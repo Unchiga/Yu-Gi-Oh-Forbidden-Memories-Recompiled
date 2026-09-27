@@ -850,6 +850,29 @@ row locations, but not six distinct category assignments.
   those visual roles come from the tutorial, while their card-kind ordering
   and palette boundaries are exact.
 
+**Which rows retail selects.** Every frame is one texture drawn through a
+row chosen from the card's packed type (`gDuel_adwCardStats` bits 26-30),
+and no code path selects the Fusion or Effect rows:
+
+- The large card, in every view, is built by `func_800291E0`
+  (`duel_effect_resource_setup.c`): its frame object gets texture value
+  `0x108 + k` (monster, Magic/Equip, Trap, Ritual for `k` 0-3), which
+  `DisplayObject_ConfigureSpriteResource` turns into CLUT `(256, 248 + k)`.
+- The 2D small card, `func_80016784` (`duel_card_frame_draw.c`), draws its
+  face through `DisplayObject_SubmitPacket` with CLUT `(256, 241)` plus
+  1/2/3 for Magic/Equip, Trap and Ritual.
+- The 3D field card, `func_80015EF4`, uses row `0xF1 + field_42` of its
+  display object.
+- The Library grid's mini-cards are a separate 4bpp texture with only four
+  16-colour palettes, `(0x160-0x190, 247)` (`LIBRARY_CARD_SELECTOR_*`); there
+  is no Fusion or Effect variant to select.
+
+Rows 245/246 and 252/253 are byte-identical in the terrain, Library and
+Build Deck packages; Password's small rows are other graphics, but its large
+rows 252/253 match too. So the two unused frames are resident wherever a
+frame is drawn, and `mods/card-frame-colors` only redirects monsters to them
+without uploading anything.
+
 ## Card-image editor dimensions
 
 **Tutorial:** `Introduction to Mod - ENG, 1.2.docx`

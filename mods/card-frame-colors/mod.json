@@ -1,0 +1,26 @@
+{
+    "id": "card-frame-colors",
+    "name": "Card Frame Colors",
+    "version": "1.0",
+    "author": "mtmjr92",
+    "description": "Colours monster card frames the way the TCG does: Effect orange, Fusion purple, Ritual blue, Normal yellow. It uses the purple and orange frames the disc ships but never uses. Magic, Equip, Trap and Ritual spells keep their own colours, and so do the Library's grid thumbnails.",
+    "min_api": 4,
+    "game": "slus_01411",
+    "library": "card-frame-colors",
+    "enabled": false,
+    "restart": false,
+    "settings": [
+        {
+            "key": "mode",
+            "label": "Monster frames",
+            "type": "choice",
+            "default": 1,
+            "choices": [
+                "Original",
+                "TCG",
+                "Forbidden Memories"
+            ],
+            "description": "Original: every monster yellow, as on the console. TCG: each monster in its TCG frame (Effect and Flip orange, Fusion purple, Ritual blue). Forbidden Memories: the results of this game's rituals blue and of its fusions purple."
+        }
+    ]
+}
