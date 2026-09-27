@@ -101,7 +101,7 @@ typedef struct {
 typedef struct { const char *label; Item items[20]; int count; int x, w; } Menu;
 
 enum { MENU_FILE, MENU_VIDEO, MENU_AUDIO, MENU_GAME, MENU_VIEW, MENU_DEBUG, MENU_HELP, MENU_COUNT };
-enum { SUB_SCALE, SUB_MENU_SIZE, SUB_SPEED, SUB_FPS, SUB_CHEATS, SUB_TRACE, SUB_SCALING, SUB_ASPECT, SUB_RESOLUTION, SUB_COLOR, SUB_EFFECTS, SUB_JUMP, SUB_ANTIALIAS, SUB_FILTER, SUB_RANK, SUB_COUNT };
+enum { SUB_SCALE, SUB_MENU_SIZE, SUB_SPEED, SUB_FPS, SUB_CHEATS, SUB_TRACE, SUB_SCALING, SUB_ASPECT, SUB_RESOLUTION, SUB_COLOR, SUB_EFFECTS, SUB_JUMP, SUB_ANTIALIAS, SUB_FILTER, SUB_RANK, SUB_PGXP, SUB_COUNT };
 static Menu menus[MENU_COUNT] = {
     {"File", {{"Save state", "F5", ITEM_ACTION, ACT_SAVE_STATE, -1},
               {"Load state", "F7", ITEM_ACTION, ACT_LOAD_STATE, -1},
@@ -121,9 +121,10 @@ static Menu menus[MENU_COUNT] = {
               {"Resolution", 0, ITEM_SUBMENU, 0, -1, SUB_RESOLUTION},
               {"Anti-aliasing", 0, ITEM_SUBMENU, 0, -1, SUB_ANTIALIAS},
               {"Filtering", 0, ITEM_SUBMENU, MENU_ITEM_FILTER, -1, SUB_FILTER, ITEM_GROUP_BREAK},
+              {"Precise geometry", 0, ITEM_SUBMENU, MENU_ITEM_PGXP, -1, SUB_PGXP},
               {"VSync", 0, ITEM_CHECK, MENU_ITEM_VSYNC, SET_VSYNC},
               {"Color", 0, ITEM_SUBMENU, 0, -1, SUB_COLOR, ITEM_GROUP_BREAK},
-              {"Effects", 0, ITEM_SUBMENU, 0, -1, SUB_EFFECTS}}, 12},
+              {"Effects", 0, ITEM_SUBMENU, 0, -1, SUB_EFFECTS}}, 13},
     {"Audio", {{"Master", 0, ITEM_SLIDER, SLIDER_MASTER, SET_MASTER_VOLUME},
                {"Music", 0, ITEM_SLIDER, SLIDER_MUSIC, SET_MUSIC_VOLUME},
                {"Sound FX", 0, ITEM_SLIDER, SLIDER_SFX, SET_SFX_VOLUME},
@@ -240,6 +241,11 @@ static Menu submenus[SUB_COUNT] = {
     {"Duel rank", {{"Off", 0, ITEM_RADIO, 0, SET_RANK_METER, 0},
                    {"Rank", 0, ITEM_RADIO, 0, SET_RANK_METER, 1},
                    {"Rank and score", 0, ITEM_RADIO, 0, SET_RANK_METER, 2}}, 3},
+    /* The GTE rounds a 3D vertex to a whole console pixel and keeps no
+     * depth with it, which bends a model's textures on tilted surfaces
+     * (pgxp.h). */
+    {"Precise geometry", {{"Off", 0, ITEM_RADIO, 0, SET_PGXP, 0},
+                          {"Textures", 0, ITEM_RADIO, 0, SET_PGXP, 1}}, 2},
 };
 
 static int open_menu = -1, hot_item = -1, hover_bar = -1, grabbed, ready, visible = 1;
@@ -731,16 +737,21 @@ static int hd_picture;
 
 /* The opponent's name is drawn by the OpenGL pass at Internal 2x and up,
  * and by the software GPU at 1x. (HD text is the Forbidden Memories HD
- * mod's setting now, hd_text.h.) */
+ * mod's setting now, hd_text.h.) Precise geometry, unlike the opponent's
+ * name, has no software-GPU fallback at 1x: it only ever runs in the
+ * OpenGL picture pass, so it needs Internal 2x and up *and* OpenGL 3. */
 static void update_hd_items(void)
 {
     int console = Settings_Get(SET_INTERNAL_SCALE) < 2;
     const char *name_why = !hd_picture && !console ? "needs OpenGL 3 or 1x" : NULL;
+    const char *pgxp_why = !hd_picture ? "needs OpenGL 3" : console ? "needs Internal 2x" : NULL;
     int menu, item;
     Menu_SetItemEnabled(MENU_ITEM_OPPONENT_NAME, !name_why);
+    Menu_SetItemEnabled(MENU_ITEM_PGXP, !pgxp_why);
     for (menu = 0; menu < MENU_COUNT; menu++) {
         for (item = 0; item < menus[menu].count; item++) {
             if (menus[menu].items[item].id == MENU_ITEM_OPPONENT_NAME) menus[menu].items[item].shortcut = name_why;
+            if (menus[menu].items[item].id == MENU_ITEM_PGXP) menus[menu].items[item].shortcut = pgxp_why;
         }
     }
 }

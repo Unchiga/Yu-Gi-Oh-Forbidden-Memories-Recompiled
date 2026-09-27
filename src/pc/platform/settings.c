@@ -107,9 +107,11 @@ static const SettingInfo info[SET_COUNT] = {
     /* Samples a pixel of the OpenGL picture is drawn with: 0 (off), 2, 4, 8
      * (gl_picture.c). */
     [SET_MSAA] = {"msaa", NULL, "MEMORIES_MSAA", NULL, 0, 0, 8},
-    /* PGXP is disabled; keep its setting and implementation for future use.
-     * Clamp saved preferences, environment overrides and runtime writes off. */
-    [SET_PGXP] = {"pgxp", NULL, "MEMORIES_PGXP", NULL, 0, 0, 0},
+    /* Precise geometry (pgxp.h): 0 off, 1 textures (perspective-correct,
+     * drawn at the console's whole-pixel vertices). Video > Precise
+     * geometry; drawn by the OpenGL picture pass at Internal 2x and up,
+     * gated like the opponent's name (update_hd_items, menu.c). */
+    [SET_PGXP] = {"pgxp", NULL, "MEMORIES_PGXP", NULL, 0, 0, 1},
 };
 
 /* A key the fixed list does not know: a mod's, or one this build dropped.

@@ -1668,24 +1668,38 @@ viewer and was not reached.
 
 ### Precise geometry (PGXP)
 
-Precise geometry (PGXP) is currently disabled and has no Video menu option.
-The `pgxp` setting is clamped to zero, including saved preferences,
-`MEMORIES_PGXP` overrides and runtime changes. Its implementation and tests
-remain in place for future use. The modes described below are inactive;
-when enabled in the code, they affect the OpenGL picture at 2x and up.
+Precise geometry (PGXP), Video > Precise geometry, is off by default and
+affects the OpenGL picture at Internal 2x and up (gated the same way as the
+opponent's name: greyed out below that, or without OpenGL 3 — unlike the
+opponent's name, there is no 1x fallback, since PGXP never runs outside the
+OpenGL picture pass). Only one level is offered:
 
 - **Affine textures** (`pgxp=1`, *Textures*). The GTE keeps no depth with a
   vertex, so textures on 3D polygons bend. Textured polygons are drawn in
   perspective, at the console's whole-pixel vertices.
-- **Rounded vertices** (`pgxp=2`, *Textures and positions*, experimental).
-  The GTE's perspective transform rounds each vertex to a whole console
-  pixel, which makes 3D polygons wobble as they move. Polygons are also
-  drawn at the vertices' precise positions. A model's parts are projected
-  each with its own matrix, and where they meet, the vertices lie up to
-  about a console pixel apart; the console's rounding closes those seams.
-  So a frame word that carries two different precise positions keeps its
-  whole-pixel one (`snap_seams` in `libgpu.c`; its depth stays precise).
-  Still experimental, so not the default level.
+
+**Rounded vertices** (`pgxp=2`, *textures and positions*) is implemented
+but the `pgxp` setting is clamped to 1, so it cannot be reached: the GTE's
+perspective transform rounds each vertex to a whole console pixel, which
+makes 3D polygons wobble as they move. This level also draws polygons at
+their precise positions. A model's parts are projected each with its own
+matrix, and where they meet, the vertices lie up to about a console pixel
+apart; the console's rounding closes those seams, so a frame word that
+carries two different precise positions is meant to keep its whole-pixel
+one (`snap_seams` in `libgpu.c`; its depth stays precise). But
+`snap_seams` finds a seam only by two vertices rounding to the *same*
+screen word this frame — it knows nothing of the mesh itself. On a model
+small enough that its whole footprint is a handful of pixels (the
+3d-monsters mod's field figures, 32 tall by default), vertices from
+unrelated, non-adjacent parts coincide by chance, and snapping them
+together distorts a triangle that was otherwise precise: a new gap where
+there was none. This is why `fix/disable-precise-geometry` (2026-09-26,
+#83) disabled PGXP outright rather than only capping this level; level 1
+does not call `snap_seams` and was not implicated. Fixing `snap_seams` to
+tell a real seam from a coincidence (perhaps by keeping each vertex's own
+model and part index alongside its precise position, so only vertices
+*from different draws of the same model* are ever compared) would let this
+level come back.
 
 **How it works** (`src/pc/compat/pgxp.c`):
 

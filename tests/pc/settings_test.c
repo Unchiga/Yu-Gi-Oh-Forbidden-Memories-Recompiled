@@ -37,18 +37,23 @@ int main(void)
     assert(Settings_Get(SET_MASTER_VOLUME) == 40);
     assert(Settings_Get(SET_MUSIC_VOLUME) == 70);
     assert(Settings_Get(SET_SFX_VOLUME) == 100);
-    /* Disabled PGXP cannot be restored by an old preference, environment
-     * override or runtime setting change. */
-    assert(Settings_Get(SET_PGXP) == 0);
+    /* Level 1 (textures) is reachable by a preference, an environment
+     * override or a runtime setting change; 2 (positions, not offered in
+     * the menu) still clamps, to 1. */
+    assert(Settings_Get(SET_PGXP) == 1);
     assert(!setenv("MEMORIES_PGXP", "1", 1));
     Settings_Load();
-    assert(Settings_Get(SET_PGXP) == 0);
+    assert(Settings_Get(SET_PGXP) == 1);
     assert(!setenv("MEMORIES_PGXP", "2", 1));
     Settings_Load();
-    assert(Settings_Get(SET_PGXP) == 0);
+    assert(Settings_Get(SET_PGXP) == 1);
     assert(!unsetenv("MEMORIES_PGXP"));
     Settings_Set(SET_PGXP, 2);
+    assert(Settings_Get(SET_PGXP) == 1);
+    Settings_Set(SET_PGXP, 0);
     assert(Settings_Get(SET_PGXP) == 0);
+    Settings_Set(SET_PGXP, 1);
+    assert(Settings_Get(SET_PGXP) == 1);
     Settings_Set(SET_ASPECT, 2);
     assert(Settings_Get(SET_ASPECT) == 2);
     Settings_Set(SET_ASPECT, 3);
@@ -66,7 +71,7 @@ int main(void)
     assert(contains(path, "volume=40\n"));
     assert(contains(path, "sfx_volume=65\n"));
     assert(contains(path, "unknown=7\n"));
-    assert(contains(path, "pgxp=0\n"));
+    assert(contains(path, "pgxp=1\n"));
     for (int i = 0; i < 1024; i++) {
         char key[200]; snprintf(key, sizeof(key), "mod.a_very_long_mod_id_that_used_to_exceed_the_old_key_limit.option_%d", i);
         Settings_SetNamed(key, i);
