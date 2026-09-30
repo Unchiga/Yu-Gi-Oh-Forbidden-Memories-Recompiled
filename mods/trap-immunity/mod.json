@@ -3,7 +3,7 @@
   "name": "Trap Immunity (God Cards)",
   "version": "1.0.1",
   "author": "PauloH-Gudang",
-  "description": "Monstros imunes a armadilhas de ataque (Widespread Ruin, Acid Trap Hole, etc).\\n\\nDISCORD: firekill_",
+  "description": "Monstros imunes a armadilhas de ataque (Widespread Ruin, Acid Trap Hole, etc).\n\nDISCORD: firekill_",
   "library": "trap_immunity",
   "enabled": true,
   "restart": true,
