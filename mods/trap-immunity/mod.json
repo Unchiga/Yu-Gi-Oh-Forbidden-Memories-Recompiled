@@ -1,0 +1,25 @@
+{
+  "id": "trap-immunity",
+  "name": "Trap Immunity (God Cards)",
+  "version": "1.0.1",
+  "author": "PauloH-Gudang",
+  "description": "Monstros imunes a armadilhas de ataque (Widespread Ruin, Acid Trap Hole, etc).\\n\\nDISCORD: firekill_",
+  "library": "trap_immunity",
+  "enabled": true,
+  "restart": true,
+  "min_api": 4,
+  "game": "slus_01411",
+  "settings": [
+    {"key":"card_380","label":"Blue-Eyes Ultimate Dragon (#380)","type":"bool","default":1},
+    {"key":"card_357","label":"Yamadron (#357)","type":"bool","default":1},
+    {"key":"card_529","label":"Flame Cerberus (#529)","type":"bool","default":1},
+    {"key":"card_613","label":"Twin-Headed Thunder Dragon (#613)","type":"bool","default":1},
+    {"key":"card_32","label":"Two-Headed King Rex (#032)","type":"bool","default":1},
+    {"key":"card_298","label":"Wicked Dragon with Ersatz Head (#298)","type":"bool","default":1},
+    {"key":"card_218","label":"Two-Mouth Darkruler (#218)","type":"bool","default":1},
+    {"key":"card_359","label":"Three-Legged Zombies (#359)","type":"bool","default":1},
+    {"key":"card_63","label":"Harpie Lady Sisters (#063)","type":"bool","default":1},
+    {"key":"card_532","label":"Gemini Elf (#532)","type":"bool","default":1},
+    {"key":"card_248","label":"Master & Expert (#248)","type":"bool","default":1}
+  ]
+}
