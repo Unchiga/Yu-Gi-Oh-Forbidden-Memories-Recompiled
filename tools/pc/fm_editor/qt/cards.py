@@ -198,7 +198,6 @@ class CardsMixin:
         self.listing.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.listing.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.listing.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.listing.setSortingEnabled(True)
         self.listing.verticalHeader().setVisible(False)
         header = self.listing.horizontalHeader()
         header.setStretchLastSection(False)
@@ -357,10 +356,7 @@ class CardsMixin:
             return
         selected = select_id or self.current
         self._loading = True
-        sorting_enabled = self.listing.isSortingEnabled()
-        sort_column = self.listing.horizontalHeader().sortIndicatorSection()
-        sort_order = self.listing.horizontalHeader().sortIndicatorOrder()
-        self.listing.setSortingEnabled(False)
+        held = sort_paused(self.listing)
         self.listing.setRowCount(0)
         for cid in sorted(self.project.cards):
             if not self._wanted(cid): continue
@@ -369,14 +365,12 @@ class CardsMixin:
             state = ("added" if cid in self.project.added else "changed" if self.project.card_changed(cid)
                      else "notes" if cid in self.project.notes else "")
             for col, value in enumerate((cid, card.name, TYPE_NAMES[card.type], card.attack, card.defense, state)):
-                item = QTableWidgetItem()
+                item = TableItem()
                 item.setData(Qt.ItemDataRole.DisplayRole, value)
                 if col == 0: item.setData(Qt.ItemDataRole.UserRole, cid)
                 self._tint_state(item, state)
                 self.listing.setItem(row, col, item)
-        self.listing.setSortingEnabled(sorting_enabled)
-        if sorting_enabled and sort_column >= 0:
-            self.listing.sortItems(sort_column, sort_order)
+        sort_resumed(self.listing, held)
         for row in range(self.listing.rowCount()):
             if self.listing.item(row, 0).data(Qt.ItemDataRole.UserRole) == selected:
                 self.listing.selectRow(row)

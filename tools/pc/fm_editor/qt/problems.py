@@ -10,21 +10,28 @@ class ProblemsMixin:
     def _refresh_problems(self):
         c=self.workspace_controls["Problems"];issues=validate.validate(self.project);table=c["table"]
         c["issues"]=issues
-        table.setRowCount(len(issues))
+        held=sort_paused(table);table.setRowCount(len(issues))
         for row,issue in enumerate(issues):
             for col,value in enumerate((issue.level.title(),issue.area+" · "+issue.where,issue.message)):
-                item=QTableWidgetItem(str(value))
+                item=TableItem(str(value))
+                item.setData(Qt.ItemDataRole.UserRole,row)      # which issue the line is, once a sort has moved it
                 self._tint_state(item,issue.level)      # the level's ink, as the Tk tree's tags draw it
                 table.setItem(row,col,item)
+        sort_resumed(table,held)
         errors=len(validate.errors(issues));warnings=len(issues)-errors
         c["summary"].setText(f"{errors} error(s) · {warnings} warning(s)" if issues else "No problems found.")
         c["summary"].setStyleSheet("color:#ff8f87" if errors else "color:#f2c04c" if warnings
                                    else "color:#7fd49b")
     def _open_problem(self, row, _column=0):
         """Problems: a double-clicked line goes to what it is about."""
-        issues = self.workspace_controls["Problems"].get("issues") or []
-        if 0 <= row < len(issues):
-            self.go_to(issues[row])
+        controls = self.workspace_controls["Problems"]
+        issues = controls.get("issues") or []
+        # Which issue the line is, rather than which row it sits on: the
+        # column headers sort this list like any other.
+        item = controls["table"].item(row, 0)
+        index = item.data(Qt.ItemDataRole.UserRole) if item is not None else row
+        if index is not None and 0 <= index < len(issues):
+            self.go_to(issues[index])
     def go_to(self, issue):
         """Show what a validation issue is about, as App.go_to does for the Tk
         window. The pages the modern editor has no form for yet are named

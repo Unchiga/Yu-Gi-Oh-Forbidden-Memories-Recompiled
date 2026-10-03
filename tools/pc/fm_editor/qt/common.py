@@ -188,6 +188,95 @@ def _whole(text: str, what: str, low: int, high: int, blank=None):
     return int(text)
 
 
+# Tables that are not lists, and so have nothing to sort by: the grid of
+# duelist portraits, the guardian-star matrix named on both axes, the three
+# whose cells hold live spin boxes and combos (Qt keeps a cell widget at its
+# row and column rather than with the item, so a sort would leave every
+# control a row away from the line it belongs to), the two whose rows *are*
+# the order the game reads (a pack's tiers and slots), and the fusion list,
+# which sorts a million rules at the source because the table shows the
+# first three thousand of them.
+UNSORTED_TABLES = frozenset({"duelistTable", "matrixTable", "duelistLpTable",
+                             "packContentsTable", "packTierTable", "packSlotTable",
+                             "fusionTable"})
+
+
+def _sort_number(text):
+    """The number a cell reads as, or None when it does not read as one.
+
+    Covers what the pages put in a column: "1500", "003", "12.50%", "+500",
+    "-200". A cell holding words, or the em dash that stands for "unset",
+    has no number and falls back to its text.
+    """
+    found = re.fullmatch(r"\s*([+-]?\d+(?:[.,]\d+)?)\s*%?\s*", text or "")
+    return float(found.group(1).replace(",", ".")) if found else None
+
+
+class TableItem(QTableWidgetItem):
+    """A cell that sorts the way its column reads.
+
+    QTableWidgetItem compares the text it shows, which puts 10 before 9 and
+    900 after 1500. These compare the number behind the text where both
+    cells have one, the text otherwise, and a checkbox column -- whose cells
+    hold no text at all -- by what is ticked.
+    """
+
+    def __lt__(self, other):
+        if not isinstance(other, QTableWidgetItem):
+            return NotImplemented
+        mine, theirs = self.text(), other.text()
+        if not mine and not theirs:
+            return int(self.checkState().value) < int(other.checkState().value)
+        left, right = _sort_number(mine), _sort_number(theirs)
+        if left is None or right is None:
+            return mine.casefold() < theirs.casefold()
+        return left < right
+
+
+def allow_sorting(table):
+    """Let a click on a column header sort the list under it."""
+    if table.objectName() in UNSORTED_TABLES:
+        return False
+    header = table.horizontalHeader()
+    header.setSectionsClickable(True)
+    header.setSortIndicatorShown(True)
+    table.setSortingEnabled(True)
+    return True
+
+
+def sort_paused(table):
+    """Take a list's sort off while it is refilled, handing back what it was.
+
+    Qt re-sorts after every setItem, so a fill that walks row by row finds
+    its later cells landing on whatever row the sort has moved into the way.
+    Pass what this returns to `sort_resumed` once the rows are in.
+    """
+    header = table.horizontalHeader()
+    held = (table.isSortingEnabled(), header.sortIndicatorSection(), header.sortIndicatorOrder())
+    table.setSortingEnabled(False)
+    return held
+
+
+def sort_resumed(table, held):
+    """Put back the sort `sort_paused` took off, over the rows now in the list."""
+    sorting, column, order = held
+    table.setSortingEnabled(sorting)
+    if sorting and 0 <= column < table.columnCount():
+        table.sortItems(column, order)
+
+
+def sort_keeps_filter(table, refilter):
+    """Hide again, after a sort, the rows a search had hidden.
+
+    setRowHidden marks a row number rather than the line in it, so a sort
+    that moves the lines leaves the marks behind on whatever landed there.
+    The page's own filter runs once the sort has settled, which is a turn of
+    the event loop later: the view does its sorting on this same signal.
+    """
+    table.horizontalHeader().sortIndicatorChanged.connect(
+        lambda *_: QTimer.singleShot(0, refilter))
+
+
 class FlowLayout(QLayout):
     """Left to right, wrapping onto another line when the room runs out (Qt's
     own flow-layout example). The Packs page's card actions sit on one line

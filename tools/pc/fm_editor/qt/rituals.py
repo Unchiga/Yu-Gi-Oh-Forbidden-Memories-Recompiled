@@ -11,22 +11,24 @@ class RitualsMixin:
         c=self.workspace_controls["Rituals"]; cards=c["cards"]
         previous=getattr(self,"ritual_current",None)
         self._loading_workspace=True
+        held=sort_paused(cards)
         cards.setRowCount(0)
         rituals=sorted(set(self.project.ritual_cards())|set(self.project.rituals)|set(self.project.retail.rituals))
         for ritual in rituals:
             if ritual not in self.project.cards:continue
             row=cards.rowCount();cards.insertRow(row)
-            id_item=QTableWidgetItem(f"{ritual:03d}")
+            id_item=TableItem(f"{ritual:03d}")
             id_item.setData(Qt.ItemDataRole.UserRole,ritual)
             cards.setItem(row,0,id_item)
-            cards.setItem(row,1,QTableWidgetItem(self.project.cards[ritual].name))
+            cards.setItem(row,1,TableItem(self.project.cards[ritual].name))
             state=self.project.ritual_status(ritual).title() or "Stock"
-            status_item=QTableWidgetItem(state)
+            status_item=TableItem(state)
             self._tint_state(status_item,self.project.ritual_status(ritual))
             cards.setItem(row,2,status_item)
-            cards.setItem(row,3,QTableWidgetItem(self._ritual_recipe_text(ritual)))
-            if ritual==previous:
-                cards.selectRow(row)
+            cards.setItem(row,3,TableItem(self._ritual_recipe_text(ritual)))
+        sort_resumed(cards,held)
+        if previous is not None:
+            self._select_table_id(cards,previous)
         if cards.currentRow()<0 and cards.rowCount():
             cards.selectRow(0)
         self.ritual_current=self._selected_ritual()

@@ -103,7 +103,7 @@ class FusionsMixin:
         image_list.clear()
         for i, (pair, a, b, result, status, atk, defense) in enumerate(rows):
             for col, value in enumerate((a, b, result, atk, defense, status)):
-                item = QTableWidgetItem(str(value))
+                item = TableItem(str(value))
                 if col == 0: item.setData(Qt.ItemDataRole.UserRole, pair)
                 self._tint_state(item, status)
                 table.setItem(i, col, item)
@@ -456,6 +456,7 @@ class FusionsMixin:
         bulk["warnings"].setText("\n".join(plan.warnings))
         bulk["warnings"].setVisible(bool(plan.warnings))
         table = bulk["preview"]
+        held = sort_paused(table)
         table.setRowCount(0)
         label = lambda cid: self.project.card_label(cid) if cid else ("(forbidden)" if cid == 0 else "(none)")
         for pair, before, after, action in plan.samples[:bulk_fusions.SAMPLE]:
@@ -465,7 +466,8 @@ class FusionsMixin:
             values = (self.project.card_label(pair[0]), self.project.card_label(pair[1]), label(before),
                       after_label, action)
             for column, value in enumerate(values):
-                table.setItem(row, column, QTableWidgetItem(value))
+                table.setItem(row, column, TableItem(value))
+        sort_resumed(table, held)
         bulk["apply"].setEnabled(True)
         bulk["apply"].setToolTip("Review the validation message before applying." if plan.errors
                                  else "Apply the previewed fusion changes to this mod.")

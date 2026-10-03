@@ -132,6 +132,7 @@ class StarsMixin:
         model, table = self.stars_model, c["stars"]
         counts = self._star_card_counts()
         table.blockSignals(True)
+        held = sort_paused(table)
         table.setRowCount(0)
         for star in range(1, model.count + 1):
             entry = model.stars.get(star)
@@ -141,7 +142,7 @@ class StarsMixin:
             icon = "mod's" if entry and entry.icon else \
                 ("disc's" if star <= guardian_stars.RETAIL_COUNT else "plain")
             for column, text in enumerate((str(star), model.name(star), icon, str(counts.get(star, 0)))):
-                item = QTableWidgetItem(text)
+                item = TableItem(text)
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, star)
                 self._tint_state(item, state)
@@ -149,6 +150,7 @@ class StarsMixin:
             picture = self._star_icon_pixmap(star)
             if picture is not None:
                 table.item(row, 1).setIcon(picture)
+        sort_resumed(table, held)
         table.blockSignals(False)
         header = table.horizontalHeader()
         for column, width in ((0, 42), (2, 74), (3, 62)):
@@ -251,7 +253,7 @@ class StarsMixin:
         for a in range(1, n + 1):
             for d in range(1, n + 1):
                 bonus = model.grid[a][d]
-                item = QTableWidgetItem(f"{bonus:+}" if bonus else "-")
+                item = TableItem(f"{bonus:+}" if bonus else "-")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 kind = "plus" if bonus > 0 else "minus" if bonus < 0 else "zero"
                 item.setBackground(QColor(self.STAR_CELL_COLOURS[kind]))

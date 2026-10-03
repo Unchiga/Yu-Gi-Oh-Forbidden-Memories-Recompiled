@@ -11,7 +11,7 @@ class EquipsMixin:
         c=self.workspace_controls.get("Equips")
         if not c:return
         self._loading_workspace=True
-        equips=c["equips"]; equips.setRowCount(0)
+        equips=c["equips"]; held=sort_paused(equips); equips.setRowCount(0)
         cards=sorted(set(self.project.equip_cards())|set(self.project.equips))
         for cid in cards:
             if cid not in self.project.cards:continue
@@ -19,10 +19,11 @@ class EquipsMixin:
             changed=self.project.equips.get(cid,set())!=self.project.equip_baseline(cid)
             for col,value in enumerate((f"{cid:03d}",self.project.cards[cid].name,
                                         len(self.project.equips.get(cid,set())))):
-                item=QTableWidgetItem(str(value))
+                item=TableItem(str(value))
                 if col==0:item.setData(Qt.ItemDataRole.UserRole,cid)
                 self._tint_state(item,"changed" if changed else "")
                 equips.setItem(row,col,item)
+        sort_resumed(equips,held)
         if getattr(self,"equip_current",None) is not None:
             for row in range(equips.rowCount()):
                 if equips.item(row,0).data(Qt.ItemDataRole.UserRole)==self.equip_current:
@@ -61,7 +62,7 @@ class EquipsMixin:
     def _fill_equip_monsters(self):
         c=self.workspace_controls.get("Equips")
         if not c:return
-        table=c["monsters"]; table.blockSignals(True); table.setRowCount(0)
+        table=c["monsters"]; table.blockSignals(True); held=sort_paused(table); table.setRowCount(0)
         cid=getattr(self,"equip_current",None)
         c["heading"].setText(f"{self.project.card_label(cid)} can equip:" if cid in self.project.cards else "Select an equip card")
         preview=c["preview"]
@@ -81,7 +82,7 @@ class EquipsMixin:
             now=self.project.equips.get(cid,set()); baseline=self.project.equip_baseline(cid)
             for monster in self.project.monsters():
                 row=table.rowCount(); table.insertRow(row)
-                check=QTableWidgetItem()
+                check=TableItem()
                 check.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsSelectable|Qt.ItemFlag.ItemIsUserCheckable)
                 check.setCheckState(Qt.CheckState.Checked if monster in now else Qt.CheckState.Unchecked)
                 check.setData(Qt.ItemDataRole.UserRole,monster); table.setItem(row,0,check)
@@ -91,8 +92,9 @@ class EquipsMixin:
                         state.title() or ("Stock" if monster in now else ""))
                 self._tint_state(check,state)
                 for col,value in enumerate(values,1):
-                    item=QTableWidgetItem(str(value));self._tint_state(item,state)
+                    item=TableItem(str(value));self._tint_state(item,state)
                     table.setItem(row,col,item)
+        sort_resumed(table,held)
         table.blockSignals(False)
         self._filter_equip_monsters(c["monster_search"].text())
     def _toggle_equip_monster(self,item):

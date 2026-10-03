@@ -189,7 +189,7 @@ class PacksMixin:
             for k,(ref,weight) in enumerate(pool):
                 cid=resolve(ref);card=self.project.cards.get(cid);chance=chances.get((ti,cid),0) if pack and cid>0 else 0;r=t.rowCount();t.insertRow(r)
                 for col,val in enumerate((r+1,card.name if card else str(ref),"","",f"{chance*100:.2f}%")):
-                    cell=QTableWidgetItem(str(val))
+                    cell=TableItem(str(val))
                     if col==0:cell.setData(Qt.ItemDataRole.UserRole,(ti,k,cid))
                     if col==1:
                         cell.setToolTip(f"{cid:03d}  {card.name}" if card else f"{ref}: no card the editor knows")
@@ -345,6 +345,7 @@ class PacksMixin:
         layout = QVBoxLayout(page)
         layout.setContentsMargins(6, 6, 6, 6)
         table = QTableWidget(0, 8)
+        table.setObjectName("packTierTable")      # UNSORTED_TABLES names it
         table.setHorizontalHeaderLabels(["Tier", "Odds", "Share", "Label", "Colour", "Sound", "Reveal", "Cards"])
         table.verticalHeader().setVisible(False)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -378,6 +379,7 @@ class PacksMixin:
         v["use_slots"].clicked.connect(self._toggle_pack_slots)
         layout.addWidget(v["use_slots"])
         slots = QTableWidget(0, 2)
+        slots.setObjectName("packSlotTable")      # likewise: slot 1 is slot 1
         slots.setHorizontalHeaderLabels(["#", "Rule"])
         slots.verticalHeader().setVisible(False)
         slots.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -495,14 +497,14 @@ class PacksMixin:
             for col, value in enumerate((name, odds, share, tier.get("label", ""), tier.get("color", ""),
                                          tier.get("sound", ""), tier.get("reveal", ""),
                                          len(packmath.pool_items(tier.get("cards", []))))):
-                v["tiers"].setItem(r, col, QTableWidgetItem(str(value)))
+                v["tiers"].setItem(r, col, TableItem(str(value)))
         slots = entry.get("slots")
         v["use_slots"].setChecked(isinstance(slots, list))
         for s, rule in enumerate(slots if isinstance(slots, list) else []):
             r = v["slots"].rowCount()
             v["slots"].insertRow(r)
-            v["slots"].setItem(r, 0, QTableWidgetItem(str(s + 1)))
-            v["slots"].setItem(r, 1, QTableWidgetItem(json.dumps(rule, ensure_ascii=False)))
+            v["slots"].setItem(r, 0, TableItem(str(s + 1)))
+            v["slots"].setItem(r, 1, TableItem(json.dumps(rule, ensure_ascii=False)))
         v["guarantee"].setText(_pairs_text(entry.get("guarantee")))
         v["pity"].setText(_pairs_text(entry.get("pity")))
         v["max_copies"].setText(str(entry.get("max_copies", "")))
@@ -1305,6 +1307,11 @@ class PacksMixin:
             dialog.resize(760, 520)
             layout = QVBoxLayout(dialog)
             layout.addWidget(c["advanced_tabs"])
+            # The same rule as a page's lists: every table is offered sorting,
+            # and the ones UNSORTED_TABLES names decline it. A tier's row and a
+            # slot's row are the order the game reads them in, so both decline.
+            for table in dialog.findChildren(QTableWidget):
+                allow_sorting(table)
             line = QHBoxLayout()
             apply_button = QPushButton("Apply")
             apply_button.clicked.connect(self._apply_pack)
@@ -1451,11 +1458,12 @@ class PacksMixin:
         table=c["sim_results"]
         if table.isVisible():
             table.hide();return
-        table.setColumnCount(4);table.setHorizontalHeaderLabels(["Card","Copies","Per pack","Chance"]);table.setRowCount(0)
+        table.setColumnCount(4);table.setHorizontalHeaderLabels(["Card","Copies","Per pack","Chance"]);held=sort_paused(table);table.setRowCount(0)
         dealt=sum(result.tiers.values()) or 1
         for cid,n in sorted(result.cards.items(),key=lambda x:(-x[1],x[0])):
             r=table.rowCount();table.insertRow(r)
-            for col,val in enumerate((self.project.card_label(cid),n,f"{n/result.packs:.3f}",f"{n/dealt*100:.2f}%")):table.setItem(r,col,QTableWidgetItem(str(val)))
+            for col,val in enumerate((self.project.card_label(cid),n,f"{n/result.packs:.3f}",f"{n/dealt*100:.2f}%")):table.setItem(r,col,TableItem(str(val)))
+        sort_resumed(table,held)
         table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch)
         table.show()
     def _pack_image_shared(self,name,entry) -> bool:

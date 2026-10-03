@@ -155,6 +155,13 @@ class ModernEditor(ArtMixin, CardsMixin, DuelistsMixin, EquipsMixin, FusionsMixi
             page = QWidget()
             self._build_workspace_page(name, page)
             self.workspace_indices[name] = self.pages.addWidget(page)
+        # Every list a page shows sorts by the column you click, bar the handful
+        # UNSORTED_TABLES names. Done here, once all the pages are built, so the
+        # three with hand-built forms (cards, art, packs) are in it as much as
+        # the ones loaded from a .ui file.
+        for index in range(self.pages.count()):
+            for table in self.pages.widget(index).findChildren(QTableWidget):
+                allow_sorting(table)
         body.addWidget(self.pages)
         body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 1)
@@ -577,6 +584,12 @@ class ModernEditor(ArtMixin, CardsMixin, DuelistsMixin, EquipsMixin, FusionsMixi
             monster_header.resizeSection(1,54)
             for col in (2,3,4):
                 monster_header.setSectionResizeMode(col,QHeaderView.ResizeMode.Stretch)
+            # Both lists hide what the search box leaves out, and a hidden row
+            # is a row number rather than the line in it.
+            sort_keeps_filter(controls["equips"],
+                              lambda: self._filter_equip_cards(controls["search"].text()))
+            sort_keeps_filter(controls["monsters"],
+                              lambda: self._filter_equip_monsters(controls["monster_search"].text()))
         elif name == "Rituals":
             # After the shared pass above, which stretches every column.
             card_header=controls["cards"].horizontalHeader()
@@ -584,6 +597,8 @@ class ModernEditor(ArtMixin, CardsMixin, DuelistsMixin, EquipsMixin, FusionsMixi
                 card_header.setSectionResizeMode(column,QHeaderView.ResizeMode.Fixed)
                 card_header.resizeSection(column,width)
             card_header.setSectionResizeMode(3,QHeaderView.ResizeMode.Stretch)
+            sort_keeps_filter(controls["cards"],
+                              lambda: self._filter_ritual_cards(controls["search"].text()))
         elif name == "Guardian Stars":
             # The shared pass above hides every vertical header, selects whole
             # rows and stretches every column. The matrix is a grid of cells
@@ -789,6 +804,7 @@ class ModernEditor(ArtMixin, CardsMixin, DuelistsMixin, EquipsMixin, FusionsMixi
     STAR_CELL_COLOURS = {"plus": "#1f4d2c", "minus": "#5a2323", "zero": "#16212f"}
     MOD_INFO_OWNED = ("limits", "guardian_stars", "starter_pools", "story")
     MOD_INFO_RESERVED = frozenset(manifest.INFO_KEYS + manifest.TABLE_KEYS + MOD_INFO_OWNED)
+    @staticmethod
     def _select_table_id(table, value, column=0):
         """Select the row whose `column` carries `value` as its id, showing it
         even when a search has hidden it."""

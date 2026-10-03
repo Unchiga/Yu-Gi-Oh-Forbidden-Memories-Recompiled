@@ -9,11 +9,13 @@ from .common import (_qimage, _line_count, _pairs_text, _parse_pairs, _whole,
 class DuelistsMixin:
     @staticmethod
     def _put_rows(table, rows):
+        held = sort_paused(table)
         table.setRowCount(0)
         table.setRowCount(len(rows))
         for row, values in enumerate(rows):
             for col, value in enumerate(values):
-                table.setItem(row, col, QTableWidgetItem(str(value)))
+                table.setItem(row, col, TableItem(str(value)))
+        sort_resumed(table, held)
     def _duelist_roster_source(self):
         """Read inline, file-backed, or folder duelist definitions without losing their source form."""
         cached=getattr(self,"_duelist_entries_cache",None)
@@ -171,7 +173,7 @@ class DuelistsMixin:
         grid.clearContents();grid.setRowCount(5);grid.setColumnCount(8)
         for cell in range(40):
             slot=page*40+cell;row,col=divmod(cell,8);record=self.duelist_slots.get(slot)
-            item=QTableWidgetItem("");item.setData(Qt.ItemDataRole.UserRole,slot)
+            item=TableItem("");item.setData(Qt.ItemDataRole.UserRole,slot)
             if slot==0:item.setFlags(Qt.ItemFlag.NoItemFlags)
             grid.setItem(row,col,item)
             if record is None:
@@ -399,13 +401,14 @@ class DuelistsMixin:
             state="" if weight==before else "added" if not before else "removed" if not weight else "changed"
             rows.append((cid,card.name if card else "?",TYPE_NAMES[card.type] if card else "",weight,
                          f"{weight*100/POOL_TOTAL:.2f}%",before,state.title()))
-        table=c["table"];table.setRowCount(len(rows))
+        table=c["table"];held=sort_paused(table);table.setRowCount(len(rows))
         for i,row in enumerate(rows):
             for col,value in enumerate(row):
-                item=QTableWidgetItem(str(value))
+                item=TableItem(str(value))
                 if col==0:item.setData(Qt.ItemDataRole.UserRole,row[0])
                 self._tint_state(item,row[6].lower())
                 table.setItem(i,col,item)
+        sort_resumed(table,held)
     def _fixed_deck(self):
         """The duelist's fixed deck, while the deck pool is the one shown."""
         if self._selected_pool_name() != "deck":
@@ -440,6 +443,7 @@ class DuelistsMixin:
             return False
         table = c["fixed_table"]
         table.blockSignals(True)
+        held = sort_paused(table)
         table.setRowCount(0)
         weights = self.project.pools[self._selected_duelist()]["deck"]
         for cid in sorted(deck.cards):
@@ -457,7 +461,7 @@ class DuelistsMixin:
             for column, value in enumerate((cid, card.name if card else "?", kind, copies,
                                             f"{weight * 100 / POOL_TOTAL:.2f}%" if weight else "",
                                             ", ".join(notes))):
-                item = QTableWidgetItem(str(value))
+                item = TableItem(str(value))
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, cid)
                 self._tint_state(item, "removed" if card is None else "")
@@ -469,11 +473,12 @@ class DuelistsMixin:
             table.insertRow(row)
             for column, value in enumerate(("", name, "", copies, "",
                                             "no such card; the deck is left out")):
-                item = QTableWidgetItem(str(value))
+                item = TableItem(str(value))
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, f"kept:{name}")
                 self._tint_state(item, "removed")
                 table.setItem(row, column, item)
+        sort_resumed(table, held)
         table.blockSignals(False)
         total = deck.total()
         good = total == DECK_SIZE and not deck.kept
@@ -630,10 +635,10 @@ class DuelistsMixin:
             player, opponent = self.limits_duelists.get(name, (None, None))
             row = table.rowCount()
             table.insertRow(row)
-            number = QTableWidgetItem("—" if name == "all" else f"{index:02d}")
+            number = TableItem("—" if name == "all" else f"{index:02d}")
             number.setData(Qt.ItemDataRole.UserRole, name)
             table.setItem(row, 0, number)
-            label = QTableWidgetItem("All duelists" if name == "all" else name)
+            label = TableItem("All duelists" if name == "all" else name)
             if name != "all":
                 base = DUELIST_NAMES.index(name) if name in DUELIST_NAMES else 0
                 if base:

@@ -119,7 +119,6 @@ class ArtMixin:
         self.art_table.setColumnWidth(1, 220)
         self.art_table.setColumnWidth(2, 110)
         self.art_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.art_table.setSortingEnabled(True)
         self.art_table.verticalHeader().setVisible(False)
         self.art_search.textChanged.connect(self.refresh_art_list)
         self.art_filter.currentTextChanged.connect(self.refresh_art_list)
@@ -137,10 +136,7 @@ class ArtMixin:
         visible_art_cards = changed | pack_cards
         self._update_art_pack_status(state)
         self.art_table.blockSignals(True)
-        sorting_enabled = self.art_table.isSortingEnabled()
-        sort_column = self.art_table.horizontalHeader().sortIndicatorSection()
-        sort_order = self.art_table.horizontalHeader().sortIndicatorOrder()
-        self.art_table.setSortingEnabled(False)
+        held = sort_paused(self.art_table)
         self.art_table.setRowCount(0)
         for cid, card in sorted(self.project.cards.items()):
             if filter_name == "Art of the mod" and cid not in visible_art_cards:
@@ -159,14 +155,12 @@ class ArtMixin:
                     part_names.append(art.LABELS[part] + " · pack")
             values = (f"{cid:03d}", card.name, TYPE_NAMES[card.type], ", ".join(part_names) if part_names else "Stock")
             for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                item = TableItem(value)
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, cid)
                 self._tint_state(item, "changed" if part_names else "")
                 self.art_table.setItem(row, column, item)
-        self.art_table.setSortingEnabled(sorting_enabled)
-        if sorting_enabled and sort_column >= 0:
-            self.art_table.sortItems(sort_column, sort_order)
+        sort_resumed(self.art_table, held)
         for row in range(self.art_table.rowCount()):
             if self.art_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == selected:
                 self.art_table.selectRow(row)

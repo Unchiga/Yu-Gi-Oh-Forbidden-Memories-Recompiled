@@ -2048,15 +2048,16 @@ class CardsTest(unittest.TestCase):
             w._add_filtered_pack_cards()
         self.assertEqual(c['contents'].rowCount(), 3)
 
-    # --- the Campaign page while the Scenes tab is away ----------------------
+    # --- the Campaign page while the story tabs are away ---------------------
 
-    def test_the_campaign_page_holds_the_scenes_and_the_map(self):
-        """The story editor from the campaign work, beside the map."""
+    def test_the_campaign_page_is_the_map_for_now(self):
+        """The scene editor, the timeline and the story assets come with the
+        campaign work, in a PR of their own. This page is the map."""
         w = self.window
         w.select_workspace('Campaign')
         c = w.workspace_controls['Campaign']
         self.assertEqual([c['tabs'].tabText(i) for i in range(c['tabs'].count())],
-                         ['Scene editor', 'Timeline viewer', 'Map'])
+                         ['Map'])
 
     def test_a_mod_s_story_key_is_left_alone(self):
         """No page writes "story": the editor keeps it as the mod wrote it."""

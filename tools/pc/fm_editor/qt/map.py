@@ -195,6 +195,7 @@ class MapMixin:
         m = self.workspace_controls["Campaign"]["map"]
         table, query = m["places"], m["search"].text().casefold().strip()
         table.blockSignals(True)
+        held = sort_paused(table)
         table.setRowCount(0)
         if self._map_available():
             for index in range(cm.COUNT):
@@ -205,7 +206,7 @@ class MapMixin:
                 row = table.rowCount()
                 table.insertRow(row)
                 for column, value in enumerate((index, name, area)):
-                    item = QTableWidgetItem(str(value))
+                    item = TableItem(str(value))
                     if column == 0:
                         item.setData(Qt.ItemDataRole.UserRole, index)
                     self._tint_state(item, "changed" if cm.changed(self.project, index) else "")
@@ -213,6 +214,7 @@ class MapMixin:
             m["hint"].setText("Drag an arrow or the marker on the screen, or a place in the overview. Saving "
                               "writes \"data\" patches of both overworld packages (before and after the coup); "
                               "the game needs a restart to read them.")
+        sort_resumed(table, held)
         table.blockSignals(False)
         self._select_map_row(self.map_index)
     def _select_map_row(self, index):

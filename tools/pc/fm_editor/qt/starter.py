@@ -96,17 +96,19 @@ class StarterMixin:
         pools = self._starter_pools()
         table = c["pools"]
         table.blockSignals(True)
+        held = sort_paused(table)
         table.setRowCount(0)
         for index, pool in enumerate(pools):
             row = table.rowCount()
             table.insertRow(row)
             for column, value in enumerate((index + 1, pool.name or "(unnamed)", pool.draws,
                                             pool.count(), pool.total())):
-                item = QTableWidgetItem(str(value))
+                item = TableItem(str(value))
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, index)
                 self._tint_state(item, "removed" if pool.kept else "")
                 table.setItem(row, column, item)
+        sort_resumed(table, held)
         header = table.horizontalHeader()
         for column, width in ((0, 40), (2, 64), (3, 64), (4, 80)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
@@ -115,7 +117,7 @@ class StarterMixin:
         if pools:
             index = min(getattr(self, "starter_pool_current", 0), len(pools) - 1)
             self.starter_pool_current = index
-            table.selectRow(index)
+            self._select_table_id(table, index)
         else:
             self.starter_pool_current = 0
         table.blockSignals(False)
@@ -174,6 +176,7 @@ class StarterMixin:
             self._report_starter_pools()
             return
         total = pool.total() or 1
+        held = sort_paused(table)
         for cid, weight in sorted(pool.cards.items()):
             card = self.project.cards.get(cid)
             row = table.rowCount()
@@ -182,7 +185,7 @@ class StarterMixin:
                       TYPE_NAMES[card.type] if card and 0 <= card.type < len(TYPE_NAMES) else "",
                       weight, f"{weight * 100 / total:.2f}%" if weight else "", "")
             for column, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
+                item = TableItem(str(value))
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, cid)
                 table.setItem(row, column, item)
@@ -193,11 +196,12 @@ class StarterMixin:
             table.insertRow(row)
             for column, value in enumerate(("", name, "", weight, "",
                                             "no such card; the game leaves it out")):
-                item = QTableWidgetItem(str(value))
+                item = TableItem(str(value))
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, f"kept:{name}")
                 self._tint_state(item, "removed")
                 table.setItem(row, column, item)
+        sort_resumed(table, held)
         table.blockSignals(False)
         header = table.horizontalHeader()
         for column, width in ((0, 56), (2, 110), (3, 80), (4, 80)):
@@ -307,17 +311,18 @@ class StarterMixin:
         self._starter_pools_edited()
     def _refresh_starter_decks(self):
         c=self.workspace_controls["Starter decks"];table=c["decks"]
-        table.blockSignals(True);table.setRowCount(0)
+        table.blockSignals(True);held=sort_paused(table);table.setRowCount(0)
         for index,deck in enumerate(self.project.starter):
             row=table.rowCount();table.insertRow(row)
             values=(index+1,deck.name or "(unnamed)",deck.weight,f"{deck.total()}/{DECK_SIZE}")
             for col,value in enumerate(values):
-                item=QTableWidgetItem(str(value))
+                item=TableItem(str(value))
                 if col==0:item.setData(Qt.ItemDataRole.UserRole,index)
                 table.setItem(row,col,item)
+        sort_resumed(table,held)
         if self.project.starter:
             self.starter_current=min(getattr(self,"starter_current",None) or 0,len(self.project.starter)-1)
-            table.selectRow(self.starter_current)
+            self._select_table_id(table,self.starter_current)
         else:self.starter_current=None
         table.blockSignals(False);self._fill_starter_cards()
     def _select_starter_deck(self):
@@ -339,12 +344,13 @@ class StarterMixin:
             if exodia_piece(cid) and copies>1:warnings.append("Exodia piece")
             rows.append((cid,card.name if card else "?",TYPE_NAMES[card.type] if card else "",copies,", ".join(warnings)))
         for label,copies in deck.kept.items():rows.append(("",label,"",copies,"Kept as written"))
-        table.setRowCount(len(rows))
+        held=sort_paused(table);table.setRowCount(len(rows))
         for i,row in enumerate(rows):
             for col,value in enumerate(row):
-                item=QTableWidgetItem(str(value))
+                item=TableItem(str(value))
                 if col==0:item.setData(Qt.ItemDataRole.UserRole,row[0])
                 table.setItem(i,col,item)
+        sort_resumed(table,held)
     def _select_starter_card(self):
         c=self.workspace_controls["Starter decks"];row=c["cards"].currentRow()
         if row>=0 and c["cards"].item(row,0).data(Qt.ItemDataRole.UserRole):
