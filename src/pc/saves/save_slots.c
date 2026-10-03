@@ -19,8 +19,8 @@
 #define STATE_SEQUENCE 0x404
 #define STATE_NAME 0x40C
 #define STATE_NAME_CHARS 6
-#define STATE_WINS 0x518
-#define STATE_LOSSES 0x51A
+#define STATE_RECORDS 0x51C /* Free Duel's wins and losses per opponent */
+#define STATE_RECORD_COUNT 40
 #define STATE_STARCHIPS 0x5E0
 
 /* Memory card image layout (src/pc/sdk/libmcrd.c). */
@@ -33,6 +33,9 @@
 static const unsigned char TAG[8] = {'Y', 'F', 'M', 'S', 'L', 'O', 'T', 1};
 
 static unsigned read_u16(const unsigned char *p) { return p[0] | p[1] << 8; }
+
+static SaveSlotRecordReader record_reader;
+void SaveSlots_SetRecordReader(SaveSlotRecordReader reader) { record_reader = reader; }
 static unsigned read_u32(const unsigned char *p) { return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24; }
 
 int SaveSlots_Path(int slot, char *out, size_t size)
@@ -155,8 +158,13 @@ void SaveSlots_Scan(SaveSlotInfo out[SAVE_SLOT_COUNT], SaveSlotCheck check)
         info->duelist_code = (int)read_u32(state + STATE_DUELIST_CODE);
         info->sequence = read_u32(state + STATE_SEQUENCE);
         info->starchips = read_u32(state + STATE_STARCHIPS);
-        info->wins = (int)read_u16(state + STATE_WINS);
-        info->losses = (int)read_u16(state + STATE_LOSSES);
+        /* Not the halfwords at 0x518: those are the two-player duel totals,
+         * which Free Duel never touches. */
+        for (i = 0; i < STATE_RECORD_COUNT; i++) {
+            info->wins += (int)read_u16(state + STATE_RECORDS + 4 * i);
+            info->losses += (int)read_u16(state + STATE_RECORDS + 4 * i + 2);
+        }
+        if (record_reader) record_reader(state, &info->wins, &info->losses);
         for (i = 0; i < STATE_QUANTITIES_SIZE; i++) info->cards += state[STATE_QUANTITIES + i];
         for (i = 0; i < STATE_DECK_SIZE; i++) info->cards += read_u16(state + STATE_DECK + 2 * i) != 0;
     }

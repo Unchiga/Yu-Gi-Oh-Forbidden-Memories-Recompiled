@@ -129,6 +129,10 @@ int Duelists_ConditionsMet(const void *state, const char *beat, int wins, int st
  * has what the newest earlier one held. */
 void Duelists_SaveLoaded(const void *state);
 void Duelists_SaveWritten(const void *state, unsigned sequence);
+/* Adds the added duelists' wins and losses a save holds to `wins` and
+ * `losses`, as Duelists_SaveLoaded would read them, for the save slot menu
+ * (SaveSlots_SetRecordReader). */
+void Duelists_SavedRecord(const unsigned char *state, int *wins, int *losses);
 /* Once a frame, beside Cards_Frame: NEW GAME writes a new duelist code into
  * the running save without loading one, so the records read for the save
  * before it would otherwise stand in the new game. */

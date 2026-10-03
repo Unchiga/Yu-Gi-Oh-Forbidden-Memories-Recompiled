@@ -488,27 +488,28 @@ static int any_record(void)
     return 0;
 }
 
-void Duelists_SaveLoaded(const void *state)
+/* The added duelists' records `state`'s section of the file holds, into
+ * `records` (zeroed first). How many were read. */
+static int read_records(const void *state, unsigned short (*records)[2], unsigned *chosen)
 {
     const int code = state_word(state, SAVE_DUELIST_CODE);
     const unsigned sequence = (unsigned)state_word(state, SAVE_SEQUENCE);
     char path[1024], line[256];
-    unsigned chosen = 0;
     int inside = 0, read = 0;
     FILE *file;
 
-    clear_extra();
-    gFreeDuel_nExtraOwner = code;
-    if (Duelists_Count() <= DUELISTS_RETAIL_COUNT) return;
-    if (sidecar_path(path, sizeof path, code)) return;
+    memset(records, 0, sizeof(unsigned short[DUELIST_TABLE_COUNT][2]));
+    *chosen = 0;
+    if (Duelists_Count() <= DUELISTS_RETAIL_COUNT) return 0;
+    if (sidecar_path(path, sizeof path, code)) return 0;
     file = fopen(path, "r");
-    if (!file) return;
-    if (choose_section(file, sequence, &chosen)) {
+    if (!file) return 0;
+    if (choose_section(file, sequence, chosen)) {
         while (fgets(line, sizeof line, file)) {
             char identity[IDENTITY_MAX];
             unsigned value;
             int wins, losses, id, at = 0;
-            if (section_header(line, &value)) { inside = value == chosen; continue; }
+            if (section_header(line, &value)) { inside = value == *chosen; continue; }
             if (!inside) continue;
             /* The identity is last on the line because it may hold spaces:
                duelists/Dark Simon.json is "<mod>:Dark Simon". */
@@ -519,14 +520,37 @@ void Duelists_SaveLoaded(const void *state)
              * that had it may come back, but its id would be another's. */
             id = Duelists_Find(identity);
             if (id < DUELISTS_RETAIL_COUNT || id >= DUELIST_TABLE_COUNT) continue;
-            gFreeDuel_aExtraRecords[id][0] = (unsigned short)(wins < 0 ? 0 : wins);
-            gFreeDuel_aExtraRecords[id][1] = (unsigned short)(losses < 0 ? 0 : losses);
+            records[id][0] = (unsigned short)(wins < 0 ? 0 : wins);
+            records[id][1] = (unsigned short)(losses < 0 ? 0 : losses);
             read++;
         }
     }
     fclose(file);
-    if (read) LOG(LOG_MODS, "duelists: %d records of duelist %08X save %u (from save %u)",
-                  read, (unsigned)code, sequence, chosen);
+    return read;
+}
+
+void Duelists_SaveLoaded(const void *state)
+{
+    unsigned chosen;
+    int read;
+
+    gFreeDuel_nExtraOwner = state_word(state, SAVE_DUELIST_CODE);
+    read = read_records(state, gFreeDuel_aExtraRecords, &chosen);
+    if (read) LOG(LOG_MODS, "duelists: %d records of duelist %08X save %u (from save %u)", read,
+                  (unsigned)gFreeDuel_nExtraOwner, (unsigned)state_word(state, SAVE_SEQUENCE), chosen);
+}
+
+void Duelists_SavedRecord(const unsigned char *state, int *wins, int *losses)
+{
+    static unsigned short records[DUELIST_TABLE_COUNT][2];
+    unsigned chosen;
+    int id;
+
+    read_records(state, records, &chosen);
+    for (id = DUELISTS_RETAIL_COUNT; id < DUELIST_TABLE_COUNT; id++) {
+        *wins += records[id][0];
+        *losses += records[id][1];
+    }
 }
 
 void Duelists_Frame(void)

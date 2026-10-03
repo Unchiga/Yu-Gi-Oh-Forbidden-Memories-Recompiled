@@ -24,6 +24,8 @@
 #include "sound.h"
 #include "pc/saves/save_menu.h"
 #include "pc/saves/save_cards.h"
+#include "pc/saves/save_slots.h"
+#include "pc/free_duel/duelists.h"
 #endif
 
 /* The empty callback, trade write-back operation, and modal runtime that
@@ -418,6 +420,7 @@ void MemCardDialog_Request(u8 *buf, s32 size, u8 *name, s32 step)
         (size + MEM_CARD_BLOCK_SIZE - 1) / MEM_CARD_BLOCK_SIZE;
     gMemCard_pPrimaryTransferCursor = buf;
 #ifdef MEMORIES_PC
+    SaveSlots_SetRecordReader(Duelists_SavedRecord);
     if (SaveMenu_Begin(step, buf, gMemCard_pSecondaryTransferCursor, size,
                        (const char *)name, MemCardDialog_CheckSlot)) {
         D_8009B3DE = step;

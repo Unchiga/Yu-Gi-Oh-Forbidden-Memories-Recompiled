@@ -18,6 +18,14 @@
  * byte is 0x5A. */
 static int sound(unsigned char *state) { return state[SAVE_SLOT_STATE_SIZE - 1] == 0x5A; }
 
+/* Stands in for Duelists_SavedRecord. */
+static void extra_record(const unsigned char *state, int *wins, int *losses)
+{
+    (void)state;
+    *wins += 10;
+    *losses += 20;
+}
+
 static void make_state(unsigned char *state, int code, unsigned starchips)
 {
     memset(state, 0, SAVE_SLOT_STATE_SIZE);
@@ -28,8 +36,12 @@ static void make_state(unsigned char *state, int code, unsigned starchips)
     state[0x404] = 7;                  /* sequence */
     state[0x40C] = 0x60; state[0x40D] = 0x82; /* full-width A */
     state[0x40E] = 0x4F; state[0x40F] = 0x82; /* full-width 0 */
-    state[0x518] = 5;                  /* wins */
-    state[0x51A] = 2;                  /* losses */
+    state[0x518] = 9;                  /* two-player totals: not shown */
+    state[0x51A] = 9;
+    state[0x51C] = 3;                  /* Free Duel: 3-1 against the first */
+    state[0x51E] = 1;
+    state[0x51C + 4 * 39] = 2;         /* 2-1 against the last */
+    state[0x51E + 4 * 39] = 1;
     memcpy(state + 0x5E0, &starchips, 4);
     state[SAVE_SLOT_STATE_SIZE - 1] = 0x5A;
 }
@@ -88,6 +100,12 @@ int main(void)
     assert(!slots[0].from_duplicate);
     for (i = 1; i < SAVE_SLOT_COUNT; i++) assert(slots[i].status == SAVE_SLOT_EMPTY);
     assert(!access(card, F_OK));
+
+    /* The added duelists' records, kept beside the save, count too. */
+    SaveSlots_SetRecordReader(extra_record);
+    SaveSlots_Scan(slots, sound);
+    assert(slots[0].wins == 15 && slots[0].losses == 22);
+    SaveSlots_SetRecordReader(NULL);
 
     /* Once only: a slot the player cleared is not filled again. */
     assert(!SaveSlots_Path(0, path, sizeof(path)));

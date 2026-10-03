@@ -41,7 +41,7 @@ typedef struct SaveSlotInfo {
     int duelist_code;
     unsigned sequence;
     unsigned starchips;
-    int wins, losses, cards;
+    int wins, losses, cards; /* wins and losses: Free Duel's, all opponents */
     /* The file's modification time, seconds since 1970; aligned so i386
      * Linux lays it out as Windows does. */
     long long saved_at __attribute__((aligned(8)));
@@ -49,6 +49,12 @@ typedef struct SaveSlotInfo {
 
 /* SaveData_ValidateIntegrity: nonzero when a 0x680-byte state is sound. */
 typedef int (*SaveSlotCheck)(unsigned char *state);
+
+/* Adds what a save's Free Duel record holds outside its state (the added
+ * duelists', pc/free_duel/duelists.h) to the wins and losses a slot shows.
+ * None by default. */
+typedef void (*SaveSlotRecordReader)(const unsigned char *state, int *wins, int *losses);
+void SaveSlots_SetRecordReader(SaveSlotRecordReader reader);
 
 /* Slots are numbered from 0 here; the menu shows them from 1. */
 int SaveSlots_Path(int slot, char *out, size_t size);
