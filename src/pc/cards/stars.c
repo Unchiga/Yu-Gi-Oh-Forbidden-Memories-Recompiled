@@ -13,6 +13,7 @@
 #include "pc/compat/fs.h"
 #include "pc/text/glyphs.h"
 #include "pc/text/language.h"
+#include "pc/guest/low_memory.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,7 +147,7 @@ static void clear_names(Star *star)
     int i;
     for (i = 0; i < star->name_count; i++) free(star->names[i].text);
     star->name_count = 0;
-    free(star->compiled);
+    Memories_LowFree(star->compiled);
     star->compiled = NULL;
     star->compile_tried = 0;
 }
@@ -556,11 +557,12 @@ static const char *name_for_language(const Star *star)
     return star->names[0].text;
 }
 
-/* UTF-8 to the names bank's glyph codes, as a card's name is (cards.c). */
+/* UTF-8 to the names bank's glyph codes, as a card's name is (cards.c), in
+ * low memory: the game keeps the text in a 4-byte pointer. */
 static unsigned char *compile(const char *mod, int id, const char *text)
 {
     size_t length = 0;
-    unsigned char *out = malloc(strlen(text) * 2 + 1);
+    unsigned char *out = Memories_LowAlloc(strlen(text) * 2 + 1);
     int bad = 0;
     if (!out) return NULL;
     while (*text) {

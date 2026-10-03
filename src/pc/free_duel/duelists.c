@@ -23,6 +23,7 @@
 #include "pc/cards/art.h"
 #include "pc/render/texture_pack.h"
 #include "pc/text/glyphs.h"
+#include "pc/guest/low_memory.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -249,11 +250,12 @@ const unsigned char *Duelists_Text(int id, const unsigned char *text)
 }
 
 /* A name in the game's own glyph codes, ending 0xFF, as cards.c makes one for
- * a card. NULL when nothing could be made of it. */
+ * a card, in low memory: the game keeps the text in a 4-byte pointer. NULL
+ * when nothing could be made of it. */
 static unsigned char *name_glyphs(const char *mod, const char *text)
 {
     size_t length = strlen(text);
-    unsigned char *glyphs = malloc(length * 2 + 1);
+    unsigned char *glyphs = Memories_LowAlloc(length * 2 + 1);
     const char *at = text;
     int bad = 0;
 
@@ -280,7 +282,7 @@ static unsigned char *name_glyphs(const char *mod, const char *text)
             glyphs[length++] = (unsigned char)code;
         }
     }
-    if (!length) { free(glyphs); return NULL; }
+    if (!length) { Memories_LowFree(glyphs); return NULL; }
     glyphs[length] = 0xFF;
     return glyphs;
 }
@@ -645,7 +647,7 @@ int Duelists_Named(const char *text)
 static void release(Duelist *one)
 {
     free(one->portrait);
-    free(one->glyphs);
+    Memories_LowFree(one->glyphs);
     free(one->art);
     one->portrait = NULL;
     one->glyphs = NULL;

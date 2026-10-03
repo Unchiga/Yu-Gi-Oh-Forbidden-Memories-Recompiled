@@ -525,7 +525,7 @@ void GsDrawOt(void *descriptor)
      * game's own tables and are layered by them. Nothing happens while the
      * mods are all off. */
     Mods_DrawFrame();
-    DrawOTag(*(u32 **)((char *)descriptor + 16));
+    DrawOTag(*(u32 *G32 *)((char *)descriptor + 16)); /* GsOT's tag, a 4-byte guest pointer */
 }
 
 int DrawSync(int mode)

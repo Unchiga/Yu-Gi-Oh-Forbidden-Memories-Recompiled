@@ -10,8 +10,11 @@
  * any guest address. A code that cannot be converted or rendered gets a
  * blank pattern rather than the ROM's -1, which the module never checks.
  * On Windows the face is a Japanese system font (Win32_FontPath) and
- * Shift-JIS converts through code page 932. */
+ * Shift-JIS converts through code page 932. The game keeps a pattern's
+ * address in a 4-byte pointer, so the patterns come from the low memory
+ * region (pc/guest/low_memory.h; plain malloc on 32-bit). */
 #include "pc/debug/log.h"
+#include "pc/guest/low_memory.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include "pc/compat/font.h"
@@ -146,7 +149,7 @@ long Krom2RawAdd2(unsigned short sjis)
     unsigned code = sjis;
     if (!face_tried) open_face();
     if (!patterns[code]) {
-        patterns[code] = malloc(GLYPH_BYTES);
+        patterns[code] = Memories_LowAlloc(GLYPH_BYTES);
         if (!patterns[code]) return (long)(uintptr_t)blank;
         render(code, patterns[code]);
     }

@@ -26,7 +26,7 @@ extern int D_800FE0D8, D_800FE0DC, D_800FE0E0;
 extern u8 D_800FE010[0x20];
 extern MATRIX D_800FE0E8, D_800FE108, D_800FE168, D_800FE188;
 extern u32 D_800FE240;                     /* GsSetWorkBase */
-extern void *D_800E9D98[];                 /* current model ordering table */
+extern void *G32 D_800E9D98[];             /* current model ordering table (4-byte guest slots) */
 
 void *func_80058F10(void)
 {

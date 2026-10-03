@@ -22,6 +22,7 @@
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
 #include "pc/debug/log.h"
+#include "pc/guest/low_memory.h"
 #include "pc/render/texture_dump.h"
 #include "pc/render/texture_pack.h"
 #include "pc/rng.h"
@@ -116,8 +117,10 @@ int Cards_Fusion(int a, int b, int *result)
     return 0;
 }
 
-static unsigned char *names[CARD_TABLE_ID_END];     /* own names, glyph codes */
-static unsigned char *descriptions[CARD_TABLE_ID_END];  /* own card text, glyph codes */
+/* Own names and card text, in glyph codes. The game is handed them as text
+ * and keeps them in 4-byte pointers: low memory (pc/guest/low_memory.h). */
+static unsigned char *names[CARD_TABLE_ID_END];
+static unsigned char *descriptions[CARD_TABLE_ID_END];
 /* The "notes" of every entry for the card, in load order, a line between
  * two (card_notes.h). Nothing the game draws or plays by. */
 static char *card_notes[CARD_TABLE_ID_END];
@@ -236,7 +239,7 @@ static unsigned char *encode_name(const char *mod, const char *pattern, int n, i
         else text[length++] = *p;
     }
     text[length] = '\0';
-    glyphs = malloc(length * 2 + 1);
+    glyphs = Memories_LowAlloc(length * 2 + 1);
     if (!glyphs) return NULL;
     {   /* UTF-8: accented letters and the like are glyphs of the port's (glyphs.h). */
         const char *at = text;
@@ -291,7 +294,7 @@ static size_t text_code(const char *at, unsigned char out[3], int *bytes, int *l
 static unsigned char *encode_description(const char *mod, const char *text, int id)
 {
     size_t length = strlen(text), n = 0;
-    unsigned char *glyphs = malloc(length * 2 + 2);
+    unsigned char *glyphs = Memories_LowAlloc(length * 2 + 2);
     const char *word = text;
     int column = 0, lines = 1, warned = 0;
     if (!glyphs) return NULL;
