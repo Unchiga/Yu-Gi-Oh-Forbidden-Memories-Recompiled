@@ -468,7 +468,7 @@ int main(void)
                  " \"Kuriboh\": {\"password\": 12345678}, \"11\": {\"password\": \"\"},"
                  " \"723\": {\"password\": \"1\"}, \"Nobody\": {\"starchips\": 1},"
                  " \"20\": {\"password\": \"12a\", \"starchips\": 1000000}}}");
-        assert(notes == 4);                    /* 723, Nobody, "12a", 1000000 */
+        assert(notes == 3);                    /* Nobody, "12a", 1000000 */
         assert(Tables_PasswordShop(12, &price, &password) && price == 100 && password == 0x00000001u);
         price = 70, password = 0x76184692u;    /* card 3 by "all": 10% of 70 */
         assert(Tables_PasswordShop(3, &price, &password) && price == 7 && password == 0x00000003u);
@@ -485,7 +485,11 @@ int main(void)
         price = 5, password = 0x1u;            /* 10% of 5 still costs one */
         assert(Tables_PasswordShop(5, &price, &password) && price == 1);
         price = 1, password = 0x1u;
-        assert(!Tables_PasswordShop(0, &price, &password) && !Tables_PasswordShop(723, &price, &password));
+        assert(!Tables_PasswordShop(0, &price, &password));
+        password = 2;
+        assert(Tables_PasswordShop(723, &price, &password) && password == 1 && price == 1);
+        price = 999999; password = CARD_PASSWORD_NONE;
+        assert(Tables_PasswordShop(800, &price, &password) && password == 0x800 && price == 100000);
         notes = 0;
         add("y", "{\"passwords\": {\"Kuriboh\": {\"starchips\": 3}}}");
         assert(notes == 0);
@@ -515,7 +519,7 @@ int main(void)
         price = 70, password = 0x1u;
         assert(!Tables_PasswordShop(3, &price, &password) && price == 70 && password == 0x1u);
         add("both", "{\"passwords\": {\"all\": {\"starchips\": 5, \"starchips_percent\": 10}}}");
-        assert(notes == 2 && shop_count == 3 + CARD_COUNT);
+        assert(notes == 2 && shop_count == 3 + gCard_nCount);
         price = 70, password = 0x1u;
         assert(Tables_PasswordShop(3, &price, &password) && price == 5 && password == 0x1u);
     }
@@ -526,7 +530,8 @@ int main(void)
      * cards with no password never clash. */
     Tables_Clear();
     {
-        static unsigned passwords[CARD_COUNT + 1];
+        static unsigned passwords[CARD_TABLE_ID_END];
+        for (id = CARD_COUNT + 1; id <= gCard_nCount; id++) passwords[id] = CARD_PASSWORD_NONE;
         for (id = 1; id <= CARD_COUNT; id++) passwords[id] = password_digits(10000000UL + (unsigned long)id);
         passwords[5] = passwords[6] = CARD_PASSWORD_NONE;
         notes = 0;

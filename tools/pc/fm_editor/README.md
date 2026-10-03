@@ -22,19 +22,19 @@ The Cards tab's right-hand options and the Limits tab scroll vertically:
 use the scrollbar or mouse wheel when the window is too short. Tabbing to
 a field brings it into view; text boxes keep their own scrolling.
 
-**Starchips**, below **Password** in Cards, edits an original card's price
+**Starchips**, below **Password** in Cards, edits any card's price
 on the Password screen (0–999999; **0 is free**). The field shows the price
 after this mod's `passwords` rules, with the disc's price beside it. Leave
 it empty to remove the card's price override and use the mod's `all` rule,
 or the disc's price if there is none. **Apply**, then **File > Save**.
-Unedited percentage prices stay as percentages. Added cards have this
-field disabled: the `passwords` price table supports the original 722.
+Unedited percentage prices stay as percentages. Added cards use a default
+price of 999999 and stable identities in the `passwords` table.
 
 The window has a tab per table:
 
 | Tab | What you edit |
 |---|---|
-| Cards | search and filter the 722 cards; name, card text (with the game's 20-letter, 8-line wrapping counted, and **Tools > Card text preview** to see it as the card view draws it, below), ATK/DEF, type, attribute, level, guardian stars, password; the retail value beside each field. A guardian star may be **(none)**, written `0`: both none is a monster with no star at all (no SELECT A GUARDIAN STAR box, no star bonus given or taken, no star drawn), the second none a monster with one star; a first star of none with a second is warned about, because the game takes the second as the card's one star ([no star](../../../notes/modding.md#guardian-stars-names-icons-new-stars-and-matchups)). **Frame**: the colour of the card's frame (by type, or monster, magic, trap, ritual, purple or orange whatever its type), with a swatch of it; the card view, the Library and the duel draw it ([frame colour](../../../notes/more-cards.md#frame-colour)). **Notes**: text of your own on the card (what you changed, what you plan), saved as its `"notes"`; the game shows none of it, and a code mod can read `<tag: value>` tags from it ([notes on a card](../../../notes/more-cards.md#notes-on-a-card)). **Revert to retail** keeps them; the **With notes** filter lists the cards that have some, and the search finds words of them too. **Add a card** copies the selected one as a new card with a stable id; a new card starts in nobody's chest (it is won in its base's place, dealt in a starter deck, or given by Game > Cheats), and its password is only shown in the card view: the Password screen sells the disc's 722 |
+| Cards | search and filter the 722 cards; name, card text (with the game's 20-letter, 8-line wrapping counted, and **Tools > Card text preview** to see it as the card view draws it, below), ATK/DEF, type, attribute, level, guardian stars, password; the retail value beside each field. A guardian star may be **(none)**, written `0`: both none is a monster with no star at all (no SELECT A GUARDIAN STAR box, no star bonus given or taken, no star drawn), the second none a monster with one star; a first star of none with a second is warned about, because the game takes the second as the card's one star ([no star](../../../notes/modding.md#guardian-stars-names-icons-new-stars-and-matchups)). **Frame**: the colour of the card's frame (by type, or monster, magic, trap, ritual, purple or orange whatever its type), with a swatch of it; the card view, the Library and the duel draw it ([frame colour](../../../notes/more-cards.md#frame-colour)). **Notes**: text of your own on the card (what you changed, what you plan), saved as its `"notes"`; the game shows none of it, and a code mod can read `<tag: value>` tags from it ([notes on a card](../../../notes/more-cards.md#notes-on-a-card)). **Revert to retail** keeps them; the **With notes** filter lists the cards that have some, and the search finds words of them too. **Add a card** copies the selected one as a new card with a stable id; a new card starts in nobody's chest (it is won in its base's place, dealt in a starter deck, or given by Game > Cheats), and its password works in the Password shop and is shown in the card view. Added cards default to 999999 starchips; edit **Starchips** to change the price |
 | Art | a card's picture (102x96), thumbnail (40x32, the hand and the field) and name plate (96x14) as the disc has them, beside what the game will draw at the console's resolution and at Internal 2x/4x; **Import PNG**, **Export** the disc's or the mod's (to paint over), **Revert** |
 | Fusions | every pair and its result (search by a card, or show the changed ones); add, change, remove (the pair no longer fuses) or revert; **Remove recipes of...** takes away every disc recipe of a card in one `remove` rule; a pair a card's own `fusions` list makes (no rule of the mod deciding it first) shows that list's result, marked "own list"; **Bulk...** adds or takes away the fusions of every card of one filtered set with every card of another (below) |
 | Equips | per equip card, the monsters it may equip; add one, add or remove a whole type, remove, revert |
@@ -238,7 +238,7 @@ record are shown as retail fusions and marked.
 
 * `cards`: a `replace` entry per changed retail card with only the changed
   keys, and a `copy` entry per added card with a stable `id`. An added
-  card's password is its entry's `password` (8 digits, shown by View > Card
+  card's password is its entry's `password` (8 digits, used in the Password shop and shown by View > Card
   passwords). Keys the editor does not show (`model`, `count`...) are kept as
   written; `art`,
   `thumbnail` and `title` are the Art tab's (below). A copy with no `name` shows its base's name from the disc.
@@ -247,7 +247,7 @@ record are shown as retail fusions and marked.
   game reads them, and `[none, X]` stays as written.
 * `passwords`: a retail card whose password changed gets `{"password": "…"}`
   (`""` for none) under its name, merged into the mod's own entries, whose
-  `all` and `"card number"` stay as written. Editing **Starchips** writes
+  `all` and `"card number"` stay as written. Editing **Starchips** for an original or added card writes
   `"starchips": n` in the card's entry, replacing its previous absolute or
   percentage price; other cards' prices stay as written. A password is up to
   8 digits, and no other card's: the Conflicts tab says when two cards share

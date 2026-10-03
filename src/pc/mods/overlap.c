@@ -38,7 +38,7 @@ static const char *const outcome_words[] = {"later", "after", "agree", "add",   
                                             "bytes", "chain", "events", "first", "aimed", "patched", "early",
                                             "sold"};
 
-#define CARD_COUNT 722             /* the disc's cards: what "replace" and the Password screen take */
+#define CARD_COUNT 722             /* the disc's cards: what "replace" takes */
 #define TEXT_KEY (1ull << 40)      /* a card named by letters no card has: its letters' hash */
 #define ALL_CARDS ((1ull << 41) - 1)
 #define SUB(n) ((uint64_t)(n) << 56)
@@ -866,15 +866,15 @@ static void read_pools(ModsOverlaps *x, int mod)
 
 /* "passwords": a card's password and its price; "all" every card, before
  * the cards named beside it. The latest mod that sets one wins; a price in
- * starchips and one in percent are not the same price. Only the disc's 722
- * are on the Password screen. */
+ * starchips and one in percent are not the same price. Added cards can be
+ * sold by password too. */
 static void read_passwords(ModsOverlaps *x, int mod)
 {
     static const char *const fields[][2] = {{"password", NULL}, {"starchips", "starchips_percent"}};
     for (const JsonValue *m = Json_At(object_of(member(x, mod, "passwords")), 0); m; m = Json_Next(m)) {
         int all = same_letters(name_of(m), "all");
         uint64_t card = all ? ALL_CARDS : card_text(x, name_of(m));
-        if (!card || Json_TypeOf(m) != JSON_OBJECT || (card > CARD_COUNT && card < TEXT_KEY)) continue;
+        if (!card || Json_TypeOf(m) != JSON_OBJECT) continue;
         for (int f = 0; f < 2; f++) {
             const JsonValue *v = Json_Member(m, fields[f][0]);
             char label[160];
@@ -1394,7 +1394,7 @@ static void read_packs(ModsOverlaps *x, int mod)
         pack_passwords(x, mod, packs);
     pack_rules(x, mod, member(x, mod, "pack_shop"));
 }
-/* The passwords a mod gives the disc's cards ("passwords", by card), beside
+/* The passwords a mod gives cards ("passwords", by card), beside
  * the packs' and each other's: of two cards with one, the screen gives the
  * lower card number (tables.c Tables_CheckPasswords). */
 static void card_passwords(ModsOverlaps *x, int mod)
@@ -1405,9 +1405,9 @@ static void card_passwords(ModsOverlaps *x, int mod)
         long password;
         Claim *c;
         char label[40];
-        if (same_letters(name_of(m), "all") || !(card = card_text(x, name_of(m))) || (card > CARD_COUNT && card < TEXT_KEY))
+        if (same_letters(name_of(m), "all") || !(card = card_text(x, name_of(m))))
             continue;
-        password = Json_String(v, NULL) && same_letters(Json_String(v, ""), "card number") && card <= CARD_COUNT
+        password = Json_String(v, NULL) && same_letters(Json_String(v, ""), "card number") && card < TEXT_KEY
                        ? (long)card : password_number(v);
         if (password < 0) continue;
         snprintf(label, sizeof(label), "Password %08ld", password);

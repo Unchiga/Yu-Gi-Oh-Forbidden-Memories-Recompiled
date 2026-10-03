@@ -31,6 +31,7 @@
 #ifdef MEMORIES_PC
 #include "pc/debug/cheats.h"
 #include "pc/cards/pack_shop.h"
+#include "pc/cards/passwords.h"
 #endif
 #include "../../game/duel_effect_resource_setup.h"
 #include "../../game/text_box_lifecycle.h"
@@ -263,6 +264,14 @@ void Password_InitShopScreen(void)
 
 s32 Password_LookupCardID(void)
 {
+#ifdef MEMORIES_PC
+    unsigned packed = 0;
+    int id, i;
+    for (i = 0; i < 8; i++) packed = (packed << 4) | gPassword_abDigits[i];
+    for (id = 1; id <= gCard_nCount; id++)
+        if (Cards_Password(id) == packed) return id;
+    return 0;
+#else
     s32 packed = 0;
     s32 *entry = D_801A8008;
     s32 index;
@@ -284,6 +293,7 @@ s32 Password_LookupCardID(void)
         entry += 2;
         index++;
     }
+#endif
 }
 
 void Password_UpdateShopScreen(void)
@@ -411,15 +421,26 @@ void Password_UpdateShopScreen(void)
         flags2 = D_8016D424;
         if ((flags2 & 0x8000) == 0) {
             D_8016D424 = flags2 | 0x8000;
+#ifdef MEMORIES_PC
+            D_801D5608[0].pair.lo = Cards_PasswordPrice(D_8016D4DC);
+#else
             D_801D5608[0].pair.lo = D_801A8000[D_8016D4DC].price;
+#endif
             D_801D5608[0].pair.hi = D_8016D4DC;
-            if (Campaign_TestStoryFlag(
+            if (
+#ifdef MEMORIES_PC
+                D_8016D4DC <= CARD_COUNT &&
+#endif
+                Campaign_TestStoryFlag(
                     D_8016D4DC + CAMPAIGN_FLAG_PASSWORD_USED_BASE) != 0) {
                 Password_CreateMessageBox(229, 128);
                 return;
             }
-            if (gLibrary_dwStarchips < D_801A8000[D_8016D4DC].price
-#ifdef MEMORIES_PC
+            if (
+#ifndef MEMORIES_PC
+                gLibrary_dwStarchips < D_801A8000[D_8016D4DC].price
+#else
+                gLibrary_dwStarchips < Cards_PasswordPrice(D_8016D4DC)
                 /* A mod's chest with no room for another copy: EXCHANGE
                    is red and only QUIT answers, as when the starchips
                    fall short, so neither the price nor the password
@@ -437,6 +458,9 @@ void Password_UpdateShopScreen(void)
         if ((flags2 & 0x4000) != 0) {
             D_8016D424 = flags2 & 0xBFFF;
             if (D_8009B34D == 0) {
+#ifdef MEMORIES_PC
+                if (D_8016D4DC <= CARD_COUNT)
+#endif
                 Library_UpdateCardUsedFlag(
                     D_8016D4DC + CAMPAIGN_FLAG_PASSWORD_USED_BASE);
                 Duel_AwardCard(D_8016D4DC);
@@ -451,7 +475,11 @@ void Password_UpdateShopScreen(void)
         if ((flags3 & 0x8000) == 0) {
             D_8016D424 = flags3 | 0x8000;
             card = D_8016D4DC;
+#ifdef MEMORIES_PC
+            D_8016D438 = Cards_PasswordPrice(card);
+#else
             D_8016D438 = D_801A8000[card].price;
+#endif
         }
 #ifdef MEMORIES_PC
         /* A free card (a mod's price of 0): nothing to count. The count

@@ -846,6 +846,34 @@ class StarchipTest(unittest.TestCase):
         self.assertNotIn("Mystic Elf", manifest.build(again)["passwords"])
         self.assertFalse(again.card_changed(2))
 
+    def test_added_password_and_price_round_trip(self):
+        p = self.project
+        cid = p.add_card(1, "aurora-wing")
+        p.set_password(cid, "00000723")
+        p.set_starchips(cid, 100)
+        data = manifest.build(p)
+        identity = p.identity(cid)
+        self.assertEqual(data["passwords"][identity], {"starchips": 100})
+        again = Project(p.retail)
+        self.assertEqual(manifest.apply(again, data), [])
+        self.assertEqual(again.password(cid), "00000723")
+        self.assertEqual(again.starchip_cost(cid), 100)
+        self.assertEqual(manifest.build(again), data)
+        # A table's explicit password overrides the card entry, even empty.
+        data["passwords"][identity]["password"] = "87654321"
+        again = Project(p.retail)
+        manifest.apply(again, data)
+        self.assertEqual(again.password(cid), "87654321")
+        again.set_password(cid, "00001234")
+        self.assertEqual(manifest.build(again)["passwords"][identity]["password"], "00001234")
+        again.set_card_key(cid, "renamed-wing")
+        renamed = again.identity(cid)
+        rebuilt = manifest.build(again)
+        self.assertNotIn(identity, rebuilt["passwords"])
+        self.assertEqual(rebuilt["passwords"][renamed], {"password": "00001234", "starchips": 100})
+        again.remove_card(cid)
+        self.assertNotIn(renamed, manifest.build(again).get("passwords", {}))
+
     def test_preserve_rules_and_replace_alias_prices(self):
         p = self.project
         table = {"all": {"starchips": 500},
@@ -879,9 +907,9 @@ class StarchipTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 p.set_starchips(1, bad)
         added = p.add_card(1, "added")
-        self.assertIsNone(p.starchip_cost(added))
-        with self.assertRaises(ValueError):
-            p.set_starchips(added, 100)
+        self.assertEqual(p.starchip_cost(added), 999999)
+        p.set_starchips(added, 100)
+        self.assertEqual(p.starchip_cost(added), 100)
         for percent, expected in ((0, 0), (1, 1), (25, 3), (1000, 100)):
             p.other["passwords"] = {"all": {"starchips_percent": percent}}
             self.assertEqual(p.starchip_cost(1), expected)

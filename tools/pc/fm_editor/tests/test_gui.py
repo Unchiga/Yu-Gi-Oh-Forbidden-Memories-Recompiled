@@ -283,8 +283,14 @@ class GuiTest(unittest.TestCase):
         cards.select()
         cards.add_card()
         app.update()
-        self.assertTrue(cards.price.instate(["disabled"]))
-        self.assertEqual(cards.vars["starchips"].get(), "")
+        self.assertFalse(cards.price.instate(["disabled"]))
+        self.assertEqual(cards.vars["starchips"].get(), "999999")
+        cards.vars["starchips"].set("100")
+        cards.vars["password"].set("00000723")
+        self.assertTrue(cards.apply())
+        added = max(app.project.added)
+        self.assertEqual(app.project.starchip_cost(added), 100)
+        self.assertEqual(app.project.password(added), "00000723")
 
     def test_card_cost_does_not_flatten_percentage_rules(self):
         from fm_editor import manifest

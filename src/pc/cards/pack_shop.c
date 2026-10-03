@@ -22,6 +22,7 @@
 #include "pack_shop.h"
 #include "packs.h"
 #include "cards.h"
+#include "passwords.h"
 #include "tables.h"
 #include "art.h"
 #include "pc/free_duel/duelists.h"
@@ -1755,8 +1756,8 @@ static void check_passwords(void)
     for (i = 0; i < Packs_Count(); i++) {
         const Pack *pack = Packs_At(i);
         if (!pack->has_password) continue;
-        for (id = 1; id <= CARD_COUNT; id++) {
-            if ((unsigned)D_801A8000[id].password == pack->password) {
+        for (id = 1; id <= gCard_nCount; id++) {
+            if (Cards_Password(id) == pack->password) {
                 Mods_Note(pack->mod, "pack \"%s\": its password is card %d's too; the digits sell the card", pack->id,
                           id);
                 break;

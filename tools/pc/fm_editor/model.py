@@ -176,7 +176,7 @@ class Project:
         self.text_cards = {}            # card id -> {field: value} its "text" file carries while unchanged
         # Passwords the mod sets, 8 digits or "" for none: a disc card's goes in
         # "passwords" (the Password screen's), an added card's is its entry's
-        # "password" (View > Card passwords alone). password_keys: how
+        # "password" (shop and View > Card passwords). password_keys: how
         # "passwords" named a disc card, so the entry is written back there.
         self.passwords = {}
         self.password_keys = {}
@@ -246,9 +246,9 @@ class Project:
 
     def starchip_cost(self, cid: int):
         """Shop price on the supplied disc, after this mod's price rules."""
-        if cid not in self.retail.cards:
+        if cid not in self.cards:
             return None
-        retail = self.retail.starchips.get(cid)
+        retail = self.retail.starchips.get(cid) if cid in self.retail.cards else 999999
         rule = self.starchip_rule(cid)
         if rule is None:
             return retail
@@ -260,14 +260,25 @@ class Project:
         return min(999999, max(1 if retail and value else 0, (retail * value + 50) // 100))
 
     def set_starchips(self, cid: int, value):
-        if cid not in self.retail.cards:
-            raise ValueError("only original cards have a Password shop price")
+        if cid not in self.cards:
+            raise ValueError("unknown card")
         if value is not None and (type(value) is not int or not 0 <= value <= 999999):
             raise ValueError("Starchips is a whole number from 0 to 999999, or empty for the default")
         self.starchips[cid] = value
 
     def identity(self, cid: int) -> str:
         return f"{self.info.id}:{self.added[cid].key}:1"
+
+    def set_card_key(self, cid: int, key: str):
+        """Rename an added card while keeping its shop table references."""
+        previous = self.identity(cid)
+        self.added[cid].key = key
+        current = self.identity(cid)
+        table = self.other.get("passwords")
+        if isinstance(table, dict) and previous in table:
+            self.other["passwords"] = {current if k == previous else k: v for k, v in table.items()}
+        if self.password_keys.get(cid) == previous:
+            self.password_keys[cid] = current
 
     def ref(self, cid: int):
         """How a rule names a card: the retail name when that finds it again,
@@ -321,6 +332,13 @@ class Project:
         """Take an added card out, and every rule that names it."""
         if cid not in self.added:
             raise ValueError("only a card the mod adds can be removed")
+        table = self.other.get("passwords")
+        if isinstance(table, dict):
+            for key in list(table):
+                if self.resolve(key) == cid:
+                    del table[key]
+        self.starchips.pop(cid, None)
+        self.password_keys.pop(cid, None)
         del self.added[cid]
         del self.cards[cid]
         self.passwords.pop(cid, None)
@@ -361,6 +379,8 @@ class Project:
         if cid in self.added:
             self.cards[cid] = self.cards[self.added[cid].base].copy(id=cid)
             self.passwords.pop(cid, None)
+            if self.starchip_rule(cid, own_only=True) is not None:
+                self.set_starchips(cid, None)
         elif cid in self.retail.cards:
             self.cards[cid] = self.retail.cards[cid].copy()
             self.card_extra.pop(cid, None)

@@ -331,10 +331,10 @@ class CardsTab(Tab):
         price = self.project.starchip_cost(cid)
         self._shown_price = "" if price is None else str(price)
         self.vars["starchips"].set(self._shown_price)
-        self.price.configure(state="normal" if cid in self.project.retail.cards else "disabled")
+        self.price.configure(state="normal")
         self.hints["starchips"].configure(text=(
             f"Retail: {self.project.retail.starchips.get(cid, 'unknown')}" if cid in self.project.retail.cards
-            else "Original cards only"))
+            else "Default: 999999"))
         self.text.insert("1.0", card.description)
         self.notes.insert("1.0", self.project.notes.get(cid, ""))
         self.notes.edit_reset()
@@ -420,12 +420,12 @@ class CardsTab(Tab):
         password = password.zfill(8) if password else ""
         price_text = self.vars["starchips"].get().strip()
         price = None
-        if cid in self.project.retail.cards and price_text:
+        if price_text:
             if not price_text.isascii() or not price_text.isdigit() or len(price_text) > 6:
                 self.status.configure(text="Starchips is a whole number from 0 to 999999, or empty for the default")
                 return False
             price = int(price_text)
-        price_changed = cid in self.project.retail.cards and price_text != self._shown_price
+        price_changed = price_text != self._shown_price
         if price_changed and not isinstance(self.project.other.get("passwords", {}), dict):
             self.status.configure(text='The mod\'s "passwords" must be an object before editing Starchips')
             return False
@@ -437,7 +437,7 @@ class CardsTab(Tab):
                 if not KEY_RE.match(key) or any(a.key == key for a in self.project.added.values()):
                     self.status.configure(text="the stable id is letters, digits, _ and -, and unique")
                     return False
-                added.key = key
+                self.project.set_card_key(cid, key)
                 changed = True
             if (added.drops, added.opponents) != (self.drops.get(), self.opponents.get()):
                 added.drops, added.opponents = self.drops.get(), self.opponents.get()

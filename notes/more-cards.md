@@ -57,9 +57,7 @@ The release ships no card mod; the checks below were made with test mods
 | `fusion_groups` | the fusion guides' groups the card is in, for a ritual's `fusion_group` condition ([Gameplay tables](gameplay-tables.md#rituals)): a list such as `["Elf", "Female"]`, `[]` for none; without it, its base's |
 | `drops` | whether the card can be won in its base's place (default `true`, below) |
 | `opponents` | whether an opponent's deck can be dealt it in its base's place (default `false`) |
-| `password` | what View > Card passwords shows for it ([PC build](pc-build.md#card-passwords-view)): up to eight digits as a string (`"08124921"`, leading zeros kept) or a number, `""` or `null` for none. It is only shown: the Password screen does not know it (a disc card's
-password and price there are the [gameplay tables'](gameplay-tables.md#passwords-and-prices-on-the-password-screen)
-`passwords`, which win over this one in the view). A copy without one shows none (its base's would give the base) |
+| `password` | the password used by the Password shop and shown on the card by View > Card passwords: up to eight digits as a string (`"08124921"`, leading zeros kept) or a number, `""` or `null` for none. The [gameplay tables'](gameplay-tables.md#passwords-and-prices-on-the-password-screen) `passwords` entry overrides it and sets the price, for added cards as well as replacements. Added cards default to 999999 starchips and allow repeat purchases. A copy without a password has none (its base's would give the base) |
 | `notes` | text of the modder's own, which the game shows and plays by none of ([below](#notes-on-a-card)) |
 
 What an entry leaves out is its base's. Give entries explicit stable `id` keys. Saves use these identities; runtime

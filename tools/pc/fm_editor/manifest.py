@@ -377,7 +377,7 @@ def build_passwords(project: Project):
         return None
     table = copy.deepcopy(kept) if kept else {}
     for cid in sorted(project.passwords):
-        if cid not in project.retail.cards:
+        if cid not in project.retail.cards and cid not in project.password_keys:
             continue
         key = project.password_keys.get(cid) or str(project.ref(cid))
         if not isinstance(table.get(key), dict):
@@ -1144,10 +1144,8 @@ def read_packs(project: Project, manifest: dict, messages: list):
 
 
 def read_passwords(project: Project, messages: list):
-    """The "password" of each "passwords" entry that names a disc card (the
-    Password screen's; gameplay-tables.md) becomes the card's in the editor.
-    Everything else ("all", "starchips", "card number", an added card, which
-    the screen does not know) stays as written in project.other."""
+    """Explicit table passwords override cards[].password for every loaded
+    card. Preserve other rules (all, prices, card number) as written."""
     table = project.other.get("passwords")
     if table is None:
         return
@@ -1161,8 +1159,8 @@ def read_passwords(project: Project, messages: list):
     for key, entry in table.items():
         cid = 0 if same_all(key) else project.resolve(key)
         password = password_text(entry.get("password")) if isinstance(entry, dict) and "password" in entry else None
-        if cid in project.retail.cards and password is not None and cid not in project.password_keys:
-            if every:
+        if cid in project.cards and password is not None and cid not in project.password_keys:
+            if every or cid in project.added:
                 project.passwords[cid] = password
             else:
                 project.set_password(cid, password)

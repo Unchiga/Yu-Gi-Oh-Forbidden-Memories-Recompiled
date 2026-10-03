@@ -2017,13 +2017,18 @@ starchips show theirs.
   pictures and then 3 to `0x801A8000`, one record per card id from 0: the
   price and the password, eight BCD digits, as little-endian words (Blue-eyes
   is `3F 42 0F 00 39 11 63 89`: 999999 and 89631139; no password is
-  `0xFFFFFFFE`). `Cards_Password(id)` (`src/pc/cards/passwords.c`) reads
+  `0xFFFFFFFE`). `Cards_Password(id)` (the shared policy in `src/game/card_password.c`,
+  backed by `src/pc/cards/password_data.c`) reads
   those 3 sectors from the disc once, the first time it is asked, checks
   every value is BCD or `0xFFFFFFFE`, and logs card 1's and how many have
   none (89631139 and 24 on the retail disc). A mod card can have one with
   `"password"` ([More cards](more-cards.md)), and a mod's `passwords`
   ([gameplay tables](gameplay-tables.md#passwords-and-prices-on-the-password-screen))
-  changes a disc card's, as the Password screen has it.
+  changes any card's, for both the viewer and Password shop. Added cards
+  can be purchased at a default price of 999999 starchips or the price set
+  in `passwords`; they allow repeat purchases. Code mods can hook the shared
+  `Cards_Password` and `Cards_PasswordPrice` policies so the display and shop
+  stay consistent.
 - **The drawing** is the game's text. The viewer's text box is laid out by
   string 3 (a monster) or 4 (the rest), whose `{f8 00 40}` inserts the
   card's text 80 pixels down in both. Once the face is up, the box is made

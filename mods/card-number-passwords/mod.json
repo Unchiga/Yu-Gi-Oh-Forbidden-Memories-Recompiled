@@ -1,0 +1,13 @@
+{
+  "id": "card-number-passwords",
+  "name": "Card Number Passwords",
+  "version": "1.2.0",
+  "author": "Douglas",
+  "description": "Usa numeros de cartas como passwords, respeita passwords de outros mods e permite configurar precos em StarChips.",
+  "library": "card-number-passwords",
+  "enabled": false,
+  "restart": false,
+  "min_api": 9,
+  "after": [],
+  "data": []
+}

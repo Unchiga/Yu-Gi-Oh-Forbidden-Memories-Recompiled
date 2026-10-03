@@ -170,15 +170,15 @@ int Tables_TerrainBonus(int terrain, int type, int *bonus);
  * else `retail`, the disc's. */
 int Tables_TrapThreshold(int trap, int retail);
 
-/* The Password screen's record for card `id` (1-722) as the mods'
+/* The Password screen's record for card `id` (any loaded card) as the mods'
  * "passwords" have it: `price` and `password` come in as the disc's table
  * has them (starchips, and eight digits a nibble each or
  * CARD_PASSWORD_NONE) and are changed in place. 1 when a mod changed
- * either. Main_RunPasswordMenu runs every record through it once the
- * screen's table is loaded, and View > Card passwords the password. */
+ * either. The shared password/price policy applies these rules over raw
+ * disc values (or an added card's defaults), for both the shop and viewer. */
 int Tables_PasswordShop(int id, unsigned *price, unsigned *password);
 /* Two cards with one password in the Password screen's table as loaded
- * (`passwords[id]`, 1-722, a `data` patch and the mods' "passwords" in):
+ * (`passwords[id]`, 1 through gCard_nCount, a `data` patch and the mods' "passwords" in):
  * the screen gives the lower card number, so the other cannot be had.
  * Each such card is noted in the Mods window beside the mod that set its
  * password (else the one that set the winner's), or only logged when no

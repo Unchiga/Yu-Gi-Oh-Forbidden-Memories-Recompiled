@@ -303,9 +303,10 @@ int main(void)
 
     /* One mod's pack and another's card password, and no second pack: the
      * digits give the card (pack_shop.c check_passwords). */
-    {
-        static const char *const texts[2] = {"{\"passwords\":{\"Kuriboh\":{\"password\":\"87654321\"}}}",
+    for (int added = 0; added < 2; added++) {
+        const char *texts[2] = {"{\"passwords\":{\"Kuriboh\":{\"password\":\"87654321\"}}}",
                                              "{\"packs\":[{\"name\":\"B\",\"cards\":[1],\"password\":\"87654321\"}]}"};
+        if (added) texts[0] = "{\"passwords\":{\"723\":{\"password\":\"87654321\"}}}";
         JsonDocument *docs[2];
         ModsOverlapMod pair[2];
         for (int m = 0; m < 2; m++) {
@@ -319,7 +320,9 @@ int main(void)
         found = Mods_OverlapCompute(pair, 2, NULL);
         assert(found && Mods_OverlapCount(found) == 1);
         Mods_OverlapText(found, 0, line, sizeof(line));
-        assert(!strcmp(line, "Password 87654321 (A, B): the digits give A's card 'Kuriboh', not the others' card or pack"));
+        assert(!strcmp(line, added
+            ? "Password 87654321 (A, B): the digits give A's card '723', not the others' card or pack"
+            : "Password 87654321 (A, B): the digits give A's card 'Kuriboh', not the others' card or pack"));
         Mods_OverlapFree(found);
         Json_Free(docs[0]);
         Json_Free(docs[1]);

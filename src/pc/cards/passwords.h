@@ -22,6 +22,14 @@
  * mod's "password" for the card; CARD_PASSWORD_NONE when the card has
  * none. The disc's table is read once, the first time it is asked. */
 unsigned Cards_Password(int id);
+/* Price for any loaded card. Added cards default to 999999 until a mod
+ * supplies a price through "passwords". These two policy entry points are
+ * hookable game functions; both the shop and viewer use Cards_Password. */
+#define CARD_PASSWORD_DEFAULT_PRICE 999999u
+unsigned Cards_PasswordPrice(int id);
+/* Unhooked defaults, backed by the disc, cards[] and passwords tables. */
+unsigned CardPassword_Resolve(int id);
+unsigned CardPassword_ResolvePrice(int id);
 
 /* Text_Resolve's question: the composed line for CARD_PASSWORD_TEXT_ID. */
 const unsigned char *CardPassword_Text(int id);

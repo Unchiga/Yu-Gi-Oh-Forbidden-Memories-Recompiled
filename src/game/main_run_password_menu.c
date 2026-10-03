@@ -19,6 +19,7 @@
 #ifdef MEMORIES_PC
 #include "card_constants.h"
 #include "pc/cards/tables.h"
+#include "pc/cards/passwords.h"
 #include "pc/cards/pack_shop.h"
 #endif
 
@@ -33,12 +34,12 @@ void Main_RunPasswordMenu(void)
         {   /* The mods' "passwords" (tables.h) over the table just loaded,
                then, once a run, two cards with one password noted. */
             static int checked;
-            static unsigned passwords[CARD_COUNT + 1];
+            static unsigned passwords[CARD_TABLE_ID_END];
             int id;
-            for (id = 1; id <= CARD_COUNT; id++) {
-                unsigned price = D_801A8000[id].price, password = (unsigned)D_801A8000[id].password;
-                if (Tables_PasswordShop(id, &price, &password)) {
-                    D_801A8000[id].price = price;
+            for (id = 1; id <= gCard_nCount; id++) {
+                unsigned password = Cards_Password(id);
+                if (id <= CARD_COUNT) {
+                    D_801A8000[id].price = Cards_PasswordPrice(id);
                     D_801A8000[id].password = (s32)password;
                 }
                 passwords[id] = password;

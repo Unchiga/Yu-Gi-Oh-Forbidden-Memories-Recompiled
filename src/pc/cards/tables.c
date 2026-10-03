@@ -1913,9 +1913,9 @@ static int limits_set(void)
 #define SHOP_PRICE 2        /* shop_price[id] is the card's */
 #define SHOP_PERCENT 4      /* shop_price[id] is a percent of the loaded record's */
 
-static unsigned shop_password[CARD_COUNT + 1], shop_price[CARD_COUNT + 1];
-static unsigned char shop_set[CARD_COUNT + 1];
-static const char *shop_from[CARD_COUNT + 1];  /* the mod that set the password */
+static unsigned shop_password[CARD_TABLE_ID_END], shop_price[CARD_TABLE_ID_END];
+static unsigned char shop_set[CARD_TABLE_ID_END];
+static const char *shop_from[CARD_TABLE_ID_END];  /* the mod that set the password */
 static int shop_count;
 
 /* Eight decimal digits as the game keeps them, a digit a nibble. */
@@ -2013,7 +2013,7 @@ static void apply_shop_entry(const char *mod, const ShopEntry *entry, int id)
 }
 
 /* "passwords": { card: {"password": ..., "starchips": n} }, with "all" for
- * every card of the disc; "all" goes first, so a card named beside it
+ * every loaded card; "all" goes first, so a card named beside it
  * keeps what its own entry says. */
 static void read_passwords(const char *mod, const JsonValue *table)
 {
@@ -2040,17 +2040,13 @@ static void read_passwords(const char *mod, const JsonValue *table)
             if (all) {
                 read_shop_entry(mod, where, entry, &shop);
                 if (!shop.set) continue;
-                for (id = 1; id <= CARD_COUNT; id++) apply_shop_entry(mod, &shop, id);
-                shop_count += CARD_COUNT;
+                for (id = 1; id <= gCard_nCount; id++) apply_shop_entry(mod, &shop, id);
+                shop_count += gCard_nCount;
                 continue;
             }
             id = Cards_Named(name);
             if (id <= 0) {
                 Mods_Note(mod, "%s: no card by that name or number", where);
-                continue;
-            }
-            if (id > CARD_COUNT) {
-                Mods_Note(mod, "%s: only the disc's 722 cards are on the Password screen", where);
                 continue;
             }
             read_shop_entry(mod, where, entry, &shop);
@@ -2061,6 +2057,14 @@ static void read_passwords(const char *mod, const JsonValue *table)
     }
 }
 
+typedef struct { unsigned password; int id; } ShopPassword;
+static int compare_shop_password(const void *left, const void *right)
+{
+    const ShopPassword *a = left, *b = right;
+    if (a->password != b->password) return a->password < b->password ? -1 : 1;
+    return a->id - b->id;
+}
+
 int Tables_CheckPasswords(const unsigned *passwords)
 {
     /* One note a mod: the first clash, and how many more ("all" giving
@@ -2069,12 +2073,18 @@ int Tables_CheckPasswords(const unsigned *passwords)
     enum { NOTED_MAX = 64 };
     const char *noted[NOTED_MAX];
     int first_a[NOTED_MAX], first_b[NOTED_MAX], more[NOTED_MAX];
-    int a, b, i, count = 0, clashes = 0;
-    for (b = 2; b <= CARD_COUNT; b++) {
-        if (passwords[b] == CARD_PASSWORD_NONE) continue;
-        for (a = 1; a < b; a++) {
+    static ShopPassword sorted[CARD_TABLE_ID_END];
+    int a, b, i, n = 0, first = 0, row, count = 0, clashes = 0;
+    for (i = 1; i <= gCard_nCount; i++) {
+        if (passwords[i] != CARD_PASSWORD_NONE) sorted[n++] = (ShopPassword){passwords[i], i};
+    }
+    qsort(sorted, (size_t)n, sizeof(*sorted), compare_shop_password);
+    for (row = 1; row < n; row++) {
+        if (sorted[row].password != sorted[first].password) { first = row; continue; }
+        a = sorted[first].id;
+        b = sorted[row].id;
+        {
             const char *mod;
-            if (passwords[a] != passwords[b]) continue;
             /* The note goes beside the mod that set the card left out,
              * else beside the one that set the card that wins. */
             mod = shop_from[b] ? shop_from[b] : shop_from[a];
@@ -2092,7 +2102,6 @@ int Tables_CheckPasswords(const unsigned *passwords)
                 }
             }
             clashes++;
-            break;
         }
     }
     for (i = 0; i < count; i++) {
@@ -2111,7 +2120,7 @@ int Tables_CheckPasswords(const unsigned *passwords)
 int Tables_PasswordShop(int id, unsigned *price, unsigned *password)
 {
     int changed = 0;
-    if (id < 1 || id > CARD_COUNT || !shop_set[id]) return 0;
+    if (!Cards_Valid(id) || !shop_set[id]) return 0;
     if (shop_set[id] & SHOP_PASSWORD) {
         changed |= *password != shop_password[id];
         *password = shop_password[id];

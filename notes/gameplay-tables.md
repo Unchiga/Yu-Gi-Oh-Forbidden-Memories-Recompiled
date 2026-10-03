@@ -453,16 +453,36 @@ Or every card at once, with `"all"`:
 | `starchips_percent` | what it costs as a percent of the price the game loaded (the disc's, or a `data` patch's), 0 to 1000, rounded; 0 is free, and any other percent of a card that cost something still costs at least 1 |
 
 An entry may leave out either key, and the card keeps the disc's (or an
-earlier mod's). `"all"` applies to the disc's 722 cards before the cards named beside
+earlier mod's). `"all"` applies to all loaded cards before the cards named beside
 it, wherever it is written, so a named card keeps what its own entry says.
 A card is a name, a number or a stable identity; cards a mod adds past 722
-are not on the Password screen. Two cards with the same password (two
+can be bought there too. Added cards default to 999999 starchips until a rule
+sets their price, and can be bought repeatedly (the retail used flags cover
+only cards 1–722). A `cards[].password` works for both added and replaced
+cards; an explicit `passwords` table entry overrides it. Two cards with the same password (two
 mods' cards, or a mod's password that is already another card's on the
 disc): the screen gives the lower card number, and the Mods window notes
 the pair beside the mod that set the password, once the Password screen
 has loaded its table.
 View > Card passwords shows the passwords the mods set. The latest mod that
 sets a card's password or price wins.
+
+For an added card, use `copy` and a stable ID (a `replace` keeps the original
+card number). The same password is accepted by the shop and printed by
+View > Card passwords:
+
+```json
+{
+  "id": "aurora",
+  "cards": [{"copy": 58, "id": "wing", "name": "Aurora Wing", "password": "00001723"}],
+  "passwords": {"aurora:wing:1": {"starchips": 100}}
+}
+```
+
+The optional [Card Number Passwords mod](../mods/card-number-passwords/README-EN.md)
+uses numeric IDs for cards without an explicit password and keeps the viewer
+in sync. Update older copies of that mod: versions that replace the entire
+shop handler bypass the shared policy.
 
 ## Rules a setting switches
 

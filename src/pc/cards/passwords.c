@@ -2,10 +2,8 @@
 #include "passwords.h"
 #include "cards.h"
 #include "stars.h"
-#include "tables.h"
 #include "pc/platform/settings.h"
 #include "pc/debug/log.h"
-#include "pc/sdk/disc.h"
 #include "pc/text/glyphs.h"
 #include "types.h"
 #include "ygo_types.h"
@@ -17,7 +15,6 @@
 #include "game/duel_effect_card_viewer_state.h"
 #include "game/duel_effect_entry_control.h"
 #include "game/duel_card.h"
-#include "game/file_constants.h"
 #include "game/library_runtime.h"
 #include "game/main_modes.h"
 #include "game/text_box_lifecycle.h"
@@ -27,75 +24,6 @@
 #include <string.h>
 
 extern unsigned Memories_PresentedFrames(void);
-
-/* --- the disc's table ----------------------------------------------------- */
-
-/* Password_LoadPackageStage reads the Password screen's package from
- * sector FILE_WA_PASSWORD_START_SECTOR of WA_MRG.MRG: 64 sectors of
- * pictures, 4 more, then 3 to 0x801A8000, the table. It has one record per
- * card id from 0, each the card's price in starchips and its password, a
- * nibble per digit, both little-endian words. */
-#define TABLE_SECTOR (FILE_WA_PASSWORD_START_SECTOR + 64 + 4)
-#define TABLE_SECTORS 3
-#define BLUE_EYES_PASSWORD 0x89631139u  /* card 1, the check that the table is where it should be */
-
-static unsigned table[CARD_ID_END];
-static unsigned char from_mod[CARD_ID_END];   /* a mod's "passwords" set table[id] */
-static int table_state;                  /* 0 unread, 1 read, -1 not there */
-
-static int bcd(unsigned value)
-{
-    int i;
-    for (i = 0; i < 8; i++, value >>= 4) {
-        if ((value & 0xF) > 9) return 0;
-    }
-    return 1;
-}
-
-static void read_table(void)
-{
-    static unsigned char data[TABLE_SECTORS * 2048];
-    int start = Memories_DiscFileStart("\\DATA\\WA_MRG.MRG;1"), id, none = 0;
-    table_state = -1;
-    if (start < 0 || Memories_DiscReadSectors(start + TABLE_SECTOR, TABLE_SECTORS, data) != TABLE_SECTORS) {
-        fprintf(stderr, "memories-pc: card passwords: the disc's table cannot be read\n");
-        return;
-    }
-    for (id = 1; id <= CARD_COUNT; id++) {
-        const unsigned char *p = data + id * 8 + 4;
-        unsigned value = (unsigned)p[0] | (unsigned)p[1] << 8 | (unsigned)p[2] << 16 | (unsigned)p[3] << 24;
-        if (value != CARD_PASSWORD_NONE && !bcd(value)) {
-            fprintf(stderr, "memories-pc: card passwords: card %d's is not a password (%08x); not shown\n", id, value);
-            return;
-        }
-        none += value == CARD_PASSWORD_NONE;
-        table[id] = value;
-    }
-    table_state = 1;
-    fprintf(stderr, "memories-pc: card passwords: read, card 1's is %08X%s, %d cards have none\n", table[1],
-            table[1] == BLUE_EYES_PASSWORD ? " (as it should be)" : " (not 89631139: a changed disc)", none);
-    /* What the Password screen will have once the mods' "passwords" are
-     * written over it (Main_RunPasswordMenu). */
-    for (id = 1; id <= CARD_COUNT; id++) {
-        const unsigned char *p = data + id * 8;
-        unsigned price = (unsigned)p[0] | (unsigned)p[1] << 8 | (unsigned)p[2] << 16 | (unsigned)p[3] << 24;
-        unsigned value = table[id];
-        Tables_PasswordShop(id, &price, &table[id]);
-        from_mod[id] = (unsigned char)(table[id] != value);
-    }
-}
-
-unsigned Cards_Password(int id)
-{
-    unsigned own;
-    /* A "passwords" entry is what the Password screen takes, so it wins
-     * over a replaced card's "password", which is only shown. */
-    if (id >= 1 && id <= CARD_COUNT && !table_state) read_table();
-    if (id >= 1 && id <= CARD_COUNT && table_state > 0 && from_mod[id]) return table[id];
-    if (Cards_OwnPassword(id, &own)) return own;
-    if (id < 1 || id > CARD_COUNT) return CARD_PASSWORD_NONE;
-    return table_state > 0 ? table[id] : CARD_PASSWORD_NONE;
-}
 
 /* --- the line --------------------------------------------------------- */
 
@@ -115,6 +43,7 @@ u32 Text_LookupString(s32 bank, s32 id);   /* src/game/text_lookup_string.c */
 
 static unsigned char text[256];
 static int text_card = -1;
+static unsigned text_password;
 
 static int layout_of(int card)
 {
@@ -165,6 +94,7 @@ static int compose(int card)
     *out = 0xFF;
     if (!placed) return 0;
     text_card = card;
+    text_password = password;
     return 1;
 }
 
@@ -216,7 +146,8 @@ static void sync(DuelEffectChannel *box, int card, int show)
 {
     static int unfit = -1;   /* the card whose text and password did not fit together */
     if (!description(box) || !Cards_Valid(card)) return;
-    if (box->field_36 == CARD_PASSWORD_TEXT_ID && show && card == text_card) return;
+    if (box->field_36 == CARD_PASSWORD_TEXT_ID && show && card == text_card &&
+        Cards_Password(card) == text_password) return;
     /* The game's box once all its text is in and still: the Library's
      * types it in, each letter settling over a few frames. */
     if (show &&
