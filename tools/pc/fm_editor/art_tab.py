@@ -161,10 +161,10 @@ class ArtTab(Tab):
         self.heading.configure(text=project.card_label(cid) + (f"  (a copy of {project.card_label(base)})"
                                                               if base != cid else ""))
         if cid in project.added:
-            how = ("A card the mod adds shares its base's place on the disc, so its picture and thumbnail are "
-                   "the \"art\" and \"thumbnail\" PNGs of its entry in mod.json: made into the game's 102x96 "
-                   "and 40x32 when it starts (restart the game after a change); no extra detail at Internal "
-                   "2x/4x. Without its own, it shows its base's.")
+            how = ("A card the mod adds keeps its picture and thumbnail in its mod.json entry (\"art\", "
+                   "\"thumbnail\"): any size up to 4x; Internal 2x and 4x draw its own detail. Without a "
+                   "thumbnail, the game cuts one from the picture; without either, it shows its base's. "
+                   "Restart the game after a change.")
         else:
             how = ("A retail card's picture and thumbnail go in the mod's texture pack (\"textures\"): any size "
                    "up to 4x; the console's resolution averages it down, Internal 2x and 4x draw its own "

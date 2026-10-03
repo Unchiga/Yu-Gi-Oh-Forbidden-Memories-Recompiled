@@ -229,6 +229,19 @@ class ArtModTest(unittest.TestCase):
         self.assertIn("Times", where)
         self.assertEqual(art.shown_image(again, wa, 2, "title")[1], "the disc")
 
+    def test_added_card_art_is_drawn_at_its_resolution(self):
+        # cards.c draws a mod card's PNG bigger than the part at its own
+        # resolution above 1x, the thumbnail cut from the picture too.
+        project = Project(self.game)
+        cid = project.add_card(3, "dragon")
+        art.set_image(project, cid, "art", gradient(408, 384))
+        wa = fixture().wa
+        for part in ("art", "thumbnail"):
+            small, big = art.in_game(project, wa, cid, part, 1), art.in_game(project, wa, cid, part, 4)
+            self.assertEqual(big.size, (small.width * 4, small.height * 4))
+            self.assertNotEqual(big, pngio.scale_nearest(small, 4), part)
+        self.assertIn("Internal 4x shows all of it", art.describe(project, cid, "art"))
+
     def test_a_retail_art_key_moves_to_the_pack(self):
         folder = self.root / "mod"
         (folder / "images").mkdir(parents=True)

@@ -18,7 +18,8 @@ A mod replaces them two ways, and the editor uses one per card:
 * a card the mod adds (a copy) has the disc offsets of its base, so a pack
   cannot tell them apart: its picture and thumbnail are the entry's "art"
   and "thumbnail" PNGs (cards.c), made into 102x96 and 40x32 at 255 and 63
-  colours when the game starts: no more detail at a higher resolution.
+  colours when the game starts; one bigger than that is also drawn at its
+  own resolution at Internal 2x and 4x, as a pack's is.
 * the name plate of any card: the entry's "title" PNG (a retail card gets a
   "replace" entry for it).
 
@@ -512,7 +513,8 @@ def changed_cards(project) -> set:
 
 def _baked(project, cid: int, part: str) -> bool:
     """Made into the art record's texels when the game starts (a card's own
-    "art"/"thumbnail"): the same at any resolution."""
+    "art"/"thumbnail"); a PNG bigger than the part is also drawn at its own
+    resolution above 1x (cards.c, add_full_picture)."""
     st = state(project)
     rep = st.images.get((cid, part))
     if rep is not None:
@@ -561,12 +563,16 @@ def own_name(project, cid: int) -> bool:
 
 def port_thumbnail(project, cid: int):
     """The thumbnail the port makes from a card's own "art" (art.c): the
-    middle at 40:32."""
+    middle at 40:32, at the picture's resolution (cards.c draws it from
+    there above 1x)."""
     try:
         art = replacement_image(project, cid, "art")
     except (OSError, pngio.PngError):
         return None
-    return None if art is None else pngio.resample(art, 40, 32, pngio.middle(art, 40, 32))
+    if art is None:
+        return None
+    left, top, w, h = pngio.middle(art, 40, 32)
+    return pngio.crop(art, round(left), round(top), max(1, round(w)), max(1, round(h)))
 
 
 def in_game(project, wa: bytes, cid: int, part: str, scale: int = 1):
@@ -579,7 +585,10 @@ def in_game(project, wa: bytes, cid: int, part: str, scale: int = 1):
         return pngio.scale_nearest(image, scale)
     w, h = SIZES[part]
     if _baked(project, cid, part):
-        small = pngio.resample(image, w, h, pngio.middle(image, w, h))
+        box = pngio.middle(image, w, h)
+        if scale > 1 and (box[2] > w or box[3] > h):
+            return pngio.resample(image, w * scale, h * scale, box)
+        small = pngio.resample(image, w, h, box)
         return pngio.scale_nearest(pngio.to_15bit(small), scale)
     if image.size == (w, h):
         return pngio.scale_nearest(image, scale)
@@ -619,9 +628,10 @@ def describe(project, cid: int, part: str) -> str:
         return text
     if part == "title":
         return f"\"title\" in mod.json ({where}), {size}: set in the plate's 7 inks at 96x14."
-    return (f"\"{part}\" in mod.json ({where}), {size}: made into {w}x{h} at {255 if part == 'art' else 63} "
-            "colours when the game starts, the same at every resolution (a card the mod adds shares its base's "
-            "place on the disc, so a texture pack cannot tell them apart).")
+    text = f"\"{part}\" in mod.json ({where}), {size}: {w}x{h} at the console's resolution. "
+    if image is not None and image.width >= w * 2:
+        return text + f"Internal {min(4, image.width // w)}x shows all of it."
+    return text + f"Import a bigger PNG (up to {w * 4}x{h * 4}) for detail at Internal 2x/4x."
 
 
 # --- saving -------------------------------------------------------------------------------
