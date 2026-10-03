@@ -28,13 +28,21 @@
  *                                     frame and Memories_VramHash
  *     S <index> <frame> <path>        a save state taken there, every
  *                                     MEMORIES_RECORD_STATES VBlanks
+ *     C <index> <frame> <line>        a control client's `poke` or `jump`,
+ *                                     taken at the safe point of that VBlank
+ *                                     and frame (control.c): done again at
+ *                                     the same point, after its H line, so a
+ *                                     session that jumps to a screen or
+ *                                     arranges a deck replays from the pads
+ *                                     and these alone
  *     E <index> <frame>               the end
  *
  * MEMORIES_PLAY=<path> plays such a file back: the pads get its bits at
  * each VBlank instead of the live ones (which are ignored), from the same
- * start, and the game ends at its E line. Recording while playing gives the
- * lines to compare (tools/pc/replay.py). Host actions (F5/F7, the deck
- * slots, the menus) are not pad bits and are not recorded.
+ * start, does the C lines again at their points, and the game ends at its E
+ * line. Recording while playing gives the lines to compare
+ * (tools/pc/replay.py), C lines included. Host actions (F5/F7, the deck
+ * slots, the menus) and the client's `load` are not recorded.
  *
  * Unset, both cost one test per VBlank and one per frame. */
 #include <stdint.h>
@@ -50,5 +58,8 @@ void Recorder_Pads(uint16_t bits[2], uint16_t fixed[2], int *pad2_connected);
 uint16_t Recorder_HostPad(int port, uint16_t live);
 /* The end of VSync(0), with the presented frame count. */
 void Recorder_Point(unsigned frame);
+/* A control client's poke or jump, done at the point Recorder_Point just
+ * passed (control.c): kept as a C line. */
+void Recorder_Command(const char *line);
 
 #endif

@@ -1,6 +1,8 @@
 /* The input recorder and player (recorder.h). */
 #include "pc/compat/fs.h"
 #include "recorder.h"
+#include "control.h"
+#include "control_protocol.h"
 #include "pc/debug/monitor.h"
 #include "pc/guest/state.h"
 #include "pc/platform/platform.h"
@@ -35,6 +37,15 @@ static unsigned play_end;
 static int play_has_end;
 static unsigned play_end_frame;
 static int clock_written;
+/* The safe point Recorder_Point last passed, where a client's commands are taken. */
+static unsigned point_index, point_frame;
+/* Playing: the C lines, in order. */
+typedef struct {
+    unsigned index, frame;
+    char *line;
+} Command;
+static Command *commands;
+static size_t command_count, command_at;
 static volatile uint16_t played[2]; /* the bits given at the last VBlank, played or recorded */
 
 static void begin(void)
@@ -44,10 +55,34 @@ static void begin(void)
     start_vblank = Platform_VBlankCount();
 }
 
+static void add_command(unsigned index, unsigned frame, const char *text)
+{
+    static size_t room;
+    size_t length = strcspn(text, "\r\n");
+    char *copy = malloc(length + 1);
+    if (!copy) return;
+    if (command_count == room) {
+        Command *grown;
+        room = room ? room * 2 : 64;
+        grown = realloc(commands, room * sizeof(*commands));
+        if (!grown) {
+            free(copy);
+            return;
+        }
+        commands = grown;
+    }
+    memcpy(copy, text, length);
+    copy[length] = '\0';
+    commands[command_count].index = index;
+    commands[command_count].frame = frame;
+    commands[command_count++].line = copy;
+}
+
 static void read_script(const char *path)
 {
     FILE *file = fopen(path, "r");
-    char line[700];
+    /* A C line holds a poke of up to CONTROL_DATA_MAX bytes in hex. */
+    static char line[CONTROL_LINE_MAX + 64];
     size_t room = 0;
     if (!file) {
         fprintf(stderr, "memories-pc: replay: cannot read %s; the pads stay idle\n", path);
@@ -55,7 +90,10 @@ static void read_script(const char *path)
     }
     while (fgets(line, sizeof(line), file)) {
         unsigned index, b1, f1, b2, f2, c2, frame;
-        if (sscanf(line, "I %u %x %x %x %x %u", &index, &b1, &f1, &b2, &f2, &c2) == 6) {
+        int at = 0;
+        if (sscanf(line, "C %u %u %n", &index, &frame, &at) == 2 && at) {
+            add_command(index, frame, line + at);
+        } else if (sscanf(line, "I %u %x %x %x %x %u", &index, &b1, &f1, &b2, &f2, &c2) == 6) {
             if (script_count == room) {
                 PadEvent *grown;
                 room = room ? room * 2 : 1024;
@@ -77,8 +115,8 @@ static void read_script(const char *path)
         }
     }
     fclose(file);
-    fprintf(stderr, "memories-pc: replay: %lu pad changes from %s%s\n", (unsigned long)script_count, path,
-            play_has_end ? "" : " (no end: it runs on)");
+    fprintf(stderr, "memories-pc: replay: %lu pad changes and %lu client commands from %s%s\n",
+            (unsigned long)script_count, (unsigned long)command_count, path, play_has_end ? "" : " (no end: it runs on)");
 }
 
 /* What the run was made with: the facts every crash report starts with
@@ -178,6 +216,13 @@ void Recorder_Pads(uint16_t bits[2], uint16_t fixed[2], int *pad2_connected)
     }
 }
 
+void Recorder_Command(const char *line)
+{
+    if (!recording || !out || phase != RUNNING) return;
+    fprintf(out, "C %u %u %s\n", point_index, point_frame, line);
+    fflush(out);
+}
+
 uint16_t Recorder_HostPad(int port, uint16_t live)
 {
     return playing || (recording && phase == RUNNING) ? played[port & 1] : live;
@@ -241,6 +286,27 @@ void Recorder_Point(unsigned frame)
             }
         }
         fflush(out);
+    }
+    point_index = index;
+    point_frame = frame;
+    /* The client's commands taken at this point, or at one passed (a play
+     * that took another path, which the check reports by its frames). */
+    while (playing && command_at < command_count &&
+           (commands[command_at].index < index ||
+            (commands[command_at].index == index && commands[command_at].frame <= frame))) {
+        Command *command = &commands[command_at++];
+        if (command->index != index || command->frame != frame) {
+            fprintf(stderr, "memories-pc: replay: the command of VBlank %u frame %u comes at VBlank %u frame %u\n",
+                    command->index, command->frame, index, frame);
+        }
+        if (recording && out) {
+            fprintf(out, "C %u %u %s\n", command->index, command->frame, command->line);
+            fflush(out);
+        }
+        if (Control_Apply(command->line)) {
+            fprintf(stderr, "memories-pc: replay: the game refused the command of VBlank %u: %.80s\n",
+                    command->index, command->line);
+        }
     }
     /* The end: its VBlank and its frame (a game closed between two VBlanks
      * presents twice in the last one). */

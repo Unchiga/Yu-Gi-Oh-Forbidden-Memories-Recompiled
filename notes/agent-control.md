@@ -37,7 +37,8 @@ Gotchas:
 - A deck given to `goto("duel", ...)` replaces the save's deck.
 - `load()` stops one frame into the state; the frame count is the run's own.
 - Only the virtual clock replays (`MEMORIES_DETERMINISTIC=1`, which `Game`
-  sets). Host keys (F5/F7, F6, the menus) are not recorded.
+  sets). Host keys (F5/F7, F6, the menus) are not recorded; the client's
+  `goto` (`jump`) and `poke` are.
 - `MEMORIES_CONTROL` alone makes a game wait 10 s at its first frame for a
   client (`MEMORIES_CONTROL_WAIT`); `Game` sets it to wait for good.
 
@@ -238,6 +239,15 @@ replay can begin at a state.
 - **Not recorded:** host actions (F5/F7, the deck slots on F6, the menus,
   Esc), and a `load` through the channel (the indices would jump back): a
   replay that needs those is a scripted one.
+- **The client's `jump` and `poke` are recorded** (`C <index> <frame>
+  <line>`, the command as sent), once the game has taken them, at the safe
+  point where the client stopped; a play does them again at the same point,
+  after that point's frame hash, in the order they came (`Control_Apply`),
+  and writes them into its own recording, so `--update` keeps them. A
+  session that goes to a screen with `goto` or arranges a deck before the
+  deal (`duel_ready(before_deal=...)`) is then a recorded replay like any
+  other. A command whose point the play passes without reaching it exactly
+  is done at the next one and reported, as is one the game refuses.
 - **The clock:** only a run on the virtual clock plays back. The file says
   which ran (`F clock: virtual` or `real`, at its first frame), the game
   warns on stderr when it records on the real-time one, `replay.py record`
@@ -340,8 +350,11 @@ CI can hold retail inputs.
   its own (`tmp/pc/replays/<name>-XXXXXXXX`), so two at once never share one.
 - **In `tests/pc/replays/`:** `first-duel` (recorded: boot to the first
   card played in the first story duel, a frame hash every 4 frames;
-  `session.py` records it again) and `state-load-rng` (scripted: a real bug,
-  below).
+  `session.py` records it again), `full-duel`, `credits` and `menus` (the
+  64-bit build's gate on feat/x64-x1: a duel with a fusion, magic cards
+  and 3D battles to its rewards, the whole credits, the main menu's
+  screens; recorded with `goto` and arranged decks, which the C lines
+  replay) and `state-load-rng` (scripted: a real bug, below).
 - **The bug as a replay:** `state-load-rng` buys a pack from a state, loads
   the state in the same game and buys it again with the same presses. On
   this branch without "Port: save states carry the game's random seed" it

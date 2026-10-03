@@ -211,7 +211,8 @@ def settings_text(header: dict, executable: Path) -> str:
     return "".join(f"{key}={value}\n" for key, value in settings.items())
 
 
-def play_recorded(replay: Replay, executable: Path, out: Path, timeout: float) -> Path | None:
+def play_recorded(replay: Replay, executable: Path, out: Path, timeout: float,
+                  more_env: dict[str, str] | None = None) -> Path | None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "user").mkdir(exist_ok=True)
     settings = out / "settings.txt"
@@ -222,6 +223,7 @@ def play_recorded(replay: Replay, executable: Path, out: Path, timeout: float) -
         extra["MEMORIES_LOAD_STATE"] = str(replay.file(replay.meta["start"]["file"]))
     if replay.meta.get("states_every"):
         extra["MEMORIES_RECORD_STATES"] = str(replay.meta["states_every"])
+    extra.update(more_env or {})
     command, wine = launcher(executable)
     started = time.monotonic()
     with (out / "game.log").open("wb") as log:
@@ -336,22 +338,24 @@ def play_scripted(replay: Replay, executable: Path, out: Path) -> bool:
     return True
 
 
-def play(path: Path, executable: Path, do_check: bool, update: bool, timeout: float) -> bool:
+def play(path: Path, executable: Path, do_check: bool, update: bool, timeout: float,
+         more_env: dict[str, str] | None = None, keep: bool = False) -> bool:
     """Play a replay in a folder of its own under tmp/pc/replays, removed when
     it passes and kept when it fails, for a look."""
     out: list[Path] = []
     passed = False
     try:
-        passed = play_in(path, executable, do_check, update, timeout, out)
+        passed = play_in(path, executable, do_check, update, timeout, out, more_env)
     finally:
-        if out and passed:
+        if out and passed and not keep:
             shutil.rmtree(out[0], ignore_errors=True)
         elif out:
             report(f"replay: kept {out[0]}")
     return passed
 
 
-def play_in(path: Path, executable: Path, do_check: bool, update: bool, timeout: float, folder: list) -> bool:
+def play_in(path: Path, executable: Path, do_check: bool, update: bool, timeout: float, folder: list,
+            more_env: dict[str, str] | None = None) -> bool:
     replay = Replay(path)
     OUTPUT.mkdir(parents=True, exist_ok=True)
     out = Path(tempfile.mkdtemp(prefix=f"{replay.name}-", dir=OUTPUT))
@@ -366,7 +370,7 @@ def play_in(path: Path, executable: Path, do_check: bool, update: bool, timeout:
     build = (executable.parent / "buildid").read_text().strip() if (executable.parent / "buildid").exists() else "?"
     if header.get("build") and header["build"] != build:
         report(f"replay: {replay.name}: recorded by build {header['build']}, playing on {build}")
-    actual = play_recorded(replay, executable, out, timeout)
+    actual = play_recorded(replay, executable, out, timeout, more_env)
     if actual is None:
         return False
     if not completed(parse(replay.file(replay.meta["recording"])), parse(actual), replay.name):
@@ -436,6 +440,8 @@ def main() -> int:
     playing.add_argument("--update", action="store_true", help="take this build's frame hashes as the expected")
     playing.add_argument("--executable", type=Path)
     playing.add_argument("--timeout", type=float, default=900)
+    playing.add_argument("--env", nargs="*", default=[], help="KEY=VALUE variables for the game (MEMORIES_TRACE...)")
+    playing.add_argument("--keep", action="store_true", help="keep the play's folder (its log) when it passes")
     running = commands.add_parser("run", help="every replay in a folder, checked")
     running.add_argument("folder", type=Path, nargs="?", default=REPLAYS)
     running.add_argument("--executable", type=Path)
@@ -446,7 +452,9 @@ def main() -> int:
         arguments.executable = executable
         return record(arguments)
     if arguments.command == "play":
-        return 0 if play(arguments.replay, executable, arguments.check, arguments.update, arguments.timeout) else 1
+        more_env = dict(item.split("=", 1) for item in arguments.env)
+        return 0 if play(arguments.replay, executable, arguments.check, arguments.update, arguments.timeout,
+                         more_env, arguments.keep) else 1
     replays = sorted(path for path in arguments.folder.iterdir()
                      if (path / "replay.json").exists() or path.suffix == ".yfmreplay")
     failed = [path.name for path in replays if not play(path, executable, True, False, arguments.timeout)]

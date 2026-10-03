@@ -22,5 +22,9 @@ void Control_Point(void);
 uint16_t Control_Pad(int port);
 /* Pad 2 counts as connected once the client has set it. */
 int Control_PadConnected(int port);
+/* A `poke` or `jump` line a recording kept (recorder.h, C lines), done
+ * again as the channel did it: 0 done, -1 not (a line of another kind, or
+ * one the game refuses now). The line is modified in place. */
+int Control_Apply(char *text);
 
 #endif

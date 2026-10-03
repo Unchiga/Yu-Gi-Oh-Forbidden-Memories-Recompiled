@@ -3,6 +3,7 @@
 #include "control.h"
 #include "control_net.h"
 #include "control_protocol.h"
+#include "recorder.h"
 #include "pc/guest/image.h"
 #include "pc/guest/state.h"
 #include "pc/platform/platform.h"
@@ -221,13 +222,51 @@ static int shot(const char *path)
     return ok ? 0 : -1;
 }
 
+/* The poke's bytes into guest memory; -1 outside it. */
+static int poke(const ControlCommand *command)
+{
+    uint8_t *at;
+    int ram;
+    if (!(at = guest(command->address, command->length, &ram))) return -1;
+    memcpy(at, data, command->length);
+    if (ram && command->length) Memories_GuestWritten(at, command->length); /* a module's identifier, perhaps */
+    return 0;
+}
+
+/* The jump asked for, checked as Debug > Jump to checks it: -1 with why. */
+static int jump(const ControlCommand *command, char *error, size_t size)
+{
+    int target = TitleJump_TargetByName(command->path);
+    if (target < 0) {
+        snprintf(error, size, "no such screen (title, debug, duel, free_duel, build_deck, library, password, map, "
+                              "credits, options)");
+        return -1;
+    }
+    return TitleJump_RequestTo(target, command->opponent, command->deck, error, size) ? -1 : 0;
+}
+
+int Control_Apply(char *text)
+{
+    ControlCommand command;
+    char error[160];
+    if (ControlProtocol_Parse(text, &command, data, error, sizeof(error))) return -1;
+    if (command.kind == CONTROL_POKE) return poke(&command);
+    if (command.kind == CONTROL_JUMP) return jump(&command, error, sizeof(error));
+    return -1;
+}
+
 /* One command. 1 when the game is to run (step, quit), 0 to read the next. */
 static int handle(char *text)
 {
     ControlCommand command;
     char error[160];
+    /* A poke or a jump changes what the game does next, and the pads alone
+     * would not bring it back: a recording keeps the line (recorder.h). The
+     * parser cuts the line up, so it is copied first. */
+    static char kept[CONTROL_LINE_MAX + 1];
     uint8_t *at;
     int ram;
+    snprintf(kept, sizeof(kept), "%s", text);
     if (ControlProtocol_Parse(text, &command, data, error, sizeof(error))) {
         send_error(error);
         return 0;
@@ -268,12 +307,11 @@ static int handle(char *text)
         send_line(reply);
         return 0;
     case CONTROL_POKE:
-        if (!(at = guest(command.address, command.length, &ram))) {
+        if (poke(&command)) {
             send_error("outside guest RAM and the scratchpad");
             return 0;
         }
-        memcpy(at, data, command.length);
-        if (ram && command.length) Memories_GuestWritten(at, command.length); /* a module's identifier, perhaps */
+        Recorder_Command(kept);
         send_line("ok");
         return 0;
     case CONTROL_SAVE:
@@ -301,20 +339,16 @@ static int handle(char *text)
                  (unsigned)Memories_StateBuildId(), TitleJump_Count(), Platform_VirtualClock() ? "virtual" : "real");
         send_line(reply);
         return 0;
-    case CONTROL_JUMP: {
+    case CONTROL_JUMP:
         /* Taken now, done by the game at its next point between two
          * screens' frames: the client waits for the mode it wants. */
-        int target = TitleJump_TargetByName(command.path);
-        if (target < 0) {
-            send_error("no such screen (title, debug, duel, free_duel, build_deck, library, password, map, "
-                       "credits, options)");
-        } else if (TitleJump_RequestTo(target, command.opponent, command.deck, error, sizeof(error))) {
+        if (jump(&command, error, sizeof(error))) {
             send_error(error);
         } else {
+            Recorder_Command(kept);
             send_line("ok");
         }
         return 0;
-    }
     case CONTROL_QUIT:
         send_line("ok");
         detach("the client asked to quit");
