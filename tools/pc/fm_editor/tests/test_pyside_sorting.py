@@ -44,9 +44,14 @@ class SortingTest(unittest.TestCase):
                 if table.item(row, index) is not None]
 
     @staticmethod
-    def click(table, column, order=Qt.SortOrder.AscendingOrder):
-        """Sort as a click on the column header does."""
-        table.sortByColumn(column, order)
+    def click(table, column, order=None):
+        """Sort as a click on the column header does.
+
+        The order is read here rather than taken as a default: a default is
+        worked out when the class is read, which is before skipIf can hold
+        this file back on a machine with no Qt to name it.
+        """
+        table.sortByColumn(column, Qt.SortOrder.AscendingOrder if order is None else order)
 
     def test_every_list_sorts_by_the_column_you_click(self):
         found = [name for name, table in self.tables() if name not in UNSORTED_TABLES]
