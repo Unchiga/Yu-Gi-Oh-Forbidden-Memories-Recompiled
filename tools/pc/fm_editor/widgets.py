@@ -129,6 +129,126 @@ class ScrolledForm(ttk.Frame):
                 self._root().deletecommand(command)
 
 
+class ScrolledPage(ttk.Frame):
+    """A notebook page that stretches its tab to fill the window and, when
+    the window is smaller than the tab needs, scrolls it instead: the
+    scrollbars show only then. Build the tab in inner (Tab does).
+
+    The inner frame's grid has the canvas's size as its least, so it is as
+    big as the canvas or as the tab, whichever is bigger; it takes that size
+    itself (the canvas item has none of its own), so a tab that grows after
+    the window is shown makes it lay out again.
+    """
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.canvas = tk.Canvas(self, width=1, height=1, highlightthickness=0, xscrollincrement=1,
+                                yscrollincrement=1)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.ybar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.xbar = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(xscrollcommand=self.xbar.set, yscrollcommand=self.ybar.set)
+        self.ybar.grid(row=0, column=1, sticky="ns")
+        self.xbar.grid(row=1, column=0, sticky="we")
+        self.ybar.grid_remove()
+        self.xbar.grid_remove()
+        self.inner = ttk.Frame(self.canvas)
+        self.inner.rowconfigure(0, weight=1)
+        self.inner.columnconfigure(0, weight=1)
+        self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", self._layout)
+        self.canvas.bind("<Configure>", self._layout)
+        self.bind("<<ThemeChanged>>", self._theme)
+        self._theme()
+        self._tag = f"ScrolledPage:{self}"
+        self._bindings = [(sequence, self.bind_class(self._tag, sequence, self._wheel))
+                          for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>")]
+        self._top = self.winfo_toplevel()
+        self._map_binding = self._top.bind("<Map>", self._mapped, add=True)
+        self.bind("<Destroy>", self._destroyed, add=True)
+
+    def _content(self):
+        slaves = self.inner.grid_slaves()
+        return slaves[0] if slaves else self.inner
+
+    def _theme(self, event=None):
+        self.canvas.configure(background=ttk.Style(self).lookup("TFrame", "background"))
+
+    def _layout(self, event=None):
+        width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
+        self.inner.columnconfigure(0, minsize=width)
+        self.inner.rowconfigure(0, minsize=height)
+        content = self._content()
+        wide, tall = content.winfo_reqwidth() > width, content.winfo_reqheight() > height
+        for bar, shown in ((self.xbar, wide), (self.ybar, tall)):
+            if shown != bool(bar.winfo_manager()):
+                bar.grid() if shown else bar.grid_remove()
+        self.canvas.configure(scrollregion=(0, 0, max(width, self.inner.winfo_reqwidth()),
+                                            max(height, self.inner.winfo_reqheight())))
+
+    def _mapped(self, event):
+        widget = event.widget
+        if self._tag in widget.bindtags():
+            return
+        while widget is not None and widget is not self.inner:
+            widget = getattr(widget, "master", None)
+        if widget is self.inner:
+            event.widget.bindtags((self._tag,) + event.widget.bindtags())
+
+    def _wheel(self, event):
+        if not self.ybar.winfo_manager():
+            return
+        # What scrolls by itself keeps the wheel: lists, text, pictures, and
+        # the scrolled forms some tabs hold.
+        widget = event.widget
+        while widget is not None and widget is not self.inner:
+            if isinstance(widget, (tk.Text, tk.Listbox, tk.Canvas, ttk.Treeview, ScrolledForm)):
+                return
+            widget = getattr(widget, "master", None)
+        if getattr(event, "num", None) in (4, 5):
+            units = -3 if event.num == 4 else 3
+        else:
+            delta = event.delta
+            if not delta:
+                return
+            units = -int(delta) if sys.platform == "darwin" else -int(delta / 120)
+            if not units:
+                units = -1 if delta > 0 else 1
+        self.canvas.yview_scroll(units * px(self, 20), "units")
+        return "break"
+
+    def _destroyed(self, event):
+        if event.widget is self:
+            self._top.unbind("<Map>", self._map_binding)
+            for sequence, command in self._bindings:
+                self.unbind_class(self._tag, sequence)
+                self._root().deletecommand(command)
+
+
+class Pages(ttk.Notebook):
+    """A notebook of ScrolledPages that takes a tab where ttk wants its page:
+    select(tab), tab(tab, ...), index(tab). current() is the shown tab."""
+
+    @staticmethod
+    def _page(tab_id):
+        return getattr(tab_id, "page", tab_id)
+
+    def select(self, tab_id=None):
+        return super().select(None if tab_id is None else self._page(tab_id))
+
+    def tab(self, tab_id, option=None, **kw):
+        return super().tab(self._page(tab_id), option, **kw)
+
+    def index(self, tab_id):
+        return super().index(self._page(tab_id))
+
+    def current(self):
+        page = self.nametowidget(super().select())
+        return getattr(page, "tab", page)
+
+
 class TreeSort:
     """Sort displayed rows without changing their identity, selection or data."""
 

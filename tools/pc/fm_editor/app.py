@@ -14,7 +14,7 @@ from .guardian_stars_tab import GuardianStarsTab
 from .packs_tab import PacksTab
 from .tabs import (CardsTab, DuelistsTab, EquipsTab, FusionsTab, ModInfoTab, ConflictsTab, RitualsTab,
                    StarterTab)
-from .widgets import px
+from .widgets import Pages, px
 
 APP_TITLE = "FM Editor"
 
@@ -28,7 +28,7 @@ class App(tk.Tk):
         # Sizes for 96 dpi, grown with the desktop's font (widgets.ui_scale)
         # but kept on the screen; a row as tall as a line of text.
         width, height = self.winfo_screenwidth() * 9 // 10, self.winfo_screenheight() * 9 // 10
-        self.geometry(f"{min(px(self, 1280), width)}x{min(px(self, 800), height)}")
+        self.geometry(f"{min(px(self, 1600), width)}x{min(px(self, 960), height)}")
         self.minsize(min(px(self, 1000), width), min(px(self, 640), height))
         self.retail = None
         self.files = None
@@ -38,7 +38,7 @@ class App(tk.Tk):
         self.dark = tk.BooleanVar(self, value=settings.load().get("dark") is True)
         self.text_preview = None   # Tools > Card text preview, while open
         self.build_menu()
-        self.notebook = ttk.Notebook(self)
+        self.notebook = Pages(self)
         self.notebook.pack(fill="both", expand=True)
         self.cards = CardsTab(self.notebook, self)
         self.art = ArtTab(self.notebook, self)
@@ -220,7 +220,7 @@ class App(tk.Tk):
 
     def tab_changed(self):
         self.commit_all()
-        current = self.notebook.nametowidget(self.notebook.select())
+        current = self.notebook.current()
         # Other tabs may have changed what this one shows (a card's name or
         # type): fill it again, keeping its selection.
         if current is self.conflicts:

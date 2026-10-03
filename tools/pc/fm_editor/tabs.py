@@ -14,7 +14,8 @@ from .gamedata import (FUSION_GROUPS, ATTRIBUTE_NAMES, CARD_COUNT, DECK_COPY_LIM
 from . import fixed_decks
 from .fixed_deck_view import FixedDeckView
 from .model import KEY_RE, StarterDeck
-from .widgets import CardField, FormDialog, ScrolledForm, card_matches, card_named, grab, pick_card, px, scrolled_tree, show_text, ui_font
+from .widgets import (CardField, FormDialog, ScrolledForm, ScrolledPage, card_matches, card_named, grab, pick_card, px,
+                      scrolled_tree, show_text, ui_font)
 
 ATTRIBUTE_CHOICES = ATTRIBUTE_NAMES + ["6 (magic)", "7 (trap)"]
 STAR_CHOICES = ["(none)"] + STAR_NAMES[1:]
@@ -54,9 +55,13 @@ def parse_choice(text: str, choices) -> int:
 
 class Tab(ttk.Frame):
     def __init__(self, notebook, app, title):
-        super().__init__(notebook, padding=6)
+        # In a page that scrolls when the window is too small for the tab.
+        self.page = ScrolledPage(notebook)
+        super().__init__(self.page.inner, padding=6)
+        self.page.tab = self
+        self.grid(row=0, column=0, sticky="nsew")
         self.app = app
-        notebook.add(self, text=title)
+        notebook.add(self.page, text=title)
 
     @property
     def project(self):
@@ -72,6 +77,9 @@ class Tab(ttk.Frame):
 
 # --- Cards --------------------------------------------------------------------
 
+HINT_WIDTH = 35     # characters: "Retail: " and the longest name it shows in full
+
+
 class CardsTab(Tab):
     FILTERS = ["All cards", "Changed", "Added by the mod", "With notes", "Monsters", "Non-monsters"] + TYPE_NAMES
 
@@ -81,6 +89,8 @@ class CardsTab(Tab):
         self._shown_price = ""
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
+        # The form keeps its width; the list takes what is left, down to this.
+        self.columnconfigure(0, minsize=px(self, 320))
         left = ttk.Frame(self)
         left.grid(row=0, column=0, sticky="nsew")
         top = ttk.Frame(left)
@@ -93,7 +103,7 @@ class CardsTab(Tab):
         self.search.trace_add("write", lambda *_: self.fill())
         self.filter.trace_add("write", lambda *_: self.fill())
         frame, self.tree = scrolled_tree(left, [("id", "#"), ("name", "Name"), ("type", "Type"), ("atk", "ATK"),
-                                                ("def", "DEF"), ("state", "")], [50, 230, 100, 50, 50, 60], 24, sort_numeric=("id", "atk", "def"))
+                                                ("def", "DEF"), ("state", "")], [50, 160, 100, 50, 50, 60], 10, sort_numeric=("id", "atk", "def"))
         frame.pack(fill="both", expand=True, pady=4)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.select())
         bottom = ttk.Frame(left)
@@ -125,11 +135,15 @@ class CardsTab(Tab):
         row += 1
         self.hints = {}
 
+        # The hints have a fixed width, the longest one's ("Retail: " and a
+        # name of 27 letters, show()), so the form is as wide for every card
+        # and lays out once: grown after the window is shown, the scrolled
+        # form would keep its first width and cut them off.
         def hint(key):
-            self.hints[key] = ttk.Label(form, style="Hint.TLabel")
+            self.hints[key] = ttk.Label(form, style="Hint.TLabel", width=HINT_WIDTH)
             return self.hints[key]
 
-        line("Name", ttk.Entry(form, textvariable=self.vars["name"], width=32), hint("name"))
+        line("Name", ttk.Entry(form, textvariable=self.vars["name"], width=26), hint("name"))
         line("Type", ttk.Combobox(form, textvariable=self.vars["type"], values=TYPE_NAMES, state="readonly", width=18),
              hint("type"))
         line("Attribute", ttk.Combobox(form, textvariable=self.vars["attribute"], values=ATTRIBUTE_CHOICES,
@@ -166,7 +180,7 @@ class CardsTab(Tab):
         beside.grid(row=row, column=2, sticky="w", padx=6)
         self.swatch = tk.Label(beside, width=2, relief="solid", borderwidth=1)
         self.swatch.pack(side="left")
-        self.hints["frame"] = ttk.Label(beside, style="Hint.TLabel")
+        self.hints["frame"] = ttk.Label(beside, style="Hint.TLabel", width=HINT_WIDTH - 4)
         self.hints["frame"].pack(side="left", padx=(6, 0))
         row += 1
         self.vars["frame"].trace_add("write", lambda *_: self.show_swatch())

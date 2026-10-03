@@ -352,6 +352,39 @@ class GuiTest(unittest.TestCase):
         if expected == 1.0:
             self.assertEqual((first, last), (0.0, 1.0))
 
+    def test_card_hints_fit_and_tabs_scroll_when_the_window_is_small(self):
+        from tkinter import ttk
+        app = self.app
+        app.deiconify()
+        app.geometry("1600x960")
+        cards = app.cards
+        cards.tree.selection_set("1")
+        cards.select()
+        app.update()
+        # The form is as wide as it asks, whatever the card: the hints, set
+        # after the window was shown, are not cut off.
+        scroll = cards.card_scroll
+        self.assertGreaterEqual(scroll.canvas.winfo_width(), scroll.body.winfo_reqwidth())
+        hint = cards.hints["name"]
+        self.assertGreaterEqual(hint.winfo_width(), hint.winfo_reqwidth())
+        self.assertFalse(cards.page.xbar.winfo_ismapped() or cards.page.ybar.winfo_ismapped())
+        # A window smaller than a tab scrolls the tab instead of cutting it off.
+        app.notebook.select(app.stars)
+        self.assertIs(app.notebook.current(), app.stars)
+        app.minsize(1, 1)
+        app.geometry("700x400")
+        app.update()
+        page = app.stars.page
+        self.assertTrue(page.xbar.winfo_ismapped() and page.ybar.winfo_ismapped())
+        self.assertGreaterEqual(app.stars.winfo_height(), app.stars.winfo_reqheight())
+        page.canvas.yview_moveto(1)
+        app.update()
+        self.assertGreater(page.canvas.yview()[0], 0)
+        app.geometry("1600x960")
+        app.update()
+        self.assertFalse(page.xbar.winfo_ismapped() or page.ybar.winfo_ismapped())
+        self.assertEqual(page.canvas.cget("background"), ttk.Style(app).lookup("TFrame", "background"))
+
     def test_scrolled_options_keep_text_scroll_and_dark_background(self):
         from tkinter import ttk
         app = self.app

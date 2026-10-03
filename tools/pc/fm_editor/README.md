@@ -18,9 +18,12 @@ again. It writes mod folders only: never the disc, never `game/`.
 
     python tools/pc/fm_editor [--game <folder or .bin>] [--mod <mod folder>]
 
-The Cards tab's right-hand options and the Limits tab scroll vertically:
-use the scrollbar or mouse wheel when the window is too short. Tabbing to
-a field brings it into view; text boxes keep their own scrolling.
+The window opens at 1600x960 (less on a smaller screen) and every tab fits
+it. On a smaller window a tab gets scrollbars instead of being cut off; the
+mouse wheel scrolls it too, except over lists, text boxes and pictures,
+which keep their own scrolling. The Cards tab's right-hand options and the
+Limits tab also scroll vertically on their own: tabbing to a field brings it
+into view.
 
 **Starchips**, below **Password** in Cards, edits an original card's price
 on the Password screen (0–999999; **0 is free**). The field shows the price
