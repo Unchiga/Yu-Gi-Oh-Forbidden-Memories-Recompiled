@@ -8,7 +8,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import star_rules
+from . import screen, star_rules
 from .bulk_dialog import FilterPanel
 from .gamedata import ATTRIBUTE_NAMES, TYPE_NAMES
 from .widgets import px, scrolled_tree
@@ -61,7 +61,7 @@ class StarRulesDialog(tk.Toplevel):
                                          [260, 200, 200], 9)
         frame.pack(fill="both", expand=True, pady=(4, 0))
         buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
-        buttons.pack(fill="x")
+        buttons.pack(fill="x", side="bottom", before=preview)  # shrink the preview, not the buttons, on a short screen
         ttk.Button(buttons, text="Close", command=self.destroy).pack(side="right")
         self.apply_button = ttk.Button(buttons, text="Apply...", command=self.apply)
         self.apply_button.pack(side="right", padx=4)
@@ -69,6 +69,7 @@ class StarRulesDialog(tk.Toplevel):
         self.undo_button.pack(side="left")
         self.bind("<Escape>", lambda e: self.destroy())
         self.minsize(px(self, 900), px(self, 620))
+        screen.fit(self)
         self.show_undo()
         self.schedule()
 

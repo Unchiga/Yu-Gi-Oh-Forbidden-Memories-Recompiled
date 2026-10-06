@@ -42,6 +42,17 @@ def work_area(window):
     return 0, 0, window.winfo_screenwidth(), window.winfo_screenheight()
 
 
+def fit(window):
+    """Size a dialog as it asks, but no more than 90% of the monitor's work
+    area, in its middle: a tall one would otherwise run off the bottom of a
+    1080p screen, buttons and all."""
+    window.update_idletasks()
+    x, y, width, height = work_area(window)
+    w = min(window.winfo_reqwidth(), width * 9 // 10)
+    h = min(window.winfo_reqheight(), height * 9 // 10)
+    window.geometry(f"{w}x{h}+{x + (width - w) // 2}+{y + (height - h) // 2}")
+
+
 class _Rect(ctypes.Structure):
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]

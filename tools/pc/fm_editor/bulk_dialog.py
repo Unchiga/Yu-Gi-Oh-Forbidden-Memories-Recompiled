@@ -6,7 +6,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import bulk_fusions as bulk
+from . import bulk_fusions as bulk, screen
 from .gamedata import ATTRIBUTE_NAMES, STAR_NAMES, TYPE_NAMES
 from .widgets import CardField, grab, px, scrolled_tree, show_text
 
@@ -241,7 +241,7 @@ class BulkFusionsDialog(tk.Toplevel):
         frame.pack(fill="both", expand=True, pady=(4, 0))
 
         buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
-        buttons.pack(fill="x")
+        buttons.pack(fill="x", side="bottom", before=preview)  # shrink the preview, not the buttons, on a short screen
         ttk.Button(buttons, text="Close", command=self.destroy).pack(side="right")
         self.apply_button = ttk.Button(buttons, text="Apply...", command=self.apply)
         self.apply_button.pack(side="right", padx=4)
@@ -251,6 +251,7 @@ class BulkFusionsDialog(tk.Toplevel):
         self.undo_note.pack(side="left", padx=6)
         self.bind("<Escape>", lambda e: self.destroy())
         self.minsize(px(self, 900), px(self, 640))
+        screen.fit(self)
         self.mode_changed()
         self.show_undo()
         grab(self)
