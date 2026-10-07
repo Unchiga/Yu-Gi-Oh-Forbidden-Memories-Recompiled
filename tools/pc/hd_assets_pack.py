@@ -570,7 +570,7 @@ def main():
                 continue
             filename = f"anime_frame_{kind}.png"
             shutil.copyfile(source, os.path.join(args.out, "textures", filename))
-            frame[kind] = {"image": f"textures/{filename}", "width": 140, "height": 196}
+            frame[kind] = {"image": f"textures/{filename}", "width": 140, "height": 197}
         windows = {kind: W.measure_window(os.path.join(args.out, "textures", f"anime_frame_{kind}.png"))
                    for kind in frame}
         monster_kinds = [kind for kind in windows if kind in ("monster", "orange")]

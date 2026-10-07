@@ -34,7 +34,7 @@ import sys
 import numpy as np
 from PIL import Image
 
-CARD_SIZE = (140, 196)
+CARD_SIZE = (140, 197)
 FRAME_TEXELS = (531, 762)
 MAX_OVERLAP = 1.5
 MAX_ASYMMETRY = 1.0

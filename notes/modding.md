@@ -892,19 +892,19 @@ some of them out, with a `"card_layout"` object, no code needed:
 ```json
 "card_layout": {
     "frame": {
-        "monster": {"image": "anime_frame_monster.png", "width": 140, "height": 196},
-        "magic": {"image": "anime_frame_magic.png", "width": 140, "height": 196},
-        "trap": {"image": "anime_frame_trap.png", "width": 140, "height": 196},
-        "ritual": {"image": "anime_frame_ritual.png", "width": 140, "height": 196},
-        "orange": {"image": "anime_frame_orange.png", "width": 140, "height": 196}
+        "monster": {"image": "anime_frame_monster.png", "width": 140, "height": 197},
+        "magic": {"image": "anime_frame_magic.png", "width": 140, "height": 197},
+        "trap": {"image": "anime_frame_trap.png", "width": 140, "height": 197},
+        "ritual": {"image": "anime_frame_ritual.png", "width": 140, "height": 197},
+        "orange": {"image": "anime_frame_orange.png", "width": 140, "height": 197}
     },
-    "art": {"x": 3, "y": 3, "width": 134, "height": 138},
+    "art": {"x": 3, "y": 3, "width": 134, "height": 139},
     "attribute": {"x": 114, "y": 149},
     "atk": {"x": 38, "y": 178},
     "def": {"x": 104, "y": 178},
     "stars": {"x": 59, "y": 153},
     "spell": {
-        "art": {"x": 3, "y": 3, "width": 134, "height": 138},
+        "art": {"x": 3, "y": 3, "width": 134, "height": 139},
         "icon": {"x": 62, "y": 163}
     }
 }
