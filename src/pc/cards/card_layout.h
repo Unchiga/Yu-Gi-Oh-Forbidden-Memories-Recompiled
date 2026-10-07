@@ -55,7 +55,7 @@ int CardLayout_FullBleed(void);
  * already joined with its directory and validated the way a "title" mod's
  * image is -- card_layout_art.c just opens it), or "" when no mod applies
  * one. Decode failure there is not an error here: the caller (func_80028B08.c,
- * through CardLayoutArt_FrameCell) simply does not draw a frame. */
+ * through CardLayoutArt_FrameTile) simply does not draw a frame. */
 const char *CardLayout_FramePath(void);
 
 /* Which card the next CardLayout_Get/CardLayout_FramePath/CardLayout_IsSpell

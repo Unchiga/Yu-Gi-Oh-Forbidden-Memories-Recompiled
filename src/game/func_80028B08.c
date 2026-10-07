@@ -86,6 +86,11 @@ static void CardLayout_DrawArt(SpritePrim *src, s32 x, s32 y, s32 w, s32 h,
     s32 art_mode = (mode & 0xFFFF) | 0x50000;
 
     setPolyGT4(&art);
+    /* The word after vertex 2's UVs is a bank-sampling polygon's fade
+     * (soft_gpu.h's SoftGpu_FadeOf): this packet is a stack local, so
+     * without this it is whatever the stack held. */
+    art.pad2 = 0;
+    art.pad3 = 0;
     setRGB0(&art, (u8)src->rgb, (u8)(src->rgb >> 8), (u8)(src->rgb >> 16));
     setRGB1(&art, (u8)src->rgb, (u8)(src->rgb >> 8), (u8)(src->rgb >> 16));
     setRGB2(&art, (u8)src->rgb, (u8)(src->rgb >> 8), (u8)(src->rgb >> 16));
@@ -152,6 +157,11 @@ static void CardLayout_DrawCell(s32 x, s32 y, s32 w, s32 h, s32 tpage, s32 u, s3
     s32 art_mode = (mode & 0xFFFF) | 0x50000;
 
     setPolyGT4(&art);
+    /* The word after vertex 2's UVs is a bank-sampling polygon's fade
+     * (soft_gpu.h's SoftGpu_FadeOf): this packet is a stack local, so
+     * without this it is whatever the stack held. */
+    art.pad2 = 0;
+    art.pad3 = 0;
     setRGB0(&art, 128, 128, 128);
     setRGB1(&art, 128, 128, 128);
     setRGB2(&art, 128, 128, 128);
@@ -170,10 +180,19 @@ static void CardLayout_DrawCell(s32 x, s32 y, s32 w, s32 h, s32 tpage, s32 u, s3
 
 static void CardLayout_DrawFrame(s32 x, s32 y, s32 w, s32 h, s32 ot, s32 mode, Func80028B08Extra *EXT)
 {
-    int art_tpage, art_u, art_v, art_clut, art_w, art_h;
+    int col, row, tpage, clut, tile_w, tile_h;
 
-    if (!CardLayoutArt_FrameCell(&art_tpage, &art_u, &art_v, &art_clut, &art_w, &art_h)) return;
-    CardLayout_DrawCell(x, y, w, h, art_tpage, art_u, art_v, art_clut, art_w, art_h, ot, mode, EXT);
+    /* The frame's tiles, abutting: each edge is a whole-pixel share of w/h,
+     * so neighbours meet exactly with no gap or overlap. */
+    for (row = 0; row < CARD_LAYOUT_FRAME_ROWS; row++) {
+        for (col = 0; col < CARD_LAYOUT_FRAME_COLS; col++) {
+            s32 x0 = x + w * col / CARD_LAYOUT_FRAME_COLS, x1 = x + w * (col + 1) / CARD_LAYOUT_FRAME_COLS;
+            s32 y0 = y + h * row / CARD_LAYOUT_FRAME_ROWS, y1 = y + h * (row + 1) / CARD_LAYOUT_FRAME_ROWS;
+
+            if (!CardLayoutArt_FrameTile(col, row, &tpage, &clut, &tile_w, &tile_h)) return;
+            CardLayout_DrawCell(x0, y0, x1 - x0, y1 - y0, tpage, 0, 0, clut, tile_w, tile_h, ot, mode, EXT);
+        }
+    }
 }
 #endif
 

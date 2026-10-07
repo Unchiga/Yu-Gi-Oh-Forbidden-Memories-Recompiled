@@ -898,13 +898,13 @@ some of them out, with a `"card_layout"` object, no code needed:
         "ritual": {"image": "anime_frame_ritual.png", "width": 140, "height": 196},
         "orange": {"image": "anime_frame_orange.png", "width": 140, "height": 196}
     },
-    "art": {"x": 3, "y": 3, "width": 134, "height": 139},
+    "art": {"x": 3, "y": 3, "width": 134, "height": 138},
     "attribute": {"x": 114, "y": 149},
     "atk": {"x": 38, "y": 178},
     "def": {"x": 104, "y": 178},
     "stars": {"x": 59, "y": 153},
     "spell": {
-        "art": {"x": 3, "y": 3, "width": 134, "height": 139},
+        "art": {"x": 3, "y": 3, "width": 134, "height": 138},
         "icon": {"x": 62, "y": 163}
     }
 }

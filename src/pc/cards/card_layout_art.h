@@ -7,10 +7,16 @@
  * and src/pc/text/glyphs.c already do for theirs, then read back as an
  * ordinary tpage/u/v/clut cell. */
 
-/* 1 on success (`*tpage`/`*u`/`*v`/`*clut` filled, its own stored w/h in
- * `*w`/`*h`), 0 when no mod gives a frame path, or it could not be decoded
- * or the bank could not be allocated -- the caller (func_80028B08.c) simply
- * doesn't draw it then, purely decorative. */
-int CardLayoutArt_FrameCell(int *tpage, int *u, int *v, int *clut, int *w, int *h);
+/* The frame is FRAME_COLS x FRAME_ROWS tiles (card_layout_art.c explains
+ * why), drawn as that many abutting quads. */
+#define CARD_LAYOUT_FRAME_COLS 3
+#define CARD_LAYOUT_FRAME_ROWS 3
+
+/* 1 on success (`*tpage`/`*clut` filled, the tile's own texel w/h in
+ * `*w`/`*h`; its texels start at u = v = 0 of that page), 0 when no mod
+ * gives a frame path, or it could not be decoded or the bank could not be
+ * allocated -- the caller (func_80028B08.c) simply doesn't draw it then,
+ * purely decorative. */
+int CardLayoutArt_FrameTile(int col, int row, int *tpage, int *clut, int *w, int *h);
 
 #endif
