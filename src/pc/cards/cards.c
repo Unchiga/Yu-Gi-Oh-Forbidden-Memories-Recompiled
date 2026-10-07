@@ -9,6 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "cards.h"
 #include "art.h"
+#include "card_layout.h"
 #include "card_layout_art.h"
 #include "card_notes.h"
 #include "monster_effects.h"
@@ -114,6 +115,11 @@ int Cards_FrameColor(int id)
      * effect monster is in the card game. */
     if (!frames[id]) {
         const MonsterEffect *effects;
+        /* With the anime frame on (card_layout.h's CardLayout_FullBleed) a
+         * ritual spell wears the magic frame's colour, as the card viewer's
+         * frame does (hd_assets_pack.py draws no ritual frame of its own), so
+         * its hand card and the viewer agree. */
+        if (Cards_Type(id) == CARD_TYPE_RITUAL && CardLayout_FullBleed()) return CARD_FRAME_MAGIC;
         return Cards_Type(id) < CARD_TYPE_MAGIC && Cards_MonsterEffects(id, &effects) ? CARD_FRAME_ORANGE : -1;
     }
     return frames[id] - 1;
