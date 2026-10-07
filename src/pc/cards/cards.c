@@ -9,6 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "cards.h"
 #include "art.h"
+#include "card_layout_art.h"
 #include "card_notes.h"
 #include "monster_effects.h"
 #include "tables.h"
@@ -2233,6 +2234,7 @@ void Cards_PairCommit(void)
 
 void Cards_Frame(void)
 {
+    CardLayoutArt_Prewarm();
     const void *state = gDuel_awPlayerDeck;
     int code = state_word(state, SAVE_DUELIST_CODE);
     /* NEW GAME writes a new duelist code into the running save. */

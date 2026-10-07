@@ -68,6 +68,21 @@ int CardLayout_IsSpell(void)
            current_kind == CARD_FRAME_RITUAL;
 }
 
+/* `kind`'s "frame" image joined with the mod's own directory, into `out`;
+ * "" for none (or one outside the mod). */
+static void frame_path_of(int mod, const JsonValue *layout, int kind, char *out, size_t size)
+{
+    const JsonValue *frame = frame_for_kind(layout, kind);
+    const char *file = Json_String(Json_Member(frame, "image"), NULL);
+    out[0] = 0;
+    if (file && *file) {
+        if (!Paths_Contained(file) || snprintf(out, size, "%s/%s", Mods_Directory(mod), file) >= (int)size) {
+            Mods_Note(Mods_Id(mod), "card_layout: \"frame\" \"image\" \"%s\" is outside the mod", file);
+            out[0] = 0;
+        }
+    }
+}
+
 /* The last applied mod, in load order, that declares a "card_layout" key --
  * the same "a later mod's value wins" rule every other manifest key
  * follows (notes/modding.md). Re-walked on every call rather than cached:
@@ -91,18 +106,9 @@ static LayoutSource find_source(void)
         source.mod = mod;
         source.layout = layout;
     }
-    if (source.mod >= 0) {
-        const JsonValue *frame = frame_for_kind(source.layout, current_kind);
-        const char *file = Json_String(Json_Member(frame, "image"), NULL);
-        if (file && *file) {
-            if (!Paths_Contained(file) ||
-                snprintf(source.frame_path, sizeof(source.frame_path), "%s/%s", Mods_Directory(source.mod), file) >=
-                    (int)sizeof(source.frame_path)) {
-                Mods_Note(Mods_Id(source.mod), "card_layout: \"frame\" \"image\" \"%s\" is outside the mod", file);
-                source.frame_path[0] = 0;
-            }
-        }
-    }
+    if (source.mod >= 0)
+        frame_path_of(source.mod, source.layout, current_kind, source.frame_path,
+                      sizeof(source.frame_path));
     return source;
 }
 
@@ -146,6 +152,22 @@ const char *CardLayout_FramePath(void)
     LayoutSource source = find_source();
     snprintf(path, sizeof(path), "%s", source.frame_path);
     return path;
+}
+
+int CardLayout_FramePaths(char (*paths)[1024], int max)
+{
+    LayoutSource source = find_source();
+    int kind, count = 0;
+
+    if (source.mod < 0 || !full_bleed_of(&source)) return 0;
+    for (kind = 0; kind < CARD_FRAME_COUNT && count < max; kind++) {
+        int i;
+        frame_path_of(source.mod, source.layout, kind, paths[count], 1024);
+        if (!paths[count][0]) continue;
+        for (i = 0; i < count && strcmp(paths[i], paths[count]); i++) {}
+        if (i == count) count++;   /* a kind that shares another's image (ritual/magic) adds nothing */
+    }
+    return count;
 }
 
 CardLayoutPlacement CardLayout_Get(CardLayoutElement element)

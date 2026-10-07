@@ -58,6 +58,12 @@ int CardLayout_FullBleed(void);
  * through CardLayoutArt_FrameTile) simply does not draw a frame. */
 const char *CardLayout_FramePath(void);
 
+/* Every distinct frame image the active full-bleed layout can draw (one per
+ * card kind, kinds sharing an image counted once), joined with the mod's
+ * directory, into `paths`; 0 when no mod's layout is on. For
+ * CardLayoutArt_Prewarm. */
+int CardLayout_FramePaths(char (*paths)[1024], int max);
+
 /* Which card the next CardLayout_Get/CardLayout_FramePath/CardLayout_IsSpell
  * answer for: its frame (monster/magic/trap/ritual/purple/orange, cards.h
  * CARD_FRAME_*) comes from its own Cards_FrameColor if a mod set one, else

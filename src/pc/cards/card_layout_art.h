@@ -19,4 +19,11 @@
  * purely decorative. */
 int CardLayoutArt_FrameTile(int col, int row, int *tpage, int *clut, int *w, int *h);
 
+/* Once a frame (cards.c's Cards_Frame): builds, one a call and only now and
+ * then, any frame image of the active layout not built yet, so the cost of
+ * building one (decoding a 919x1319 PNG and a 255-colour median cut of it,
+ * tens to hundreds of milliseconds) is paid off screen, not on the frame a
+ * card first draws. */
+void CardLayoutArt_Prewarm(void);
+
 #endif

@@ -45,26 +45,61 @@
 #define FRAME_H (FRAME_ROWS * FRAME_TILE_H)
 #define FRAME_CLUT_Y FRAME_TILE_H   /* right after the first tile's last pixel row, same bank, no overlap */
 
-static unsigned char made;      /* 0 not yet, 1 made, 2 failed */
-static char made_path[1024];    /* the path "made" was decoded from, to notice a different mod's art */
-
-static int make(uint16_t *bank, const char *path)
-{
-    unsigned char *indices = malloc((size_t)FRAME_W * FRAME_H);
+/* Each frame image's built texels (FRAME_W x FRAME_H palette indices and its
+ * palette), kept so that a card of another kind -- another frame image -- or
+ * one drawn again later costs a copy into the bank, not a decode and a median
+ * cut. The bank holds one frame at a time (bank_path). */
+#define FRAME_CACHE 8
+typedef struct {
+    char path[1024];
+    unsigned char *indices;   /* NULL: built and failed */
     unsigned short clut[256];
+    int used;
+} FrameImage;
+static FrameImage images[FRAME_CACHE];
+static char bank_path[1024];    /* the path whose texels the bank holds now */
+
+static FrameImage *image_for(const char *path, int build)
+{
+    FrameImage *slot = NULL;
+    int i;
     char why[128];
-    int x, y, tile;
-    if (!indices) return 0;
-    if (!CardArt_IndexedImage(path, FRAME_W, FRAME_H, indices, clut, why, sizeof(why))) {
-        LOG(LOG_CARD_LAYOUT, "frame: %s: %s", path, why);
-        free(indices);
-        return 0;
+
+    for (i = 0; i < FRAME_CACHE; i++) {
+        if (images[i].used && !strcmp(images[i].path, path)) return &images[i];
     }
+    if (!build) return NULL;
+    for (i = 0; i < FRAME_CACHE && !slot; i++) {
+        if (!images[i].used) slot = &images[i];
+    }
+    if (!slot) {   /* full: the first goes (a layout has at most one image per kind) */
+        slot = &images[0];
+        free(slot->indices);
+        if (!strcmp(bank_path, slot->path)) bank_path[0] = 0;
+    }
+    memset(slot, 0, sizeof(*slot));
+    snprintf(slot->path, sizeof(slot->path), "%s", path);
+    slot->used = 1;
+    slot->indices = malloc((size_t)FRAME_W * FRAME_H);
+    if (slot->indices &&
+        !CardArt_IndexedImage(path, FRAME_W, FRAME_H, slot->indices, slot->clut, why, sizeof(why))) {
+        LOG(LOG_CARD_LAYOUT, "frame: %s: %s", path, why);
+        free(slot->indices);
+        slot->indices = NULL;
+    }
+    return slot;
+}
+
+/* The image's texels into the bank, tile by tile (see the layout above). */
+static void store(uint16_t *bank, const FrameImage *image)
+{
+    int tile, x, y;
+
     for (tile = 0; tile < FRAME_COLS * FRAME_ROWS; tile++) {
         int col = tile % FRAME_COLS, row = tile / FRAME_COLS;
         uint16_t *page = bank + (tile / 8 * 256) * SOFT_GPU_WIDTH + tile % 8 * 128;
         for (y = 0; y < FRAME_TILE_H; y++) {
-            const unsigned char *line = indices + (row * FRAME_TILE_H + y) * FRAME_W + col * FRAME_TILE_W;
+            const unsigned char *line = image->indices + (row * FRAME_TILE_H + y) * FRAME_W + col * FRAME_TILE_W;
             for (x = 0; x < FRAME_TILE_W; x += 2) {
                 unsigned char lo = line[x];
                 unsigned char hi = x + 1 < FRAME_TILE_W ? line[x + 1] : 0;   /* the odd width's last pair */
@@ -72,35 +107,44 @@ static int make(uint16_t *bank, const char *path)
             }
         }
     }
-    memcpy(&bank[FRAME_CLUT_Y * SOFT_GPU_WIDTH], clut, 256 * sizeof(uint16_t));
-    free(indices);
-    return 1;
+    memcpy(&bank[FRAME_CLUT_Y * SOFT_GPU_WIDTH], image->clut, 256 * sizeof(uint16_t));
 }
 
 int CardLayoutArt_FrameTile(int col, int row, int *tpage, int *clut, int *w, int *h)
 {
     uint16_t *bank;
     const char *path = CardLayout_FramePath();
+    const FrameImage *image;
     int tile = row * FRAME_COLS + col;
     if (col < 0 || col >= FRAME_COLS || row < 0 || row >= FRAME_ROWS) return 0;
     if (!path || !*path) { LOG(LOG_CARD_LAYOUT, "FrameTile: no path"); return 0; }
-    if (strcmp(path, made_path)) {
-        /* A different mod's frame art (or the same mod's art changed under
-         * it) than whatever is cached: decode again, same as the first
-         * time. Mods rarely change their own shipped art mid-session, so
-         * this is a cheap strcmp on the common path (nothing changed) and
-         * only actually re-decodes on the rare path (it did). */
-        made = 0;
-        snprintf(made_path, sizeof(made_path), "%s", path);
-    }
-    if (made == 2) return 0;
     if (!(bank = SoftGpu_Bank(FRAME_BANK))) { LOG(LOG_CARD_LAYOUT, "FrameTile: no bank"); return 0; }
-    if (!made) made = make(bank, path) ? 1 : 2;
-    if (made != 1) return 0;
-    /* getTPage(1, 0, x, y) | bank << 11: 8bpp, this tile's page in the bank (make()'s layout) */
+    image = image_for(path, 1);
+    if (!image || !image->indices) return 0;
+    if (strcmp(bank_path, path)) {
+        store(bank, image);
+        snprintf(bank_path, sizeof(bank_path), "%s", path);
+    }
+    /* getTPage(1, 0, x, y) | bank << 11: 8bpp, this tile's page in the bank (store()'s layout) */
     *tpage = 0x80 | (FRAME_BANK << 11) | (tile % 8 * 2) | (tile / 8 << 4);
     *clut = (FRAME_CLUT_Y << 6) | 0;   /* getClut(0, FRAME_CLUT_Y) */
     *w = FRAME_TILE_W;
     *h = FRAME_TILE_H;
     return 1;
+}
+
+void CardLayoutArt_Prewarm(void)
+{
+    static unsigned int frame;
+    char paths[FRAME_CACHE][1024];
+    int i, count;
+
+    if (++frame % 30) return;   /* the layout changes with a setting, not a frame */
+    count = CardLayout_FramePaths(paths, FRAME_CACHE);
+    for (i = 0; i < count; i++) {
+        if (!image_for(paths[i], 0)) {
+            image_for(paths[i], 1);
+            return;   /* one a call: each is a hitch of its own */
+        }
+    }
 }
