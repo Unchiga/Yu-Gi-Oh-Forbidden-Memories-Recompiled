@@ -76,6 +76,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import extract_images as X  # noqa: E402
+import card_frame_window as W  # noqa: E402
 
 S = 4
 SECTOR = 2048
@@ -96,21 +97,22 @@ PARTS = {
 }
 # --anime-frame-<kind>'s "card_layout" positions, measured against
 # anime_frame_monster.png/anime_frame_magic.png (notes/modding.md, "Card
-# layout"). No "attribute"/"icon" width/height: those frames cut no hole
+# layout"). Not "art": that rect is derived from each frame's own window
+# (card_frame_window.py: measured as the game draws it, covered whole-pixel,
+# verified) so it cannot drift from the PNG.
+# No "attribute"/"icon" width/height: those frames cut no hole
 # for them, so they draw at native size, moved off retail's default (the
 # title plate, covered by full-bleed's bigger art) into the stat band.
 # "stars"."x" is the row's centre, not a first-star anchor: a card can
 # carry up to 12 stars, and func_80028B08.c centres them around this point
 # so a wide row never runs past the frame's edge.
 ANIME_FRAME_MONSTER_LAYOUT = {
-    "art": {"x": 4, "y": 3, "width": 134, "height": 138},
     "attribute": {"x": 114, "y": 149},
     "atk": {"x": 38, "y": 178},
     "def": {"x": 104, "y": 178},
     "stars": {"x": 59, "y": 153},
 }
 ANIME_FRAME_SPELL_LAYOUT = {
-    "art": {"x": 4, "y": 3, "width": 133, "height": 138},
     "icon": {"x": 62, "y": 163},
 }
 FRAMES = {8: "frame_monster.png", 9: "frame_magic.png", 10: "frame_trap.png", 11: "frame_ritual.png"}
@@ -569,7 +571,26 @@ def main():
             filename = f"anime_frame_{kind}.png"
             shutil.copyfile(source, os.path.join(args.out, "textures", filename))
             frame[kind] = {"image": f"textures/{filename}", "width": 140, "height": 196}
-        manifest["card_layout"] = dict(frame=frame, spell=ANIME_FRAME_SPELL_LAYOUT, **ANIME_FRAME_MONSTER_LAYOUT)
+        windows = {kind: W.measure_window(os.path.join(args.out, "textures", f"anime_frame_{kind}.png"))
+                   for kind in frame}
+        monster_kinds = [kind for kind in windows if kind in ("monster", "orange")]
+        spell_kinds = [kind for kind in windows if kind in ("magic", "trap", "ritual")]
+        art = W.art_rect([windows[kind] for kind in monster_kinds]) if monster_kinds else None
+        spell_art = W.art_rect([windows[kind] for kind in spell_kinds]) if spell_kinds else None
+        problems = []
+        for kinds, rect in ((monster_kinds, art), (spell_kinds, spell_art)):
+            for kind in kinds:
+                print(W.describe(kind, rect, windows[kind]))
+                problems += W.check(kind, rect, windows[kind])
+        if problems:
+            sys.exit("anime frame art placement failed:\n  " + "\n  ".join(problems))
+        spell = dict(ANIME_FRAME_SPELL_LAYOUT)
+        monster = dict(ANIME_FRAME_MONSTER_LAYOUT)
+        if spell_art:
+            spell["art"] = spell_art
+        if art:
+            monster["art"] = art
+        manifest["card_layout"] = dict(frame=frame, spell=spell, **monster)
         manifest["settings"].append({
             "key": "full_bleed", "label": "Anime card frame", "type": "bool", "default": 0,
             "description": "An anime-style card frame representation, by d02d02 and Hræzlyr."})
