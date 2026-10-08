@@ -64,6 +64,11 @@ const char *CardLayout_FramePath(void);
  * CardLayoutArt_Prewarm. */
 int CardLayout_FramePaths(char (*paths)[1024], int max);
 
+/* True when the full-bleed layout has no ritual frame image of its own, or
+ * it is the same file as magic's: a ritual spell then wears magic's colour
+ * (Cards_FrameColor). A layout with its own ritual frame keeps it. */
+int CardLayout_RitualWearsMagic(void);
+
 /* Which card the next CardLayout_Get/CardLayout_FramePath/CardLayout_IsSpell
  * answer for: its frame (monster/magic/trap/ritual/purple/orange, cards.h
  * CARD_FRAME_*) comes from its own Cards_FrameColor if a mod set one, else

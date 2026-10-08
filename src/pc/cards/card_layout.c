@@ -140,6 +140,21 @@ static void rect(const JsonValue *layout, const char *key, int *x, int *y, int *
     *h = (int)Json_Number(Json_Member(part, "height"), dh);
 }
 
+int CardLayout_RitualWearsMagic(void)
+{
+    LayoutSource source = find_source();
+    const JsonValue *frame_set, *ritual;
+    const char *own, *magic;
+
+    if (!full_bleed_of(&source)) return 0;
+    frame_set = Json_Member(source.layout, "frame");
+    ritual = Json_Member(frame_set, frame_kind_names[CARD_FRAME_RITUAL]);
+    own = Json_String(Json_Member(ritual, "image"), NULL);
+    if (!own || !*own) return 1;
+    magic = Json_String(Json_Member(frame_for_kind(source.layout, CARD_FRAME_MAGIC), "image"), NULL);
+    return magic && !strcmp(own, magic);
+}
+
 int CardLayout_FullBleed(void)
 {
     LayoutSource source = find_source();

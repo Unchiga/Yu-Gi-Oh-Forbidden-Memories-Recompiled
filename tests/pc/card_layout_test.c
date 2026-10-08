@@ -312,6 +312,24 @@ static void frame_color_override_wins_over_type(void)
     CHECK(!strcmp(CardLayout_FramePath(), "/mods/x/frame_trap.png"));
 }
 
+static void ritual_wears_magic_unless_own_frame(void)
+{
+    reset();
+    CHECK(!CardLayout_RitualWearsMagic());   /* no layout */
+    add_mod("a", "/mods/a", FULL_MANIFEST, 1, "full_bleed", 1);
+    CHECK(CardLayout_RitualWearsMagic());   /* no ritual image of its own */
+    reset();
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"frame\": {\"monster\": {\"image\": \"m.png\"},"
+            "\"magic\": {\"image\": \"g.png\"}, \"ritual\": {\"image\": \"g.png\"}}}}", 1, "full_bleed", 1);
+    CHECK(CardLayout_RitualWearsMagic());   /* same file as magic's */
+    reset();
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"frame\": {\"monster\": {\"image\": \"m.png\"},"
+            "\"magic\": {\"image\": \"g.png\"}, \"ritual\": {\"image\": \"r.png\"}}}}", 1, "full_bleed", 1);
+    CHECK(!CardLayout_RitualWearsMagic());  /* its own ritual frame stays */
+}
+
 int main(void)
 {
     retail_defaults();
@@ -327,6 +345,7 @@ int main(void)
     spell_frame_equip_uses_magic();
     spell_frame_ritual_falls_back_to_monster_frame();
     frame_color_override_wins_over_type();
+    ritual_wears_magic_unless_own_frame();
     reset();
     printf("card layout: ok\n");
     return 0;

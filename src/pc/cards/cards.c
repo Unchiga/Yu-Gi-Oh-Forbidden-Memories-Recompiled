@@ -118,8 +118,9 @@ int Cards_FrameColor(int id)
         /* With the anime frame on (card_layout.h's CardLayout_FullBleed) a
          * ritual spell wears the magic frame's colour, as the card viewer's
          * frame does (hd_assets_pack.py draws no ritual frame of its own), so
-         * its hand card and the viewer agree. */
-        if (Cards_Type(id) == CARD_TYPE_RITUAL && CardLayout_FullBleed()) return CARD_FRAME_MAGIC;
+         * its hand card and the viewer agree -- unless the layout ships its
+         * own ritual frame, which keeps it. */
+        if (Cards_Type(id) == CARD_TYPE_RITUAL && CardLayout_RitualWearsMagic()) return CARD_FRAME_MAGIC;
         return Cards_Type(id) < CARD_TYPE_MAGIC && Cards_MonsterEffects(id, &effects) ? CARD_FRAME_ORANGE : -1;
     }
     return frames[id] - 1;
