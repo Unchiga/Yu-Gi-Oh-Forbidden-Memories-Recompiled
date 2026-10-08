@@ -93,6 +93,23 @@
             "description": "How much darker the cards are drawn under the monsters, in percent."
         },
         {
+            "key": "summon",
+            "label": "Anime summon (3D models)",
+            "type": "bool",
+            "default": 1,
+            "description": "A monster put face up grows out of its card, fading in, while the card flashes and then disappears; the card stays hidden under the monster wherever the monster is drawn. Off: the card stays and the monster appears at once."
+        },
+        {
+            "key": "summon_frames",
+            "label": "Summon length (3D models)",
+            "type": "int",
+            "default": 30,
+            "min": 6,
+            "max": 120,
+            "step": 2,
+            "description": "Frames a monster takes to grow out of its card, at 60 a second."
+        },
+        {
             "key": "glow",
             "label": "Glowing diffusion (Card art)",
             "type": "bool",

@@ -74,6 +74,7 @@
 #include "game/duel_scene_state.h"
 #include "game/high_memory_addresses.h"
 #include "game/display_object.h"
+#include "game/func_80015EF4.h"
 #include "game/display_object_layout.h"
 #include "game/display_object_work_slots.h"
 #include "game/duel_effect_resource_record.h"
@@ -184,6 +185,22 @@ static unsigned frame;
 static int inside;
 static DisplayObject *dimmed[DUEL_SIDE_COUNT]; /* the big cards draw_battle dimmed */
 
+/* The summon (summon_on), per monster zone, side * 5 + zone: the card id it
+ * last saw stand there, whether its card has come down onto the zone (a card
+ * put down drops from above for about 25 frames; it has landed once its
+ * height has held for SETTLE_FRAMES), and how many frames the monster has
+ * been drawn since. A new id starts it again; an emptied, face-down or magic
+ * zone forgets it. */
+#define SUMMON_ZONES 10
+typedef struct {
+    int card;
+    int landed;
+    int y;            /* the card's height last frame, while it may be falling */
+    unsigned settled; /* frames that height has held */
+    unsigned elapsed;
+} Summon;
+static Summon summons[SUMMON_ZONES];
+
 static void reset(void)
 {
     int i;
@@ -191,6 +208,7 @@ static void reset(void)
         cache[i].card = 0;
     }
     dimmed[0] = dimmed[1] = NULL; /* a state was loaded over them */
+    memset(summons, 0, sizeof(summons));
     FieldArt_Reset();
 }
 
@@ -864,17 +882,25 @@ static int lift(void)
     return tunable("lift", LIFT_PIXELS * LIFT_UNITS_PER_PIXEL);
 }
 
-static void draw_monster(Monster *monster, int x, int z, int yaw)
+/* `share` of its fitted size (MODEL_FIXED_ONE is the whole), faded by `fade`
+ * (0 opaque to 255 gone) and `lifted` field units above the card: the summon
+ * grows it from its card; whole, opaque and at lift() it is drawn as ever. */
+static void draw_monster(Monster *monster, int x, int z, int yaw, int share, int fade, int lifted)
 {
     ModelSlot *slot = &D_800F2C40[0];
     int turned = yaw == MODEL_ANGLE_HALF_TURN;
+    int body_x = monster->body_x * share / MODEL_FIXED_ONE;
+    int body_y = monster->body_y * share / MODEL_FIXED_ONE;
+    int body_z = monster->body_z * share / MODEL_FIXED_ONE;
 
     *slot = monster->slot;
     /* The body offset was measured facing up the field, so turning the
      * monster turns it too. */
-    place(slot, turned ? x + monster->body_x : x - monster->body_x, -monster->body_y - lift(),
-          turned ? z + monster->body_z : z - monster->body_z, yaw, monster->scale);
+    place(slot, turned ? x + body_x : x - body_x, -body_y - lifted,
+          turned ? z + body_z : z - body_z, yaw, monster->scale * share / MODEL_FIXED_ONE);
+    monster->fade = fade;
     sort_monster(monster, (GsOT *)D_800E9D98[0], -1);
+    monster->fade = 0;
     if (!monster->stepped) {
         func_800556E8(0);
         monster->stepped = 1;
@@ -912,6 +938,7 @@ static int duel_field_up(void)
 typedef struct {
     Monster *monster;
     int x, z, yaw;
+    int summon; /* its zone in summons[] */
 } Standing;
 
 /* The five monster zones of a side, in card-record order. */
@@ -1276,7 +1303,37 @@ static void applied(int on)
     if (!on) {
         undim(0);
         undim(1);
+        memset(summons, 0, sizeof(summons));
     }
+}
+
+/* The summon: a monster put face up grows out of its card, from SUMMON_FROM
+ * of its size, fading in and rising to lift() over summon_frames frames,
+ * eased out; meanwhile draw_card flashes its card for FLASH_FRAMES frames and
+ * then leaves it out. The frames are those it is drawn in, so one put down
+ * while the camera is away (choosing its zone) is summoned when the field
+ * comes back. Off, or in the Card art style, nothing here runs. */
+#define SUMMON_FROM (MODEL_FIXED_ONE / 5)
+#define SUMMON_FRAMES 30
+#define FLASH_FRAMES 8
+#define SETTLE_FRAMES 3
+
+static int summon_on(void)
+{
+    return tunable("summon", 1) && !tunable("style", 0);
+}
+
+static int summon_frames(void)
+{
+    int frames = tunable("summon_frames", SUMMON_FRAMES);
+    return frames < 1 ? 1 : frames > 240 ? 240 : frames;
+}
+
+/* 1 - (1 - p)^2, all in MODEL_FIXED_ONE units: fast at first, settling. */
+static int eased(int progress)
+{
+    int rest = MODEL_FIXED_ONE - progress;
+    return MODEL_FIXED_ONE - rest * rest / MODEL_FIXED_ONE;
 }
 
 static void draw_frame(void)
@@ -1284,7 +1341,7 @@ static void draw_frame(void)
     static ModelSlot borrowed;
     Standing standing[DUEL_SIDE_COUNT * MONSTER_ZONES];
     u32 work_base;
-    int count = 0, i, side, zone;
+    int count = 0, i, side, zone, summoning, frames;
 
     if (inside) {
         return;
@@ -1319,10 +1376,13 @@ static void draw_frame(void)
     SetFarColor(0, 0, 0);
     SetFogNearFar(0x28A, 0x320, D_800F2848.projection);
 
+    summoning = summon_on();
+    frames = summon_frames();
     for (side = 0; side < DUEL_SIDE_COUNT; side++) {
         for (zone = 0; zone < MONSTER_ZONES; zone++) {
             int index = SIDE_ZONE(side, zone);
             DuelCardRecord *card = &D_801A7AD8[index];
+            Summon *summon = &summons[side * MONSTER_ZONES + zone];
             Monster *monster;
             int id = card->card_id;
 
@@ -1334,7 +1394,15 @@ static void draw_frame(void)
             } else if (!(card->flags & DUEL_CARD_FLAG_OCCUPIED) ||
                 (card->flags & DUEL_CARD_FLAG_FACE_DOWN) || id <= 0 ||
                 ((gDuel_adwCardStats[id - 1] >> 0x1A) & 0x1F) >= 0x14) {
+                summon->card = 0;
                 continue; /* empty, face down, or a magic or trap card */
+            }
+            if (summon->card != card->card_id) {
+                summon->card = card->card_id; /* put down, turned up or replaced */
+                summon->landed = 0;
+                summon->settled = 0;
+                summon->y = card->object ? (s16)((DisplayObject *)card->object)->field_30.h.field_32 : 0;
+                summon->elapsed = 0;
             }
             /* A card a card mod added stands as the retail card it is a
              * copy of: MODEL.MRG has the disc's monsters only. */
@@ -1346,6 +1414,19 @@ static void draw_frame(void)
             monster = acquire(id, (card->flags & DUEL_CARD_FLAG_DEFENSE_POSITION) ? 1 : 0);
             if (!monster) {
                 continue;
+            }
+            /* Loaded while its card comes down, so landing costs nothing;
+             * summoned once it has landed. */
+            if (summoning && !summon->landed) {
+                DisplayObject *object = card->object;
+                int y = object ? (s16)object->field_30.h.field_32 : 0;
+                summon->settled = y == summon->y ? summon->settled + 1 : 0;
+                summon->y = y;
+                if (object && summon->settled < SETTLE_FRAMES) {
+                    continue;
+                }
+                summon->landed = 1;
+                say("zone %d: card %d landed at height %d, summoned\n", side * MONSTER_ZONES + zone, summon->card, y);
             }
             standing[count].monster = monster;
             standing[count].x = D_800908A0[index].x;
@@ -1360,6 +1441,7 @@ static void draw_frame(void)
              * by that snapped every monster round mid-swing and left the
              * player's showing their backs for the opponent's turn. */
             standing[count].yaw = side == DUEL_SIDE_PLAYER ? MODEL_ANGLE_HALF_TURN : 0;
+            standing[count].summon = side * MONSTER_ZONES + zone;
             count++;
         }
     }
@@ -1368,7 +1450,19 @@ static void draw_frame(void)
         standing[i].monster->stepped = 0;
     }
     for (i = 0; i < count; i++) {
-        draw_monster(standing[i].monster, standing[i].x, standing[i].z, standing[i].yaw);
+        Summon *summon = &summons[standing[i].summon];
+        int share = MODEL_FIXED_ONE, fade = 0, lifted = lift();
+        if (summoning && summon->elapsed < (unsigned)frames) {
+            int progress = (int)(summon->elapsed * MODEL_FIXED_ONE / (unsigned)frames);
+            int grown = eased(progress);
+            share = SUMMON_FROM + (MODEL_FIXED_ONE - SUMMON_FROM) * grown / MODEL_FIXED_ONE;
+            fade = 255 - 255 * progress / MODEL_FIXED_ONE;
+            lifted = lifted * grown / MODEL_FIXED_ONE;
+        }
+        draw_monster(standing[i].monster, standing[i].x, standing[i].z, standing[i].yaw, share, fade, lifted);
+        if (summon->elapsed < 0xFFFFu) {
+            summon->elapsed++;
+        }
     }
 
     D_800F2C40[0] = borrowed;
@@ -1377,6 +1471,57 @@ static void draw_frame(void)
     }
     SetGeomOffset(0, 0);
     inside = 0;
+}
+
+/* The card under a summoned monster. Duel_DrawFieldCards draws each field
+ * card through func_80015EF4, which takes its colour from the card's display
+ * object: for FLASH_FRAMES frames after the card has landed that colour rises
+ * to full, then the card is not drawn at all while the monster stands on it.
+ * This runs in the game's frame, before draw_frame (GsDrawOt), so it reads
+ * what the last frame left in summons[]. A card drawn the other way (flag
+ * 0x400, func_80015DFC: the field seen from overhead, where no monster is
+ * drawn) stays as it is. */
+static void *original_card;
+
+static int summon_zone(const void *record)
+{
+    u32 at = (u32)(uintptr_t)record;
+    int side, zone;
+    for (side = 0; side < DUEL_SIDE_COUNT; side++) {
+        for (zone = 0; zone < MONSTER_ZONES; zone++) {
+            if (at == (u32)(uintptr_t)&D_801A7AD8[SIDE_ZONE(side, zone)]) {
+                return side * MONSTER_ZONES + zone;
+            }
+        }
+    }
+    return -1;
+}
+
+static void draw_card(void *record, POLY_GT4 *prim, POLY_FT4 *sprite, s32 *color)
+{
+    void (*original)(void *, POLY_GT4 *, POLY_FT4 *, s32 *) =
+        (void (*)(void *, POLY_GT4 *, POLY_FT4 *, s32 *))original_card;
+    DuelCardRecord *card = record;
+    int zone = summon_zone(record);
+    const Summon *summon = zone >= 0 ? &summons[zone] : NULL;
+
+    if (summon && summon->landed && summon->card && summon->card == card->card_id &&
+        (card->flags & (DUEL_CARD_FLAG_OCCUPIED | DUEL_CARD_FLAG_FACE_DOWN)) == DUEL_CARD_FLAG_OCCUPIED &&
+        summon_on() && duel_field_up()) {
+        DisplayObject *object = card->object;
+        if (summon->elapsed >= FLASH_FRAMES) {
+            return;
+        }
+        if (object) {
+            u32 kept = object->field_0C;
+            u32 level = 0x80u + 0x7Fu * (summon->elapsed + 1) / FLASH_FRAMES;
+            object->field_0C = (kept & ~0xFFFFFFu) | level * 0x010101u;
+            original(record, prim, sprite, color);
+            object->field_0C = kept;
+            return;
+        }
+    }
+    original(record, prim, sprite, color);
 }
 
 int MemoriesModInit(const MemoriesModHost *from, MemoriesMod *mod)
@@ -1390,5 +1535,11 @@ int MemoriesModInit(const MemoriesModHost *from, MemoriesMod *mod)
     mod->reset = reset;
     mod->applied = applied;
     FieldArt_Init(from);
+    /* Hooks arrived in mod API 4; without one the summon still grows the
+     * monster, over its card. */
+    if (from->api >= 4 && !original_card &&
+        !host->hook(host, (void *)func_80015EF4, (void *)draw_card, &original_card)) {
+        say("the summon cannot hide cards: func_80015EF4 could not be hooked\n");
+    }
     return 1;
 }
