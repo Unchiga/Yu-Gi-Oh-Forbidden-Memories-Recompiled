@@ -53,8 +53,10 @@ is a part of its own, named as that mod is).
 the full-bleed "card_layout" presentation (notes/modding.md, "Card layout"),
 folded in as the mod's own "full_bleed" setting. Each defaults to
 tools/pc/hd_recipes/anime_frame_<kind>.png if present, else
-<assets>/anime_frame_<kind>.png, else nothing for that kind. ritual then
-falls back to magic's file and orange to monster's, whichever that resolved to.
+<assets>/anime_frame_<kind>.png, else nothing for that kind. Orange then
+falls back to monster's file. A ritual with no PNG gets no "ritual" frame
+at all: the game then draws a ritual spell in magic's frame colour, both in
+the card view and in the hand (CardLayout_RitualWearsMagic).
 
 Usage: hd_assets_pack.py --assets <folder> --out <mod folder> [--data game/DATA]
                          [--base <pack> ...] [--merge <pack> ...] [--thumb-crops crops.json]
@@ -559,8 +561,10 @@ def main():
         "magic": anime_frame_default("magic", args.anime_frame_magic, args.assets),
         "trap": anime_frame_default("trap", args.anime_frame_trap, args.assets),
     }
-    anime_frame_sources["ritual"] = anime_frame_default(
-        "ritual", args.anime_frame_ritual, args.assets) or anime_frame_sources["magic"]
+    # No ritual PNG, no "ritual" frame: a copy of magic's file under another name
+    # would read as a ritual frame of its own (card_layout.c), and the hand's
+    # small ritual frame would stay blue beside a green big one.
+    anime_frame_sources["ritual"] = anime_frame_default("ritual", args.anime_frame_ritual, args.assets)
     anime_frame_sources["orange"] = anime_frame_default(
         "orange", args.anime_frame_orange, args.assets) or anime_frame_sources["monster"]
     if any(anime_frame_sources.values()):
