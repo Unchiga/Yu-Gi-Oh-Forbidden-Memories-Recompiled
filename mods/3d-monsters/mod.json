@@ -93,6 +93,23 @@
             "description": "How much darker the cards are drawn under the monsters, in percent."
         },
         {
+            "key": "attack",
+            "label": "Monsters attack on the attack cards (3D models)",
+            "type": "bool",
+            "default": 1,
+            "description": "With the monsters on the attack cards, the attacker strikes and the defender reacts as in the 3D arena: it is hit, it guards, or, when the attacker is weaker, it strikes back. The battle waits for the blow before it shows the damage. Only in the 3D models style."
+        },
+        {
+            "key": "attack_speed",
+            "label": "Attack speed (3D models)",
+            "type": "int",
+            "default": 200,
+            "min": 25,
+            "max": 400,
+            "step": 25,
+            "description": "How fast the attack and the reactions play, in percent of the 3D arena's speed: 100 is the arena's own pace."
+        },
+        {
             "key": "summon",
             "label": "Anime summon (3D models)",
             "type": "bool",

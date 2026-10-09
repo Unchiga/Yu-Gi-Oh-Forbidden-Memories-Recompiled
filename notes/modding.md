@@ -1901,7 +1901,7 @@ the reason beside any that failed to load.
 The first two were part of the executable until they became mods; they are the worked
 examples of a code mod that reaches deep into the game. 3D Monsters' knobs
 are its declared settings `style`, `scale`, `pixels`, `lift`, `pitch`, `depth`,
-`battle`, `battle_pixels`, `battle_dim`, `glow`, `glow_r`, `glow_g`, `glow_b`,
+`battle`, `battle_pixels`, `battle_dim`, `attack`, `attack_speed`, `glow`, `glow_r`, `glow_g`, `glow_b`,
 `glow_reach` and `glow_period`, in
 the Mods window (`MEMORIES_MOD_3D_MONSTERS_SCALE=5000` for one run; they were
 `MEMORIES_MODS_SCALE` and so on before it became one object for both systems).
@@ -1911,12 +1911,14 @@ fit and place their own cutout or model by the same target height, lift,
 field-pitch threshold and depth offset, so one setting means the same thing
 either way, and `field_art.c` simply reads the settings `field_models.c`
 already declares rather than repeating them. Everything else belongs to one
-style alone: `scale`, `battle`, `battle_pixels` and `battle_dim` are 3D
+style alone: `scale`, `battle`, `battle_pixels`, `battle_dim`, `attack` and `attack_speed` are 3D
 models only (down to their own labels saying so in the manifest); `glow` and
 the rest are Card art only, the same way. One more, `test`, is read but not
 declared, so the window does not show it: `MEMORIES_MOD_3D_MONSTERS_TEST=<card>` stands a
 different monster in every zone from that card on, for measuring the cache
-and the arenas.
+and the arenas. `attack_test` (1-4, forcing the attack's destroyed, guarded,
+counter or tie case) and `attack_drift` (the percent of a monster's shift the
+attack keeps) are read the same way.
 
 **A mod with a "style"-like choice setting** (more than one whole presentation,
 picked by one setting, the way 3D Monsters' two styles are): a setting or a

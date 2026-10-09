@@ -1509,6 +1509,61 @@ opponent's first attack and the player's quick and arena attacks after the
 `duel-3d-monsters` smoke input, frame by frame against the same frames with
 `MEMORIES_MOD_3D_MONSTERS_BATTLE=0`.
 
+**The attack.** With `battle` on, the setting `attack` (on by default) has
+the two monsters fight on the big cards instead of standing there. The
+fight uses the rows of animation the 3D arena plays, which every model
+carries: the attack row is `field_DFE + 3` (row 3 from attack position), and
+the reactions are 5 (withstands the blow), 6 (hit) and 8 (guards). The arena's
+controller (`func_8004EB00`, mode 15) starts the defender's reaction from the
+attacker's control module. For a monster with no module, which is how the mod
+loads every one, `func_800559D4` starts it at the attack row's midpoint, and
+so does the mod. When the battle reaches step 7, before any damage number, the
+mod starts the attack and holds the battle there. A hook on
+`DuelScene_UpdateBattle` skips its update until the last blow lands (and at
+most 1,200 frames). Then the game shows its flash, numbers and flames as
+ever, over the reactions. The case comes from the exchange step 3 already
+resolved (`D_8009B1B0[side]`, -1 for a card destroyed and 1 for one hit
+that stays):
+
+- the defender is destroyed: it is hit (6);
+- its defence holds: it guards (8);
+- the attacker is the weaker: the defender withstands the blow (5), strikes
+  back with its own attack row as soon as that row ends (the arena waits for
+  the attacker's whole row), and the attacker is hit;
+- a tie: both are hit;
+- no defender: the attack alone.
+
+A trap that negates the attack skips step 7, and nothing is played. A monster
+that is hit holds the row's last frame until its card burns. Any other row
+ends back at rest (`Model_ControlSlotAnimation(0, 0, 0)`, then
+`func_800597C8(0, 1, 0)`).
+
+The arena's rows carry a monster across a wide floor, and a small monster
+stands on its card several times enlarged (Shadow Specter at 5.7 times), so
+the first version threw the defender off the screen with its recoil. Every
+frame the mod takes the mean world translation of the model's parts against
+the same mean at rest. It keeps 35% of the shift (`attack_drift`, not
+declared) and no more than half a card's width of it, and takes the rest off
+the placement. The attacker still lunges at the other card (Man-eating Plant's
+head reaches the skull), and the one hit recoils by its own.
+
+The two monsters are cache entries of their own while `attack` is on (tag
+`side + 1`), so the rows never reach the monsters on the field, and they are
+dropped when the presentation ends. `attack_speed` (default 200%) scales the
+slot's speed byte while a row plays. The arena plays rows at 8 units a VBlank,
+the same as here, so 100% is the arena's own pace: its blows land 1.3 to 4.5
+seconds in, and a counter-attack up to 10. The particles and sounds of the
+arena's attacks are not there: they come from each monster's MIPS control
+module and its sound bank, which the mod does not load.
+`MEMORIES_MOD_3D_MONSTERS_ATTACK_TEST=1..4` (not declared) forces the
+destroyed, guarded, counter or tie case for any exchange, which only changes
+what is shown. Checked frame by frame on the quick battle of the
+`animated_battle_inputs` timeline with its last Square turned into Cross
+(Man-eating Plant against Shadow Specter in defence, held 76 frames at 200%),
+on every case with `BATTLE_TEST` pairs, and against the previous build:
+`attack` off, and the arena attack, give the same frames. The smoke case
+`duel-3d-monsters-attack` is that battle at the bite (frame 20164).
+
 ### Images from the disc
 
 `python tools/pc/extract_images.py [family ...]` writes the game's images
