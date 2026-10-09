@@ -1664,6 +1664,70 @@ the life points step 3 takes. The smoke case
 `duel-3d-monsters-attack-field-end` is the turn after the battle (frame
 20400): the attacker back on its zone, face up.
 
+**The attacker's effects.** With `effects` on (the default), the field fight
+plays the attacker's own control module, the per-monster MIPS overlay the
+arena runs for its beams, flashes and particles. The defender's module
+(slot B) is not loaded: its code is linked for 0x8017A000, where the duel
+keeps its equip and fusion tables.
+
+- **Loading the module.** Each cached monster keeps its record's three
+  command words (sector 275, +0x110). These are the two stances' variant
+  commands and the primary's; the quiet load leaves the slot's own copies at
+  -1. Its stance's variant and its primary are already in its arena. When
+  its stance's command is not negative, the fight:
+  - copies the primary to 0x8013A000 and the variant to 0x8013B000, keeping
+    what was there and putting it back when the fight is over (a loaded state
+    keeps its own);
+  - clears the attacker's contexts in its arena;
+  - puts the arena's effect sheet into the attacker's soft-GPU bank: SU.MRG
+    stage 0 record (sector 0x88), palette sector 83 to (0x200,0xF4), 32
+    sectors of texels from (0x380,0). In VRAM the duel's card thumbnails sit
+    there.
+- **Running it.** The module runs through `func_800559D4(0)` inside
+  `sort_monster`'s scratch window, right after the attacker's model, so its
+  packets are chained and stamped with the attacker's bank. For the call it
+  is told the arena's world:
+  - **Time.** A module adds `Model_GetFrameStep` (`D_8009AFA3`, the VBlanks
+    the frame took) on each frame its animation index moves. That is 2 in
+    the 30 fps arena and 1 on the 60 fps field, where its clock ran at half
+    speed. Blue-Eyes, which charges from 80 to 316, fires at 324-360 and
+    fades at 500-520 (its command-0 table at module +0x38A4), never fired
+    within its 270-frame attack row. It is handed 2.
+  - **Space.** A module works at the arena's scale, around slot 0's arena
+    pose. It aims at the other slot's body centre (`field_DD0`, through
+    `Model_CopySlotU16Values`) and draws camera-facing billboards with
+    view-space sizes (`GsGetLs`, then `ReadRotMatrix`, `RotMatrix`,
+    `ScaleMatrix`, `SetRotMatrix`). So for the call:
+    - the attacker stands at the arena pose (`func_8005A4C4(slot, 0, 0, 0,
+      0)`, scale 1);
+    - both body centres go through the inverse of its field root matrix T
+      (`field_D18`: rotation times its scale s, then its position);
+    - `GsWSMATRIX` (`D_800FE148`, which the port's `GsGetLs` reads too) is
+      WS T scaled by 1/s. That keeps the field's screen positions at the
+      arena's depth, so a billboard comes out s times its arena size, as the
+      monster does. With WS T alone the billboards came out at arena size,
+      seven times too big for a monster drawn at 552/4096.
+  - **Camera.** Its camera requests are refused (`D_8009B07B`/`D_8009B07C`).
+  - **Reactions.** The reactions it would start in slot 1 go with the copy
+    of the defender put there for the call. For a direct attack, the copy's
+    body centre is the empty zone across.
+- **Timing.** The module's answer times the fight:
+  - its first 4, 3 or 1 lands the attacker's blow (or the end of the attack
+    row, if it never says);
+  - until it answers 2, or has run 900 frames, the attacker stays where it
+    struck, the camera stays in and the battle is held.
+  - Blue-Eyes lands 165 frames into the module and is over at 336. Man-eating
+    Plant lands at 74 and is over at 118.
+- **The counter.** A defender that strikes back does it as before.
+
+Checked on the timeline with 60 attackers (`battle_test` 1, 75, and every
+twelfth card from 3 to 699). Each of the 52 monsters has a module; each
+lands its blow 21 to 266 frames in and is over by frame 397, and every
+battle ends. The 8 cards that are not monsters fight no fight. The smoke
+case `duel-3d-monsters-attack-effects` is Blue-Eyes' White Lightning
+mid-beam (frame 20320). The two field fight cases set `effects` off, so
+their frames are as before.
+
 ### Images from the disc
 
 `python tools/pc/extract_images.py [family ...]` writes the game's images

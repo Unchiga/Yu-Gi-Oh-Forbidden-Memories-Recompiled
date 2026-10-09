@@ -87,6 +87,8 @@
 #include "game/duel_apply_card_object_flags.h"
 #include "game/duel_card_record_lifecycle.h"
 #include "game/display_object_motion.h"
+#include "game/model_control.h"
+#include "game/model_transfer_flags.h"
 #include "pc/compat/gte.h"
 #include "pc/render/packets.h"
 #include "pc/render/soft_gpu.h"
@@ -154,6 +156,8 @@ static const struct {
 
 #define SECTOR 2048
 #define RECORD_SECTORS MODEL_MRG_SECTOR_COUNT
+#define META_SECTOR 275     /* the record's last sector: sounds, then the */
+#define META_COMMANDS 0x110 /* command words, the stance variants' and the primary's */
 /* Models kept loaded, least recently drawn replaced first. The field has
  * ten monster zones, and with fewer entries than that a field of nine or ten
  * different monsters missed on every draw: all of them were loaded again from
@@ -184,6 +188,7 @@ typedef struct {
     int battle_x, battle_y, battle_z;
     int battle_ox, battle_oy; /* its outline's middle and foot on the screen */
     int fade;      /* 0 opaque to 255 gone, as it is drawn now */
+    s32 commands[3]; /* its control modules' command words (effect_begin) */
     u32 packet_bytes; /* the most its packets have taken in one sort */
 } Monster;
 
@@ -211,6 +216,7 @@ typedef struct {
 } Summon;
 static Summon summons[SUMMON_ZONES];
 static void attack_finish(void);
+static void module_dropped(void);
 /* The field fight has the duel camera, which was as in fight_view
  * (draw_fighters). */
 static int fight_moved;
@@ -225,6 +231,7 @@ static void reset(void)
     dimmed[0] = dimmed[1] = NULL; /* a state was loaded over them */
     memset(summons, 0, sizeof(summons));
     fight_moved = 0; /* the state brought its own camera */
+    module_dropped();  /* and its own RAM where a module ran */
     attack_finish();
     FieldArt_Reset();
 }
@@ -481,6 +488,9 @@ static int load_monster(Monster *monster, int card, int position)
 
     slot->field_DE8 = (s32)(monster->arena + ARENA_DATA_A);
     slot->field_DEC = (s32)(monster->arena + ARENA_DATA_B);
+    /* The quiet load leaves the slot's command words at -1, so no module
+     * runs; the record's own are kept for the attack's effects. */
+    memcpy(monster->commands, record + META_SECTOR * SECTOR + META_COMMANDS, sizeof(monster->commands));
     monster->slot = *slot;
     monster->card = card;
     monster->position = position;
@@ -673,6 +683,13 @@ static int packets_fit(const Monster *monster)
     return 0;
 }
 
+/* The attacker whose control module plays its effects (effect_run, with the
+ * fight below), run right after its model is sorted, while the scratch table
+ * is live, so the effects' packets go with the model's and draw from its
+ * texture bank. */
+static Monster *effect_monster;
+static void effect_run(void);
+
 static void sort_monster(Monster *monster, GsOT *into, int at)
 {
     const u32 *from = (const u32 *)(uintptr_t)D_800FE240;
@@ -692,6 +709,9 @@ static void sort_monster(Monster *monster, GsOT *into, int at)
     end = tags[0] & LINK_MASK; /* what entry 0 leads to: the table's tail */
     D_800E9D98[0] = table;
     func_800540B4(0);
+    if (monster == effect_monster) {
+        effect_run();
+    }
     D_800E9D98[0] = live;
     if (D_800FE240 - (u32)(uintptr_t)from > monster->packet_bytes) {
         monster->packet_bytes = D_800FE240 - (u32)(uintptr_t)from;
@@ -1357,6 +1377,11 @@ typedef struct {
     int head[DUEL_SIDE_COUNT][2];   /* the top middle of its outline on the screen, last drawn */
     int headed[DUEL_SIDE_COUNT];    /* head has been measured */
     int conclude;                   /* update_battle ends the battle at its next call */
+    /* The attacker's module (effect_begin, with `effects`): */
+    int effect_started;             /* it has been set going */
+    int effect_hit;                 /* it has said the blow lands */
+    int effect_done;                /* it has said it is over */
+    int effect_frames;              /* frames it has been called since it started */
 } Attack;
 static Attack attack;
 
@@ -1552,7 +1577,13 @@ static void attack_side(int side, ModelSlot *slot, int yaw)
     striking = ((attack.phase == ATTACK_FIRST && side == 0) || (attack.phase == ATTACK_COUNTER && side == 1)) &&
                attack.row[side] == slot->field_DFE + 3;
     if (striking) {
-        if (progress >= 1 && !attack.landed) {
+        /* With the attacker's module playing, its first blow lands when the
+         * module says so, or at the end of the row if it never does. */
+        int due = progress >= 1;
+        if (side == 0 && attack.phase == ATTACK_FIRST && attack.stage == STAGE_FIELD && effect_monster) {
+            due = attack.effect_hit || progress == 2;
+        }
+        if (due && !attack.landed) {
             attack.landed = 1;
             attack_landed(side);
         }
@@ -1618,9 +1649,12 @@ static void fight_restore(void)
 
 /* When the presentation is over, or the big cards take over from the field:
  * the fighters' entries go, and the next fight starts afresh. */
+static void effect_end(void);
+
 static void attack_finish(void)
 {
     int i;
+    effect_end();
     fight_restore();
     for (i = 0; i < CACHE; i++) {
         if (cache[i].tag) {
@@ -2045,6 +2079,232 @@ static int fight_turn(int dx, int dz)
     return turn * share / 100;
 }
 
+/* The attacker's own effects (`effects`, on the field fight). The arena's
+ * beams, flashes and particles come from each monster's control module, a
+ * retail MIPS overlay the port interprets (notes/pc-build.md, MIPS-only
+ * effects). Its primary goes to 0x8013A000 and its stance's variant to
+ * 0x8013B000, the addresses slot 0's copies are linked for; what was there
+ * is kept and put back when the fight is over. Its contexts are in its
+ * arena. It draws from the arena's effect sheet, which the duel's card
+ * thumbnails cover in VRAM, so the sheet goes into the attacker's bank.
+ *
+ * It is called the arena's way (func_800559D4), but told the arena's world:
+ * - time: on each frame its animation index moves it adds Model_GetFrameStep,
+ *   the VBlanks a frame took: 2 in the 30 fps arena, 1 on the 60 fps field,
+ *   where it ran at half speed and Blue-Eyes never fired. It is handed 2.
+ * - space: it works at the arena's scale around slot 0's arena pose, aims at
+ *   the other slot's body centre (field_DD0, through
+ *   Model_CopySlotU16Values) and draws camera-facing billboards sized in
+ *   view space. So for the call the attacker stands at that pose, both body
+ *   centres are carried into it through the inverse of its field root matrix
+ *   T (field_D18: rotation times its scale s, and its position), and the
+ *   world-screen matrix (GsWSMATRIX, which GsGetLs reads too) is WS T scaled
+ *   by 1/s: the field's screen positions at the arena's depth, so everything
+ *   comes out s times its arena size, as the monster does.
+ * - camera: its camera requests are refused (D_8009B07B and D_8009B07C).
+ * Its answer (field_E0E) times the fight: 4, 3 or 1, the blow lands; 2, it
+ * is over. The reactions it starts in slot 1 go with the copy put there for
+ * the call: the fight plays the defender's own. */
+#define MODULE_AREA 0x8013A000u
+#define MODULE_SPAN 0x6000u
+#define MODULE_PRIMARY_BYTES 0x1000u  /* to MODULE_AREA */
+#define MODULE_VARIANT_BYTES 0x5000u  /* to MODULE_AREA + MODULE_PRIMARY_BYTES */
+#define SU_STAGE_RECORD 0x88          /* stage 0's record in SU.MRG */
+#define SHEET_PALETTE 83              /* its effect sheet: the palette sector, */
+#define SHEET_SECTORS 33              /* then 32 of texels */
+#define SHEET_X 0x380
+#define SHEET_PALETTE_X 0x200
+#define SHEET_PALETTE_Y 0xF4
+#define ARENA_STEP 2
+#define EFFECT_LIMIT 900              /* the most frames the fight waits for a module */
+#define EFFECT_OVER 2                 /* field_E0E: the module is done, or not going */
+#define EFFECT_SETUP 6                /* field_E0E before the attack row */
+
+static u8 module_saved[MODULE_SPAN];
+static int module_held;
+static u8 effect_sheet[SHEET_SECTORS * SECTOR];
+static int effect_sheet_state; /* 0 not read yet, 1 read, -1 not there */
+static Monster *effect_defender;
+
+extern u8 D_8009AFA3; /* the VBlanks the last frame took: Model_GetFrameStep */
+
+/* A loaded state brought its own RAM: what was kept is not put back. */
+static void module_dropped(void)
+{
+    module_held = 0;
+}
+
+static void effect_end(void)
+{
+    if (module_held) {
+        memcpy((void *)(uintptr_t)MODULE_AREA, module_saved, MODULE_SPAN);
+        module_held = 0;
+    }
+    effect_monster = effect_defender = NULL;
+}
+
+static int effect_sheet_ready(void)
+{
+    int su;
+    if (effect_sheet_state) {
+        return effect_sheet_state > 0;
+    }
+    su = host->disc_file_start(host, "\\DATA\\SU.MRG;1");
+    effect_sheet_state = su >= 0 && host->disc_read(host, su + SU_STAGE_RECORD + SHEET_PALETTE, SHEET_SECTORS,
+                                                    effect_sheet) == SHEET_SECTORS ? 1 : -1;
+    say("effect sheet %s\n", effect_sheet_state > 0 ? "read" : "missing");
+    return effect_sheet_state > 0;
+}
+
+/* At fight_begin: the attacker's modules into place, its commands on, its
+ * contexts cleared and the effect sheet in its bank. */
+static void effect_begin(Monster *attacker, Monster *defender)
+{
+    ModelControlCommandView *view = (ModelControlCommandView *)&attacker->slot;
+    u16 *bank = SoftGpu_Bank(attacker->bank);
+    int i;
+
+    if (!tunable("effects", 1) || attacker->commands[attacker->position] < 0 || !bank || !effect_sheet_ready()) {
+        return;
+    }
+    if (!module_held) {
+        memcpy(module_saved, (const void *)(uintptr_t)MODULE_AREA, MODULE_SPAN);
+        module_held = 1;
+    }
+    memcpy((void *)(uintptr_t)MODULE_AREA, attacker->arena + ARENA_PRIMARY, MODULE_PRIMARY_BYTES);
+    memcpy((void *)(uintptr_t)(MODULE_AREA + MODULE_PRIMARY_BYTES), attacker->arena + ARENA_VARIANT,
+           MODULE_VARIANT_BYTES);
+    memset(attacker->arena + ARENA_DATA_A, 0, ARENA_SIZE - ARENA_DATA_A);
+    for (i = 0; i < 3; i++) {
+        view->commands[i] = attacker->commands[i];
+    }
+    bank_put(bank, SHEET_PALETTE_X, SHEET_PALETTE_Y, 0x100, 2, (const u16 *)effect_sheet);
+    for (i = 0; i < SHEET_SECTORS - 1; i++) {
+        bank_put(bank, SHEET_X + (i / 16) * 0x40, (i % 16) * 0x10, 0x40, 0x10,
+                 (const u16 *)(effect_sheet + (i + 1) * SECTOR));
+    }
+    effect_monster = attacker;
+    effect_defender = defender;
+    say("effect: card %d, commands %d %d %d\n", attacker->card, attacker->commands[0], attacker->commands[1],
+        attacker->commands[2]);
+}
+
+/* A field point into the attacker's arena space: T^-1, with T rotation times
+ * uniform scale, then its position. */
+static void effect_to_arena(const MATRIX *t, s16 *p)
+{
+    double d[3], s2 = 0, out;
+    int i, k;
+    for (i = 0; i < 3; i++) {
+        d[i] = (double)p[i] - t->t[i];
+        s2 += (double)t->m[i][0] * t->m[i][0];
+    }
+    s2 /= 4096.0 * 4096.0;
+    for (i = 0; i < 3; i++) {
+        out = 0;
+        for (k = 0; k < 3; k++) {
+            out += t->m[k][i] / 4096.0 * d[k];
+        }
+        p[i] = (s16)(out / (s2 > 0 ? s2 : 1));
+    }
+}
+
+/* The world-screen matrix the module is handed: WS T, scaled by 1/s. */
+static void effect_view(const MATRIX *ws, const MATRIX *t, MATRIX *m)
+{
+    double s2 = 0, k;
+    int i, j, n;
+    for (i = 0; i < 3; i++) {
+        s2 += (double)t->m[i][0] * t->m[i][0];
+    }
+    k = s2 > 0 ? 4096.0 / sqrt(s2) : 1;
+    for (i = 0; i < 3; i++) {
+        double tt = 0;
+        for (j = 0; j < 3; j++) {
+            double v = 0;
+            for (n = 0; n < 3; n++) {
+                v += (double)ws->m[i][n] * t->m[n][j];
+            }
+            m->m[i][j] = (s16)(v / 4096.0 * k);
+            tt += (double)ws->m[i][j] * t->t[j];
+        }
+        m->t[i] = (int)((tt / 4096.0 + ws->t[i]) * k);
+    }
+}
+
+static void effect_run(void)
+{
+    static ModelSlot kept; /* slot 1, put back after the call */
+    ModelSlot *slot = &D_800F2C40[0], *other = &D_800F2C40[1];
+    GsCOORDUNIT *root = (GsCOORDUNIT *)(uintptr_t)slot->field_D18;
+    MATRIX field_root, ws = D_800FE148;
+    SVECTOR field_rot;
+    s16 own[4];
+    u8 camera = D_8009B07B, camera_too = D_8009B07C, step = D_8009AFA3;
+    int i, state;
+
+    if (!root || attack.stage != STAGE_FIELD || attack.phase == ATTACK_IDLE) {
+        return;
+    }
+    kept = *other;
+    *other = effect_defender ? effect_defender->slot : *slot;
+    if (!effect_defender) {
+        other->field_DD0[0] = (s16)attack.home[1][0]; /* the zone across, at its height */
+        other->field_DD0[2] = (s16)attack.home[1][1];
+    }
+    field_root = root->matrix;
+    field_rot = root->rot;
+    for (i = 0; i < 4; i++) {
+        own[i] = slot->field_DD0[i];
+    }
+    effect_view(&ws, &field_root, &D_800FE148);
+    effect_to_arena(&field_root, slot->field_DD0);
+    effect_to_arena(&field_root, other->field_DD0);
+    forget_coordinates(slot);
+    func_8005A4C4(slot, 0, 0, 0, 0);
+    D_8009B07B = D_8009B07C = 1;
+    D_8009AFA3 = ARENA_STEP;
+
+    func_800559D4(0);
+
+    D_8009AFA3 = step;
+    D_8009B07B = camera;
+    D_8009B07C = camera_too;
+    D_800FE148 = ws;
+    root->rot = field_rot;
+    root->matrix = field_root;
+    forget_coordinates(slot);
+    for (i = 0; i < 4; i++) {
+        slot->field_DD0[i] = own[i];
+    }
+    *other = kept;
+
+    state = slot->field_E0E;
+    if (state != EFFECT_OVER && state != EFFECT_SETUP && !attack.effect_started) {
+        attack.effect_started = 1;
+    }
+    if (!attack.effect_started) {
+        return;
+    }
+    attack.effect_frames++;
+    if (!attack.effect_hit && (state == 4 || state == 3 || state == 1)) {
+        attack.effect_hit = 1;
+        say("effect: card %d lands after %d frames\n", effect_monster->card, attack.effect_frames);
+    }
+    if (!attack.effect_done && state == EFFECT_OVER) {
+        attack.effect_done = 1;
+        say("effect: card %d over after %d frames\n", effect_monster->card, attack.effect_frames);
+    }
+}
+
+/* The fight waits for the attacker's module: until it is over, it has run
+ * EFFECT_LIMIT frames, or the attack row ended without it ever starting. */
+static int effect_busy(void)
+{
+    return effect_monster && attack.stage == STAGE_FIELD && !attack.effect_done &&
+           attack.effect_frames < EFFECT_LIMIT && (attack.effect_started || attack.phase != ATTACK_OVER);
+}
+
 /* At the call step 2 makes the big cards in, with the field up. */
 static void fight_begin(void)
 {
@@ -2103,6 +2363,7 @@ static void fight_begin(void)
     attack.phase = ATTACK_FIRST;
     attack.outcome = fight_outcome();
     fight_tally();
+    effect_begin(attacker, defender);
     attack.holding = 1;
     say("fight: case %d, record %d against %d, from %d,%d to %d,%d, %d short\n", attack.outcome,
         attack.record[0], attack.record[1], attack.home[0][0], attack.home[0][1], attack.strike[0], attack.strike[1],
@@ -2375,7 +2636,7 @@ static int draw_fighters(void)
         int home = fell || attack.back >= FIGHT_CHARGE;
         /* On the field alone the camera stays in, and the attacker where it
          * struck, until the destroyed have gone. */
-        int waiting = alone && fight_going();
+        int waiting = (alone && fight_going()) || effect_busy();
         if (!home && !attack.row[0] && !waiting) {
             attack.back++;
         }
@@ -2383,7 +2644,7 @@ static int draw_fighters(void)
             attack.closing++;
         }
         if (home && attack.closing >= FIGHT_CAMERA && (!attack.row[0] || attack.still[0]) &&
-            (!attack.row[1] || attack.still[1]) && (!alone || fight_settled())) {
+            (!attack.row[1] || attack.still[1]) && (!alone || fight_settled()) && !effect_busy()) {
             fight_restore();
             attack.holding = 0;
             attack.conclude = alone;

@@ -1911,7 +1911,7 @@ fit and place their own cutout or model by the same target height, lift,
 field-pitch threshold and depth offset, so one setting means the same thing
 either way, and `field_art.c` simply reads the settings `field_models.c`
 already declares rather than repeating them. Everything else belongs to one
-style alone: `scale`, `battle`, `battle_pixels`, `battle_dim`, `attack` and `attack_speed` are 3D
+style alone: `scale`, `battle`, `battle_pixels`, `battle_dim`, `attack`, `attack_speed` and `effects` are 3D
 models only (down to their own labels saying so in the manifest); `glow` and
 the rest are Card art only, the same way. One more, `test`, is read but not
 declared, so the window does not show it: `MEMORIES_MOD_3D_MONSTERS_TEST=<card>` stands a

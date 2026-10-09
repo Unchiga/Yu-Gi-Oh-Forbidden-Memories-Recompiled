@@ -111,6 +111,13 @@
             "description": "How fast the attack and the reactions play, in percent of the 3D arena's speed: 100 is the arena's own pace."
         },
         {
+            "key": "effects",
+            "label": "Attack effects (3D models)",
+            "type": "bool",
+            "default": 1,
+            "description": "In the fight on the field, the attacker's own effects from the 3D arena: its beams, flashes and particles, sized to the field, and the blow lands when they reach the defender. Only in the 3D models style."
+        },
+        {
             "key": "summon",
             "label": "Anime summon (3D models)",
             "type": "bool",
