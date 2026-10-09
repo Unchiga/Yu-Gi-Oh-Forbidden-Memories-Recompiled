@@ -58,6 +58,7 @@
 #define DUEL_SCREEN_TABLES_TYPED_POSITIONS
 #include "game/duel_screen_tables.h"
 #include "game/view_state.h"
+#include "game/view_state_orbit.h"
 #include "game/graphics_frame.h"
 #include "game/graphics_frame_buffer.h"
 #define MODEL_SLOT_SETUP_EXPLICIT_TRANSFER_ARGS
@@ -69,6 +70,7 @@
 #include "game/model_control_slot_animation.h"
 #include "game/model_slot_state_updates.h"
 #include "game/duel_scene_battle.h"
+#include "game/duel_battle_stats.h"
 #include "game/func_8005922C.h"
 #include "game/func_80058DD8.h"
 #include "game/file_transfer.h"
@@ -205,6 +207,10 @@ typedef struct {
 } Summon;
 static Summon summons[SUMMON_ZONES];
 static void attack_finish(void);
+/* The field fight has the duel camera, which was as in fight_view
+ * (draw_fighters). */
+static int fight_moved;
+static ViewState fight_view;
 
 static void reset(void)
 {
@@ -214,6 +220,7 @@ static void reset(void)
     }
     dimmed[0] = dimmed[1] = NULL; /* a state was loaded over them */
     memset(summons, 0, sizeof(summons));
+    fight_moved = 0; /* the state brought its own camera */
     attack_finish();
     FieldArt_Reset();
 }
@@ -1042,12 +1049,25 @@ extern u8 D_8009B174;          /* the battle's step, in the low nibble */
 extern u16 D_8009B178[2];      /* the two cards' saved flags */
 extern s8 D_8009B1B9;          /* the side whose card is destroyed */
 extern u8 D_8009B229;          /* the battle goes on to the 3D arena */
+extern s16 D_8009B22A;         /* the trap that springs, 0 none */
 extern MATRIX D_800FE128, D_800FE148; /* GsLIGHTWSMATRIX, GsWSMATRIX */
 
-/* The attack (attack_begin and the rest, before draw_battle): with `battle`. */
+/* `attack` is a choice: off, on the attack cards, on the field, or both, one
+ * bit each; the 1 stored when it was a bool on or off is the cards. */
+#define ATTACK_CARDS 1
+#define ATTACK_FIELD 2
+
+/* The attack on the big cards (attack_begin and the rest, before
+ * draw_battle): with `battle`. */
 static int attack_on(void)
 {
-    return tunable("attack", 1);
+    return tunable("attack", ATTACK_CARDS) & ATTACK_CARDS;
+}
+
+/* The attack on the field (fight_begin and the rest, before draw_frame). */
+static int fight_on(void)
+{
+    return (tunable("attack", ATTACK_CARDS) & ATTACK_FIELD) && !tunable("style", 0);
 }
 
 /* The battle sets up its projection once and draws its damage numbers and
@@ -1263,12 +1283,14 @@ static int battle_lost(int side)
  * entries of their own (tag side + 1), dropped when the presentation ends.
  * Only the models' own rows play: the arena's particles and sounds come from
  * each monster's control module and sound bank, which are never loaded here. */
+#define BATTLE_STEP_PRESENT 2     /* the big cards are made (held here for the field) */
 #define BATTLE_STEP_EXCHANGE 7    /* the damage numbers start from here */
 #define ROW_ATTACK (-1)           /* field_DFE + 3 of the slot it is played on */
 #define ROW_IDLE 1
 #define ROW_WITHSTAND 5
 #define ROW_HIT 6
 #define ROW_GUARD 8
+#define MODEL_ROW_STOPPED 0x23    /* field_E16 of a row that has stopped */
 #define ATTACK_HOLD_LIMIT 1200    /* the most frames the battle is held */
 /* Percent of the arena's own speed (8 units of a row a VBlank there and
  * here alike). The arena's blows take 1.3 to 4.5 seconds to land and a
@@ -1278,17 +1300,33 @@ static int battle_lost(int side)
 
 enum { CASE_DESTROYED = 1, CASE_BLOCKED, CASE_COUNTER, CASE_TIE, CASE_DIRECT };
 enum { ATTACK_IDLE, ATTACK_FIRST, ATTACK_COUNTER, ATTACK_OVER };
+/* Where it is played: the field at step 2, then the big cards at step 7. */
+enum { STAGE_CARDS = 1, STAGE_FIELD };
 
 typedef struct {
+    int stage;
     int phase, outcome, frames;
-    int holding;                    /* update_battle waits at step 7 */
+    int holding;                    /* update_battle waits */
+    int held;                       /* the calls it has waited through */
     int landed;                     /* the blow being struck has landed */
+    int struck;                     /* the last blow has landed */
+    int still[DUEL_SIDE_COUNT];     /* destroyed: held on its hit row's last frame */
     int measured[DUEL_SIDE_COUNT];  /* rest and speed taken */
     int rest[DUEL_SIDE_COUNT][3];   /* the body's mean at rest, 1:1 */
     int speed[DUEL_SIDE_COUNT];     /* the slot's own field_E0D */
     int row[DUEL_SIDE_COUNT];       /* the row it plays, 0 none */
     int want[DUEL_SIDE_COUNT];      /* the row to start next, 0 none */
     int last[DUEL_SIDE_COUNT];      /* its field_E06 last frame, -1 before the row has begun */
+    /* On the field: */
+    int record[DUEL_SIDE_COUNT];    /* the card's record, -1 none */
+    int home[DUEL_SIDE_COUNT][2];   /* its zone's x and z */
+    int yaw[DUEL_SIDE_COUNT];       /* turned to face the other */
+    int strike[2];                  /* where the attacker strikes from */
+    int back;                       /* frames into the attacker's way home */
+    int closing;                    /* frames into the camera's way back */
+    int at[2];                      /* where the attacker was drawn */
+    int gap;                        /* field units from body to body when it strikes */
+    int turn;                       /* the camera's swing, all the way in */
 } Attack;
 static Attack attack;
 
@@ -1331,6 +1369,19 @@ static void body_mean(ModelSlot *slot, int yaw, int mean[3])
     }
 }
 
+/* The last blow has landed, and no other is coming (a monster that was hit
+ * may never finish the row it was striking with): the hold on the big cards
+ * lets go at once, the one on the field once the attacker is home
+ * (draw_fighters). */
+static void attack_struck(void)
+{
+    attack.struck = 1;
+    attack.phase = ATTACK_OVER;
+    if (attack.stage == STAGE_CARDS) {
+        attack.holding = 0;
+    }
+}
+
 /* Start `row` on side `side`'s slot, which is in D_800F2C40[0]. */
 static void attack_play(int side, ModelSlot *slot, int row)
 {
@@ -1350,7 +1401,7 @@ static void attack_play(int side, ModelSlot *slot, int row)
     if (!slot->field_750[row].max) {
         attack.row[side] = 0;
         if (attack.phase == ATTACK_COUNTER && side == 1) {
-            attack.holding = 0; /* no attack row to answer with */
+            attack_struck(); /* no attack row to answer with */
             attack.phase = ATTACK_OVER;
         }
         return;
@@ -1375,7 +1426,12 @@ static int attack_progress(int side, const ModelSlot *slot)
         return attack.last[side] >= 0 ? 2 : 0;
     }
     length = slot->field_750[row].max << 4;
-    progress = at >= length || (attack.last[side] >= 0 && at < attack.last[side]) ? 2 : at >= length / 2 ? 1 : 0;
+    /* The hit row stops itself a step short of its end (func_800556E8). */
+    progress = at >= length || slot->field_E16 == MODEL_ROW_STOPPED ||
+                       (attack.last[side] >= 0 && at < attack.last[side])
+                   ? 2
+               : at >= length / 2 ? 1
+                                  : 0;
     attack.last[side] = at;
     return progress;
 }
@@ -1386,26 +1442,26 @@ static void attack_landed(int side)
     switch (attack.outcome) {
     case CASE_DESTROYED:
         attack.want[1] = ROW_HIT;
-        attack.holding = 0;
+        attack_struck();
         break;
     case CASE_BLOCKED:
         attack.want[1] = ROW_GUARD;
-        attack.holding = 0;
+        attack_struck();
         break;
     case CASE_TIE:
         attack.want[0] = attack.want[1] = ROW_HIT;
-        attack.holding = 0;
+        attack_struck();
         break;
     case CASE_COUNTER:
         if (side == 0) {
             attack.want[1] = ROW_WITHSTAND;
         } else {
             attack.want[0] = ROW_HIT;
-            attack.holding = 0;
+            attack_struck();
         }
         break;
     default: /* direct */
-        attack.holding = 0;
+        attack_struck();
         break;
     }
     say("attack: side %d's blow lands (case %d) after %d frames\n", side, attack.outcome, attack.frames);
@@ -1433,6 +1489,7 @@ static void attack_begin(Monster *const monsters[DUEL_SIDE_COUNT])
         return; /* no attack row: the battle goes on as ever */
     }
     memset(&attack, 0, sizeof(attack));
+    attack.stage = STAGE_CARDS;
     attack.phase = ATTACK_FIRST;
     attack.outcome = attack_outcome();
     attack.holding = 1;
@@ -1479,6 +1536,7 @@ static void attack_side(int side, ModelSlot *slot, int yaw)
          * its card burns and it goes. */
         func_800597C8(0, ROW_HIT, slot->field_750[ROW_HIT].max - 1);
         slot->field_E0D = 0;
+        attack.still[side] = 1;
     } else if (progress == 2 && side == 1 && attack.phase == ATTACK_FIRST && attack.outcome == CASE_COUNTER) {
         attack_counter();
     } else if (progress == 2 && !attack.want[side]) {
@@ -1492,15 +1550,14 @@ static void attack_side(int side, ModelSlot *slot, int yaw)
  * small monster stands on its card several times enlarged, so a reaction
  * threw it off the screen. The attacker still lunges towards the other card
  * and the one hit still recoils, both near their own. */
-static void attack_drift(int side, ModelSlot *slot, int yaw, int scale, int drift[3])
+static void attack_drift(int side, ModelSlot *slot, int yaw, int scale, int keep, int limit, int drift[3])
 {
-    int keep = tunable("attack_drift", ATTACK_DRIFT), limit, now[3], axis;
+    int now[3], axis;
     drift[0] = drift[1] = drift[2] = 0;
     if (attack.phase == ATTACK_IDLE || !attack.measured[side]) {
         return;
     }
     keep = keep < 0 ? 0 : keep > 100 ? 100 : keep;
-    limit = BATTLE_CARD_WIDTH / 2 * BATTLE_DISTANCE / BATTLE_PROJECTION;
     body_mean(slot, yaw, now);
     for (axis = 0; axis < 3; axis++) {
         int full = (now[axis] - attack.rest[side][axis]) * scale / MODEL_FIXED_ONE;
@@ -1510,11 +1567,26 @@ static void attack_drift(int side, ModelSlot *slot, int yaw, int scale, int drif
     }
 }
 
-/* When the presentation is over: the big cards' entries go, and the next
- * battle starts afresh. */
+/* The duel camera back where the field fight found it. */
+static void fight_restore(void)
+{
+    if (fight_moved) {
+        D_800F2848.field_00 = fight_view.field_00;
+        D_800F2848.angle = fight_view.angle;
+        D_800F2848.view.vrx = fight_view.view.vrx;
+        D_800F2848.view.vry = fight_view.view.vry;
+        D_800F2848.view.vrz = fight_view.view.vrz;
+        ViewState_ApplyOrbit();
+        fight_moved = 0;
+    }
+}
+
+/* When the presentation is over, or the big cards take over from the field:
+ * the fighters' entries go, and the next fight starts afresh. */
 static void attack_finish(void)
 {
     int i;
+    fight_restore();
     for (i = 0; i < CACHE; i++) {
         if (cache[i].tag) {
             cache[i].card = 0;
@@ -1523,14 +1595,32 @@ static void attack_finish(void)
     memset(&attack, 0, sizeof(attack));
 }
 
-/* DuelScene_UpdateBattle, held at step 7 while a blow is on its way. */
+/* DuelScene_UpdateBattle, held while a fight is on: at step 7 while a blow is
+ * on its way to a big card, or at step 2, before the big cards are made, while
+ * the two fight on the field. Each held call counts towards the limit, so the
+ * battle goes on whatever the drawing does. */
 static void *original_battle;
+
+static int battle_held(void)
+{
+    if (!attack.holding || attack.held >= ATTACK_HOLD_LIMIT || tunable("style", 0)) {
+        return 0;
+    }
+    if (attack.stage == STAGE_FIELD) {
+        return D_8009B174 == BATTLE_STEP_PRESENT && fight_on();
+    }
+    return (D_8009B174 & 0xF) == BATTLE_STEP_EXCHANGE && attack_on() && tunable("battle", 0);
+}
 
 static void update_battle(void)
 {
-    if (attack.holding && attack.frames < ATTACK_HOLD_LIMIT && (D_8009B174 & 0xF) == BATTLE_STEP_EXCHANGE &&
-        attack_on() && tunable("battle", 0) && !tunable("style", 0)) {
+    if (battle_held()) {
+        attack.held++;
         return;
+    }
+    if (attack.stage == STAGE_FIELD && attack.holding) {
+        fight_restore(); /* let go early: the limit, or the setting changed */
+        attack.holding = 0;
     }
     if (original_battle) {
         ((void (*)(void))original_battle)();
@@ -1580,8 +1670,14 @@ static int draw_battle(void)
         }
     }
     if (!count) {
-        attack_finish();
+        if (attack.stage != STAGE_FIELD) {
+            attack_finish();
+        }
         return 0;
+    }
+    /* The big cards take over from the fight on the field. */
+    if (attack.stage == STAGE_FIELD) {
+        attack_finish();
     }
     frame++;
     inside = 1;
@@ -1620,7 +1716,8 @@ static int draw_battle(void)
                         cards[side]->field_30.h.field_32 + BATTLE_CARD_FEET - monster->battle_oy, &wx, &wy);
         *slot = monster->slot;
         attack_side(side, slot, yaw);
-        attack_drift(side, slot, yaw, monster->battle_scale, drift);
+        attack_drift(side, slot, yaw, monster->battle_scale, tunable("attack_drift", ATTACK_DRIFT),
+                     BATTLE_CARD_WIDTH / 2 * BATTLE_DISTANCE / BATTLE_PROJECTION, drift);
         place(slot, wx - monster->battle_x + drift[0], wy - monster->battle_y + drift[1],
               -monster->battle_z + drift[2], yaw, monster->battle_scale);
         at = cards[side]->field_14 - (int)table->offset - BATTLE_DEPTH_STEPS;
@@ -1687,6 +1784,313 @@ static int eased(int progress)
     return MODEL_FIXED_ONE - rest * rest / MODEL_FIXED_ONE;
 }
 
+/* The attack on the field (`attack` 2 or 3, fight_on). The quick battle lifts
+ * both field cards in its first call (their records lose
+ * DUEL_CARD_FLAG_OCCUPIED, and each card's display object becomes
+ * D_800E9EF0[side], field_6A its record) and flies them up to the screen while
+ * its own camera comes back from overhead to the view the duel is played
+ * from. Step 1 ends there, and the next call makes the big cards: the battle
+ * is held at that call while the two fight on the field. The cards in the air
+ * are hidden, as step 2 hides them itself a little later; both monsters grow
+ * on their zones, face to face, a face-down one shown as it is about to be;
+ * the attacker crosses to just short of the defender, strikes as on the big
+ * cards (attack_side), and goes home again unless it was destroyed. Once both
+ * have done the battle goes on, and the two stay where they are until the
+ * field fades out behind the big cards. The outcome is not stored until step
+ * 3, but it is func_8001EFD4's, which only reads (the CPU calls it for its
+ * field scans). */
+#define FIELD_TAG 3      /* the fighters' entries: side + FIELD_TAG */
+#define FIGHT_APPEAR 12  /* frames the two take to grow on their zones */
+#define FIGHT_CHARGE 20  /* frames the attacker takes to cross, and to go home */
+#define FIGHT_DRIFT 35   /* field units of the body's shift at most: half a zone */
+/* The arena stands both models on one point facing each other, each body
+ * its own way from it (raw_z), and an attack row is made to reach across that
+ * gap: the attacker strikes from as far from the defender as the two bodies
+ * would be in the arena at its own scale (fight_reach percent of it), and
+ * while it plays an attack row all of its body's shift shows, up to that
+ * gap, so one that runs in reaches the other and one that stretches out does
+ * not overshoot it. */
+#define FIGHT_REACH 100
+/* The duel's camera comes in on the two over FIGHT_CAMERA frames, to
+ * FIGHT_ZOOM percent of its distance, aimed between the attacker, wherever it
+ * is, and the defender, FIGHT_RISE field units over the mat, and swung
+ * FIGHT_TURN percent of the way round to seeing the two side on; it goes back
+ * the same way while the attacker goes home. Nothing of the game moves the
+ * camera then: it only re-applies the orbit while one of its own camera
+ * moves runs, and the last one ended with step 1. */
+#define FIGHT_ZOOM 60
+#define FIGHT_TURN 60
+#define FIGHT_RISE 48
+#define FIGHT_CAMERA 24
+
+static int fight_outcome(void)
+{
+    int forced = tunable("attack_test", 0), result;
+    if (!D_800E9EF0[1]) {
+        return CASE_DIRECT;
+    }
+    if (forced >= CASE_DESTROYED && forced <= CASE_TIE) {
+        return forced;
+    }
+    /* As step 3 reads it into D_8009B1B0. */
+    result = func_8001EFD4(D_800E9EF0[0], D_800E9EF0[1]);
+    if (result > 0) {
+        return CASE_DESTROYED;
+    }
+    if (result == 0) {
+        return CASE_BLOCKED;
+    }
+    if (result == -1) {
+        return CASE_TIE;
+    }
+    return (D_8009B178[1] & DUEL_CARD_FLAG_DEFENSE_POSITION) ? CASE_BLOCKED : CASE_COUNTER;
+}
+
+/* The yaw that faces a model along (dx, dz) on the mat: at 0 it faces the
+ * player's edge, -z. */
+static int yaw_towards(int dx, int dz)
+{
+    int yaw = (int)(atan2((double)-dx, (double)-dz) * MODEL_ANGLE_HALF_TURN / M_PI);
+    return yaw < 0 ? yaw + MODEL_ANGLE_FULL_TURN : yaw;
+}
+
+/* The monster a fighter's card shows, in its stance, or NULL. */
+static Monster *fighter(int side)
+{
+    int index = attack.record[side], id;
+    const DuelCardRecord *card;
+    if (index < 0) {
+        return NULL;
+    }
+    if (tunable("battle_test", 0)) {
+        return acquire(tunable("battle_test", 0) + side * tunable("battle_test_step", 1), 0, side + FIELD_TAG);
+    }
+    card = &D_801A7AD8[index];
+    id = card->card_id;
+    if (id <= 0 || ((gDuel_adwCardStats[id - 1] >> 0x1A) & 0x1F) >= 0x14) {
+        return NULL;
+    }
+    return acquire(Cards_ModelId(id), (card->flags & DUEL_CARD_FLAG_DEFENSE_POSITION) ? 1 : 0, side + FIELD_TAG);
+}
+
+/* The camera's swing towards seeing a fight along (dx, dz) side on. It looks
+ * along (cos angle, sin angle) on the mat (ViewState_ApplyOrbit), so side on
+ * is the line's own angle a quarter turn either way: the nearer of the two. */
+static int fight_turn(int dx, int dz)
+{
+    int line = (int)(atan2((double)dz, (double)dx) * MODEL_ANGLE_HALF_TURN / M_PI), turn, share;
+    turn = (line + MODEL_ANGLE_QUARTER_TURN - D_800F2848.angle) & (MODEL_ANGLE_FULL_TURN - 1);
+    /* Either side on is a half turn from the other: the nearer is within a
+     * quarter turn of where the camera is. */
+    turn = (turn + MODEL_ANGLE_QUARTER_TURN) % MODEL_ANGLE_HALF_TURN - MODEL_ANGLE_QUARTER_TURN;
+    share = tunable("fight_turn", FIGHT_TURN);
+    share = share < 0 ? 0 : share > 100 ? 100 : share;
+    return turn * share / 100;
+}
+
+/* At the call step 2 makes the big cards in, with the field up. */
+static void fight_begin(void)
+{
+    const ModelSlot *slot;
+    Monster *attacker, *defender;
+    int side, dx, dz, length, reach;
+
+    if (attack.phase != ATTACK_IDLE || !fight_on() || D_8009B229 || D_8009B22A || !D_800E9EF0[0] ||
+        (gDuel_wSceneStateFlags & DUEL_SCENE_PHASE_MASK) != DUEL_SCENE_BATTLE ||
+        D_8009B174 != BATTLE_STEP_PRESENT) {
+        return;
+    }
+    memset(&attack, 0, sizeof(attack));
+    for (side = 0; side < DUEL_SIDE_COUNT; side++) {
+        DisplayObject *card = D_800E9EF0[side];
+        attack.record[side] = card ? card->field_6A : -1;
+        if (card) {
+            attack.home[side][0] = D_800908A0[card->field_6A].x;
+            attack.home[side][1] = D_800908A0[card->field_6A].y;
+        }
+    }
+    attacker = fighter(0);
+    defender = attack.record[1] >= 0 ? fighter(1) : NULL;
+    slot = attacker ? &attacker->slot : NULL;
+    if (!slot || !slot->field_750[slot->field_DFE + 3].max || (D_800E9EF0[1] && !defender)) {
+        memset(&attack, 0, sizeof(attack));
+        attack.stage = STAGE_FIELD; /* not this battle: the cards go on as ever */
+        attack.phase = ATTACK_OVER;
+        attack.record[0] = attack.record[1] = -1;
+        return;
+    }
+    /* With no defender it goes for the zone straight across. */
+    if (attack.record[1] < 0) {
+        attack.home[1][0] = attack.home[0][0];
+        attack.home[1][1] = -attack.home[0][1];
+    }
+    dx = attack.home[1][0] - attack.home[0][0];
+    dz = attack.home[1][1] - attack.home[0][1];
+    length = (int)sqrt((double)dx * dx + (double)dz * dz);
+    reach = abs(attacker->raw_z) + abs(defender ? defender->raw_z : attacker->raw_z);
+    reach = reach * attacker->scale / MODEL_FIXED_ONE * tunable("fight_reach", FIGHT_REACH) / 100;
+    reach = reach < 0 ? 0 : reach > length ? length : reach;
+    attack.gap = reach;
+    attack.strike[0] = length ? attack.home[1][0] - dx * reach / length : attack.home[0][0];
+    attack.strike[1] = length ? attack.home[1][1] - dz * reach / length : attack.home[0][1];
+    attack.yaw[0] = yaw_towards(dx, dz);
+    attack.yaw[1] = yaw_towards(-dx, -dz);
+    attack.turn = fight_turn(dx, dz);
+    for (side = 0; side < DUEL_SIDE_COUNT; side++) {
+        if (D_800E9EF0[side]) {
+            D_800E9EF0[side]->flags &= ~DISPLAY_OBJECT_FLAG_RENDERABLE;
+        }
+    }
+    fight_view = D_800F2848;
+    attack.stage = STAGE_FIELD;
+    attack.phase = ATTACK_FIRST;
+    attack.outcome = fight_outcome();
+    attack.holding = 1;
+    say("fight: case %d, record %d against %d, from %d,%d to %d,%d, %d short\n", attack.outcome,
+        attack.record[0], attack.record[1], attack.home[0][0], attack.home[0][1], attack.strike[0], attack.strike[1],
+        attack.gap);
+}
+
+/* p^2 (3 - 2p), in MODEL_FIXED_ONE units: slow, fast, slow. */
+static int smooth(int progress)
+{
+    return progress * progress / MODEL_FIXED_ONE * (3 * MODEL_FIXED_ONE - 2 * progress) / MODEL_FIXED_ONE;
+}
+
+/* Where the attacker is along its way, from its zone (0) to its strike
+ * (MODEL_FIXED_ONE). */
+static int fight_along(void)
+{
+    int t = attack.frames - FIGHT_APPEAR;
+    if (attack.back) {
+        return MODEL_FIXED_ONE - smooth(attack.back * MODEL_FIXED_ONE / FIGHT_CHARGE);
+    }
+    return t <= 0 ? 0 : t >= FIGHT_CHARGE ? MODEL_FIXED_ONE : smooth(t * MODEL_FIXED_ONE / FIGHT_CHARGE);
+}
+
+/* The camera for the next frame: the mat is drawn before this pass, so the
+ * monsters this frame have to be seen as the mat was. */
+static void fight_camera(void)
+{
+    int zoom = tunable("fight_zoom", FIGHT_ZOOM), share;
+    int mid_x = (attack.at[0] + attack.home[1][0]) / 2, mid_z = (attack.at[1] + attack.home[1][1]) / 2;
+    zoom = zoom < 20 ? 20 : zoom > 100 ? 100 : zoom;
+    if (attack.closing) {
+        share = MODEL_FIXED_ONE - smooth((attack.closing < FIGHT_CAMERA ? attack.closing : FIGHT_CAMERA) *
+                                         MODEL_FIXED_ONE / FIGHT_CAMERA);
+    } else {
+        share = smooth((attack.frames < FIGHT_CAMERA ? attack.frames : FIGHT_CAMERA) * MODEL_FIXED_ONE /
+                       FIGHT_CAMERA);
+    }
+    D_800F2848.field_00 =
+        (s16)(fight_view.field_00 - fight_view.field_00 * (100 - zoom) / 100 * share / MODEL_FIXED_ONE);
+    D_800F2848.angle = (s16)((fight_view.angle + attack.turn * share / MODEL_FIXED_ONE) & (MODEL_ANGLE_FULL_TURN - 1));
+    D_800F2848.view.vrx = fight_view.view.vrx + (mid_x - fight_view.view.vrx) * share / MODEL_FIXED_ONE;
+    D_800F2848.view.vry = fight_view.view.vry - FIGHT_RISE * share / MODEL_FIXED_ONE;
+    D_800F2848.view.vrz = fight_view.view.vrz + (mid_z - fight_view.view.vrz) * share / MODEL_FIXED_ONE;
+    ViewState_ApplyOrbit();
+    fight_moved = 1;
+}
+
+/* draw_monster, with the fight's rows and drift and any yaw. */
+static void draw_fighter(int side, Monster *monster, int x, int z, int share, int fade, int lifted)
+{
+    ModelSlot *slot = &D_800F2C40[0];
+    int yaw = attack.yaw[side], scale = monster->scale * share / MODEL_FIXED_ONE, drift[3];
+    double turn = yaw * M_PI / MODEL_ANGLE_HALF_TURN, c = cos(turn), s = sin(turn);
+    int body_x = monster->body_x * share / MODEL_FIXED_ONE;
+    int body_y = monster->body_y * share / MODEL_FIXED_ONE;
+    int body_z = monster->body_z * share / MODEL_FIXED_ONE;
+
+    *slot = monster->slot;
+    attack_side(side, slot, yaw);
+    if (attack.row[side] && attack.row[side] == slot->field_DFE + 3) {
+        attack_drift(side, slot, yaw, scale, 100, attack.gap, drift);
+    } else {
+        attack_drift(side, slot, yaw, scale, tunable("attack_drift", ATTACK_DRIFT), FIGHT_DRIFT, drift);
+    }
+    /* The body offset was measured facing the player's edge; it turns with
+     * the monster. */
+    place(slot, x - (int)(c * body_x + s * body_z) + drift[0], -body_y - lifted + drift[1],
+          z - (int)(c * body_z - s * body_x) + drift[2], yaw, scale);
+    monster->fade = fade;
+    sort_monster(monster, (GsOT *)D_800E9D98[0], -1);
+    monster->fade = 0;
+    if (!monster->stepped) {
+        func_800556E8(0);
+        monster->stepped = 1;
+    }
+    monster->slot = *slot;
+    monster->used = frame;
+}
+
+/* The fight's frame, in draw_frame's pass for the field; how many it drew. */
+static int draw_fighters(void)
+{
+    Monster *monsters[DUEL_SIDE_COUNT];
+    int side, count = 0, along, share = MODEL_FIXED_ONE, fade = 0, lifted = lift();
+
+    if (attack.stage != STAGE_FIELD || attack.phase == ATTACK_IDLE) {
+        return 0;
+    }
+    if (attack.frames < FIGHT_APPEAR) {
+        int progress = attack.frames * MODEL_FIXED_ONE / FIGHT_APPEAR, grown = eased(progress);
+        share = SUMMON_FROM + (MODEL_FIXED_ONE - SUMMON_FROM) * grown / MODEL_FIXED_ONE;
+        fade = 255 - 255 * progress / MODEL_FIXED_ONE;
+        lifted = lifted * grown / MODEL_FIXED_ONE;
+    }
+    if (attack.frames == FIGHT_APPEAR + FIGHT_CHARGE && attack.phase == ATTACK_FIRST) {
+        attack.want[0] = ROW_ATTACK; /* arrived */
+    }
+    along = fight_along();
+    for (side = 0; side < DUEL_SIDE_COUNT; side++) {
+        monsters[side] = attack.record[side] >= 0 ? fighter(side) : NULL;
+        if (monsters[side]) {
+            monsters[side]->stepped = 0;
+        }
+    }
+    for (side = 0; side < DUEL_SIDE_COUNT; side++) {
+        int x = attack.home[side][0], z = attack.home[side][1];
+        if (!monsters[side]) {
+            continue;
+        }
+        if (side == 0) {
+            x += (attack.strike[0] - x) * along / MODEL_FIXED_ONE;
+            z += (attack.strike[1] - z) * along / MODEL_FIXED_ONE;
+            attack.at[0] = x;
+            attack.at[1] = z;
+        }
+        draw_fighter(side, monsters[side], x, z, share, fade, lifted);
+        count++;
+    }
+    attack.frames++;
+    if (!attack.holding) {
+        return count;
+    }
+    /* Once the blows are over and its row has ended the attacker goes home,
+     * unless it was destroyed, and the camera goes back; the battle goes on
+     * when both have done. */
+    if (attack.phase == ATTACK_OVER) {
+        int fell = attack.outcome == CASE_COUNTER || attack.outcome == CASE_TIE;
+        int home = fell || attack.back >= FIGHT_CHARGE;
+        if (!home && !attack.row[0]) {
+            attack.back++;
+        }
+        if (attack.closing < FIGHT_CAMERA && (fell || !attack.row[0])) {
+            attack.closing++;
+        }
+        if (home && attack.closing >= FIGHT_CAMERA && (!attack.row[0] || attack.still[0]) &&
+            (!attack.row[1] || attack.still[1])) {
+            fight_restore();
+            attack.holding = 0;
+            say("fight: over after %d frames\n", attack.frames);
+            return count;
+        }
+    }
+    fight_camera();
+    return count;
+}
+
 static void draw_frame(void)
 {
     static ModelSlot borrowed;
@@ -1697,6 +2101,10 @@ static void draw_frame(void)
 
     if (inside) {
         return;
+    }
+    if (attack.stage == STAGE_FIELD &&
+        (gDuel_wSceneStateFlags & DUEL_SCENE_PHASE_MASK) != DUEL_SCENE_BATTLE) {
+        attack_finish(); /* the battle is over */
     }
     /* Card art has no battle-presentation equivalent (draw_battle, the
      * models standing on the attack cards): style gates it out here,
@@ -1841,6 +2249,10 @@ static void draw_frame(void)
         if (summon->elapsed < 0xFFFFu) {
             summon->elapsed++;
         }
+    }
+    if (field) {
+        fight_begin();
+        count += draw_fighters();
     }
 
     D_800F2C40[0] = borrowed;

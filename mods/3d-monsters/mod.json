@@ -94,10 +94,11 @@
         },
         {
             "key": "attack",
-            "label": "Monsters attack on the attack cards (3D models)",
-            "type": "bool",
+            "label": "Monsters attack (3D models)",
+            "type": "choice",
             "default": 1,
-            "description": "With the monsters on the attack cards, the attacker strikes and the defender reacts as in the 3D arena: it is hit, it guards, or, when the attacker is weaker, it strikes back. The battle waits for the blow before it shows the damage. Only in the 3D models style."
+            "choices": ["Off", "On the attack cards", "On the field", "Both"],
+            "description": "The attacker strikes and the defender reacts as in the 3D arena: it is hit, it guards, or, when the attacker is weaker, it strikes back. On the attack cards needs the monsters on the attack cards. On the field, before the attack cards come up, the attacker crosses the field to the defender's zone, strikes and goes back. The battle waits for the blows before it shows the damage. Only in the 3D models style."
         },
         {
             "key": "attack_speed",

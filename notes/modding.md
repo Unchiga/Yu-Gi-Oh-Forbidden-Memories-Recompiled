@@ -1917,8 +1917,12 @@ the rest are Card art only, the same way. One more, `test`, is read but not
 declared, so the window does not show it: `MEMORIES_MOD_3D_MONSTERS_TEST=<card>` stands a
 different monster in every zone from that card on, for measuring the cache
 and the arenas. `attack_test` (1-4, forcing the attack's destroyed, guarded,
-counter or tie case) and `attack_drift` (the percent of a monster's shift the
-attack keeps) are read the same way.
+counter or tie case), `attack_drift` (the percent of a monster's shift the
+attack keeps), and, for the attack on the field, `fight_zoom` (the percent of
+the camera's distance it comes in to), `fight_turn` (the percent of the way to
+a side-on view it swings) and `fight_reach` (the percent of the arena's gap
+the attacker strikes from) are read the same way. `attack` is a choice (off,
+the attack cards, the field, both); the 1 it stored as a bool is the cards.
 
 **A mod with a "style"-like choice setting** (more than one whole presentation,
 picked by one setting, the way 3D Monsters' two styles are): a setting or a
