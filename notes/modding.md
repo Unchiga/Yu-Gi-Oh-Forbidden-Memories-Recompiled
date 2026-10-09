@@ -1923,6 +1923,8 @@ the camera's distance it comes in to), `fight_turn` (the percent of the way to
 a side-on view it swings) and `fight_reach` (the percent of the arena's gap
 the attacker strikes from) are read the same way. `attack` is a choice (off,
 the attack cards, the field, both); the 1 it stored as a bool is the cards.
+On the field alone ends the battle on the field, with no attack cards
+(notes/pc-build.md, "On the field alone").
 
 **A mod with a "style"-like choice setting** (more than one whole presentation,
 picked by one setting, the way 3D Monsters' two styles are): a setting or a

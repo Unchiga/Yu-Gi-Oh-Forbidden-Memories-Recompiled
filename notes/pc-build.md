@@ -1617,6 +1617,53 @@ frame on the same timeline for every case with `attack_test`: the fight takes
 270 frames there (355 for the counter). The smoke case
 `duel-3d-monsters-attack-field` is the bite on the field (frame 20155).
 
+**On the field alone.** With `attack` on the field and not both, the big
+cards never come up: the fight ends the battle itself.
+
+- Each blow shows what the card it struck would have shown, as it lands.
+  Step 3's `D_8009B1B0` and `D_8009B1A4` are worked out ahead from the same
+  `func_8001EFD4` result. A side left untouched shows nothing; any other gets
+  step 8's damage effect (request id 2: `field_12` the number, `field_1A`
+  its size by thousands, at most 2) and its sound (0x10 plus the size, 0xD
+  plus it on the attacker's side). One struck for nothing gets the flash
+  alone, as the effect itself does with 0.
+- A direct attack's number is step 9's in its plain form: size 0-2, not the
+  burst of 3-5.
+- The effect adds its colour to whatever is under it, so over a pale monster
+  the digits all but vanished. Each number goes above the head of the monster
+  it is for, against the dark behind the fight; a direct attack's goes over
+  the middle of the screen, above the attacker. The head is the top of the
+  outline its packets covered when it was last drawn (`packet_height`), and
+  the number is kept whole on the 320-pixel screen.
+- A destroyed monster goes over 16 frames once its hit row has stopped: the
+  summon run backwards, with the burning card's sound (0x1B). Until it has
+  gone, the camera stays in and the attacker stays where it struck. While the
+  camera goes back, both turn to the way their zones face.
+- The battle is let go once every number has run (its request no longer
+  `DUEL_EFFECT_REQUEST_FLAG_ACTIVE`) and every destroyed monster has gone.
+  At the next call, still at step 2, the hook ends it:
+  - Step 3 runs as the game's own, with `D_8009B174 = 3 | 0x80` so its
+    fade-out counts as begun and the field stays up. It takes the life points
+    (`Mods_DamageLife`) and counts the ranks. Like step 3, this waits out any
+    screen fade (`D_800E9ECE[0]` bit 7), or no life points would be taken.
+  - What step 11 does first follows: each card that was not destroyed goes
+    back on its zone (`func_80024D34`, the saved 0xA00 flags, 0x4000 on the
+    attacker, the saved modifiers, `Duel_ApplyCardObjectFlags`), and its
+    summon is marked done, so its monster stands at once where the fighter
+    stood.
+  - The two lifted cards are released, the panels slide back to 0xC and
+    0x118 (`func_8001ED20`) and count to the new life points, and the scene
+    goes to state 5.
+  - A destroyed card's record stays empty, as after its card burns.
+
+Checked on the timeline with each real outcome, forced by a test mod at step
+1 that changes the cards' modifiers and positions. Destroyed with 2300
+damage, counter (-1700 to the player), tie, guarded with 1400 to the player,
+guarded for nothing and a direct attack for 800 all end on the field with
+the life points step 3 takes. The smoke case
+`duel-3d-monsters-attack-field-end` is the turn after the battle (frame
+20400): the attacker back on its zone, face up.
+
 ### Images from the disc
 
 `python tools/pc/extract_images.py [family ...]` writes the game's images

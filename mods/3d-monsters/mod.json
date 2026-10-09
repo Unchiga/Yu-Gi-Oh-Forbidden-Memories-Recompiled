@@ -98,7 +98,7 @@
             "type": "choice",
             "default": 1,
             "choices": ["Off", "On the attack cards", "On the field", "Both"],
-            "description": "The attacker strikes and the defender reacts as in the 3D arena: it is hit, it guards, or, when the attacker is weaker, it strikes back. On the attack cards needs the monsters on the attack cards. On the field, before the attack cards come up, the attacker crosses the field to the defender's zone, strikes and goes back. The battle waits for the blows before it shows the damage. Only in the 3D models style."
+            "description": "The attacker strikes and the defender reacts as in the 3D arena: it is hit, it guards, or, when the attacker is weaker, it strikes back. On the attack cards needs the monsters on the attack cards. On the field, the attacker crosses the field to the defender's zone, strikes and goes back; the damage shows over the monster struck, a destroyed monster fades away, and the attack cards do not come up. Both plays it on the field, then on the attack cards. The battle waits for the blows before it shows the damage. Only in the 3D models style."
         },
         {
             "key": "attack_speed",
