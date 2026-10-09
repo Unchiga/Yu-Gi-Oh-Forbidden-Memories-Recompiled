@@ -534,14 +534,21 @@ static void forget_coordinates(ModelSlot *slot)
     }
 }
 
-static void place(ModelSlot *slot, int x, int y, int z, int yaw, int scale)
+/* `height` of its scale upright (MODEL_FIXED_ONE is all of it). */
+static void place_flat(ModelSlot *slot, int x, int y, int z, int yaw, int scale, int height)
 {
     VECTOR size;
     forget_coordinates(slot);
     func_8005A4C4(slot, x, y, z, yaw);
-    size.vx = size.vy = size.vz = scale;
+    size.vx = size.vz = scale;
+    size.vy = scale * height / MODEL_FIXED_ONE;
     size.pad = 0;
     func_8005922C(slot->field_D18, &size);
+}
+
+static void place(ModelSlot *slot, int x, int y, int z, int yaw, int scale)
+{
+    place_flat(slot, x, y, z, yaw, scale, MODEL_FIXED_ONE);
 }
 
 /* Point a run of freshly sorted packets at a monster's texture bank: bits
@@ -884,22 +891,25 @@ static int lift(void)
 
 /* `share` of its fitted size (MODEL_FIXED_ONE is the whole), faded by `fade`
  * (0 opaque to 255 gone) and `lifted` field units above the card: the summon
- * grows it from its card; whole, opaque and at lift() it is drawn as ever. */
-static void draw_monster(Monster *monster, int x, int z, int yaw, int share, int fade, int lifted)
+ * grows it from its card; whole, opaque and at lift() it is drawn as ever.
+ * Sorted at its own depth, or at entry `at` when that is not negative (over a
+ * flat card on the overhead field). */
+static void draw_monster(Monster *monster, int x, int z, int yaw, int share, int fade, int lifted, int at,
+                         int height)
 {
     ModelSlot *slot = &D_800F2C40[0];
     int turned = yaw == MODEL_ANGLE_HALF_TURN;
     int body_x = monster->body_x * share / MODEL_FIXED_ONE;
-    int body_y = monster->body_y * share / MODEL_FIXED_ONE;
+    int body_y = monster->body_y * share / MODEL_FIXED_ONE * height / MODEL_FIXED_ONE;
     int body_z = monster->body_z * share / MODEL_FIXED_ONE;
 
     *slot = monster->slot;
     /* The body offset was measured facing up the field, so turning the
      * monster turns it too. */
-    place(slot, turned ? x + body_x : x - body_x, -body_y - lifted,
-          turned ? z + body_z : z - body_z, yaw, monster->scale * share / MODEL_FIXED_ONE);
+    place_flat(slot, turned ? x + body_x : x - body_x, -body_y - lifted,
+               turned ? z + body_z : z - body_z, yaw, monster->scale * share / MODEL_FIXED_ONE, height);
     monster->fade = fade;
-    sort_monster(monster, (GsOT *)D_800E9D98[0], -1);
+    sort_monster(monster, (GsOT *)D_800E9D98[0], at);
     monster->fade = 0;
     if (!monster->stepped) {
         func_800556E8(0);
@@ -917,6 +927,34 @@ static void draw_monster(Monster *monster, int x, int z, int yaw, int share, int
  * played from) and put their own panels on the screen, and a monster
  * standing on a card has nothing to stand on there. */
 #define FIELD_PITCH 512
+
+/* With `board` the monsters stay on past FIELD_PITCH, through the tilt up to
+ * the field seen from overhead, where a zone or an attack is chosen and the
+ * cards are drawn flat on the screen (record flag 0x400, func_80015DFC), and
+ * there too: through the same camera, so each is seen from above facing the
+ * way it faces on the field, and it stands on its flat card, which the duel
+ * projects to that very spot. That camera comes much nearer, so from
+ * FIELD_PITCH each monster shrinks with the pitch, to `board_size` percent
+ * looking straight down (TILT_PITCH), which keeps it over its own card. */
+#define TILT_PITCH 1024
+#define BOARD_SIZE 50
+/* Seen from above, the parts of a tall monster nearest the camera fall
+ * outwards from the middle of the screen, off its card at the field's edges;
+ * its height is flattened with the pitch, to BOARD_HEIGHT looking straight
+ * down, where height does not show. */
+#define BOARD_HEIGHT (MODEL_FIXED_ONE / 2)
+#define DUEL_CARD_FLAG_SPRITE 0x400
+/* When the overhead view slides from one side's cards to the other's, a card
+ * goes under the panel across the foot of the screen (its top at
+ * BOARD_PANEL_TOP), and its monster, bigger than the card, would stick out
+ * above it: one whose flat card is that far down (its corner, kept in the
+ * record at 0x08 and 0x0A, plus BOARD_CARD_FEET) is left out. */
+#define BOARD_CARD_FEET 0x26
+#define BOARD_PANEL_TOP 0xAC
+/* A flat card goes into the model table at its display object's priority
+ * (func_80016784, GsSortFastSprite); its monster goes BOARD_DEPTH_STEPS
+ * nearer, over it, as draw_battle puts one over a big card. */
+#define BOARD_DEPTH_STEPS 2
 
 static int duel_field_up(void)
 {
@@ -939,6 +977,7 @@ typedef struct {
     Monster *monster;
     int x, z, yaw;
     int summon; /* its zone in summons[] */
+    int at;     /* its ordering-table entry, or -1 for its own depth */
 } Standing;
 
 /* The five monster zones of a side, in card-record order. */
@@ -1341,7 +1380,8 @@ static void draw_frame(void)
     static ModelSlot borrowed;
     Standing standing[DUEL_SIDE_COUNT * MONSTER_ZONES];
     u32 work_base;
-    int count = 0, i, side, zone, summoning, frames;
+    int count = 0, i, side, zone, summoning, frames, field, overhead, board_share = MODEL_FIXED_ONE;
+    int height = MODEL_FIXED_ONE;
 
     if (inside) {
         return;
@@ -1360,11 +1400,24 @@ static void draw_frame(void)
     if (draw_battle()) {
         return;
     }
-    if (!duel_field_up()) {
+    field = duel_field_up();
+    overhead = !field && tunable("board", 1) && D_800E9DB0[3] == Duel_DrawFieldCards &&
+               D_800F2C40[2].field_E1F != 0;
+    if (!field && !overhead) {
         return;
     }
     frame++;
     inside = 1;
+    if (overhead) {
+        int from = tunable("pitch", FIELD_PITCH), pitch = D_800F2848.field_04;
+        int size = tunable("board_size", BOARD_SIZE), toward;
+        size = size < 10 ? 10 : size > 100 ? 100 : size;
+        toward = pitch <= from ? 0 : pitch >= TILT_PITCH ? MODEL_FIXED_ONE
+                                                         : (pitch - from) * MODEL_FIXED_ONE / (TILT_PITCH - from);
+        board_share = MODEL_FIXED_ONE - (MODEL_FIXED_ONE - size * MODEL_FIXED_ONE / 100) * toward / MODEL_FIXED_ONE;
+        height = MODEL_FIXED_ONE - (MODEL_FIXED_ONE - BOARD_HEIGHT) * toward / MODEL_FIXED_ONE;
+        keep_geometry(0); /* the pass never used to draw here: leave the GTE as found */
+    }
     borrowed = D_800F2C40[0];
     work_base = D_800FE240;
     scratch = &D_800A5768[GsGetActiveBuff() * GRAPHICS_PACKET_BUFFER_SIZE];
@@ -1404,6 +1457,10 @@ static void draw_frame(void)
                 summon->y = card->object ? (s16)((DisplayObject *)card->object)->field_30.h.field_32 : 0;
                 summon->elapsed = 0;
             }
+            if (overhead && (card->flags & DUEL_CARD_FLAG_SPRITE) &&
+                *(const s16 *)&card->pad_08[2] + BOARD_CARD_FEET > BOARD_PANEL_TOP) {
+                continue; /* its card has gone under the panel */
+            }
             /* A card a card mod added stands as the retail card it is a
              * copy of: MODEL.MRG has the disc's monsters only. */
             if (!tunable("test", 0)) {
@@ -1442,6 +1499,12 @@ static void draw_frame(void)
              * player's showing their backs for the opponent's turn. */
             standing[count].yaw = side == DUEL_SIDE_PLAYER ? MODEL_ANGLE_HALF_TURN : 0;
             standing[count].summon = side * MONSTER_ZONES + zone;
+            standing[count].at = -1;
+            if (overhead && (card->flags & DUEL_CARD_FLAG_SPRITE) && card->object) {
+                int at = (int)((DisplayObject *)card->object)->field_14 - (int)((GsOT *)D_800E9D98[0])->offset -
+                         BOARD_DEPTH_STEPS;
+                standing[count].at = at < 0 ? 0 : at;
+            }
             count++;
         }
     }
@@ -1459,7 +1522,10 @@ static void draw_frame(void)
             fade = 255 - 255 * progress / MODEL_FIXED_ONE;
             lifted = lifted * grown / MODEL_FIXED_ONE;
         }
-        draw_monster(standing[i].monster, standing[i].x, standing[i].z, standing[i].yaw, share, fade, lifted);
+        share = share * board_share / MODEL_FIXED_ONE;
+        lifted = lifted * board_share / MODEL_FIXED_ONE;
+        draw_monster(standing[i].monster, standing[i].x, standing[i].z, standing[i].yaw, share, fade, lifted,
+                     standing[i].at, height);
         if (summon->elapsed < 0xFFFFu) {
             summon->elapsed++;
         }
@@ -1469,7 +1535,11 @@ static void draw_frame(void)
     if (!count) {
         D_800FE240 = work_base;
     }
-    SetGeomOffset(0, 0);
+    if (overhead) {
+        keep_geometry(1);
+    } else {
+        SetGeomOffset(0, 0);
+    }
     inside = 0;
 }
 
