@@ -2038,10 +2038,12 @@ static void fight_tally(void)
 }
 
 /* The yaw that faces a model along (dx, dz) on the mat: at 0 it faces the
- * player's edge, -z. */
+ * player's edge, -z. The fight's angles use the game's own fixed-point
+ * trigonometry (ratan2, rsin, rcos) rather than the C library's, whose last
+ * bits differ between systems: a frame is the same on every one. */
 static int yaw_towards(int dx, int dz)
 {
-    int yaw = (int)(atan2((double)-dx, (double)-dz) * MODEL_ANGLE_HALF_TURN / M_PI);
+    int yaw = (int)ratan2(-dx, -dz);
     return yaw < 0 ? yaw + MODEL_ANGLE_FULL_TURN : yaw;
 }
 
@@ -2069,7 +2071,7 @@ static Monster *fighter(int side)
  * is the line's own angle a quarter turn either way: the nearer of the two. */
 static int fight_turn(int dx, int dz)
 {
-    int line = (int)(atan2((double)dz, (double)dx) * MODEL_ANGLE_HALF_TURN / M_PI), turn, share;
+    int line = (int)ratan2(dz, dx), turn, share;
     turn = (line + MODEL_ANGLE_QUARTER_TURN - D_800F2848.angle) & (MODEL_ANGLE_FULL_TURN - 1);
     /* Either side on is a half turn from the other: the nearer is within a
      * quarter turn of where the camera is. */
@@ -2418,7 +2420,7 @@ static void draw_fighter(int side, Monster *monster, int x, int z, int share, in
 {
     ModelSlot *slot = &D_800F2C40[0];
     int yaw = attack.yaw[side], scale = monster->scale * share / MODEL_FIXED_ONE, drift[3];
-    double turn = facing * M_PI / MODEL_ANGLE_HALF_TURN, c = cos(turn), s = sin(turn);
+    double c = rcos(facing) / (double)MODEL_FIXED_ONE, s = rsin(facing) / (double)MODEL_FIXED_ONE;
     int body_x = monster->body_x * share / MODEL_FIXED_ONE;
     int body_y = monster->body_y * share / MODEL_FIXED_ONE;
     int body_z = monster->body_z * share / MODEL_FIXED_ONE;
