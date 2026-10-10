@@ -19,6 +19,7 @@ int (*TextureDump_Prepare)(int page_x, int page_y, int depth, int clut_x, int cl
 uint32_t (*TextureDump_Recall)(const uint16_t *pixels, size_t words);
 void (*TextureDump_Restored)(void);
 int (*TextureDump_Sample)(int page_x, int page_y, int depth, int u, int v, uint32_t *rgb);
+int (*TextureDump_BankSample)(int bank, int page_x, int page_y, int depth, int u, int v, uint32_t *rgb);
 void (*TextureDump_Forget)(int x, int y, int w, int h);
 void (*TextureDump_Follow)(int sx, int sy, int dx, int dy, int w, int h);
 static char directory[1024];

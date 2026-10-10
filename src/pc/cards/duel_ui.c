@@ -21,6 +21,7 @@
 #include "pc/platform/settings.h"
 #include "pc/platform/ui_config.h"
 #include "pc/render/soft_gpu.h"
+#include "pc/render/texture_pack.h"
 #include "types.h"
 #include "psyq/libgte.h"
 #include "psyq/libgpu.h"
@@ -58,6 +59,7 @@ static const UiConfig *config;
 
 typedef struct {
     int made, ready, w, h;         /* made: tried for this w x h */
+    int png_w, png_h;
     int x, y, clut_y;              /* its place in the bank (words) and its palette's row */
 } BankPicture;
 /* Each element's at the console's resolution and above it, at up to SIZES
@@ -72,6 +74,7 @@ void DuelUi_Prepare(void)
 {
     int band;
     config = UiConfig_Load();
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_DUEL_UI);
     memset(pictures, 0, sizeof(pictures));
     for (band = 0; band < 2; band++) {
         shelves[band].x = SHELF_X;
@@ -265,6 +268,7 @@ static const BankPicture *picture(int which, int w, int h, int hd)
         if (size->made && size->w == w * factor && size->h == h * factor) return size->ready ? size : NULL;
         if (!size->made && !picture) picture = size;
     }
+    if (!CardArt_ImageSize(image->file, &png_w, &png_h)) return NULL;
     if (!picture) {
         Mods_Note(image->mod, "ui: %s is drawn at more than %d sizes", image->file, SIZES);
         return NULL;
@@ -278,12 +282,14 @@ static const BankPicture *picture(int which, int w, int h, int hd)
         return NULL;
     }
     /* Above the console's resolution only when the PNG has the detail. */
-    if (hd && (!CardArt_ImageSize(image->file, &png_w, &png_h) || (png_w <= w && png_h <= h))) return NULL;
+    if (hd && png_w <= w && png_h <= h) return NULL;
     if (cluts == CLUT_ROWS || !shelve(picture->w, picture->h, &picture->x, &picture->y)) {
         Mods_Note(image->mod, "ui: no room left for %s", image->file);
         return NULL;
     }
     picture->clut_y = CLUT_ROW + cluts++;
+    picture->png_w = png_w;
+    picture->png_h = png_h;
     if (!(bank = SoftGpu_Bank(BANK)) || !(texels = malloc((size_t)picture->w * picture->h))) return NULL;
     if (!CardArt_IndexedImage(image->file, picture->w, picture->h, texels, clut, why, sizeof(why))) {
         if (!hd) Mods_Note(image->mod, "ui: %s", why);
@@ -342,6 +348,10 @@ static int draw_picture(int which, int x, int y, int w, int h, const Place *plac
     for (left = 0; left < bank_picture->w; left += STRIP) {
         int width = bank_picture->w - left < STRIP ? bank_picture->w - left : STRIP;
         int word = bank_picture->x + left / 2;
+        int page_x = word & ~(PAGE_WORDS - 1);
+        int page_y = bank_picture->y & ~(BAND - 1);
+        int source_x = left * bank_picture->png_w / bank_picture->w;
+        int source_x1 = (left + width) * bank_picture->png_w / bank_picture->w;
         strip.tpage = (u16)(getTPage(1, 0, word, bank_picture->y & ~(BAND - 1)) | (BANK << 11));
         strip.x0 = strip.x2 = (short)(x0 + (x1 - x0) * left / bank_picture->w);
         strip.x1 = strip.x3 = (short)(x0 + (x1 - x0) * (left + width) / bank_picture->w);
@@ -352,6 +362,10 @@ static int draw_picture(int which, int x, int y, int w, int h, const Place *plac
         strip.v0 = strip.v1 = (u8)(bank_picture->y & (BAND - 1));
         strip.v2 = strip.v3 = (u8)((bank_picture->y & (BAND - 1)) + bank_picture->h > 255
                                        ? 255 : (bank_picture->y & (BAND - 1)) + bank_picture->h);
+        TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_DUEL_UI);
+        TexturePack_AddBankSpriteCrop(BANK, page_x, page_y, 1, (word - page_x) * 2,
+                                      bank_picture->y & (BAND - 1), width, bank_picture->h, image->file,
+                                      source_x, 0, source_x1 - source_x, bank_picture->png_h);
         GsSortPoly(&strip, (GsOT *G32)ot, (u16)depth);
     }
     return 1;

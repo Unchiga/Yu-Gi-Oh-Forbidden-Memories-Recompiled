@@ -66,6 +66,10 @@ int TextureDump_EnableShadow(void);
  * it is mixed over what lies beneath as much as it covers (texture_pack.c). */
 #define PACK_ALPHA_CLEAR 8
 extern int (*TextureDump_Sample)(int page_x, int page_y, int depth, int u, int v, uint32_t *rgb);
+/* The same replacement hook for a software-GPU texture bank.  Kept here,
+ * rather than in soft_gpu.c, so the core renderer does not link to the
+ * optional texture-pack implementation. */
+extern int (*TextureDump_BankSample)(int bank, int page_x, int page_y, int depth, int u, int v, uint32_t *rgb);
 /* The pack's own record of what it painted where, kept in step with the
  * words: cleared (a fill, a state load, an upload not from the disc) and
  * moved. NULL: no pack. */

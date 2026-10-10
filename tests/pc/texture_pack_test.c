@@ -10,6 +10,10 @@
 #include "pc/mods/json.h"
 #include "pc/render/texture_dump.h"
 #include "pc/render/soft_gpu.h"
+/* Tests must execute their checks in Release CI too. */
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 #include <png.h>
 #include <stdio.h>
@@ -53,6 +57,23 @@ static void make_dir(const char *relative)
     char path[1024];
     snprintf(path, sizeof(path), "%s/%s", root, relative);
     assert(!mkdir(path, 0777));
+}
+
+static void write_png(const char *relative, const unsigned char *rgba, int width, int height)
+{
+    char path[1024];
+    unsigned char encoded[1024];
+    png_alloc_size_t size = sizeof(encoded);
+    png_image png = {0};
+    FILE *file;
+    png.version = PNG_IMAGE_VERSION;
+    png.width = (png_uint_32)width;
+    png.height = (png_uint_32)height;
+    png.format = PNG_FORMAT_RGBA;
+    assert(png_image_write_to_memory(&png, encoded, &size, 0, rgba, 0, NULL) && size <= sizeof(encoded));
+    snprintf(path, sizeof(path), "%s/%s", root, relative);
+    file = fopen(path, "wb");
+    assert(file && fwrite(encoded, 1, size, file) == size && !fclose(file));
 }
 
 /* A mod whose settings are named after the catalog's own folders. */
@@ -476,6 +497,40 @@ static void duplicate_settings(void)
     TexturePack_Unload();
 }
 
+/* Bank-backed pictures have independent owners, newest-overlap priority,
+ * half-open UV bounds, and survive an ordinary texture-pack reload. */
+static void bank_sprites(void)
+{
+    static const unsigned char red[] = {255, 0, 0, 255};
+    static const unsigned char green[] = {0, 255, 0, 255};
+    char a[1024], b[1024];
+    uint32_t rgb;
+    make_dir("bank");
+    write_png("bank/a.png", red, 1, 1);
+    write_png("bank/b.png", green, 1, 1);
+    snprintf(a, sizeof(a), "%s/bank/a.png", root);
+    snprintf(b, sizeof(b), "%s/bank/b.png", root);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_STARS);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_DUEL_UI);
+    TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_STARS);
+    assert(TexturePack_AddBankSprite(14, 0, 0, 0, 0, 0, 16, 16, a));
+    assert(TexturePack_BankSample(14, 0, 0, 0, 1 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
+    TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_DUEL_UI);
+    assert(TexturePack_AddBankSprite(14, 0, 0, 0, 8, 0, 8, 16, b));
+    /* Cache the older sprite first: the overlap must still choose newer. */
+    assert(TexturePack_BankSample(14, 0, 0, 0, 1 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
+    assert(TexturePack_BankSample(14, 0, 0, 0, 10 << 16, 1 << 16, &rgb) == 1 && rgb == 0x00ff00);
+    assert(TexturePack_BankSample(14, 0, 0, 0, 1 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_DUEL_UI);
+    assert(TexturePack_BankSample(14, 0, 0, 0, 10 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
+    TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_STARS);
+    assert(TexturePack_AddBankSprite(14, 0, 0, 0, 16, 0, 16, 16, b));
+    assert(TexturePack_BankEntryForRegion(14, 0, 0, 0, 0, 0, 16, 16) == -1);
+    TexturePack_Unload();
+    assert(TexturePack_BankSample(14, 0, 0, 0, 1 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_STARS);
+}
+
 int main(void)
 {
     char path[1024], problems[256];
@@ -507,6 +562,7 @@ int main(void)
     named_folder();
     shared_word();
     duplicate_settings();
+    bank_sprites();
     field_thumbnail(0);
     field_thumbnail(1);
     made_image();
