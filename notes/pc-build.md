@@ -1401,6 +1401,12 @@ measurements make them stand right:
   are read for the height they cover. Drawing it at the square root of that
   against a middling monster keeps the order, a dragon still towering over
   Sangan, while bringing a sevenfold range down to about two and a half.
+  That root, and every other sum the mod draws from, is taken in whole
+  numbers (`isqrt`). The Linux and Windows objects do their floating point
+  on the x87 (`build_mod.py` builds them `-mno-sse`), which keeps a product
+  to 64 bits where the macOS dylib rounds it to 53: with `double`, 150
+  times a battle-card share of 0.7 was 104 there and 105 here, and
+  `duel-3d-monsters-attack` came out a different frame on each.
 
 Which way a monster faces is fixed to the side that owns its zone: the
 player's monsters face up the mat, the opponent's face down it, as the

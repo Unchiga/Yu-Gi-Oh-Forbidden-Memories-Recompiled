@@ -101,7 +101,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
 extern u8 D_8009B1D5;          /* the side the view belongs to */
 extern void *G32 D_800E9D98[]; /* D_800E9D90[2]: func_800540B4's table */
@@ -254,6 +253,30 @@ static void say(const char *format, ...)
 static int tunable(const char *key, int fallback)
 {
     return host->setting(host, key, fallback);
+}
+
+/* The whole part of the square root of `value`. Where a monster is drawn and
+ * how big is worked out in whole numbers: the Linux and Windows objects do
+ * floating point on the x87 (build_mod.py builds them -mno-sse), which keeps
+ * a product to 64 bits where the macOS one rounds it to 53, and the two came
+ * out a pixel apart -- 150 times a share of 0.7 is 105 on one and 104 on the
+ * other -- and their frames with them. */
+static u32 isqrt(u64 value)
+{
+    u64 root = 0, bit = (u64)1 << 62;
+    while (bit > value) {
+        bit >>= 2;
+    }
+    while (bit) {
+        if (value >= root + bit) {
+            value -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (u32)root;
 }
 
 /* Model_LoadMonsterMerge's own arithmetic: the three id ranges with no record
@@ -901,9 +924,10 @@ static void fit(Monster *monster)
          * a middling monster keeps the order -- a dragon still towers over
          * Sangan -- while bringing a sevenfold range down to about two and a
          * half. */
-        double natural = (double)target * MODEL_FIXED_ONE / monster->scale;
-        monster->natural = (int)natural;
-        monster->scale = (int)(MODEL_FIXED_ONE * target / sqrt(natural * MIDDLING_PIXELS));
+        monster->natural = target * MODEL_FIXED_ONE / monster->scale;
+        /* MODEL_FIXED_ONE * target / sqrt(natural * MIDDLING_PIXELS), with
+         * natural before it is rounded down, is the square root of this. */
+        monster->scale = (int)isqrt((u64)target * MODEL_FIXED_ONE * monster->scale / MIDDLING_PIXELS);
         monster->scale = monster->scale < SCALE_SMALLEST ? SCALE_SMALLEST
                        : monster->scale > SCALE_LARGEST ? SCALE_LARGEST : monster->scale;
     }
@@ -1053,8 +1077,8 @@ typedef struct {
 #define BATTLE_CARD_FEET 0xAC     /* the feet, down from the card's top edge */
 #define BATTLE_BOX_WIDTH 0x96     /* the widest a monster stands on its card */
 #define BATTLE_BACK 8             /* each stands this far back from the middle of its card */
-#define BATTLE_SMALLEST 0.7       /* the least share of that box it gets */
-#define BATTLE_LARGEST 1.6        /* and the most */
+#define BATTLE_SMALLEST 7         /* tenths: the least share of that box it gets */
+#define BATTLE_LARGEST 16         /* and the most */
 #define BATTLE_TALLEST 188        /* from the card's feet line to the top of the screen */
 #define BATTLE_DEPTH_STEPS 2
 #define BATTLE_PIXELS 160         /* a middling monster's height on its card */
@@ -1204,6 +1228,15 @@ static void measure_turned(Monster *monster, int yaw, int *x, int *y, int *z)
     *z = parts ? sum_z / parts : 0;
 }
 
+/* `size` times the square root of natural / MIDDLING_PIXELS, from
+ * BATTLE_SMALLEST to BATTLE_LARGEST tenths of `size`. */
+static int battle_box(int size, int natural)
+{
+    int least = size * BATTLE_SMALLEST / 10, most = size * BATTLE_LARGEST / 10;
+    int box = (int)isqrt((u64)size * size * (natural > 0 ? natural : 0) / MIDDLING_PIXELS);
+    return box < least ? least : box > most ? most : box;
+}
+
 /* The scale a monster stands on its big card at, once per facing, and where
  * its outline sits: it is fitted into a box the size of the card's picture
  * and print, BATTLE_BOX_WIDTH wide and `battle_pixels` high, whichever of the
@@ -1219,14 +1252,12 @@ static void battle_pose(Monster *monster, int yaw)
     ModelSlot *slot = &D_800F2C40[0];
     int pixels = tunable("battle_pixels", BATTLE_PIXELS), raw_x, raw_y, raw_z, scale = monster->scale,
         attempt, wx, wy, box_w, box_h;
-    double share = sqrt((double)monster->natural / MIDDLING_PIXELS);
 
     if (monster->battle_scale && monster->battle_yaw == yaw && monster->battle_pixels == pixels) {
         return;
     }
-    share = share < BATTLE_SMALLEST ? BATTLE_SMALLEST : share > BATTLE_LARGEST ? BATTLE_LARGEST : share;
-    box_w = (int)(BATTLE_BOX_WIDTH * share);
-    box_h = (int)(pixels * share);
+    box_w = battle_box(BATTLE_BOX_WIDTH, monster->natural);
+    box_h = battle_box(pixels, monster->natural);
     box_h = box_h > BATTLE_TALLEST ? BATTLE_TALLEST : box_h;
     measure_turned(monster, yaw, &raw_x, &raw_y, &raw_z);
     screen_to_world(0xA0, 0x78, &wx, &wy);
@@ -2195,42 +2226,57 @@ static void effect_begin(Monster *attacker, Monster *defender)
  * uniform scale, then its position. */
 static void effect_to_arena(const MATRIX *t, s16 *p)
 {
-    double d[3], s2 = 0, out;
+    s64 d[3], s2 = 0, out;
     int i, k;
     for (i = 0; i < 3; i++) {
-        d[i] = (double)p[i] - t->t[i];
-        s2 += (double)t->m[i][0] * t->m[i][0];
+        d[i] = (s64)p[i] - t->t[i];
+        s2 += (s64)t->m[i][0] * t->m[i][0];
     }
-    s2 /= 4096.0 * 4096.0;
     for (i = 0; i < 3; i++) {
         out = 0;
         for (k = 0; k < 3; k++) {
-            out += t->m[k][i] / 4096.0 * d[k];
+            out += t->m[k][i] * d[k];
         }
-        p[i] = (s16)(out / (s2 > 0 ? s2 : 1));
+        p[i] = (s16)(s2 > 0 ? out * 4096 / s2 : out / 4096);
     }
+}
+
+/* `value` over the square root of `s2`, towards zero; over 4096 when `s2`
+ * is 0 (no scale to take out). */
+static int over_root(s64 value, u64 s2)
+{
+    u64 magnitude = value < 0 ? (u64)-value : (u64)value;
+    int whole;
+    if (!s2) {
+        return (int)(value / 4096);
+    }
+    while (magnitude >> 32) { /* so that its square fits */
+        magnitude >>= 1;
+        s2 = s2 >> 2 ? s2 >> 2 : 1;
+    }
+    whole = (int)isqrt(magnitude * magnitude / s2);
+    return value < 0 ? -whole : whole;
 }
 
 /* The world-screen matrix the module is handed: WS T, scaled by 1/s. */
 static void effect_view(const MATRIX *ws, const MATRIX *t, MATRIX *m)
 {
-    double s2 = 0, k;
+    u64 s2 = 0;
     int i, j, n;
     for (i = 0; i < 3; i++) {
-        s2 += (double)t->m[i][0] * t->m[i][0];
+        s2 += (s64)t->m[i][0] * t->m[i][0];
     }
-    k = s2 > 0 ? 4096.0 / sqrt(s2) : 1;
     for (i = 0; i < 3; i++) {
-        double tt = 0;
+        s64 tt = 0;
         for (j = 0; j < 3; j++) {
-            double v = 0;
+            s64 v = 0;
             for (n = 0; n < 3; n++) {
-                v += (double)ws->m[i][n] * t->m[n][j];
+                v += (s64)ws->m[i][n] * t->m[n][j];
             }
-            m->m[i][j] = (s16)(v / 4096.0 * k);
-            tt += (double)ws->m[i][j] * t->t[j];
+            m->m[i][j] = (s16)over_root(v, s2);
+            tt += (s64)ws->m[i][j] * t->t[j];
         }
-        m->t[i] = (int)((tt / 4096.0 + ws->t[i]) * k);
+        m->t[i] = over_root(tt + (s64)ws->t[i] * 4096, s2);
     }
 }
 
@@ -2345,7 +2391,7 @@ static void fight_begin(void)
     }
     dx = attack.home[1][0] - attack.home[0][0];
     dz = attack.home[1][1] - attack.home[0][1];
-    length = (int)sqrt((double)dx * dx + (double)dz * dz);
+    length = (int)isqrt((u64)((s64)dx * dx + (s64)dz * dz));
     reach = abs(attacker->raw_z) + abs(defender ? defender->raw_z : attacker->raw_z);
     reach = reach * attacker->scale / MODEL_FIXED_ONE * tunable("fight_reach", FIGHT_REACH) / 100;
     reach = reach < 0 ? 0 : reach > length ? length : reach;
@@ -2420,7 +2466,7 @@ static void draw_fighter(int side, Monster *monster, int x, int z, int share, in
 {
     ModelSlot *slot = &D_800F2C40[0];
     int yaw = attack.yaw[side], scale = monster->scale * share / MODEL_FIXED_ONE, drift[3];
-    double c = rcos(facing) / (double)MODEL_FIXED_ONE, s = rsin(facing) / (double)MODEL_FIXED_ONE;
+    int c = rcos(facing), s = rsin(facing);
     int body_x = monster->body_x * share / MODEL_FIXED_ONE;
     int body_y = monster->body_y * share / MODEL_FIXED_ONE;
     int body_z = monster->body_z * share / MODEL_FIXED_ONE;
@@ -2434,8 +2480,8 @@ static void draw_fighter(int side, Monster *monster, int x, int z, int share, in
     }
     /* The body offset was measured facing the player's edge; it turns with
      * the monster. */
-    place(slot, x - (int)(c * body_x + s * body_z) + drift[0], -body_y - lifted + drift[1],
-          z - (int)(c * body_z - s * body_x) + drift[2], facing, scale);
+    place(slot, x - (c * body_x + s * body_z) / MODEL_FIXED_ONE + drift[0], -body_y - lifted + drift[1],
+          z - (c * body_z - s * body_x) / MODEL_FIXED_ONE + drift[2], facing, scale);
     monster->fade = fade;
     {
         const u32 *start = (const u32 *)(uintptr_t)D_800FE240;
