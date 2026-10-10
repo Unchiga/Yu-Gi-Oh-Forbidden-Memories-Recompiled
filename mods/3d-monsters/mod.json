@@ -96,7 +96,7 @@
             "key": "attack",
             "label": "Monsters attack (3D models)",
             "type": "choice",
-            "default": 1,
+            "default": 0,
             "choices": ["Off", "On the attack cards", "On the field", "Both"],
             "description": "The attacker strikes and the defender reacts as in the 3D arena: it is hit, it guards, or, when the attacker is weaker, it strikes back. On the attack cards needs the monsters on the attack cards. On the field, the attacker crosses the field to the defender's zone, strikes and goes back; the damage shows over the monster struck, a destroyed monster fades away, and the attack cards do not come up. Both plays it on the field, then on the attack cards. The battle waits for the blows before it shows the damage. Only in the 3D models style."
         },
@@ -121,7 +121,7 @@
             "key": "summon",
             "label": "Anime summon (3D models)",
             "type": "bool",
-            "default": 1,
+            "default": 0,
             "description": "A monster put face up grows out of its card, fading in, while the card flashes and then disappears; the card stays hidden under the monster wherever the monster is drawn. Off: the card stays and the monster appears at once."
         },
         {
@@ -138,7 +138,7 @@
             "key": "board",
             "label": "Monsters on the overhead field (3D models)",
             "type": "bool",
-            "default": 1,
+            "default": 0,
             "description": "The monsters stay on when the camera rises to the field seen from overhead, where a zone or an attack is chosen: seen from above, facing the way they face on the field, over their cards. Off: they are drawn on the field seen across only."
         },
         {

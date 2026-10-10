@@ -5,8 +5,6 @@
   "settings": {
     "mod.3d-monsters": 1,
     "mod.3d-monsters.attack": 2,
-    "mod.3d-monsters.summon": 0,
-    "mod.3d-monsters.board": 0,
     "mod.3d-monsters.effects": 0
   },
   "sha256": "cf648b2800aaf7da8f5004e8c8142f4eafe85587ac43ece5b1295aba97cc3564"

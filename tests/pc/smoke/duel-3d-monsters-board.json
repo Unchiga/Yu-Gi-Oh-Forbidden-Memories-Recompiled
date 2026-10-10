@@ -5,7 +5,8 @@
   "settings": {
     "mod.3d-monsters": 1,
     "mod.hand-camera": 1,
-    "mod.3d-monsters.board": 1
+    "mod.3d-monsters.board": 1,
+    "mod.3d-monsters.summon": 1
   },
   "sha256": "ef3000efebf7d8c77f9ee56f4f053e03d49b7029831ab687a23fbd95e9fe8fef"
 }

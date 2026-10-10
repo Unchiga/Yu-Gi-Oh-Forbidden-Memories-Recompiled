@@ -1094,20 +1094,20 @@ void SD_SEPlayFull(u32 sound);
  * draw_battle): with `battle`. */
 static int attack_on(void)
 {
-    return tunable("attack", ATTACK_CARDS) & ATTACK_CARDS;
+    return tunable("attack", 0) & ATTACK_CARDS;
 }
 
 /* The attack on the field (fight_begin and the rest, before draw_frame). */
 static int fight_on(void)
 {
-    return (tunable("attack", ATTACK_CARDS) & ATTACK_FIELD) && !tunable("style", 0);
+    return (tunable("attack", 0) & ATTACK_FIELD) && !tunable("style", 0);
 }
 
 /* On the field alone: the fight ends the battle itself, with no attack
  * cards after it (fight_conclude). */
 static int fight_alone(void)
 {
-    return (tunable("attack", ATTACK_CARDS) & (ATTACK_CARDS | ATTACK_FIELD)) == ATTACK_FIELD;
+    return (tunable("attack", 0) & (ATTACK_CARDS | ATTACK_FIELD)) == ATTACK_FIELD;
 }
 
 /* The battle sets up its projection once and draws its damage numbers and
@@ -1915,7 +1915,7 @@ static void applied(int on)
 
 static int summon_on(void)
 {
-    return tunable("summon", 1) && !tunable("style", 0);
+    return tunable("summon", 0) && !tunable("style", 0);
 }
 
 static int summon_frames(void)
@@ -2688,7 +2688,7 @@ static void draw_frame(void)
         return;
     }
     field = duel_field_up();
-    overhead = !field && tunable("board", 1) && D_800E9DB0[3] == Duel_DrawFieldCards &&
+    overhead = !field && tunable("board", 0) && D_800E9DB0[3] == Duel_DrawFieldCards &&
                D_800F2C40[2].field_E1F != 0;
     if (!field && !overhead) {
         return;

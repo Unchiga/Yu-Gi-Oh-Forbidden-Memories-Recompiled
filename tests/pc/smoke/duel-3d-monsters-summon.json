@@ -6,8 +6,7 @@
     "mod.3d-monsters": 1,
     "mod.hand-camera": 1,
     "mod.3d-monsters.summon": 1,
-    "mod.3d-monsters.summon_frames": 6,
-    "mod.3d-monsters.board": 0
+    "mod.3d-monsters.summon_frames": 6
   },
   "sha256": "5239d73ec6466192688e912e4379cf55fedd0634c7507ed007ddcf6b500a2c2c"
 }

@@ -4,9 +4,7 @@
   "frame": 6760,
   "settings": {
     "mod.3d-monsters": 1,
-    "mod.hand-camera": 1,
-    "mod.3d-monsters.summon": 0,
-    "mod.3d-monsters.board": 0
+    "mod.hand-camera": 1
   },
   "sha256": "bf91202f51a2a64390e2e6173f2cc02b7fd4da95855df45e983ca465111a33d3"
 }

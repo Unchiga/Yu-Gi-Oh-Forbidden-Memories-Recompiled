@@ -1509,8 +1509,8 @@ opponent's first attack and the player's quick and arena attacks after the
 `duel-3d-monsters` smoke input, frame by frame against the same frames with
 `MEMORIES_MOD_3D_MONSTERS_BATTLE=0`.
 
-**The attack.** The setting `attack` is a choice: off, on the attack cards
-(the default; the 1 the setting stored when it was a bool on or off), on the
+**The attack.** The setting `attack` is a choice: off (the default), on the
+attack cards (the 1 the setting stored when it was a bool on or off), on the
 field, or both (one bit each). On the attack cards, with `battle` on, the
 two monsters fight on the big cards instead of standing there. The
 fight uses the rows of animation the 3D arena plays, which every model

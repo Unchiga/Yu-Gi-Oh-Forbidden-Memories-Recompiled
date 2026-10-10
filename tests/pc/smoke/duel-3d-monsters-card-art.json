@@ -4,9 +4,7 @@
   "frame": 6760,
   "settings": {
     "mod.3d-monsters": 1,
-    "mod.3d-monsters.style": 1,
-    "mod.3d-monsters.summon": 0,
-    "mod.3d-monsters.board": 0
+    "mod.3d-monsters.style": 1
   },
   "sha256": "dcbf2a2ad3b72bf806acb1e345b3102517e261d387ac45255296078c28658996"
 }
