@@ -93,6 +93,65 @@
             "description": "How much darker the cards are drawn under the monsters, in percent."
         },
         {
+            "key": "attack",
+            "label": "Monsters attack (3D models)",
+            "type": "choice",
+            "default": 0,
+            "choices": ["Off", "On the attack cards", "On the field", "Both"],
+            "description": "The attacker strikes and the defender reacts as in the 3D arena: it is hit, it guards, or, when the attacker is weaker, it strikes back. On the attack cards needs the monsters on the attack cards. On the field, the attacker crosses the field to the defender's zone, strikes and goes back; the damage shows over the monster struck, a destroyed monster fades away, and the attack cards do not come up. Both plays it on the field, then on the attack cards. The battle waits for the blows before it shows the damage. Only in the 3D models style."
+        },
+        {
+            "key": "attack_speed",
+            "label": "Attack speed (3D models)",
+            "type": "int",
+            "default": 200,
+            "min": 25,
+            "max": 400,
+            "step": 25,
+            "description": "How fast the attack and the reactions play, in percent of the 3D arena's speed: 100 is the arena's own pace."
+        },
+        {
+            "key": "effects",
+            "label": "Attack effects (3D models)",
+            "type": "bool",
+            "default": 1,
+            "description": "In the fight on the field, the attacker's own effects from the 3D arena: its beams, flashes and particles, sized to the field, and the blow lands when they reach the defender. Only in the 3D models style."
+        },
+        {
+            "key": "summon",
+            "label": "Anime summon (3D models)",
+            "type": "bool",
+            "default": 0,
+            "description": "A monster put face up grows out of its card, fading in, while the card flashes and then disappears; the card stays hidden under the monster wherever the monster is drawn. Off: the card stays and the monster appears at once."
+        },
+        {
+            "key": "summon_frames",
+            "label": "Summon length (3D models)",
+            "type": "int",
+            "default": 30,
+            "min": 6,
+            "max": 120,
+            "step": 2,
+            "description": "Frames a monster takes to grow out of its card, at 60 a second."
+        },
+        {
+            "key": "board",
+            "label": "Monsters on the overhead field (3D models)",
+            "type": "bool",
+            "default": 0,
+            "description": "The monsters stay on when the camera rises to the field seen from overhead, where a zone or an attack is chosen: seen from above, facing the way they face on the field, over their cards. Off: they are drawn on the field seen across only."
+        },
+        {
+            "key": "board_size",
+            "label": "Overhead monster size (3D models)",
+            "type": "int",
+            "default": 50,
+            "min": 20,
+            "max": 100,
+            "step": 5,
+            "description": "How big the monsters are on the overhead field, in percent of their size on the field; the camera comes much nearer there, so smaller keeps each one over its own card. They shrink to it as the camera rises."
+        },
+        {
             "key": "glow",
             "label": "Glowing diffusion (Card art)",
             "type": "bool",
