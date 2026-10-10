@@ -74,6 +74,7 @@ void DuelUi_Prepare(void)
 {
     int band;
     config = UiConfig_Load();
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_DUEL_UI);
     memset(pictures, 0, sizeof(pictures));
     for (band = 0; band < 2; band++) {
         shelves[band].x = SHELF_X;
@@ -257,7 +258,6 @@ static const BankPicture *picture(int which, int w, int h, int hd)
     char why[1300];
     int factor = 1, png_w, png_h, y, x;
     if (!image->file[0] || w < 1 || h < 1) return NULL;
-    if (!CardArt_ImageSize(image->file, &png_w, &png_h)) return NULL;
     if (hd) {
         factor = internal_scale() < 4 ? internal_scale() : 4;
         while (factor > 1 && (w * factor > MAX_W || h * factor > MAX_H)) factor--;
@@ -268,6 +268,7 @@ static const BankPicture *picture(int which, int w, int h, int hd)
         if (size->made && size->w == w * factor && size->h == h * factor) return size->ready ? size : NULL;
         if (!size->made && !picture) picture = size;
     }
+    if (!CardArt_ImageSize(image->file, &png_w, &png_h)) return NULL;
     if (!picture) {
         Mods_Note(image->mod, "ui: %s is drawn at more than %d sizes", image->file, SIZES);
         return NULL;
@@ -361,6 +362,7 @@ static int draw_picture(int which, int x, int y, int w, int h, const Place *plac
         strip.v0 = strip.v1 = (u8)(bank_picture->y & (BAND - 1));
         strip.v2 = strip.v3 = (u8)((bank_picture->y & (BAND - 1)) + bank_picture->h > 255
                                        ? 255 : (bank_picture->y & (BAND - 1)) + bank_picture->h);
+        TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_DUEL_UI);
         TexturePack_AddBankSpriteCrop(BANK, page_x, page_y, 1, (word - page_x) * 2,
                                       bank_picture->y & (BAND - 1), width, bank_picture->h, image->file,
                                       source_x, 0, source_x1 - source_x, bank_picture->png_h);

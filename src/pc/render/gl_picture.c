@@ -1245,7 +1245,8 @@ static size_t polygon(const uint32_t *words, size_t count)
         if (v[i].v > piece[7]) piece[7] = v[i].v;
     }
     state.pack = textured ? (state.bank
-        ? TexturePack_BankEntryFor(state.bank, state.page_x, state.page_y, state.depth, v[0].u, v[0].v)
+        ? TexturePack_BankEntryForRegion(state.bank, state.page_x, state.page_y, state.depth,
+                                          piece[4], piece[5], piece[6], piece[7])
         : TexturePack_EntryFor(state.page_x, state.page_y, state.depth, state.clut_x, state.clut_y, v[0].u, v[0].v)) : 0;
     if (quad && textured && hd_hud && !state.pack && !state.bank) {
         /* A digit or the panel drawn as a quad (a clip-tested field card):
@@ -1929,6 +1930,7 @@ static int bind_pack_entry(int entry)
     if (entry < 0) {
         int u, v, w, h, sx, sy, sw, sh, index = -entry - 1;
         GLuint *more;
+        unsigned char *smaller = NULL;
         if (index >= bank_entry_texture_count) {
             more = realloc(bank_entry_textures, (size_t)(index + 1) * sizeof(*more));
             if (!more) return 0;
@@ -1938,13 +1940,23 @@ static int bind_pack_entry(int entry)
         }
         gl_ActiveTexture(GL_TEXTURE5);
         if (!bank_entry_textures[index]) {
+            if (texture_width != width || texture_height != height) {
+                smaller = shrunk(rgba, width, height, texture_width, texture_height);
+                if (!smaller) { gl_ActiveTexture(GL_TEXTURE0); return 0; }
+            }
             bank_entry_textures[index] = make_texture(GL_RGBA8, texture_width, texture_height, GL_RGBA, GL_UNSIGNED_BYTE);
             glBindTexture(GL_TEXTURE_2D, bank_entry_textures[index]);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, texture_width, texture_height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, texture_width, texture_height, GL_RGBA, GL_UNSIGNED_BYTE,
+                            smaller ? smaller : rgba);
+            free(smaller);
         } else glBindTexture(GL_TEXTURE_2D, bank_entry_textures[index]);
         gl_ActiveTexture(GL_TEXTURE0);
         if (!TexturePack_BankEntryRect(entry, &u, &v, &w, &h) ||
             !TexturePack_BankEntrySource(entry, &sx, &sy, &sw, &sh)) return 0;
+        sx = sx * texture_width / width;
+        sy = sy * texture_height / height;
+        sw = (sw * texture_width + width - 1) / width;
+        sh = (sh * texture_height + height - 1) / height;
         gl_Uniform4i(u_bank_sprite, u, v, w, h);
         gl_Uniform4i(u_bank_source, sx, sy, sw, sh);
         gl_Uniform4i(u_pack_entry, 0, 0, 0, 0);

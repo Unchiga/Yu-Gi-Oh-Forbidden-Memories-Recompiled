@@ -3,7 +3,6 @@
 #endif
 #include "soft_gpu.h"
 #include "texture_dump.h"
-#include "texture_pack.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -675,9 +674,15 @@ static inline __attribute__((always_inline)) void plot(int x, int y, int r, int 
 static inline __attribute__((always_inline)) int picture_texel(int u, int v, uint32_t *rgb)
 {
     uint16_t word;
-    if (texture_bank) {
-        int got = TexturePack_BankSample(texture_bank, gpu.page_x, gpu.page_y, gpu.depth, u, v, rgb);
-        if (got) return got == 1;
+    if (texture_bank && TextureDump_BankSample) {
+        int got = TextureDump_BankSample(texture_bank, gpu.page_x, gpu.page_y, gpu.depth, u, v, rgb);
+        if (got == 1) {
+            /* The PNG supplies color and coverage, but the bank texel still
+             * controls PS1 semi-transparency. */
+            *rgb = (*rgb & 0x7fffffffu) | ((uint32_t)(texel(u >> 16, v >> 16) & 0x8000) << 16);
+            return 1;
+        }
+        if (got == 2) return 0;
     }
     if (shadow_on && TextureDump_Sample) {
         int got = TextureDump_Sample(gpu.page_x, gpu.page_y, gpu.depth, u, v, rgb);

@@ -126,6 +126,7 @@ static int make(int star, uint16_t *bank)
         }
         /* The indexed 16x16 form is the console/1x texture; retain the
          * source PNG for higher internal resolutions. */
+        TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_STARS);
         TexturePack_AddBankSprite(ICON_BANK, ICON_PAGE * 64, 0, 0, (star - 1) * SIDE, 0, SIDE, SIDE, icon);
     } else {
         plain_disc(pixels);

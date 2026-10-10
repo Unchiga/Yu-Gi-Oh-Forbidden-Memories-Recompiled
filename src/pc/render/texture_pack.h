@@ -68,9 +68,13 @@ int TexturePack_AddBankSprite(int bank, int page_x, int page_y, int depth, int u
 int TexturePack_AddBankSpriteCrop(int bank, int page_x, int page_y, int depth, int u, int v, int w, int h,
                                   const char *file, int source_x, int source_y, int source_w, int source_h);
 int TexturePack_BankEntryFor(int bank, int page_x, int page_y, int depth, int u, int v);
+int TexturePack_BankEntryForRegion(int bank, int page_x, int page_y, int depth, int u0, int v0, int u1, int v1);
 int TexturePack_BankSample(int bank, int page_x, int page_y, int depth, int u, int v, uint32_t *rgb);
 int TexturePack_BankEntryRect(int entry, int *u, int *v, int *w, int *h);
 int TexturePack_BankEntrySource(int entry, int *x, int *y, int *w, int *h);
+enum { TEXTURE_BANK_OWNER_STARS = 1, TEXTURE_BANK_OWNER_LAYOUT, TEXTURE_BANK_OWNER_DUEL_UI };
+void TexturePack_BankSpritesUseOwner(unsigned owner);
+void TexturePack_BankSpritesClear(unsigned owner);
 
 /* For a renderer that samples the pack's images itself, at their own
  * resolution (gl_picture.c). The entry (its index + 1) whose image replaces
