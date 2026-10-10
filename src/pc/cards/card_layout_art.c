@@ -137,7 +137,7 @@ int CardLayoutArt_FrameTile(int col, int row, int *tpage, int *clut, int *w, int
     *w = FRAME_TILE_W;
     *h = FRAME_TILE_H;
     if (image->png_w > 0 && image->png_h > 0) {
-        TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_LAYOUT);
+        TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
         sx = col * FRAME_TILE_W * image->png_w / FRAME_W;
         sx1 = (col + 1) * FRAME_TILE_W * image->png_w / FRAME_W;
         sy = row * FRAME_TILE_H * image->png_h / FRAME_H;
@@ -209,7 +209,7 @@ int CardLayoutArt_DigitCell(int digit, int dim, int *tpage, int *u, int *v, int 
     *w = CARD_LAYOUT_DIGIT_CELL_W;
     *h = CARD_LAYOUT_DIGIT_CELL_H;
     if (digits_png_w > 0 && digits_png_h > 0) {
-        TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_LAYOUT);
+        TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_LAYOUT_DIGITS);
         sx = *u * digits_png_w / DIGITS_W;
         sx1 = (*u + *w) * digits_png_w / DIGITS_W;
         sy = *v * digits_png_h / DIGITS_H;
@@ -224,15 +224,16 @@ void CardLayoutArt_Prewarm(void)
 {
     static unsigned int frame;
     char paths[FRAME_CACHE][1024];
-    char digits[1024];
+    char digits[1024] = "";
     int i, count, dw, dh, dstep;
 
     if (++frame % 30) return;   /* the layout changes with a setting, not a frame */
     if (CardLayout_Digits(digits, sizeof(digits), &dw, &dh, &dstep) && strcmp(digits_path, digits)) {
         digits_build(digits);
         return;
-    }
+    } else if (!digits[0]) TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_DIGITS);
     count = CardLayout_FramePaths(paths, FRAME_CACHE);
+    if (!count) TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
     for (i = 0; i < count; i++) {
         if (!image_for(paths[i], 0)) {
             image_for(paths[i], 1);

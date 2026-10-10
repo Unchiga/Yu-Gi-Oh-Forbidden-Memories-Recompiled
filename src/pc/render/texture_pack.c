@@ -156,11 +156,14 @@ int TexturePack_AddBankSpriteCrop(int bank, int page_x, int page_y, int depth, i
         BankSprite *at = &bank_sprites[i];
         if (at->owner == bank_sprite_owner && at->bank == bank && at->page_x == page_x && at->page_y == page_y && at->depth == depth &&
             at->u == u && at->v == v && at->w == w && at->h == h) {
+            char *copy;
             if (!strcmp(at->file, file) && at->source_x == source_x && at->source_y == source_y &&
                 at->source_w == source_w && at->source_h == source_h) return 1;
+            copy = strdup(file);
+            if (!copy) return 0;
             free(at->file); free(at->image); memset(at, 0, sizeof(*at));
             at->owner = bank_sprite_owner; at->bank = bank; at->page_x = page_x; at->page_y = page_y; at->depth = depth;
-            at->u = u; at->v = v; at->w = w; at->h = h; at->file = strdup(file);
+            at->u = u; at->v = v; at->w = w; at->h = h; at->file = copy;
             at->source_x = source_x; at->source_y = source_y; at->source_w = source_w; at->source_h = source_h;
             generation++;
             bank_cached = -1;
@@ -205,7 +208,7 @@ int TexturePack_BankEntryForRegion(int bank, int page_x, int page_y, int depth, 
     for (i = bank_sprite_count - 1; i >= 0; i--) {
         BankSprite *at = &bank_sprites[i];
         if (at->bank == bank && at->page_x == page_x && at->page_y == page_y && at->depth == depth &&
-            u0 < at->u + at->w && u1 >= at->u && v0 < at->v + at->h && v1 >= at->v && load_bank_sprite(at)) return -i - 1;
+            u0 < at->u + at->w && u1 > at->u && v0 < at->v + at->h && v1 > at->v && load_bank_sprite(at)) return -i - 1;
     }
     return 0;
 }
@@ -216,10 +219,17 @@ int TexturePack_BankSample(int bank, int page_x, int page_y, int depth, int u, i
     BankSprite *at;
     const unsigned char *p;
     if (bank_cached >= 0 && bank_cached < bank_sprite_count) {
+        int newer;
         at = &bank_sprites[bank_cached];
         if (at->bank == bank && at->page_x == page_x && at->page_y == page_y && at->depth == depth &&
-            tu >= at->u && tu < at->u + at->w && tv >= at->v && tv < at->v + at->h && load_bank_sprite(at))
-            entry = -bank_cached - 1;
+            tu >= at->u && tu < at->u + at->w && tv >= at->v && tv < at->v + at->h && load_bank_sprite(at)) {
+            for (newer = bank_sprite_count - 1; newer > bank_cached; newer--) {
+                BankSprite *other = &bank_sprites[newer];
+                if (other->bank == bank && other->page_x == page_x && other->page_y == page_y && other->depth == depth &&
+                    tu >= other->u && tu < other->u + other->w && tv >= other->v && tv < other->v + other->h) break;
+            }
+            if (newer == bank_cached) entry = -bank_cached - 1;
+        }
     }
     if (!entry) entry = TexturePack_BankEntryFor(bank, page_x, page_y, depth, tu, tv);
     if (!entry) return 0;
@@ -1767,8 +1777,6 @@ void TexturePack_Service(void)
 
 void TexturePack_Unload(void)
 {
-    TextureDump_BankSample = NULL;
-    TexturePack_BankSpritesClear(UINT_MAX);
     if (!entries) return;
     TextureDump_Paint = NULL;
     TextureDump_Prepare = NULL;

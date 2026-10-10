@@ -28,6 +28,12 @@
 static unsigned pending;
 static unsigned char made[STARS_MAX + 1];   /* 0 not yet, 1 made, 2 failed */
 
+static void clear_icons(void)
+{
+    memset(made, 0, sizeof(made));
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_STARS);
+}
+
 static int own_icon(int star)
 {
     return star >= 1 && star <= STARS_MAX && (star > STARS_RETAIL || Stars_Icon(star));
@@ -148,6 +154,7 @@ int Stars_IconCell(unsigned code, int *tpage, int *u, int *v, int *clut_x, int *
 {
     uint16_t *bank;
     int star = (int)(code & 0xF);
+    Stars_IconsCleared = clear_icons;
     if ((code & 0xFFF0u) != STARS_ICON_CODE || !own_icon(star)) return 0;
     if (made[star] == 2 || !(bank = SoftGpu_Bank(ICON_BANK))) return 0;
     if (!made[star]) made[star] = make(star, bank) ? 1 : 2;

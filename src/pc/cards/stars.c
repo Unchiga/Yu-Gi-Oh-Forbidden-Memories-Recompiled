@@ -5,7 +5,6 @@
  * asks Stars_Matchup first and otherwise runs the disc's arithmetic, so a run
  * without such a mod is the disc's to the bit. */
 #include "stars.h"
-#include "pc/render/texture_pack.h"
 #include "cards.h"
 #include "tables.h"
 #include "pc/mods/mods.h"
@@ -53,6 +52,7 @@ static int choice_mode = STARS_CHOICE_ASK;
 static int built;
 static int any;          /* whether any mod has a "guardian_stars" */
 static int no_star;      /* whether a mod made a monster with no star */
+void (*Stars_IconsCleared)(void);
 
 /* --- the disc's rule -------------------------------------------------- */
 
@@ -385,7 +385,7 @@ void Stars_Clear(void)
         free(stars[i].icon);
         free(stars[i].fallback);
     }
-    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_STARS);
+    if (Stars_IconsCleared) Stars_IconsCleared();
     memset(stars, 0, sizeof(stars));
     memset(bonus_of, 0, sizeof(bonus_of));
     memset(decided, 0, sizeof(decided));
