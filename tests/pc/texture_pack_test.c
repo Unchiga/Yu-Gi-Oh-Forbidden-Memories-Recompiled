@@ -10,6 +10,10 @@
 #include "pc/mods/json.h"
 #include "pc/render/texture_dump.h"
 #include "pc/render/soft_gpu.h"
+/* Tests must execute their checks in Release CI too. */
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 #include <png.h>
 #include <stdio.h>
@@ -513,6 +517,8 @@ static void bank_sprites(void)
     assert(TexturePack_BankSample(14, 0, 0, 0, 1 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
     TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_DUEL_UI);
     assert(TexturePack_AddBankSprite(14, 0, 0, 0, 8, 0, 8, 16, b));
+    /* Cache the older sprite first: the overlap must still choose newer. */
+    assert(TexturePack_BankSample(14, 0, 0, 0, 1 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
     assert(TexturePack_BankSample(14, 0, 0, 0, 10 << 16, 1 << 16, &rgb) == 1 && rgb == 0x00ff00);
     assert(TexturePack_BankSample(14, 0, 0, 0, 1 << 16, 1 << 16, &rgb) == 1 && rgb == 0xff0000);
     TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_DUEL_UI);
