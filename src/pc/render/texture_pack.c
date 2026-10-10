@@ -86,6 +86,134 @@ static Block *blocks;
 static int block_count;
 static uint32_t made_next = TEXTURE_MADE_BASE;
 
+typedef struct BankSprite {
+    int bank, page_x, page_y, depth, u, v, w, h;
+    int source_x, source_y, source_w, source_h;
+    char *file;
+    unsigned char *image;
+    int image_width, image_height, failed;
+} BankSprite;
+static BankSprite *bank_sprites;
+static int bank_sprite_count;
+
+static int load_bank_sprite(BankSprite *sprite)
+{
+    png_image image = {0};
+    FILE *file;
+    if (sprite->image || sprite->failed) return sprite->image != NULL;
+    image.version = PNG_IMAGE_VERSION;
+    file = fopen(sprite->file, "rb");
+    if (!file || !png_image_begin_read_from_stdio(&image, file)) {
+        fprintf(stderr, "memories-pc: texture bank image: %s cannot be read: %s\n", sprite->file, image.message);
+        if (file) fclose(file);
+        sprite->failed = 1;
+        return 0;
+    }
+    image.format = PNG_FORMAT_RGBA;
+    sprite->image = malloc(PNG_IMAGE_SIZE(image));
+    if (!sprite->image || !png_image_finish_read(&image, NULL, sprite->image, 0, NULL)) {
+        fprintf(stderr, "memories-pc: texture bank image: %s cannot be read: %s\n", sprite->file,
+                sprite->image ? image.message : "out of memory");
+        free(sprite->image); sprite->image = NULL;
+        fclose(file); png_image_free(&image); sprite->failed = 1;
+        return 0;
+    }
+    fclose(file);
+    sprite->image_width = (int)image.width;
+    sprite->image_height = (int)image.height;
+    png_image_free(&image);
+    return 1;
+}
+
+int TexturePack_AddBankSpriteCrop(int bank, int page_x, int page_y, int depth, int u, int v, int w, int h,
+                                  const char *file, int source_x, int source_y, int source_w, int source_h)
+{
+    BankSprite *more;
+    int i;
+    if (!file || bank <= 0 || w <= 0 || h <= 0 || u < 0 || v < 0 || u + w > 256 || v + h > 256 ||
+        source_x < 0 || source_y < 0 || (source_w == 0) != (source_h == 0) || source_w < 0 || source_h < 0) return 0;
+    for (i = 0; i < bank_sprite_count; i++) {
+        BankSprite *at = &bank_sprites[i];
+        if (at->bank == bank && at->page_x == page_x && at->page_y == page_y && at->depth == depth &&
+            at->u == u && at->v == v && at->w == w && at->h == h) {
+            if (!strcmp(at->file, file) && at->source_x == source_x && at->source_y == source_y &&
+                at->source_w == source_w && at->source_h == source_h) return 1;
+            free(at->file); free(at->image); memset(at, 0, sizeof(*at));
+            at->bank = bank; at->page_x = page_x; at->page_y = page_y; at->depth = depth;
+            at->u = u; at->v = v; at->w = w; at->h = h; at->file = strdup(file);
+            at->source_x = source_x; at->source_y = source_y; at->source_w = source_w; at->source_h = source_h;
+            generation++;
+            return at->file != NULL;
+        }
+    }
+    more = realloc(bank_sprites, (size_t)(bank_sprite_count + 1) * sizeof(*more));
+    if (!more) return 0;
+    bank_sprites = more;
+    memset(&bank_sprites[bank_sprite_count], 0, sizeof(*bank_sprites));
+    bank_sprites[bank_sprite_count] = (BankSprite){bank, page_x, page_y, depth, u, v, w, h,
+                                                     source_x, source_y, source_w, source_h,
+                                                     strdup(file), NULL, 0, 0, 0};
+    if (!bank_sprites[bank_sprite_count].file) return 0;
+    bank_sprite_count++;
+    generation++;
+    return 1;
+}
+
+int TexturePack_AddBankSprite(int bank, int page_x, int page_y, int depth, int u, int v, int w, int h,
+                              const char *file)
+{
+    return TexturePack_AddBankSpriteCrop(bank, page_x, page_y, depth, u, v, w, h, file, 0, 0, 0, 0);
+}
+
+int TexturePack_BankEntryFor(int bank, int page_x, int page_y, int depth, int u, int v)
+{
+    int i;
+    for (i = 0; i < bank_sprite_count; i++) {
+        BankSprite *at = &bank_sprites[i];
+        if (at->bank == bank && at->page_x == page_x && at->page_y == page_y && at->depth == depth &&
+            u >= at->u && u < at->u + at->w && v >= at->v && v < at->v + at->h && load_bank_sprite(at)) return -i - 1;
+    }
+    return 0;
+}
+
+int TexturePack_BankSample(int bank, int page_x, int page_y, int depth, int u, int v, uint32_t *rgb)
+{
+    int entry = TexturePack_BankEntryFor(bank, page_x, page_y, depth, u >> 16, v >> 16), x, y;
+    BankSprite *at;
+    const unsigned char *p;
+    if (!entry) return 0;
+    at = &bank_sprites[-entry - 1];
+    x = at->source_x + (int)(((int64_t)(u - (at->u << 16)) * (at->source_w ? at->source_w : at->image_width)) /
+                       ((int64_t)at->w << 16));
+    y = at->source_y + (int)(((int64_t)(v - (at->v << 16)) * (at->source_h ? at->source_h : at->image_height)) /
+                       ((int64_t)at->h << 16));
+    x = x < 0 ? 0 : x >= at->image_width ? at->image_width - 1 : x;
+    y = y < 0 ? 0 : y >= at->image_height ? at->image_height - 1 : y;
+    p = at->image + ((size_t)y * at->image_width + x) * 4;
+    if (p[3] < PACK_ALPHA_CLEAR) return 2;
+    *rgb = ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | p[2] | ((uint32_t)(255 - p[3]) >> 1 << 24);
+    return 1;
+}
+
+int TexturePack_BankEntryRect(int entry, int *u, int *v, int *w, int *h)
+{
+    BankSprite *at;
+    if (entry >= 0 || -entry > bank_sprite_count) return 0;
+    at = &bank_sprites[-entry - 1];
+    *u = at->u; *v = at->v; *w = at->w; *h = at->h;
+    return 1;
+}
+
+int TexturePack_BankEntrySource(int entry, int *x, int *y, int *w, int *h)
+{
+    BankSprite *at;
+    if (entry >= 0 || -entry > bank_sprite_count || !(at = &bank_sprites[-entry - 1])->image) return 0;
+    *x = at->source_x; *y = at->source_y;
+    *w = at->source_w ? at->source_w : at->image_width;
+    *h = at->source_h ? at->source_h : at->image_height;
+    return 1;
+}
+
 /* Readings of the same words: entries of one geometry, differing in depth
  * or palette (a sheet the game draws with several palettes). Sorted by
  * offset they are adjacent; the first is the head, the one the maps name. */
@@ -1635,6 +1763,13 @@ int TexturePack_EntryImage(int entry, const unsigned char **rgba, int *width, in
                            int *crop_width, int *rows, int *texels_per_word)
 {
     const Entry *at;
+    if (entry < 0 && -entry <= bank_sprite_count) {
+        const BankSprite *sprite = &bank_sprites[-entry - 1];
+        if (!sprite->image) return 0;
+        *rgba = sprite->image; *width = sprite->image_width; *height = sprite->image_height;
+        *crop_left = 0; *crop_width = sprite->w; *rows = sprite->h; *texels_per_word = 1;
+        return 1;
+    }
     if (entry < 1 || entry > entry_count || !entries[entry - 1].image) return 0;
     at = &entries[entry - 1];
     *rgba = at->image;

@@ -1,5 +1,6 @@
 #ifndef MEMORIES_PC_TEXTURE_PACK_H
 #define MEMORIES_PC_TEXTURE_PACK_H
+#include <stdint.h>
 
 /* A texture pack: a directory of PNGs named by where the images come from
  * on the disc, as tools/pc/extract_images.py writes them, with its
@@ -57,6 +58,20 @@ int TexturePack_AddMade(const void *pixels, int words, int rows, int bpp, const 
 int TexturePack_AddMadeSeeThrough(const void *pixels, int words, int rows, int bpp, const void *clut,
                                   int clut_entries, const char *file, int x, int y, int w, int h);
 
+/* A picture placed directly in a software-GPU texture bank.  Its ordinary
+ * indexed texels remain the 1x fallback; above 1x renderers sample this PNG
+ * instead.  The rectangle is in page-local texels. */
+int TexturePack_AddBankSprite(int bank, int page_x, int page_y, int depth, int u, int v, int w, int h,
+                              const char *file);
+/* As above, but sample `source_x`, `source_y`, `source_w`, `source_h` from
+ * the PNG.  A zero width and height mean the entire PNG. */
+int TexturePack_AddBankSpriteCrop(int bank, int page_x, int page_y, int depth, int u, int v, int w, int h,
+                                  const char *file, int source_x, int source_y, int source_w, int source_h);
+int TexturePack_BankEntryFor(int bank, int page_x, int page_y, int depth, int u, int v);
+int TexturePack_BankSample(int bank, int page_x, int page_y, int depth, int u, int v, uint32_t *rgb);
+int TexturePack_BankEntryRect(int entry, int *u, int *v, int *w, int *h);
+int TexturePack_BankEntrySource(int entry, int *x, int *y, int *w, int *h);
+
 /* For a renderer that samples the pack's images itself, at their own
  * resolution (gl_picture.c). The entry (its index + 1) whose image replaces
  * the texel a primitive starts at, as the software pass decides it, when
@@ -65,7 +80,6 @@ int TexturePack_AddMadeSeeThrough(const void *pixels, int words, int rows, int b
  * painted there (index + 1, 0 none) and its place in it (row << 16 | word).
  * The generation changes whenever the entries do, the map generation
  * whenever a word of the maps does. */
-#include <stdint.h>
 int TexturePack_EntryFor(int page_x, int page_y, int depth, int clut_x, int clut_y, int u, int v);
 /* Readings of the same words (one geometry, several depths or palettes)
  * are entries in a row; the maps name the first, the head, whichever the

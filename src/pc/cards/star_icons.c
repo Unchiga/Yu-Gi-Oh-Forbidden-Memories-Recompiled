@@ -13,6 +13,7 @@
 #include "art.h"
 #include "pc/mods/mods.h"
 #include "pc/render/soft_gpu.h"
+#include "pc/render/texture_pack.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -123,6 +124,9 @@ static int make(int star, uint16_t *bank)
         } else if (own) {
             memcpy(&bank[(OWN_CLUT_Y + star) * SOFT_GPU_WIDTH], clut, sizeof(clut));
         }
+        /* The indexed 16x16 form is the console/1x texture; retain the
+         * source PNG for higher internal resolutions. */
+        TexturePack_AddBankSprite(ICON_BANK, ICON_PAGE * 64, 0, 0, (star - 1) * SIDE, 0, SIDE, SIDE, icon);
     } else {
         plain_disc(pixels);
     }

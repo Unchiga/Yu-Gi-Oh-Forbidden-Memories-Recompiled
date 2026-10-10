@@ -3,6 +3,7 @@
 #endif
 #include "soft_gpu.h"
 #include "texture_dump.h"
+#include "texture_pack.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,7 @@ static int shadow_on;
 /* Where texels and palettes are read: VRAM, or one of the banks below. Set by
  * every texture-page word, so it is never stale and never part of a state. */
 static uint16_t *texture_source;
+static int texture_bank;
 
 static uint16_t *banks[SOFT_GPU_BANKS];
 
@@ -155,6 +157,7 @@ void SoftGpu_Reset(void)
 {
     memset(&gpu, 0, sizeof(gpu));
     texture_source = vram;
+    texture_bank = 0;
     TextureDump_Init();
     gpu.clip_x2 = SOFT_GPU_WIDTH - 1;
     gpu.clip_y2 = SOFT_GPU_HEIGHT - 1;
@@ -672,6 +675,10 @@ static inline __attribute__((always_inline)) void plot(int x, int y, int r, int 
 static inline __attribute__((always_inline)) int picture_texel(int u, int v, uint32_t *rgb)
 {
     uint16_t word;
+    if (texture_bank) {
+        int got = TexturePack_BankSample(texture_bank, gpu.page_x, gpu.page_y, gpu.depth, u, v, rgb);
+        if (got) return got == 1;
+    }
     if (shadow_on && TextureDump_Sample) {
         int got = TextureDump_Sample(gpu.page_x, gpu.page_y, gpu.depth, u, v, rgb);
         if (got == 1) {
@@ -1008,6 +1015,7 @@ static void set_page(uint32_t value)
 {
     int bank = (int)((value >> 11) & (SOFT_GPU_BANKS - 1));
     texture_source = bank && banks[bank] ? banks[bank] : vram;
+    texture_bank = texture_source == vram ? 0 : bank;
     gpu.page_x = (value & 0xf) * 64;
     gpu.page_y = ((value >> 4) & 1) * 256;
     gpu.blend = (value >> 5) & 3;

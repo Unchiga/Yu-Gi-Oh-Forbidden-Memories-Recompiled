@@ -256,10 +256,10 @@ static int bank_used[SOFT_GPU_BANKS];
 /* The texture pack (texture_pack.h): its maps as integer textures,
  * uploaded again when they change, and its images as textures, made as
  * primitives need them, dropped when the entries change. */
-static GLuint entry_map_texture, place_map_texture, *entry_textures;
-static int entry_texture_count;
+static GLuint entry_map_texture, place_map_texture, *entry_textures, *bank_entry_textures;
+static int entry_texture_count, bank_entry_texture_count;
 static unsigned pack_generation = ~0u, map_generation = ~0u;
-static GLint u_entry_map, u_place_map, u_pack, u_pack_entry, u_pack_size;
+static GLint u_entry_map, u_place_map, u_pack, u_pack_entry, u_pack_size, u_bank_sprite, u_bank_source;
 /* HD text (hd_text.h): whether it is on for this replay, and its atlas of
  * glyph pictures, 8-bit indices, as an integer texture on unit 6; and HD
  * numbers and labels, whose pictures are in the same atlas. */
@@ -414,6 +414,8 @@ static const char *fragment_source =
     "uniform usampler2D glyphs;\n"
     "uniform ivec4 pack_entry;\n" /* entry index + 1, crop left, crop width, rows */
     "uniform ivec3 pack_size;\n"  /* image width, height, texels per word */
+    "uniform ivec4 bank_sprite;\n" /* u, v, width, height; width 0 is a normal pack */
+    "uniform ivec4 bank_source;\n" /* source x, y, width, height in the PNG */
     "uniform sampler2D captured;\n" /* a capture's scaled picture (SoftGpu_Capture) */
     "uniform ivec4 capture;\n"      /* its rect in VRAM words, w 0 for none */
     "uniform ivec4 window;\n"
@@ -509,7 +511,13 @@ static const char *fragment_source =
     /* The pack's image, where it paints this texel (texture_pack.c, sample). */
     "            int per = pack_size.z;\n"
     "            int vx = (page.x + u / per) & 1023, vy = (page.y + v) & 511;\n"
-    "            if (int(texelFetch(entry_map, ivec2(vx, vy), 0).r) == pack_entry.x) {\n"
+    "            if (bank_sprite.z > 0 && u >= bank_sprite.x && u < bank_sprite.x + bank_sprite.z && v >= bank_sprite.y && v < bank_sprite.y + bank_sprite.w) {\n"
+    "                int px = bank_source.x + int(floor((float(u - bank_sprite.x) + fract(ub)) * float(bank_source.z) / float(bank_sprite.z)));\n"
+    "                int py = bank_source.y + int(floor((float(v - bank_sprite.y) + fract(vb)) * float(bank_source.w) / float(bank_sprite.w)));\n"
+    "                vec4 p = texelFetch(pack, ivec2(clamp(px, 0, pack_size.x - 1), clamp(py, 0, pack_size.y - 1)), 0);\n"
+    "                if (p.a < 8.0 / 255.0) discard;\n"
+    "                cover = p.a; t = floor(p.rgb * 255.0 + 0.5); replaced = true;\n"
+    "            } else if (int(texelFetch(entry_map, ivec2(vx, vy), 0).r) == pack_entry.x) {\n"
     "                uint place = texelFetch(place_map, ivec2(vx, vy), 0).r;\n"
     "                int row = int(place >> 16), word_in = int(place & 0xffffu);\n"
     "                int texel_x = word_in * per + (u - (u / per) * per) - pack_entry.y;\n"
@@ -724,6 +732,8 @@ static int make_program(int xbr)
     u_glyphs = gl_GetUniformLocation(program, "glyphs");
     u_pack_entry = gl_GetUniformLocation(program, "pack_entry");
     u_pack_size = gl_GetUniformLocation(program, "pack_size");
+    u_bank_sprite = gl_GetUniformLocation(program, "bank_sprite");
+    u_bank_source = gl_GetUniformLocation(program, "bank_source");
     u_captured = gl_GetUniformLocation(program, "captured");
     u_capture = gl_GetUniformLocation(program, "capture");
     return 1;
@@ -1234,10 +1244,9 @@ static size_t polygon(const uint32_t *words, size_t count)
         if (v[i].u > piece[6]) piece[6] = v[i].u;
         if (v[i].v > piece[7]) piece[7] = v[i].v;
     }
-    state.pack = textured && !state.bank
-                     ? TexturePack_EntryFor(state.page_x, state.page_y, state.depth, state.clut_x, state.clut_y,
-                                            v[0].u, v[0].v)
-                     : 0;
+    state.pack = textured ? (state.bank
+        ? TexturePack_BankEntryFor(state.bank, state.page_x, state.page_y, state.depth, v[0].u, v[0].v)
+        : TexturePack_EntryFor(state.page_x, state.page_y, state.depth, state.clut_x, state.clut_y, v[0].u, v[0].v)) : 0;
     if (quad && textured && hd_hud && !state.pack && !state.bank) {
         /* A digit or the panel drawn as a quad (a clip-tested field card):
          * a texture pack's image, where one paints it, comes first. */
@@ -1364,10 +1373,9 @@ static size_t rectangle(const uint32_t *words, size_t count)
         w = words[at] & 0x3ff;
         h = (words[at] >> 16) & 0x1ff;
     }
-    state.pack = textured && !state.bank
-                     ? TexturePack_EntryFor(state.page_x, state.page_y, state.depth, state.clut_x, state.clut_y,
-                                            base.u, base.v)
-                     : 0;
+    state.pack = textured ? (state.bank
+        ? TexturePack_BankEntryFor(state.bank, state.page_x, state.page_y, state.depth, base.u, base.v)
+        : TexturePack_EntryFor(state.page_x, state.page_y, state.depth, state.clut_x, state.clut_y, base.u, base.v)) : 0;
     if (w && h && textured && hd_hud && !state.pack && !state.bank) {
         /* HD numbers and labels (a texture pack's image comes first). */
         int atlas_u, atlas_v;
@@ -1840,17 +1848,23 @@ static void sync_pack(void)
     const uint16_t *entry_map = TexturePack_EntryMap();
     const uint32_t *place_map = TexturePack_PlaceMap();
     int i;
-    if (!entry_map || !place_map) return;
     if (generation != pack_generation) {
         pack_generation = generation;
         for (i = 0; i < entry_texture_count; i++) {
             if (entry_textures[i]) glDeleteTextures(1, &entry_textures[i]);
         }
+        for (i = 0; i < bank_entry_texture_count; i++) {
+            if (bank_entry_textures[i]) glDeleteTextures(1, &bank_entry_textures[i]);
+        }
         free(entry_textures);
         entry_textures = NULL;
         entry_texture_count = 0;
+        free(bank_entry_textures);
+        bank_entry_textures = NULL;
+        bank_entry_texture_count = 0;
         map_generation = maps - 1; /* the maps with them */
     }
+    if (!entry_map || !place_map) return;
     if (maps == map_generation) return;
     map_generation = maps;
     if (!entry_map_texture) entry_map_texture = make_map_texture(GL_R16UI, GL_UNSIGNED_SHORT);
@@ -1912,6 +1926,31 @@ static int bind_pack_entry(int entry)
     if (!TexturePack_EntryImage(entry, &rgba, &width, &height, &crop_left, &crop_width, &rows, &per)) return 0;
     texture_width = fitted(width);
     texture_height = fitted(height);
+    if (entry < 0) {
+        int u, v, w, h, sx, sy, sw, sh, index = -entry - 1;
+        GLuint *more;
+        if (index >= bank_entry_texture_count) {
+            more = realloc(bank_entry_textures, (size_t)(index + 1) * sizeof(*more));
+            if (!more) return 0;
+            memset(more + bank_entry_texture_count, 0, (size_t)(index + 1 - bank_entry_texture_count) * sizeof(*more));
+            bank_entry_textures = more;
+            bank_entry_texture_count = index + 1;
+        }
+        gl_ActiveTexture(GL_TEXTURE5);
+        if (!bank_entry_textures[index]) {
+            bank_entry_textures[index] = make_texture(GL_RGBA8, texture_width, texture_height, GL_RGBA, GL_UNSIGNED_BYTE);
+            glBindTexture(GL_TEXTURE_2D, bank_entry_textures[index]);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, texture_width, texture_height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        } else glBindTexture(GL_TEXTURE_2D, bank_entry_textures[index]);
+        gl_ActiveTexture(GL_TEXTURE0);
+        if (!TexturePack_BankEntryRect(entry, &u, &v, &w, &h) ||
+            !TexturePack_BankEntrySource(entry, &sx, &sy, &sw, &sh)) return 0;
+        gl_Uniform4i(u_bank_sprite, u, v, w, h);
+        gl_Uniform4i(u_bank_source, sx, sy, sw, sh);
+        gl_Uniform4i(u_pack_entry, 0, 0, 0, 0);
+        gl_Uniform3i(u_pack_size, texture_width, texture_height, 1);
+        return 1;
+    }
     if (entry > entry_texture_count) {
         GLuint *more = realloc(entry_textures, (size_t)entry * sizeof(*entry_textures));
         if (!more) return 0;
@@ -1940,6 +1979,8 @@ static int bind_pack_entry(int entry)
         glBindTexture(GL_TEXTURE_2D, entry_textures[entry - 1]);
     }
     gl_ActiveTexture(GL_TEXTURE0);
+    gl_Uniform4i(u_bank_sprite, 0, 0, 0, 0);
+    gl_Uniform4i(u_bank_source, 0, 0, 0, 0);
     /* The maps name the head of the entry's readings; this entry's image. */
     gl_Uniform4i(u_pack_entry, TexturePack_EntryHead(entry), crop_left, crop_width, rows);
     gl_Uniform3i(u_pack_size, texture_width, texture_height, per);
@@ -2039,7 +2080,11 @@ static void flush_runs(void)
         scissor_words(run->clip[0], run->clip[1], run->clip[2], run->clip[3], origin_x, origin_y);
         gl_Uniform4i(u_window, run->window[0] * 8, run->window[1] * 8, (run->window[2] & run->window[0]) * 8,
                     (run->window[3] & run->window[1]) * 8);
-        if (!run->pack || !bind_pack_entry(run->pack)) gl_Uniform4i(u_pack_entry, 0, 0, 0, 0);
+        if (!run->pack || !bind_pack_entry(run->pack)) {
+            gl_Uniform4i(u_pack_entry, 0, 0, 0, 0);
+            gl_Uniform4i(u_bank_sprite, 0, 0, 0, 0);
+            gl_Uniform4i(u_bank_source, 0, 0, 0, 0);
+        }
         if (!run->subtractive) {
             gl_Uniform1i(u_pass, 0);
             glDrawArrays(GL_TRIANGLES, (GLint)run->first, (GLsizei)run->count);
@@ -2702,6 +2747,9 @@ void GlPicture_Lost(void)
     free(entry_textures);
     entry_textures = NULL;
     entry_texture_count = 0;
+    free(bank_entry_textures);
+    bank_entry_textures = NULL;
+    bank_entry_texture_count = 0;
     pack_generation = map_generation = ~0u;
     capture_texture = 0;
     capture_w = capture_h = 0;

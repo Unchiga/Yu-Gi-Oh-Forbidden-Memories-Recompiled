@@ -11,6 +11,7 @@
 #include "card_layout.h"
 #include "art.h"
 #include "pc/render/soft_gpu.h"
+#include "pc/render/texture_pack.h"
 #include "pc/debug/log.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,6 +119,7 @@ int CardLayoutArt_FrameTile(int col, int row, int *tpage, int *clut, int *w, int
     const char *path = CardLayout_FramePath();
     const FrameImage *image;
     int tile = row * FRAME_COLS + col;
+    int png_w, png_h, sx, sy, sx1, sy1;
     if (col < 0 || col >= FRAME_COLS || row < 0 || row >= FRAME_ROWS) return 0;
     if (!path || !*path) { LOG(LOG_CARD_LAYOUT, "FrameTile: no path"); return 0; }
     if (!(bank = SoftGpu_Bank(FRAME_BANK))) { LOG(LOG_CARD_LAYOUT, "FrameTile: no bank"); return 0; }
@@ -132,6 +134,14 @@ int CardLayoutArt_FrameTile(int col, int row, int *tpage, int *clut, int *w, int
     *clut = (FRAME_CLUT_Y << 6) | 0;   /* getClut(0, FRAME_CLUT_Y) */
     *w = FRAME_TILE_W;
     *h = FRAME_TILE_H;
+    if (CardArt_ImageSize(path, &png_w, &png_h)) {
+        sx = col * FRAME_TILE_W * png_w / FRAME_W;
+        sx1 = (col + 1) * FRAME_TILE_W * png_w / FRAME_W;
+        sy = row * FRAME_TILE_H * png_h / FRAME_H;
+        sy1 = (row + 1) * FRAME_TILE_H * png_h / FRAME_H;
+        TexturePack_AddBankSpriteCrop(FRAME_BANK, (tile % 8 * 2) * 64, tile / 8 * 256, 1, 0, 0,
+                                      FRAME_TILE_W, FRAME_TILE_H, path, sx, sy, sx1 - sx, sy1 - sy);
+    }
     return 1;
 }
 
@@ -167,7 +177,7 @@ static void digits_build(const char *path)
 int CardLayoutArt_DigitCell(int digit, int dim, int *tpage, int *u, int *v, int *clut, int *w, int *h)
 {
     char path[1024];
-    int dw, dh, step, x, y;
+    int dw, dh, step, x, y, png_w, png_h, sx, sy, sx1, sy1;
     uint16_t *bank, *page;
 
     if (digit < 0 || digit > 9) return 0;
@@ -192,6 +202,14 @@ int CardLayoutArt_DigitCell(int digit, int dim, int *tpage, int *u, int *v, int 
     *v = (digit / CARD_LAYOUT_DIGIT_COLS + (dim ? 2 : 0)) * CARD_LAYOUT_DIGIT_CELL_H;
     *w = CARD_LAYOUT_DIGIT_CELL_W;
     *h = CARD_LAYOUT_DIGIT_CELL_H;
+    if (CardArt_ImageSize(path, &png_w, &png_h)) {
+        sx = *u * png_w / DIGITS_W;
+        sx1 = (*u + *w) * png_w / DIGITS_W;
+        sy = *v * png_h / DIGITS_H;
+        sy1 = (*v + *h) * png_h / DIGITS_H;
+        TexturePack_AddBankSpriteCrop(FRAME_BANK, (DIGITS_SLOT % 8 * 2) * 64, DIGITS_SLOT / 8 * 256, 1,
+                                      *u, *v, *w, *h, path, sx, sy, sx1 - sx, sy1 - sy);
+    }
     return 1;
 }
 
