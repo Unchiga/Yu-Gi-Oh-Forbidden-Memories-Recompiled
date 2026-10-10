@@ -77,6 +77,7 @@
 #include "game/file_transfer_steps.h"
 #include "game/duel_display.h"
 #include "game/duel_scene_state.h"
+#include "game/duel_side_state.h"
 #include "game/high_memory_addresses.h"
 #include "game/display_object.h"
 #include "game/func_80015EF4.h"
@@ -1081,7 +1082,6 @@ extern s16 gDuel_awSavedDefenseModifier[2];
 extern u8 D_800E9ECE[];        /* the screen fade: bit 7 while one runs */
 extern DisplayObject *G32 D_8009B214; /* the two panels slid off for the battle */
 extern DisplayObject *G32 D_8009B21C;
-extern u16 gDuel_wPlayerLifePoint, gDuel_wOpponentLifePoint; /* for the trace */
 void DisplayObject_ReleaseIfPresent(void *object);
 void SD_SEPlayFull(u32 sound);
 
@@ -1742,7 +1742,7 @@ static void fight_conclude(void)
     fight_panel(D_8009B21C, PANEL_RIGHT);
     gDuel_wSceneStateFlags = DUEL_SCENE_AFTER_BATTLE;
     say("fight: the battle ends on the field (exchange %d, %d; life %d, %d)\n", D_8009B1B0[0], D_8009B1B0[1],
-        gDuel_wPlayerLifePoint, gDuel_wOpponentLifePoint);
+        D_800E9FF0[0].life_points.unsigned_value, D_800E9FF0[1].life_points.unsigned_value);
 }
 
 static void update_battle(void)
