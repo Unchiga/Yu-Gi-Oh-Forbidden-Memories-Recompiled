@@ -45,6 +45,7 @@ void Text_SetCursorOffset(DuelEffectChannel *object);
  * only caller. Nothing else writes it, so the parameter type is not a guess:
  * it is Text_TryCompleteChoiceLayout's own, volatile qualifier included. */
 extern void (*G32 D_8009B340)(volatile DuelEffectChannel *object);
-extern void (*TRANSLATED_G32 D_80090F18[])(u8 *);
+typedef void (*TextStreamHandler)(u8 *);
+extern TextStreamHandler G32 D_80090F18[];
 
 #endif
