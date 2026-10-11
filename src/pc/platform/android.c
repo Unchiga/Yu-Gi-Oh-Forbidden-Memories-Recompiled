@@ -1047,16 +1047,27 @@ static void read_environment(const char *folder)
 /* An APK asset (a path under assets/) copied to `to`; 1 when it was. */
 static int copy_asset(const char *asset, const char *to)
 {
-    size_t size = 0;
-    void *data = SDL_LoadFile(asset, &size); /* relative: the internal folder, then the assets */
+    SDL_IOStream *stream = SDL_IOFromFile(asset, "rb");
     char temporary[1100];
+    static unsigned char buffer[1 << 20];
     FILE *file;
-    int written;
-    if (!data) return 0;
+    int written = 1;
+    if (!stream) return 0;
     snprintf(temporary, sizeof(temporary), "%s.tmp", to);
-    written = (file = fopen(temporary, "wb")) != NULL && fwrite(data, 1, size, file) == size;
-    if (file && fclose(file)) written = 0;
-    SDL_free(data);
+    if (!(file = fopen(temporary, "wb"))) {
+        SDL_CloseIO(stream);
+        return 0;
+    }
+    for (;;) {
+        size_t got = SDL_ReadIO(stream, buffer, sizeof(buffer));
+        if (!got) break;
+        if (fwrite(buffer, 1, got, file) != got) {
+            written = 0;
+            break;
+        }
+    }
+    if (fclose(file)) written = 0;
+    SDL_CloseIO(stream);
     if (!written || rename(temporary, to)) {
         remove(temporary);
         return 0;
