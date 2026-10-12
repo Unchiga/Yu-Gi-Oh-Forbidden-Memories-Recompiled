@@ -5,6 +5,7 @@
 #ifdef __SWITCH__
 #include <fontconfig/fontconfig.h>
 #include "paths.h"
+#include "pc/compat/fs.h"
 #include <switch.h>
 #include <stdio.h>
 #include <sys/stat.h>

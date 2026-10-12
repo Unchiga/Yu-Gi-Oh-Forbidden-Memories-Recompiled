@@ -4,6 +4,7 @@
  * signal mask, the page size, a positioned read and (no) iconv. */
 #ifdef __SWITCH__
 #include <sys/mman.h>
+#include "pc/compat/fs.h"
 #include <errno.h>
 #include <iconv.h>
 #include <pthread.h>

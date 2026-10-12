@@ -6,8 +6,10 @@
 #include "platform.h"
 #include "paths.h"
 #include "pc/memory_map.h"
+#include "pc/compat/fs.h"
 #include <switch.h>
 #include <netinet/in.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -172,8 +174,12 @@ int Switch_EarlyInit(char *why, size_t size)
     if (__nxlink_host.s_addr && R_SUCCEEDED(socketInitializeDefault()) && nxlinkStdio() >= 0) {
         /* stdout and stderr go to the terminal */
     } else {
-        freopen(PATHS_SWITCH_DIR "/log.txt", "w", stdout);
-        dup2(fileno(stdout), fileno(stderr));
+        int log = open(PATHS_SWITCH_DIR "/log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (log >= 0) {
+            dup2(log, STDOUT_FILENO);
+            dup2(log, STDERR_FILENO);
+            close(log);
+        }
     }
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
