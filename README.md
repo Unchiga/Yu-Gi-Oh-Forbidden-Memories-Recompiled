@@ -1,8 +1,8 @@
 # Yu-Gi-Oh! Forbidden Memories Recompiled
 
 **Yu-Gi-Oh! Forbidden Memories** (PS1, USA) rebuilt from its decompiled source as a
-native PC game for Windows and Linux, with a macOS ARM64 source build. Bring your own disc image; no game data is
-included but the text of the European translations (below).
+native PC game for Windows and Linux, with a macOS ARM64 source build and a Nintendo Switch homebrew.
+Bring your own disc image; no game data is included but the text of the European translations (below).
 
 This is not a static recompilation: the game code was decompiled
 by hand into C that matches the original byte for byte, then ported to PC.
@@ -63,6 +63,24 @@ PAL discs by the port itself. With the discs in `game/pal`, `python3 tools/pc/ex
 writes them again, and `--check` compares them ([Translations](notes/translation.md),
 "The official languages"). They are the only game data in the repository: text, no pictures.
 
+### Nintendo Switch
+
+A homebrew for a Switch with custom firmware (Atmosphère). From a release, unpack
+`yfm-redecomp-<version>-switch.zip` onto the SD card's root, or copy
+`yfm-redecomp-<version>-switch.nro` alone into `sdmc:/switch/`: it makes
+`sdmc:/switch/yfm-redecomp/` (`game/`, `mods/`, `user/`) on its first start. Put your USA
+disc's `.bin` in `sdmc:/switch/yfm-redecomp/game/`, then start the homebrew **in place of a
+game** (hold **R** while starting any game): from the album it gets too little memory.
+
+- **R3** (press the right stick) shows or hides the menu bar, which starts hidden. While it
+  shows, **L** / **R** switch menus, the D-pad moves and the controller drives the menus,
+  not the game. Taps on the bar work too.
+- **L3** (press the left stick) turns fast forward on, and off on the next press.
+- Data mods only (the HD pack included: pick **Internal 2x** or more for it to show); mods
+  with code do not run on the Switch.
+
+Building, the memory layout and packaging: [Nintendo Switch](notes/switch.md).
+
 ## Decompilation
 
 Every game function matches the original executable byte for byte:
@@ -108,7 +126,7 @@ _Generated from `config/slus_01411/functions.csv` and `config/slus_01411/overlay
 
 [Modding](notes/modding.md) · [FM Editor](tools/pc/fm_editor/README.md) · [More cards](notes/more-cards.md) · [Fusion helper](notes/fusion-helper.md) ·
 [Card drops](notes/card-drops.md) · [Card packs](notes/card-packs.md) · [Translations](notes/translation.md) · [Updates](notes/updates.md) · [Setup](notes/setup.md) · [Build](notes/build.md) ·
-[Releases](notes/pc-release.md)
+[Releases](notes/pc-release.md) · [Nintendo Switch](notes/switch.md)
 
 ## Community
 
