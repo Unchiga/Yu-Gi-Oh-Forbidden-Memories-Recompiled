@@ -14,7 +14,7 @@ int Hooks_IsHooked(const void *function);
 /* Hook `index` (from 0) of any mod, applied or not: 0 past the last, else 1
  * with its mod and the function it hooks (the Mods window's overlaps). */
 int Hooks_At(int index, int *owner, const void **function);
-#if defined(__APPLE__) && defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
+#if (defined(__APPLE__) || defined(__SWITCH__)) && defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
 /* Native wrappers retain the original ABI; no executable-memory patching. */
 void Hooks_Register(void *function, void *body);
 void *Hooks_Resolve(void *function, void *body);

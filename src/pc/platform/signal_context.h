@@ -8,7 +8,7 @@
  * (tools/pc/check_mod_abi.py). */
 #ifndef MEMORIES_PC_PLATFORM_SIGNAL_CONTEXT_H
 #define MEMORIES_PC_PLATFORM_SIGNAL_CONTEXT_H
-#if !defined(_WIN32) && !defined(MEMORIES_MOD)
+#if !defined(_WIN32) && !defined(MEMORIES_MOD) && !defined(__SWITCH__) /* no signals there: crash.c */
 #ifdef __APPLE__
 #include <sys/ucontext.h>
 #else

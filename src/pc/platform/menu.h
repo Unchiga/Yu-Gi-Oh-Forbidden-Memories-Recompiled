@@ -152,6 +152,13 @@ void Menu_Open(void);
  * (48 dp): the bar, the rows and a notice's buttons are at least that tall.
  * 0, the default, keeps the mouse's sizes. */
 void Menu_SetTouchTarget(int pixels);
+/* A controller has the bar (the Switch's R3): L and R badges at its ends,
+ * Menu_Step moves between its menus, and Left and Right in a menu are its
+ * sliders' and submenus' only, never a step to the next menu. */
+void Menu_SetPadHints(int on);
+/* The next menu (direction > 0) or the previous, opened with its first row
+ * lit; the first when none is open. */
+void Menu_Step(int direction);
 /* That height (0 with a mouse): the Mods and Controls panels drawn inside
  * the window (panel.h) size their rows and buttons by it too. */
 int Menu_TouchTarget(void);

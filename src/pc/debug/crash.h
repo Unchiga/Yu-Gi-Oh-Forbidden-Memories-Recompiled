@@ -10,7 +10,7 @@ void Crash_ChooseReportDir(void);
  * user directory (paths.h), so a player can find them to send. Set by
  * Crash_Init, before any handler can need it. */
 extern char Crash_ReportDir[];
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__SWITCH__) /* the Switch reports faults as exceptions: crash.c */
 void Crash_HandleSignal(int number, siginfo_t *info, void *context);
 #endif
 void Crash_ReportSoft(const char *kind, const char *detail);

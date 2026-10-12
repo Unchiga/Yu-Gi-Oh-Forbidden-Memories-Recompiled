@@ -1,11 +1,11 @@
-/* Where the system's OpenGL is GLES (Android), in place of present_pass.c:
+/* Where the system's OpenGL is GLES (Android, the Switch), in place of present_pass.c:
  * the present pass and sdl.c's GL presenter call desktop GL's fixed
  * function (glBegin, glOrtho, the matrix stack), which GLES does not have.
  * That path is never taken there, since Platform_HasDesktopGL() is 0 and
  * sdl.c shows the picture through the SDL renderer instead; these only
  * complete the link. tools/pc/build_game32.py picks this file for Android
- * builds (ANDROID_BACKEND). */
-#ifdef __ANDROID__
+ * builds (ANDROID_BACKEND), tools/pc/build_config.py for the Switch. */
+#if defined(__ANDROID__) || defined(__SWITCH__)
 #include "present_pass.h"
 #include <SDL3/SDL_opengl.h>
 

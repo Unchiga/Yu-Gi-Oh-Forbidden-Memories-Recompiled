@@ -832,9 +832,14 @@ static void setting_changed(SettingId id, int value)
 
 int Menu_Height(void) { return MENU_H; }
 
+/* Menu_SetPadHints: a controller has the bar, whose L and R step between
+ * its menus; their badges stand at its ends. */
+static int pad_hints;
+static int badge_w(void) { return pad_hints ? text_width("L") + BAR_PAD * 2 : 0; }
+
 static void layout_bar(void)
 {
-    int i, at = 0;
+    int i, at = badge_w();
     for (i = 0; i < MENU_COUNT; i++) {
         menus[i].w = text_width(menus[i].label) + BAR_PAD * 2;
         menus[i].x = at;
@@ -1592,6 +1597,16 @@ void Menu_Draw(MenuCanvas *into)
         }
         draw_text(menu->x + BAR_PAD, MENU_H / 2, menu->label, ink);
     }
+    if (pad_hints) {
+        const char *const badges[2] = {"L", "R"};
+        const int at[2] = {0, menus[MENU_COUNT - 1].x + menus[MENU_COUNT - 1].w};
+        int inset = MENU_H / 6, w = badge_w();
+        for (i = 0; i < 2; i++) {
+            fill(at[i] + inset, inset, w - inset * 2, MENU_H - 1 - inset * 2, C_BAR_HOVER, 255);
+            outline(at[i] + inset, inset, w - inset * 2, MENU_H - 1 - inset * 2, C_TEXT_DIM);
+            draw_text(at[i] + (w - text_width(badges[i])) / 2, MENU_H / 2, badges[i], C_TEXT);
+        }
+    }
     for (level = 0; level < (open_sub >= 0 ? 2 : open_menu >= 0 ? 1 : 0); level++) {
         const Menu *menu = level_menu(level);
         int x, y, w, h, top, hot_row = level ? hot_sub : hot_item, full, scrolls;
@@ -2140,6 +2155,8 @@ int Menu_Event(const MenuEvent *event, int *quit)
                 keep_shown(1, hot_sub);
             } else if (event->key == MENU_KEY_LEFT && open_sub >= 0) {
                 close_submenu();
+            } else if (pad_hints) {
+                /* a controller steps between menus with L and R (Menu_Step) */
             } else {
                 int next = (open_menu + (event->key == MENU_KEY_RIGHT ? 1 : MENU_COUNT - 1)) % MENU_COUNT;
                 close_menu();
@@ -2176,4 +2193,25 @@ int Menu_Event(const MenuEvent *event, int *quit)
     default:
         return 0;
     }
+}
+
+void Menu_SetPadHints(int on)
+{
+    on = on != 0;
+    if (on == pad_hints) return;
+    pad_hints = on;
+    if (ready) layout_bar();
+    changed = 1;
+}
+
+void Menu_Step(int direction)
+{
+    int next;
+    if (!ready || notice.shown) return;
+    next = open_menu < 0 ? 0 : (open_menu + (direction > 0 ? 1 : MENU_COUNT - 1)) % MENU_COUNT;
+    close_menu();
+    open_menu = next;
+    hot_item = step_item(0, -1, 1);
+    keep_shown(0, hot_item);
+    changed = 1;
 }

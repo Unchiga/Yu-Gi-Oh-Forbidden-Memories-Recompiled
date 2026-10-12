@@ -14,6 +14,7 @@ on:
         options:
           - all
           - macos-arm64
+          - switch
         default: all
 
 permissions:
@@ -25,7 +26,7 @@ concurrency:
 
 jobs:
   package:
-    if: github.event_name != 'workflow_dispatch' || inputs.platform != 'macos-arm64'
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
     strategy:
       fail-fast: false
       matrix:
@@ -252,6 +253,62 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # The Nintendo Switch homebrew (tools/pc/package_switch.py): the .nro on
+  # its own, and a ZIP to unpack onto the SD card's root. Built on macOS,
+  # where the pinned LLVM and the guest IR pass come from (as the macOS
+  # job's), with devkitPro's devkitA64, libnx and portlibs for linking.
+  package-switch:
+    name: package (switch, macos-15)
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'switch'
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            tmp/pc/llvm-macos
+            tmp/pc/tools/macos
+            tmp/pc/macos-deps
+          key: macos-arm64-llvm21.1.8-${{ hashFiles('tools/pc/macos_toolchain.json', 'tools/pc/macos_deps.py', 'tools/pc/dependency_archives.py', 'tools/pc/fetch_tools.py') }}
+      - name: devkitPro (devkitA64, libnx, Switch portlibs)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/devkitpro-pacman.pkg" https://github.com/devkitPro/pacman/releases/latest/download/devkitpro-pacman-installer.pkg
+          sudo installer -pkg "$RUNNER_TEMP/devkitpro-pacman.pkg" -target /
+          sudo /opt/devkitpro/pacman/bin/pacman -Sy --noconfirm --needed switch-dev switch-sdl2 switch-mesa switch-freetype switch-libpng switch-zlib switch-harfbuzz
+          command -v pkg-config || brew install pkgconf
+          echo "DEVKITPRO=/opt/devkitpro" >> "$GITHUB_ENV"
+      - name: Archive version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            echo "PACKAGE_VERSION=$REF_NAME" >> "$GITHUB_ENV"
+          else
+            echo "PACKAGE_VERSION=dev-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+          fi
+      - name: Build the Switch homebrew without a disc
+        run: MEMORIES_VERSION="$PACKAGE_VERSION" python tools/pc/build.py --target switch
+      - name: Package the .nro and the SD card archive
+        run: python tools/pc/package_switch.py --version "$PACKAGE_VERSION"
+      - name: Upload the Switch homebrew
+        uses: actions/upload-artifact@v4
+        with:
+          name: yfm-redecomp-switch
+          path: |
+            dist/yfm-redecomp-*-switch.nro
+            dist/yfm-redecomp-*-switch.zip
+            dist/yfm-redecomp-*-switch.*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   # The Android app (notes/pc-release.md, "Android signing"): the arm64 APK,
   # signed with the release key held in this repository's secrets. Only
   # master and v* tags are signed; every other run (pull requests, manual runs
@@ -259,7 +316,7 @@ jobs:
   # (signed with a debug key, not uploaded); a version tag without the
   # release key fails, so a release never carries a debug-signed APK.
   android:
-    if: github.event_name != 'workflow_dispatch' || inputs.platform != 'macos-arm64'
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -397,7 +454,7 @@ jobs:
 
   draft-release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [package, android]
+    needs: [package, android, package-switch]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

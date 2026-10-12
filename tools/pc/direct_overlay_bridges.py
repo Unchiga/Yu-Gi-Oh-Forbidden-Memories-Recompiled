@@ -5,9 +5,12 @@ ENTRIES = {'func_8016AA6C': (0x8016AA6C, False),
            'func_80168FB4': (0x80168FB4, False),
            'func_801462B0': (0x801462B0, 'effect')}
 
-def validate_signature(name, signature):
+def validate_signature(name, signature, extends_short=True):
+    """extends_short: the target's C ABI marks a short argument signext,
+    as Apple's ARM64 ABI does; standard AAPCS64 (ELF: the Switch) leaves
+    extending it to the callee and marks nothing."""
     validate_c_abi(name, signature)
-    expected = ([('i16', True), ('i16', True), ('i32', False), ('ptr', False)]
+    expected = ([('i16', extends_short), ('i16', extends_short), ('i32', False), ('ptr', False)]
                 if name == 'func_801462B0' else
                 [('i32', False)] if ENTRIES[name][1] else [])
     actual = [(parameter['kind'], parameter['signext'])

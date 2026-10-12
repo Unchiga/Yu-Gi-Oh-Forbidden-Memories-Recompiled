@@ -15,6 +15,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 #include <string>
 #include "../../../src/pc/memory_map.h"
 
@@ -184,8 +185,15 @@ class GuestMemoryPass : public PassInfoMixin<GuestMemoryPass> {
     Value *address = b.CreatePtrToInt(pointer, i64);
     // Negative PS1 pointers may be sign extended by a signed integer cast.
     Value *signedGuest = b.CreateICmpUGE(address, b.getInt64(0xffffffff80000000ull));
-    b.CreateCondBr(b.CreateAnd(b.CreateICmpUGT(address, b.getInt64(UINT32_MAX)),
-                              b.CreateNot(signedGuest)), native, guest);
+    Value *host = b.CreateAnd(b.CreateICmpUGT(address, b.getInt64(UINT32_MAX)), b.CreateNot(signedGuest));
+    // Darwin keeps everything of the host's above 4 GiB; the Switch
+    // (aarch64-none-elf: no OS in the triple) may put its own below it too,
+    // in the window tokens never use.
+    Triple triple(module.getTargetTriple());
+    if (triple.getArch() == Triple::aarch64 && triple.getOS() == Triple::UnknownOS)
+      host = b.CreateOr(host, b.CreateAnd(b.CreateICmpUGE(address, b.getInt64(MEMORIES_HOST_LOW_START)),
+                                          b.CreateICmpULT(address, b.getInt64(MEMORIES_HOST_LOW_END))));
+    b.CreateCondBr(host, native, guest);
     b.SetInsertPoint(native); b.CreateRet(pointer);
     b.SetInsertPoint(guest);
     Value *bits = b.CreateTrunc(address, b.getInt32Ty());

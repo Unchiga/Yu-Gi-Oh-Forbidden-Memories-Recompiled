@@ -26,6 +26,8 @@
 #include <unistd.h>
 #ifdef _WIN32
 #include "pc/platform/win32.h"
+#elif defined(__SWITCH__)
+#include <switch.h>
 #else
 #include "pc/platform/signal_context.h"
 #endif
@@ -78,6 +80,9 @@ static const char *region(uintptr_t address)
 #elif defined(__APPLE__)
     uintptr_t image_low, image_high;
     DarwinImage_TextRange(&image_low, &image_high);
+#elif defined(__SWITCH__)
+    extern char __start__[], __rodata_start[]; /* libnx's switch.ld: the code, then read-only data */
+    uintptr_t image_low = (uintptr_t)__start__, image_high = (uintptr_t)__rodata_start;
 #else
     extern char __executable_start[], etext[];
     uintptr_t image_low = (uintptr_t)__executable_start, image_high = (uintptr_t)etext;
@@ -307,6 +312,32 @@ void Crash_Init(void)
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     _set_invalid_parameter_handler(on_invalid_parameter);
 }
+#elif defined(__SWITCH__)
+/* Horizon has no signals: libnx hands a fault to the process itself, on a
+ * stack of its own (these names are libnx's), and the process ends when the
+ * handler returns. */
+_Alignas(16) unsigned char __nx_exception_stack[0x8000];
+u64 __nx_exception_stack_size = sizeof(__nx_exception_stack);
+u32 __nx_exception_ignoredebug = 1; /* report under a debugger as well */
+
+void __libnx_exception_handler(ThreadExceptionDump *dump)
+{
+    if (reporting++) return;
+    fault_lr = (uintptr_t)dump->lr.x;
+    report_fatal("exception", dump->error_desc, (uintptr_t)dump->far.x, (uintptr_t)dump->pc.x,
+                 (uintptr_t)dump->sp.x, (uintptr_t)dump->fp.x);
+}
+
+void Crash_Init(void)
+{
+    MemoryInfo info;
+    u32 page;
+    Crash_ChooseReportDir();
+    if (R_SUCCEEDED(svcQueryMemory(&info, &page, (u64)(uintptr_t)__builtin_frame_address(0)))) {
+        main_stack_low = (uintptr_t)info.addr;
+        main_stack_high = main_stack_low + info.size;
+    }
+}
 #else
 void Crash_HandleSignal(int number, siginfo_t *info, void *context)
 {
@@ -421,6 +452,10 @@ void Crash_ReportHang(void *context_pointer)
     uintptr_t eip, esp, ebp;
 #ifdef _WIN32
     Win32_ContextRegisters(context_pointer, &eip, &esp, &ebp);
+#elif defined(__SWITCH__)
+    (void)context_pointer; /* no watcher interrupts the game there: Monitor_Active */
+    eip = esp = ebp = 0;
+    fault_lr = 0;
 #else
     ucontext_t *user = context_pointer;
     eip = context_pointer ? (uintptr_t)SIGNAL_CONTEXT_PC(user) : 0;

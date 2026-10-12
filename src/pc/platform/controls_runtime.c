@@ -28,6 +28,9 @@ static uint16_t raw_pads, pad_presses;
  * fires next. */
 static uint32_t host_down, host_live, host_presses, host_taps;
 static uint64_t host_repeat_at[CTRL_HOST_COUNT];
+#ifdef __SWITCH__
+static int turbo_on;
+#endif
 #define REPEAT_DELAY_US 400000 /* like a keyboard's own repeat */
 #define REPEAT_EVERY_US 60000
 uint64_t ControlsRuntime_Now(void)
@@ -289,6 +292,9 @@ void ControlsRuntime_Update(void)
     if (!stopped) {
         uint32_t fresh = (host & ~host_down) | host_taps;
         host_presses |= fresh;
+#ifdef __SWITCH__
+        if (fresh >> CTRL_HOST_TURBO & 1) turbo_on = !turbo_on;
+#endif
         for (int h = 0; h < CTRL_HOST_COUNT; h++) {
             if (Controls_HostActions[h].mode != CTRL_HOST_REPEAT || !(host >> h & 1))
                 continue;
@@ -302,6 +308,11 @@ void ControlsRuntime_Update(void)
     }
     host_down = host;
     host_live = stopped ? 0 : host;
+#ifdef __SWITCH__
+    /* Turbo is a switch there (L3, controls.c): a press turns it on, the
+     * next off, and it stays through a menu. */
+    host_live = (host_live & ~(1u << CTRL_HOST_TURBO)) | (uint32_t)turbo_on << CTRL_HOST_TURBO;
+#endif
     host_taps = 0;
     sigfillset(&all);
     sigprocmask(SIG_BLOCK, &all, &previous);

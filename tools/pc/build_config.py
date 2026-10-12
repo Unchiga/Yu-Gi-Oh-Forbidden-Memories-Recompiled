@@ -9,7 +9,7 @@ MACOS_MINIMUM = "11.0"
 
 # Keep host platform, machine architecture, native calling ABI, and guest
 # memory strategy explicit.  In particular, Windows x64 is still the fixed
-# address G32 build; only macOS ARM64 uses translated guest memory.
+# address G32 build; macOS ARM64 and the Switch use translated guest memory.
 TARGETS = {
     "linux": {
         "platform": "linux",
@@ -70,6 +70,18 @@ TARGETS = {
         "driver": "build_arm64.py",
         "build": "tmp/pc/macos",
         "executable": "memories-arm64",
+    },
+    # Horizon cannot map the fixed guest ranges below 4 GB, so the Switch
+    # shares the macOS translated memory model on newlib/libnx.
+    "switch": {
+        "platform": "switch",
+        "architecture": "arm64",
+        "abi": "newlib-lp64",
+        "memory_model": "translated-32",
+        "guest_assembly": "translated-arm64",
+        "driver": "build_arm64.py",
+        "build": "tmp/pc/switch",
+        "executable": "memories.nro",
     },
 }
 
@@ -174,6 +186,10 @@ def native_sources(target, backend="sdl"):
     sources.difference_update(backend_sources)
     if backend:
         sources.update(BACKENDS[backend])
+    if target.get("platform") == "switch" and "src/pc/render/present_pass.c" in sources:
+        # GLES only, as on Android: the desktop GL presenter's stand-in.
+        sources.discard("src/pc/render/present_pass.c")
+        sources.add("src/pc/render/gl_desktop_none.c")
 
     assembly = sorted(
         path.relative_to(ROOT).as_posix()

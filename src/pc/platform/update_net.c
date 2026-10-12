@@ -92,14 +92,14 @@ int UpdateNet_Get(const char *url, int timeout_seconds, UpdateNetSink sink, void
     return result;
 }
 
-#elif defined(__ANDROID__)
+#elif defined(__ANDROID__) || defined(__SWITCH__)
 
-/* No curl to run in an app (android.c turns the check off); an HTTP client
- * for Android is for later. */
+/* No curl to run in an app (android.c turns the check off) or on the
+ * Switch; an HTTP client there is for later. */
 int UpdateNet_Get(const char *url, int timeout_seconds, UpdateNetSink sink, void *context, char *why, size_t why_size)
 {
     (void)url; (void)timeout_seconds; (void)sink; (void)context;
-    say(why, why_size, "no update check on Android yet");
+    say(why, why_size, "no update check on this system yet");
     return -1;
 }
 

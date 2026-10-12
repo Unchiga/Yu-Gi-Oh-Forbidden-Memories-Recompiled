@@ -67,7 +67,7 @@ static void write_profile(void)
 
 void Profile_Init(void)
 {
- #ifndef __APPLE__
+ #if !defined(__APPLE__) && !defined(__SWITCH__)
     extern char __start_game_text[], __stop_game_text[];
 #ifndef _WIN32
     extern char __executable_start[], etext[];
@@ -83,6 +83,14 @@ void Profile_Init(void)
         return;
     }
     ranges[1].first = ranges[1].last = 0;
+ #elif defined(__SWITCH__)
+    {
+        /* As on macOS, one range: libnx's switch.ld puts all code first. */
+        extern char __start__[], __rodata_start[];
+        ranges[0].first = (uintptr_t)__start__;
+        ranges[0].last = (uintptr_t)__rodata_start;
+        ranges[1].first = ranges[1].last = 0;
+    }
  #else
     ranges[0].first = (uintptr_t)__start_game_text;
     ranges[0].last = (uintptr_t)__stop_game_text;

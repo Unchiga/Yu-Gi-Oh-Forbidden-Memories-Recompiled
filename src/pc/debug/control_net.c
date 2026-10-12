@@ -111,6 +111,8 @@ int ControlNet_Listen(unsigned port, unsigned *bound)
     int yes = 1;
 #ifdef __APPLE__
     listener = close_on_exec(socket(AF_INET, SOCK_STREAM, 0));
+#elif defined(__SWITCH__) /* nothing is ever exec'd there */
+    listener = socket(AF_INET, SOCK_STREAM, 0);
 #else
     listener = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 #endif
@@ -147,6 +149,8 @@ int ControlNet_Accept(int timeout_ms)
     if (client != NO_SOCKET) SetHandleInformation((HANDLE)client, HANDLE_FLAG_INHERIT, 0);
 #elif defined(__APPLE__)
     client = close_on_exec(accept(listener, NULL, NULL));
+#elif defined(__SWITCH__)
+    client = accept(listener, NULL, NULL);
 #else
     client = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
 #endif

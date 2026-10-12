@@ -73,7 +73,22 @@ int Platform_RestartGame(void)
 
 static char **launch_argv;
 
-#if !defined(_WIN32) && !defined(__ANDROID__) /* android.c: an app cannot re-execute itself */
+#ifdef __SWITCH__
+#include <switch.h>
+/* Homebrew cannot start a process: the loader (hbloader) starts the same
+ * .nro again once this one exits, when it was asked to before. The
+ * environment does not carry over, so MEMORIES_RESTART_ENV has nothing to
+ * change. */
+int Platform_RestartGame(void)
+{
+    if (!launch_argv || !launch_argv[0] || !envHasNextLoad() ||
+        R_FAILED(envSetNextLoad(launch_argv[0], launch_argv[0])))
+        return -1;
+    exit(0);
+}
+#endif
+
+#if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__SWITCH__) /* android.c: an app cannot re-execute itself */
 int Platform_RestartGame(void)
 {
  #ifdef __APPLE__
@@ -188,14 +203,40 @@ static void user_dir_fact(int writable, const char *why)
     else Monitor_Fact("user dir", "%s; writable: no: %s", Paths_UserDir(), why);
 }
 
+#ifdef __SWITCH__
+/* The body on a stack Switch_Main picks (src/pc/platform/switch.c). */
+static int memories_main(int argc, char **argv);
 int main(int argc, char **argv)
+{
+    extern int Switch_Main(int (*run)(int, char **), int argc, char **argv);
+    return Switch_Main(memories_main, argc, argv);
+}
+static int memories_main(int argc, char **argv)
+#else
+int main(int argc, char **argv)
+#endif
 {
 #ifdef _WIN32
     /* main's narrow argv is lossy under a legacy Windows code page. */
     argv = Memories_Argv(&argc);
     if (!argv) return 1;
 #endif
+#ifdef __SWITCH__
+    extern int Switch_EarlyInit(char *why, size_t size);
+    {
+        char why[300];
+        if (Switch_EarlyInit(why, sizeof(why))) {
+            fprintf(stderr, "memories-pc: %s\n", why);
+            Platform_ShowError("Yu-Gi-Oh! Forbidden Memories", why);
+            return 1;
+        }
+    }
+    /* The loader's arguments (a launcher may add its own) never name a
+     * game executable: it is always read from the disc. */
+    const char *exe = NULL;
+#else
     const char *exe = argc > 1 ? argv[1] : NULL;
+#endif
     launch_argv = argv;
     if (getenv("MEMORIES_MOD_EXPORTS")) {
         return Mods_PrintExports();   /* tools/pc/check_mod_exports.py */

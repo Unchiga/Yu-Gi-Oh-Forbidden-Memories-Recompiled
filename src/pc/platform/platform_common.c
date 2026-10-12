@@ -27,7 +27,7 @@
 #include <time.h>
 #ifdef _WIN32
 #include "win32.h"
-#else
+#elif !defined(__SWITCH__) /* no signals there: the clock is cooperative */
 #include <sys/syscall.h>
 #include "signal_context.h"
 #endif
@@ -203,7 +203,7 @@ static void on_tick(uintptr_t eip, void *context)
     advance(real_now, eip);
 }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__SWITCH__)
 static void on_alarm(int number, siginfo_t *info, void *context)
 {
     ucontext_t *user = context;
@@ -221,7 +221,7 @@ static void on_alarm(int number, siginfo_t *info, void *context)
  * on that driver's locks. The process-wide timer is only a fallback. */
 int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__SWITCH__)
     struct sigaction action;
  #ifndef __APPLE__
     struct sigevent event;
@@ -255,6 +255,8 @@ int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
             fprintf(stderr, "memories-pc: the 64-bit build has only the cooperative clock yet\n");
             cooperative = 1;
         }
+#elif defined(__SWITCH__)
+        cooperative = 1; /* Horizon delivers no SIGALRM */
 #endif
         if (!cooperative) {
             fprintf(stderr, "memories-pc: interrupt clock%s\n",
@@ -265,6 +267,8 @@ int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
     Win32_SetStallReporter(Crash_ReportHang, watchdog_seconds);
     if (cooperative) return Win32_StartWatch(); /* the clock thread only watches for a stall */
     return Win32_StartInterrupt(on_tick);
+#elif defined(__SWITCH__)
+    return 0;
 #else
     if (cooperative) return 0; /* the crash monitor process watches for a stall */
     memset(&action, 0, sizeof(action));
@@ -310,7 +314,7 @@ void Platform_SetClockRate(int percent)
 
 int Platform_ClockRate(void) { return rate; }
 
-#ifndef __ANDROID__ /* android.c: GLES only */
+#if !defined(__ANDROID__) && !defined(__SWITCH__) /* android.c, switch.c: GLES only */
 int Platform_HasDesktopGL(void) { return 1; }
 int Platform_GuestMemoryHelp(char *why, size_t size)
 {

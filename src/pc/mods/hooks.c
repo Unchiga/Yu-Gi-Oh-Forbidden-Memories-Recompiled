@@ -47,9 +47,10 @@
 #include <unistd.h>   /* sysconf */
 #endif
 
-/* The macOS game (translated) registers each hookable function's body
- * instead (Hooks_Register); the Linux/Android arm64 game is patched. */
-#if defined(__APPLE__) && defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
+/* The translated game (macOS, the Switch) registers each hookable
+ * function's body instead (Hooks_Register); the Linux/Android arm64 game is
+ * patched. */
+#if (defined(__APPLE__) || defined(__SWITCH__)) && defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
 #define ARM64_HOOKS 1
 static struct { void *function, *body; } registered[8192];
 static unsigned registered_count;

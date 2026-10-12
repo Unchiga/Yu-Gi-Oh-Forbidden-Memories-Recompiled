@@ -321,7 +321,14 @@ void Controls_InitDefaults(ControlsConfig *cfg)
         bsrc(&s, CTRL_BTN_BACK);
         prof->src[0][0] = s; /* Select (View) */
         bsrc(&s, CTRL_BTN_LEFT_STICK);
+#ifdef __SWITCH__
+        /* No keyboard there for Tab: L3, which the game never reads (it
+         * knows only the digital pad), turns Turbo on and off instead
+         * (controls_runtime.c). */
+        prof->host[CTRL_HOST_TURBO][0] = s;
+#else
         prof->src[1][0] = s; /* L3 */
+#endif
         bsrc(&s, CTRL_BTN_RIGHT_STICK);
         prof->src[2][0] = s; /* R3 */
         bsrc(&s, CTRL_BTN_START);

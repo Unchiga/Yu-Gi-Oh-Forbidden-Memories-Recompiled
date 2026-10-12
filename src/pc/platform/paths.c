@@ -56,11 +56,18 @@ static int make_dir(const char *path)
 int Paths_MakeDirs(const char *path)
 {
     char work[PATH_MAX_];
-    size_t length = strlen(path), i;
+    size_t length = strlen(path), i, first = 1;
     if (length >= sizeof(work)) return -1;
     memcpy(work, path, length + 1);
     while (length > 1 && work[length - 1] == '/') work[--length] = '\0';
-    for (i = 1; i < length; i++) {
+#ifdef __SWITCH__
+    {
+        /* "sdmc:/": a device's root is no folder to make */
+        const char *colon = strchr(work, ':');
+        if (colon && colon[1] == '/') first = (size_t)(colon - work) + 2;
+    }
+#endif
+    for (i = first; i < length; i++) {
         if (work[i] != '/') continue;
         work[i] = '\0';
         if (make_dir(work)) return -1;
@@ -134,6 +141,10 @@ const char *Paths_ProgramDir(void)
         }
         free(canonical); free(executable);
     }
+#elif defined(__SWITCH__)
+    /* Homebrew lives in a folder of its own on the SD card: the .nro, the
+     * game/ and mods/ folders the player fills, and user/ (Paths_UserDir). */
+    snprintf(program_dir, sizeof(program_dir), "%s", PATHS_SWITCH_DIR);
 #else
     ssize_t length;
     length = readlink("/proc/self/exe", program_dir, sizeof(program_dir) - 1);
@@ -273,6 +284,10 @@ const char *Paths_UserDir(void)
         snprintf(user_dir, sizeof(user_dir), "%s", named);
     } else if (portable(user_dir, sizeof(user_dir))) {
         /* user/ beside the executable */
+#ifdef __SWITCH__
+    } else if (snprintf(user_dir, sizeof(user_dir), "%s/user", Paths_ProgramDir()) > 0) {
+        /* the Switch is portable mode always: there is no other folder */
+#endif
     } else {
         char root[PATH_MAX_ - 32] = ""; /* room for the folder name after it */
 #ifdef _WIN32

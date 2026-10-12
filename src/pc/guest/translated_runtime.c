@@ -292,7 +292,7 @@ void *GuestRuntime_ResolveData(void *pointer, size_t length)
     unsigned i;
     void *host;
     /* Full-width host pointers already address native storage. */
-    if (address > UINT32_MAX) return pointer;
+    if (GuestRuntime_IsHostAddress(address)) return pointer;
     if (!GuestRuntime_ActiveMemory) invalid("memory context is unbound", address, length);
     host = Memories_ResolveSpan(GuestRuntime_ActiveMemory, (u32)address, length, 1);
     if (host) return host;
@@ -337,7 +337,7 @@ void *GuestRuntime_ResolveFunction(void *pointer)
     uintptr_t address = guest_bits((uintptr_t)pointer);
     u32 guest;
     unsigned i;
-    if (address > UINT32_MAX) return pointer;
+    if (GuestRuntime_IsHostAddress(address)) return pointer;
     guest = canonical((u32)address);
     if (function_resolver) {
         void *target = function_resolver(guest);
@@ -380,7 +380,7 @@ u32 GuestRuntime_EncodePointer(void *pointer)
 {
     uintptr_t host = guest_bits((uintptr_t)pointer);
     uintptr_t ram, scratch;
-    if (host <= UINT32_MAX) return (u32)host;
+    if (!GuestRuntime_IsHostAddress(host)) return (u32)host;
     if (!GuestRuntime_ActiveMemory) invalid("memory context is unbound", host, 0);
     ram = (uintptr_t)GuestRuntime_ActiveMemory->ram;
     scratch = (uintptr_t)GuestRuntime_ActiveMemory->scratchpad;
@@ -419,6 +419,12 @@ u32 GuestRuntime_EncodePointer(void *pointer)
         const GuestRuntimeRegion *r = &regions[host_order[low - 1]];
         if (host - r->host == r->length) return r->guest + (u32)r->length;
     }
+#ifdef __SWITCH__
+    /* Below 4 GiB, outside every registered span: not the host's storage
+     * but a word the game keeps in a pointer's place (0x58000000 when a
+     * save is made), which macOS passes through as it is. */
+    if (host <= UINT32_MAX) return (u32)host;
+#endif
     invalid("unregistered native pointer cannot fit guest storage", host, 0);
     return 0;
 }

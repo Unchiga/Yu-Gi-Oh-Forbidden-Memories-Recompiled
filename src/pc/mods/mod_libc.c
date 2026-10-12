@@ -54,7 +54,7 @@ extern void __x86_indirect_thunk_esi(void);
 #elif defined(__x86_64__) && defined(_WIN32)
 extern void ___chkstk_ms(void);
 extern void __x86_indirect_thunk_r11(void);
-#elif defined(__aarch64__) && !defined(__APPLE__)   /* the macOS game links dylibs */
+#elif defined(__aarch64__) && !defined(__APPLE__) && !defined(__SWITCH__) /* macOS links dylibs; the Switch no mod code */
 /* The game's SLS thunks (branch_thunks.c), for the weak copies clang puts
  * in each AArch64 unit of a mod (object_loader.c binds those to these). */
 #define T(n) extern void __llvm_slsblr_thunk_x##n(void);
@@ -101,7 +101,7 @@ static const struct { const char *name; Function function; } functions[] = {
     F(__x86_indirect_thunk_edx), F(__x86_indirect_thunk_esi),
 #elif defined(__x86_64__) && defined(_WIN32)
     F(___chkstk_ms), F(__x86_indirect_thunk_r11),
-#elif defined(__aarch64__) && !defined(__APPLE__)   /* the macOS game links dylibs */
+#elif defined(__aarch64__) && !defined(__APPLE__) && !defined(__SWITCH__) /* macOS links dylibs; the Switch no mod code */
     F(__llvm_slsblr_thunk_x0), F(__llvm_slsblr_thunk_x1), F(__llvm_slsblr_thunk_x10), F(__llvm_slsblr_thunk_x11),
     F(__llvm_slsblr_thunk_x12), F(__llvm_slsblr_thunk_x13), F(__llvm_slsblr_thunk_x14), F(__llvm_slsblr_thunk_x15),
     F(__llvm_slsblr_thunk_x16), F(__llvm_slsblr_thunk_x17), F(__llvm_slsblr_thunk_x19), F(__llvm_slsblr_thunk_x2),

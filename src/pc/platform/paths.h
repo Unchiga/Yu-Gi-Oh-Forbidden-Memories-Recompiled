@@ -23,6 +23,9 @@
 #include <stddef.h>
 
 const char *Paths_UserDir(void);
+/* The Switch's one folder for everything: the program directory, with the
+ * player's files in user/ under it. */
+#define PATHS_SWITCH_DIR "sdmc:/switch/yfm-redecomp"
 const char *Paths_ProgramDir(void);
 /* Join a relative path onto a root, creating the directories above it in the
  * user root's case. Both return 0 on success, -1 if it would not fit. */

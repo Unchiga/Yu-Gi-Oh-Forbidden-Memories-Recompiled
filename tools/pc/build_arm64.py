@@ -48,6 +48,29 @@ SOFT_GPU = "src/pc/render/soft_gpu.c"
 # State restoration may replace guest heaps, but must not free live GL buffers.
 HOST_HEAP_UNITS = {"src/pc/render/texture_pack.c", "src/pc/render/gl_picture.c"}
 
+# The object format of the selected target, set once by main(): Mach-O
+# prefixes C symbols with an underscore, ELF (the Switch) does not.
+HOST = {"name": "macos", "flags": [], "nm": ["nm"], "prefix": "_", "executable": "memories-arm64"}
+
+
+def release_version():
+    """build_game32's, whose import reads --target from sys.argv and knows
+    no switch: it is imported with this driver's arguments out of sight."""
+    import sys
+
+    argv, sys.argv = sys.argv, sys.argv[:1]
+    try:
+        from build_game32 import release_version as version
+    finally:
+        sys.argv = argv
+    return version()
+
+
+def c_symbol(name):
+    """The C name of an object-file symbol, or None for a non-C one."""
+    prefix = HOST["prefix"]
+    return name[len(prefix):] if name.startswith(prefix) else None
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ORDINARY = {
@@ -166,12 +189,13 @@ def prepare_guest_units(jobs, groups, natives, ordinary, path_for, address_table
     )
     for s in ordinary:
         result = subprocess.run(
-            ["nm", "-g", str(path_for("obj", s, ".o"))], capture_output=True, text=True
+            [*HOST["nm"], "-g", str(path_for("obj", s, ".o"))], capture_output=True, text=True
         )
         native_defs |= {
-            line.split()[-1][1:]
+            c_symbol(line.split()[-1])
             for line in result.stdout.splitlines()
             if len(line.split()) == 3 and line.split()[1] != "U"
+            and c_symbol(line.split()[-1])
         }
     group_defs = {
         g: set().union(
@@ -354,7 +378,7 @@ def compile_guest_units(jobs, ordinary, raw_text, pin_maps, path_for, cc, sdk, a
         return source, run_logged(
             [
                 cc,
-                *darwin_flags(sdk),
+                *HOST["flags"],
                 "-O2" if args.optimize else "-O0",
                 "-fno-strict-aliasing",
                 "-c",
@@ -404,7 +428,7 @@ def generate_function_tables(
     for text in raw_text.values():
         for name, signature in inspect(text)["signatures"].items():
             if name in direct_overlay_bridges:
-                validate_signature(name, signature)
+                validate_signature(name, signature, extends_short=HOST["name"] != "switch")
     stubs = sorted(
         (
             all_declarations
@@ -463,7 +487,6 @@ def generate_function_tables(
         + hashlib.sha256("".join(raw_text.values()).encode()).hexdigest()[:8]
         + "u;\n"
     )
-    from build_game32 import release_version
 
     tables += f"const char Memories_Version[] = {json.dumps(release_version())};\n"
     build_label = os.environ.get("MEMORIES_VERSION") or "dev-" + revision[:12]
@@ -497,13 +520,14 @@ def generate_mod_exports(
 ):
     """Publish symbols and LLVM signatures for the separate mod build."""
     defined_symbols = subprocess.check_output(
-        ["nm", "-gU", *[str(path_for("obj", source, ".o")) for source, group in jobs]],
+        [*HOST["nm"], "-g", "--defined-only",
+         *[str(path_for("obj", source, ".o")) for source, group in jobs]],
         text=True,
     )
     public_symbols = {
-        parts[-1][1:]
+        c_symbol(parts[-1])
         for line in defined_symbols.splitlines()
-        if len(parts := line.split()) == 3 and parts[-1].startswith("_")
+        if len(parts := line.split()) == 3 and c_symbol(parts[-1])
     }
     exports = {
         name: name
@@ -515,8 +539,9 @@ def generate_mod_exports(
     )
     symbols = sorted(set(exports.values()))
     export_table = "#include <stdint.h>\ntypedef struct { const char *name; void *address; } MemoriesModExport;\n"
+    prefix = HOST["prefix"]
     for index, name in enumerate(symbols):
-        export_table += f'extern char ModExport_{index}[] __asm__("_{name}");\n'
+        export_table += f'extern char ModExport_{index}[] __asm__("{prefix}{name}");\n'
     references = {name: f"ModExport_{index}" for index, name in enumerate(symbols)}
     entries = {name: references[target] for name, target in exports.items()}
     for name, address in pin_maps["native"].items():
@@ -563,6 +588,15 @@ def link_game(
     )
     if status:
         raise SystemExit("Table compilation failed: " + str(build / "logs/tables.log"))
+    objects = [
+        *[str(path_for("obj", s, ".o")) for s, g in jobs],
+        str(tables_obj),
+        str(export_object),
+    ]
+    if HOST["name"] == "switch":
+        import switch_deps
+
+        return link_switch(build, switch_deps.link(objects, build / "memories.elf"))
     command = [
         cc,
         *darwin_flags(sdk),
@@ -626,9 +660,24 @@ def link_game(
     return status
 
 
+def link_switch(build, command):
+    """Link the Switch ELF with devkitA64, then pack it as a homebrew .nro."""
+    (build / "link-command.json").write_text(json.dumps(command, indent=2) + "\n")
+    if run_logged(command, build / "logs/link.log"):
+        print("Link failed: " + str(build / "logs/link.log"), flush=True)
+        return 1
+    import switch_deps
+
+    nro = switch_deps.package(build / "memories.elf", build / HOST["executable"], release_version())
+    print("Link succeeded: " + str(nro), flush=True)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build", type=Path, default=ROOT / "tmp/pc/macos")
+    parser.add_argument("--target", choices=["macos", "switch"], default="macos",
+                        help="macos (default) or switch: a Nintendo Switch homebrew .nro (tools/pc/switch_deps.py)")
+    parser.add_argument("--build", type=Path)
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument(
@@ -645,16 +694,27 @@ def main():
     args = parser.parse_args()
     llvm = toolchain()
     cc = str(llvm / "bin/clang")
-    from macos_deps import ensure, sdk_path
+    target = TARGETS[args.target]
+    if args.target == "switch":
+        import switch_deps
 
-    dependencies = ensure(jobs=args.jobs)
-    sdk = str(sdk_path())
-    build = args.build.resolve()
+        dependencies = switch_deps.ensure(link=not args.compile_only)
+        sdk = str(switch_deps.DEVKITPRO)
+        host_flags = switch_deps.compile_flags()
+        HOST.update(name="switch", flags=host_flags, nm=[switch_deps.nm()], prefix="",
+                    executable=target["executable"])
+    else:
+        from macos_deps import ensure, sdk_path
+
+        dependencies = ensure(jobs=args.jobs)
+        sdk = str(sdk_path())
+        host_flags = None
+        HOST.update(flags=darwin_flags(sdk))
+    build = (args.build or ROOT / target["build"]).resolve()
     for d in ["raw", "ir", "obj", "logs"]:
         (build / d).mkdir(parents=True, exist_ok=True)
     address_tables = maps()
     groups = game_sources()
-    target = TARGETS["macos"]
     natives = native_sources(target)
     required = {
         "src/pc/guest/translated_image_backend.c",
@@ -674,7 +734,7 @@ def main():
         ordinary.add("src/pc/compat/libgs_ot.c")
     # Local independent runtime helpers must never resolve their own accesses.
     flags = [
-        *guest_frontend_flags(sdk),
+        *guest_frontend_flags(sdk, host_flags),
         "-fcommon",
         "-I" + str(dependencies / "include"),
         "-I" + str(dependencies / "include/freetype2"),
@@ -687,7 +747,7 @@ def main():
     if not args.optimize or args.instrument_softgpu:
         flags.append("-DMEMORIES_INSTRUMENT_SOFTGPU")
     # Keep compiler outputs tied to the complete toolchain and source state.
-    # A reused tmp/pc/macos directory must never hide a translator, option,
+    # A reused build directory must never hide a translator, option,
     # compiler, or revision change behind timestamps alone.
     fingerprint_inputs = []
     fingerprint_inputs.extend(
@@ -805,7 +865,6 @@ def main():
     status = link_game(
         build, jobs, path_for, tables, export_object, cc, sdk, flags, dependencies
     )
-    from build_game32 import release_version
 
     if not status:
         identity = dict(
@@ -813,7 +872,7 @@ def main():
             version=release_version(),
             fingerprint=fingerprint_file.read_text().strip(),
             binary_sha256=hashlib.sha256(
-                (build / "memories-arm64").read_bytes()
+                (build / HOST["executable"]).read_bytes()
             ).hexdigest(),
         )
         (build / "build-identity.json").write_text(

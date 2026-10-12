@@ -10,7 +10,7 @@ void *Memories_Resolve(MemoriesMemory *memory, uint32_t address,
 {
 #ifdef MEMORIES_TRANSLATED
     /* Native LIBGS/render adapters pass the original mapped-image token. */
-    if ((uintptr_t)memory <= UINT32_MAX) memory = GuestRuntime_Memory();
+    if (!GuestRuntime_IsHostAddress((uintptr_t)memory)) memory = GuestRuntime_Memory();
 #endif
     return Memories_ResolveSpan(memory, address, length, alignment);
 }

@@ -14,8 +14,10 @@
 #include "pc/platform/paths.h"
 #include "pc/platform/menu.h"
 #include "pc/debug/crash.h"
+#ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
+#endif
 #include <sys/mman.h>
 #include <signal.h>
 #include <unistd.h>
@@ -55,6 +57,30 @@ void Memories_NativeStateRelocateField(const char *tag, void *data, size_t size)
                                  restore_image_base, restore_image_size);
 }
 
+#ifdef __SWITCH__
+/* libnx's linker script (switch.ld) bounds the image; the GNU build ID
+ * (linked with --build-id, tools/pc/switch_deps.py) names the build as the
+ * Mach-O UUID does. Its note is in the image's read-only data. */
+extern const unsigned char __start__[], __rodata_start[], __end__[];
+static int executable(NativeEntry *entry)
+{
+    const unsigned char *at;
+    entry->image_base = (uintptr_t)__start__;
+    entry->image_size = (uintptr_t)__end__ - (uintptr_t)__start__;
+    for (at = __rodata_start; at + 16 + 20 <= __end__; at += 4) {
+        uint32_t name_size, data_size, type;
+        memcpy(&name_size, at, 4);
+        memcpy(&data_size, at + 4, 4);
+        memcpy(&type, at + 8, 4);
+        if (name_size == 4 && data_size >= 16 && data_size <= 64 && type == 3 /* NT_GNU_BUILD_ID */ &&
+            !memcmp(at + 12, "GNU", 4)) {
+            memcpy(entry->uuid, at + 16, sizeof(entry->uuid));
+            return 0;
+        }
+    }
+    return -1;
+}
+#else
 static int executable(NativeEntry *entry)
 {
     const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(0);
@@ -81,6 +107,7 @@ static int executable(NativeEntry *entry)
     entry->image_size = end - entry->image_base;
     return 0;
 }
+#endif
 static void hold(int enabled)
 {
     sigset_t signals;

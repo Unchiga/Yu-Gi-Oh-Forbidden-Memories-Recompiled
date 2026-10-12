@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="75%">
+      <stop offset="0" stop-color="#3a2a6e"/><stop offset="1" stop-color="#0d0a1f"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe9a3"/><stop offset="1" stop-color="#c8911e"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" fill="url(#bg)"/>
+  <rect x="10" y="10" width="236" height="236" rx="14" fill="none" stroke="url(#gold)" stroke-width="4"/>
+  <!-- a pyramid with an eye -->
+  <path d="M128 34 L196 132 L60 132 Z" fill="none" stroke="url(#gold)" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M100 100 Q128 78 156 100 Q128 122 100 100 Z" fill="url(#gold)"/>
+  <circle cx="128" cy="100" r="8" fill="#0d0a1f"/>
+  <text x="128" y="186" text-anchor="middle" font-family="Avenir Next, Helvetica" font-weight="800" font-size="46" fill="url(#gold)">YFM</text>
+  <text x="128" y="220" text-anchor="middle" font-family="Avenir Next, Helvetica" font-weight="600" font-size="22" fill="#e8e0ff" letter-spacing="2">RE-DECOMP</text>
+</svg>

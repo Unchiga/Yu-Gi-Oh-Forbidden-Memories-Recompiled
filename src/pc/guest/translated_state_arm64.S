@@ -1,9 +1,10 @@
 /* Offsets are checked by the native context test. Capture owns no stack
  * frame: the recorded SP and LR describe the C caller's continuation. */
+#include "asm_arm64.h"
 .text
 .p2align 2
-.globl _Memories_Arm64Capture
-_Memories_Arm64Capture:
+FUNCTION(Memories_Arm64Capture)
+C_NAME(Memories_Arm64Capture):
     stp x19, x20, [x0, #0]
     stp x21, x22, [x0, #16]
     stp x23, x24, [x0, #32]
@@ -20,8 +21,8 @@ _Memories_Arm64Capture:
     ret
 
 .p2align 2
-.globl _Memories_Arm64Restore
-_Memories_Arm64Restore:
+FUNCTION(Memories_Arm64Restore)
+C_NAME(Memories_Arm64Restore):
     mov x9, x0
     ldp x19, x20, [x9, #0]
     ldp x21, x22, [x9, #16]
@@ -44,10 +45,10 @@ _Memories_Arm64Restore:
 /* Record the game's caller before native presentation creates its frames.
  * x0 is the VSync mode and must survive this tail bridge unchanged. */
 .p2align 2
-.globl _VSync
-_VSync:
-    adrp x9, _Memories_Arm64Boundary@PAGE
-    add x9, x9, _Memories_Arm64Boundary@PAGEOFF
+FUNCTION(VSync)
+C_NAME(VSync):
+    adrp x9, PAGE(Memories_Arm64Boundary)
+    add x9, x9, PAGE_OFFSET(Memories_Arm64Boundary)
     stp x19, x20, [x9, #0]
     stp x21, x22, [x9, #16]
     stp x23, x24, [x9, #32]
@@ -60,5 +61,5 @@ _VSync:
     stp d10, d11, [x9, #120]
     stp d12, d13, [x9, #136]
     stp d14, d15, [x9, #152]
-    b _Memories_VSync
+    b C_NAME(Memories_VSync)
 #endif

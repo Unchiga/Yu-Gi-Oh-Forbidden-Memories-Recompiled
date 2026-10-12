@@ -9,6 +9,10 @@
 #include "translated_runtime.h"
 #include "function_map.h"
 #include <pthread.h>
+#ifdef __SWITCH__
+/* src/pc/platform/switch.c: libnx's types cannot meet the game's here. */
+int Switch_ThreadStack(void **end, size_t *size);
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -32,6 +36,17 @@ static void *resolve_branch(unsigned address)
 {
     return GuestRuntime_ResolveFunction((void *)(uintptr_t)address);
 }
+/* The calling thread's stack: its top and size. */
+static int thread_stack(void **end, size_t *size)
+{
+#ifdef __SWITCH__
+    return Switch_ThreadStack(end, size);
+#else
+    *end = pthread_get_stackaddr_np(pthread_self());
+    *size = pthread_get_stacksize_np(pthread_self());
+#endif
+    return 0;
+}
 const char *Memories_GuestMapError(void) { return ""; }
 int Memories_GuestMap(void)
 {
@@ -40,8 +55,7 @@ int Memories_GuestMap(void)
     size_t stack_size;
     guest_memory = calloc(1, sizeof(*guest_memory));
     if (!guest_memory || GuestRuntime_Bind(guest_memory)) return -1;
-    stack_end = pthread_get_stackaddr_np(pthread_self());
-    stack_size = pthread_get_stacksize_np(pthread_self());
+    if (thread_stack(&stack_end, &stack_size)) return -1;
     if (!stack_end || !stack_size || GuestRuntime_RegisterData((u8 *)stack_end - stack_size,
                                                               stack_size, 0xe0000000u)) return -1;
     for (i = 0; i < Memories_FunctionMapCount; ++i) {

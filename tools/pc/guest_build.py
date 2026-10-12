@@ -1,4 +1,4 @@
-"""Shared guest address tables and Darwin compiler flags for games and mods."""
+"""Shared guest address tables and host compiler flags for games and mods."""
 
 from build_config import MACOS_MINIMUM, ROOT
 
@@ -69,10 +69,13 @@ def darwin_flags(sdk):
     return ["-isysroot", str(sdk), f"-mmacosx-version-min={MACOS_MINIMUM}"]
 
 
-def guest_frontend_flags(sdk):
-    """Preserve the PS1 layout until structured guest-memory lowering."""
+def guest_frontend_flags(sdk, host=None):
+    """Preserve the PS1 layout until structured guest-memory lowering.
+
+    host replaces the Darwin flags for another translated target (the
+    Switch: switch_deps.compile_flags())."""
     return [
-        *darwin_flags(sdk),
+        *(darwin_flags(sdk) if host is None else host),
         "-std=gnu11",
         "-fms-extensions",
         "-O0",
@@ -84,6 +87,6 @@ def guest_frontend_flags(sdk):
         "-DMEMORIES_TRANSLATED",
         "-D_LANGUAGE_C",
         "-DLANGUAGE_C",
-        "-D_DARWIN_C_SOURCE",
+        "-D_DARWIN_C_SOURCE" if host is None else "-D_DEFAULT_SOURCE",
         "-I" + str(ROOT / "src"),
     ]

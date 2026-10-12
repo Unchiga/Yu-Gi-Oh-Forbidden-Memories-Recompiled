@@ -13,4 +13,10 @@
 #define MEMORIES_GUEST_PHYSICAL_MASK 0x1fffffffu
 #define MEMORIES_GUEST_PHYSICAL_END 0x20000000u
 #define MEMORIES_GUEST_DIRECT_END 0xc0000000u
+/* Guest tokens are below MEMORIES_GUEST_PHYSICAL_END or from
+ * MEMORIES_GUEST_RAM up, never between: where a host maps its own memory
+ * below 4 GiB (the Switch: Horizon places a process's stacks and heap
+ * anywhere in its 39-bit space), addresses in this window are the host's. */
+#define MEMORIES_HOST_LOW_START MEMORIES_GUEST_PHYSICAL_END
+#define MEMORIES_HOST_LOW_END MEMORIES_GUEST_RAM
 #endif

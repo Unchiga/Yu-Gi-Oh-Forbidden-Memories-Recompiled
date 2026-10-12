@@ -44,7 +44,7 @@ long GuestRuntime_strtol(const char *string, char **end, int base)
  * They are opaque host objects, never guest-addressed storage. */
 static FILE *native_file(FILE *file)
 {
-    if ((uintptr_t)file <= UINT32_MAX) abort();
+    if (!GuestRuntime_IsHostAddress((uintptr_t)file)) abort();
     return file;
 }
 char *GuestRuntime_fgets(char *buffer, int size, FILE *file)

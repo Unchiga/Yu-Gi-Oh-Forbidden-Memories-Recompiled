@@ -10,6 +10,17 @@ void GuestRuntime_Reset(void);
 void GuestRuntime_SetFunctionResolver(void *(*resolver)(uint32_t));
 int GuestRuntime_IsBound(void);
 MemoriesMemory *GuestRuntime_Memory(void);
+/* Whether a full-width address is the host's own rather than a guest token
+ * (or a sign-extended one): above 4 GiB, and on the Switch also the window
+ * below it that no token uses (memory_map.h). guest_ir.cpp's fast resolver
+ * makes the same choice. */
+static inline int GuestRuntime_IsHostAddress(uintptr_t address)
+{
+#ifdef __SWITCH__
+    if (address >= MEMORIES_HOST_LOW_START && address < MEMORIES_HOST_LOW_END) return 1;
+#endif
+    return address > UINT32_MAX && address < (uintptr_t)0xffffffff80000000ull;
+}
 /* Read by generated fast paths; only Bind/Reset may change this context. */
 extern MemoriesMemory *GuestRuntime_ActiveMemory;
 int GuestRuntime_RegisterData(void *host, size_t length, uint32_t guest);

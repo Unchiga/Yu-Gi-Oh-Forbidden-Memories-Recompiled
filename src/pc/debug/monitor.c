@@ -1,12 +1,17 @@
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__SWITCH__)
 /* Native bring-up runs without the Linux/Windows child-process monitor.
- * Keep in-process facts and logs available to the real crash reporter. */
+ * Keep in-process facts and logs available to the real crash reporter.
+ * The Switch has no second process to watch from either. */
 #include "monitor.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef __SWITCH__
+#include <switch.h>
+#else
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
+#endif
 
 static MonitorShared darwin_shared;
 MonitorShared *Monitor_Shared(void) { return &darwin_shared; }
@@ -47,6 +52,13 @@ size_t Monitor_Facts(char *out, size_t size)
 }
 void Monitor_NoteSystem(void)
 {
+#ifdef __SWITCH__
+    const u32 version = hosversionGet();
+    Monitor_Fact("system", "Nintendo Switch, Horizon %u.%u.%u%s", HOSVER_MAJOR(version), HOSVER_MINOR(version),
+                 HOSVER_MICRO(version), hosversionIsAtmosphere() ? " (Atmosphere)" : "");
+    Monitor_Fact("cpu", "Cortex-A57");
+    Monitor_Fact("monitor", "external crash/hang monitoring unavailable on the Switch");
+#else
     struct utsname system;
     char cpu[128] = "Apple ARM64";
     size_t size = sizeof(cpu);
@@ -54,6 +66,7 @@ void Monitor_NoteSystem(void)
     if (!uname(&system)) Monitor_Fact("system", "%s %s %s", system.sysname, system.release, system.machine);
     Monitor_Fact("cpu", "%s", cpu);
     Monitor_Fact("monitor", "external crash/hang monitoring unavailable in macOS bring-up");
+#endif
 }
 int Monitor_Main(int argc, char **argv, int *status)
 {

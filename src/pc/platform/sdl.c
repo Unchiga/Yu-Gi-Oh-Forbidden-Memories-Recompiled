@@ -34,6 +34,7 @@
 #include "pc/guest/state.h"
 #include "save_icon.h"
 #include "touch_pad.h"
+#include "button_layout.h"
 #include "touch_pad_art.h"
 #include <SDL3/SDL.h>
 /* Android: SDL reaches Java (JNI) for events and joysticks, message boxes,
@@ -58,6 +59,11 @@
 #define HERE(name) name##_here
 #else
 #define HERE(name) name
+#endif
+/* One window that is the whole screen, touch for a pointer, no file manager
+ * and no second window: Android and the Switch (sdl3_shim.h). */
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_SWITCH)
+#define ONE_SCREEN 1
 #endif
 #include <SDL3/SDL_opengl.h>
 #include "pc/render/gl_picture.h"
@@ -124,7 +130,7 @@ static int pointer_x, pointer_y, pointer_inside, cursor_hidden;
 /* The pointer's place is a mouse's (it hovers): the mouse events SDL makes
  * of a touch move it only while the finger is down, and leave it where the
  * finger lifted, so they never reveal the bar by hovering. */
-#ifdef SDL_PLATFORM_ANDROID
+#ifdef ONE_SCREEN
 static int pointer_is_mouse;
 #else
 static int pointer_is_mouse = 1;
@@ -169,6 +175,12 @@ static float touch_density(void)
     float density = Android_Density();
     if (density <= 0.0f) density = display ? SDL_GetDisplayContentScale(display) : 0.0f;
     return density > 0.0f ? density : 1.0f;
+#elif defined(SDL_PLATFORM_SWITCH)
+    /* No density from the system: the handheld's 6.2-inch 720p screen is
+     * about 1.5 (237 dpi), and the TV's 1080p is sized alike from afar. */
+    int w = 0, h = 0;
+    if (!window || !SDL_GetWindowSize(window, &w, &h) || h <= 0) return 1.5f;
+    return (float)h / 480.0f;
 #else
     return 0.0f;
 #endif
@@ -222,6 +234,9 @@ static void es_enter(void)
     SDL_FlushRenderer(renderer);
     if (SDL_GL_GetCurrentContext() != es_context) SDL_GL_MakeCurrent(window, es_context);
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &es_framebuffer);
+#ifdef SDL_PLATFORM_SWITCH
+    Shim_SaveRendererGL(); /* SDL2's flush keeps its state as known */
+#endif
 }
 
 static void es_leave(void)
@@ -230,6 +245,9 @@ static void es_leave(void)
     es_bind_framebuffer(GL_FRAMEBUFFER, (GLuint)es_framebuffer);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#ifdef SDL_PLATFORM_SWITCH
+    Shim_RestoreRendererGL();
+#endif
 }
 static SDL_Window *mods_window;
 static SDL_Renderer *mods_renderer;
@@ -273,7 +291,7 @@ static void resize_mods(int w, int h)
 }
 int HERE(Platform_OpenFolder)(const char *path)
 {
-#ifdef SDL_PLATFORM_ANDROID
+#ifdef ONE_SCREEN
     /* An app has no file manager window to open: SDL_OpenURL there takes a
      * URI for an activity, and a plain path opens nothing. */
     (void)path;
@@ -421,7 +439,7 @@ void HERE(Platform_OpenControls)(void)
 static int panel_paused, panel_clock_rate, panel_typing;
 static int panel_overlay(void)
 {
-#ifdef SDL_PLATFORM_ANDROID
+#ifdef ONE_SCREEN
     return 1;
 #else
     const char *wanted = getenv("MEMORIES_PANELS");
@@ -620,13 +638,27 @@ static void apply_swap_interval(void)
 
 /* Fullscreen or borderless fullscreen: either way the menu bar hides until
  * the pointer reaches the top. */
+#ifdef SDL_PLATFORM_SWITCH
+/* The Switch's screen is always the game's, and its bar is hidden until R3
+ * shows it (or a tap at the top, as on Android). */
+static int covers_screen(void) { return 1; }
+/* R3 showed the bar: the controller is the menu's (bar_pad_presses) and the
+ * game's input rests until R3 or Circle hides it. */
+static int bar_pad;
+#else
 static int covers_screen(void) { return Settings_Get(SET_FULLSCREEN) || Settings_Get(SET_BORDERLESS); }
+#define bar_pad 0
+#endif
 
 static void update_menu_visibility(void)
 {
+#ifdef SDL_PLATFORM_SWITCH
+    int wanted = bar_pad || Menu_IsOpen() || menu_reveal_frames > 0;
+#else
     int wanted = !covers_screen() || Settings_Get(SET_SHOW_MENU_FULLSCREEN) ||
                  (pointer_inside && pointer_is_mouse && pointer_y < Menu_Height()) || Menu_IsOpen() ||
                  menu_reveal_frames > 0;
+#endif
     if (wanted == menu_visible) return;
     menu_visible = wanted;
     Menu_SetVisible(wanted);
@@ -984,7 +1016,7 @@ static void block_signals(sigset_t *previous)
 static void restore_signals(const sigset_t *previous) { pthread_sigmask(SIG_SETMASK, previous, NULL); }
 
 int Platform_Scale(void) { return scale; }
-#ifdef SDL_PLATFORM_ANDROID
+#ifdef ONE_SCREEN
 int Platform_HasWindowModes(void) { return 0; } /* the whole screen, always (android.c) */
 #else
 int Platform_HasWindowModes(void) { return 1; }
@@ -1132,7 +1164,11 @@ int HERE(Platform_StartAudio)(void (*mix)(int16_t *, size_t))
         return Platform_StartSilentAudio(mix, dump);
     }
     mixer = mix;
-#ifdef __ANDROID__
+#if defined(SDL_PLATFORM_SWITCH)
+    /* audout takes whole buffers, and 256 frames (5.3 ms at its 48 kHz)
+     * left gaps: as on Android, 1024. */
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
+#elif defined(__ANDROID__)
     /* 256 frames starved AAudio on a phone (Xiaomi 11T Pro, Android 14): its
      * track got 5 s of sound every 6.3 s, crackling and gaps; 1024 (23 ms)
      * keeps it fed. */
@@ -1829,6 +1865,65 @@ static bool SDLCALL app_event(void *userdata, SDL_Event *event)
     return true;
 }
 
+#ifdef SDL_PLATFORM_SWITCH
+static void pad_menu_key(MenuKey key)
+{
+    MenuEvent press = {0};
+    press.type = MENU_EVENT_KEY_DOWN;
+    press.key = key;
+    Menu_Event(&press, &quit);
+    press.type = MENU_EVENT_KEY_UP;
+    Menu_Event(&press, &quit);
+}
+
+/* R3: the bar and its first menu, or away with both. */
+static void set_bar_pad(int on)
+{
+    bar_pad = on;
+    Menu_SetPadHints(on);
+    menu_dirty = 1;
+}
+
+static void toggle_bar_pad(void)
+{
+    set_bar_pad(!bar_pad);
+    if (bar_pad && !Menu_IsOpen()) pad_menu_key(MENU_KEY_F10);
+    while (!bar_pad && Menu_IsOpen()) pad_menu_key(MENU_KEY_ESCAPE);
+    menu_dirty = 1;
+}
+
+/* The pad's new presses while R3 keeps the bar up, in the game's layout
+ * (View > Japanese buttons): L1 and R1 step between the bar's menus (its L
+ * and R badges, Menu_SetPadHints), Up and Down move down a menu, Left and
+ * Right set a slider or open and close a submenu, Cross chooses, Circle
+ * backs out and, with no menu open, hides the bar. A press with the menus
+ * closed opens the first again. */
+static int bar_pad_presses(uint16_t pressed)
+{
+    static const struct { uint16_t bit; MenuKey key; } keys[] = {
+        {0x0010, MENU_KEY_UP}, {0x0040, MENU_KEY_DOWN}, {0x0080, MENU_KEY_LEFT}, {0x0020, MENU_KEY_RIGHT},
+        {BUTTON_LAYOUT_CROSS, MENU_KEY_ENTER}, {BUTTON_LAYOUT_CIRCLE, MENU_KEY_ESCAPE}};
+    unsigned i;
+    if (!bar_pad || !pressed || Panel_Shown() || Menu_NoticeShown()) return 0;
+    pressed = ButtonLayout_Apply(pressed, 0, Settings_Get(SET_JP_BUTTONS));
+    if (pressed & 0x0c00) { /* L1, R1 */
+        Menu_Step(pressed & 0x0800 ? 1 : -1);
+        return 1;
+    }
+    if (!Menu_IsOpen()) {
+        if (pressed & BUTTON_LAYOUT_CIRCLE) {
+            set_bar_pad(0);
+            return 1;
+        }
+        pad_menu_key(MENU_KEY_F10);
+        return 1;
+    }
+    for (i = 0; i < sizeof(keys) / sizeof(*keys); i++)
+        if (pressed & keys[i].bit) pad_menu_key(keys[i].key);
+    return 1;
+}
+#endif
+
 static void pump(void)
 {
     SDL_Event event;
@@ -1901,6 +1996,13 @@ static void pump(void)
         if (((event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key != SDLK_AC_BACK) ||
              event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) && TouchPad_OtherInput())
             menu_dirty = 1;
+#ifdef SDL_PLATFORM_SWITCH
+        if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK &&
+            !Panel_Shown() && !Menu_NoticeShown()) {
+            toggle_bar_pad();
+            continue;
+        }
+#endif
         if(event.type==SDL_EVENT_GAMEPAD_ADDED){open_gamepad(event.gdevice.which);continue;}
         if(event.type==SDL_EVENT_GAMEPAD_REMOVED){close_gamepad(event.gdevice.which);continue;}
         /* Every release, before a menu can take it: else a held action
@@ -2081,8 +2183,14 @@ static void pump(void)
     Gamepad_Poll(current_frame);
     if (HostActions_Run(&quit)) menu_dirty = 1;
     /* A notice answers a controller and keeps the game's input at rest. */
-    ControlsRuntime_Hold(Menu_NoticeShown());
-    if (Menu_NoticePad(ControlsRuntime_TakePadPresses() | TouchPad_TakePresses(), &quit)) menu_dirty = 1;
+    ControlsRuntime_Hold(Menu_NoticeShown() || (bar_pad && !Panel_Shown()));
+    {
+        uint16_t presses = ControlsRuntime_TakePadPresses() | TouchPad_TakePresses();
+        if (Menu_NoticePad(presses, &quit)) menu_dirty = 1;
+#ifdef SDL_PLATFORM_SWITCH
+        else if (bar_pad_presses(presses)) menu_dirty = 1;
+#endif
+    }
     if (Panel_Shown()) {
         if (Panel_Tick()) menu_dirty = 1;
         if (!Panel_Shown()) panel_after(0);
@@ -2284,7 +2392,7 @@ static int software_gl_renderer(void)
                     strstr(name, "Software Rasterizer"));
 }
 
-#ifndef SDL_PLATFORM_ANDROID /* android.c: the picker copies the image into the app */
+#ifndef ONE_SCREEN /* android.c: the picker copies the image into the app; the Switch has none (switch.c) */
 typedef struct DiscSelection {
     SDL_AtomicInt done;
     char *path;
@@ -2443,14 +2551,18 @@ int Platform_Open(const char *title)
     }
     Menu_SetPresentPass(use_gl); /* present_pass.c: the desktop presenter's alone */
     Menu_Init();
-#ifdef SDL_PLATFORM_ANDROID
+#ifdef ONE_SCREEN
     /* One window, always the whole screen, no update check (android.c):
      * the window's size and mode and the update check are dimmed; Mods and
      * Controls open as panels inside the window. */
     Menu_SetPlatformItems(1, 0, 0);
 #endif
     apply_display_settings();
+#ifdef SDL_PLATFORM_SWITCH
+    menu_visible = 0; /* until R3 */
+#else
     menu_visible = !covers_screen() || Settings_Get(SET_SHOW_MENU_FULLSCREEN);
+#endif
     Menu_SetVisible(menu_visible);
 #ifdef SDL_PLATFORM_ANDROID
     /* A crash in an earlier run: its report is offered to share or save,

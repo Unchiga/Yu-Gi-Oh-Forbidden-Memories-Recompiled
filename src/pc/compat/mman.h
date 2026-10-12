@@ -84,8 +84,8 @@ static inline int mprotect(void *address, size_t length, int prot)
                                                : ((prot & PROT_WRITE) ? PAGE_READWRITE : PAGE_READONLY);
     return VirtualProtect(address, (unsigned long)length, protect, &old) ? 0 : -1;
 }
-#elif defined(__APPLE__) && defined(MEMORIES_TRANSLATED)
-#include <sys/mman.h>
+#elif (defined(__APPLE__) || defined(__SWITCH__)) && defined(MEMORIES_TRANSLATED)
+#include <sys/mman.h> /* the Switch's: src/pc/compat/switch/sys/mman.h */
 /* These requests allocate high host memory with a registered guest token.
  * They never replace an existing virtual-memory mapping. */
 #define MAP_FIXED_NOREPLACE 0x40000000

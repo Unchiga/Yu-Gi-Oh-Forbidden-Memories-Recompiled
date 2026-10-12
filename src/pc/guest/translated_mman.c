@@ -12,7 +12,7 @@ void *Memories_TranslatedMmap(void *address, size_t length, int prot, int flags,
 {
     void *host;
     if (!(flags & MAP_FIXED_NOREPLACE)) return mmap(address, length, prot, flags, fd, offset);
-    if (!address || (uintptr_t)address > UINT32_MAX || !length || !(flags & MAP_ANONYMOUS) ||
+    if (!address || GuestRuntime_IsHostAddress((uintptr_t)address) || !length || !(flags & MAP_ANONYMOUS) ||
         fd != -1 || offset || (prot & PROT_EXEC)) {
         errno = ENOTSUP;
         return MAP_FAILED;
@@ -29,13 +29,13 @@ void *Memories_TranslatedMmap(void *address, size_t length, int prot, int flags,
 int Memories_TranslatedMunmap(void *address, size_t length)
 {
     void *host;
-    if ((uintptr_t)address > UINT32_MAX) return munmap(address, length);
+    if (GuestRuntime_IsHostAddress((uintptr_t)address)) return munmap(address, length);
     host = GuestRuntime_ResolveData(address, length);
     if (GuestRuntime_UnregisterData(host)) { errno = EINVAL; return -1; }
     return munmap(host, length);
 }
 int Memories_TranslatedMprotect(void *address, size_t length, int prot)
 {
-    if ((uintptr_t)address <= UINT32_MAX) address = GuestRuntime_ResolveData(address, length);
+    if (!GuestRuntime_IsHostAddress((uintptr_t)address)) address = GuestRuntime_ResolveData(address, length);
     return mprotect(address, length, prot);
 }
