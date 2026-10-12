@@ -20,6 +20,11 @@ struct MemoriesNativeMemoryState {
     const uint8_t **payload;
     uint8_t *created;
     int applied;
+    /* The saved regions by host address, and the span they cover (end
+     * iterators included): relocation reads every native word of a state,
+     * and most are no pointer into any region. */
+    unsigned *order;
+    uint64_t low, high;
 };
 static int stored(unsigned flags)
 {
@@ -64,7 +69,49 @@ void Memories_NativeMemoryFree(MemoriesNativeMemoryState *pending)
     if (!pending->applied && pending->created && pending->current)
         for (unsigned i = 0; i < pending->count; ++i)
             if (pending->created[i]) release((void *)pending->current[i], pending->saved[i].length, pending->saved[i].flags);
-    free(pending->saved); free(pending->current); free(pending->payload); free(pending->created); free(pending);
+    free(pending->saved); free(pending->current); free(pending->payload); free(pending->created);
+    free(pending->order); free(pending);
+}
+static const SavedRegion *sorting;
+static int by_host(const void *a, const void *b)
+{
+    uint64_t x = sorting[*(const unsigned *)a].host, y = sorting[*(const unsigned *)b].host;
+    return x < y ? -1 : x > y;
+}
+/* Prepare has refused regions that share host bytes, so one region at most
+ * holds an address. */
+static void index_regions(MemoriesNativeMemoryState *pending)
+{
+    pending->low = UINT64_MAX;
+    pending->high = 0;
+    for (unsigned i = 0; i < pending->count; ++i) {
+        const SavedRegion *saved = &pending->saved[i];
+        pending->order[i] = i;
+        if (saved->host < pending->low) pending->low = saved->host;
+        if (saved->host + saved->length > pending->high) pending->high = saved->host + saved->length;
+    }
+    sorting = pending->saved;
+    qsort(pending->order, pending->count, sizeof(*pending->order), by_host);
+    sorting = NULL;
+}
+/* The region whose bytes hold `word`, or else the one it is the end of;
+ * -1 for none. */
+static int region_of(const MemoriesNativeMemoryState *pending, uint64_t word)
+{
+    unsigned first = 0, last = pending->count;
+    const SavedRegion *saved;
+    if (word < pending->low || word > pending->high) return -1;
+    while (last - first > 1) {   /* the last region starting at or below word */
+        unsigned middle = first + (last - first) / 2;
+        if (pending->saved[pending->order[middle]].host <= word) first = middle;
+        else last = middle;
+    }
+    if (!pending->count) return -1;
+    saved = &pending->saved[pending->order[first]];
+    if (word < saved->host) return -1;
+    if (word - saved->host < saved->length) return (int)pending->order[first];
+    if (word == saved->host + saved->length) return (int)pending->order[first];
+    return -1;
 }
 MemoriesNativeMemoryState *Memories_NativeMemoryPrepare(MemoriesState *state, char *why, size_t size)
 {
@@ -83,7 +130,8 @@ MemoriesNativeMemoryState *Memories_NativeMemoryPrepare(MemoriesState *state, ch
     pending->current = calloc(count ? count : 1, sizeof(*pending->current));
     pending->payload = calloc(count ? count : 1, sizeof(*pending->payload));
     pending->created = calloc(count ? count : 1, 1);
-    if (!pending->saved || !pending->current || !pending->payload || !pending->created) goto invalid;
+    pending->order = calloc(count ? count : 1, sizeof(*pending->order));
+    if (!pending->saved || !pending->current || !pending->payload || !pending->created || !pending->order) goto invalid;
     memcpy(pending->saved, chunk + sizeof(count), count * sizeof(SavedRegion));
     for (unsigned i = 0; i < count; ++i) {
         const SavedRegion *saved = &pending->saved[i];
@@ -121,6 +169,7 @@ MemoriesNativeMemoryState *Memories_NativeMemoryPrepare(MemoriesState *state, ch
     if (at != length) goto invalid;
     if (!count || pending->saved[count - 1].guest != 0x80000000u) goto invalid;
     if (GuestRuntime_ReserveRegions((size_t)GuestRuntime_RegionCount() + count)) goto invalid;
+    index_regions(pending);
     for (unsigned i = 0; i < count; ++i) {
         const SavedRegion *saved = &pending->saved[i];
         if (owned(saved->flags) && !pending->current[i]) {
@@ -187,21 +236,11 @@ void Memories_NativeMemoryRelocate(MemoriesNativeMemoryState *pending, void *dat
         memcpy(&word, bytes + offset, sizeof(word));
         relocated = word;
         if (word >= old_image && word - old_image < image_size) relocated = new_image + (word - old_image);
-        else for (unsigned i = 0; i < pending->count; ++i) {
-            const SavedRegion *saved = &pending->saved[i];
-            if (word >= saved->host && word - saved->host < saved->length) {
-                relocated = pending->current[i] + (word - saved->host);
-                break;
-            }
-        }
-        /* End iterators are valid C pointers. Prefer an owning region
-         * above when adjacent regions share this address. */
-        if (relocated == word) for (unsigned i = 0; i < pending->count; ++i) {
-            const SavedRegion *saved = &pending->saved[i];
-            if (word == saved->host + saved->length) {
-                relocated = pending->current[i] + saved->length;
-                break;
-            }
+        else {
+            /* End iterators are valid C pointers: one past a region is
+             * moved with it, unless the next region starts there. */
+            int region = region_of(pending, word);
+            if (region >= 0) relocated = pending->current[region] + (word - pending->saved[region].host);
         }
         if (word != relocated) memcpy(bytes + offset, &relocated, sizeof(relocated));
     }

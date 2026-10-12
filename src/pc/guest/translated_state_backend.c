@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define STACK_SIZE 0x00800000u
 #define STACK_TOKEN 0xe1000000u
@@ -58,15 +59,16 @@ void Memories_NativeStateRelocateField(const char *tag, void *data, size_t size)
 }
 
 #ifdef __SWITCH__
-/* libnx's linker script (switch.ld) bounds the image; the GNU build ID
- * (linked with --build-id, tools/pc/switch_deps.py) names the build as the
- * Mach-O UUID does. Its note is in the image's read-only data. */
-extern const unsigned char __start__[], __rodata_start[], __end__[];
+/* The image runs from crt0's entry (switch.ld's __start__ is absolute: 0,
+ * wherever the loader put the image) to __end__; the GNU build ID (linked
+ * with --build-id, tools/pc/switch_deps.py) names the build as the Mach-O
+ * UUID does. Its note is in the image's read-only data. */
+extern const unsigned char _start[], __rodata_start[], __end__[];
 static int executable(NativeEntry *entry)
 {
     const unsigned char *at;
-    entry->image_base = (uintptr_t)__start__;
-    entry->image_size = (uintptr_t)__end__ - (uintptr_t)__start__;
+    entry->image_base = (uintptr_t)_start;
+    entry->image_size = (uintptr_t)__end__ - (uintptr_t)_start;
     for (at = __rodata_start; at + 16 + 20 <= __end__; at += 4) {
         uint32_t name_size, data_size, type;
         memcpy(&name_size, at, 4);
@@ -133,6 +135,8 @@ static void apply(void)
     size_t length;
     const uint8_t *chunk;
     uintptr_t old_image = saved_entry.image_base;
+    struct timespec started, done;
+    clock_gettime(CLOCK_MONOTONIC, &started);
     executable(&now);
     restore_image_base = now.image_base;
     restore_image_size = now.image_size;
@@ -169,6 +173,9 @@ static void apply(void)
      * otherwise the CPU sees a stale last_vsync after restoring its turn. */
     extern int LibEtc_StateResumed(void);
     const int value = LibEtc_StateResumed();
+    clock_gettime(CLOCK_MONOTONIC, &done);
+    fprintf(stderr, "memories-pc: ARM64 state loaded in %ld ms\n",
+            (long)((done.tv_sec - started.tv_sec) * 1000 + (done.tv_nsec - started.tv_nsec) / 1000000));
     hold(0);
     Memories_Arm64Restore(&saved_entry.context, value);
 }

@@ -86,8 +86,8 @@ void Profile_Init(void)
  #elif defined(__SWITCH__)
     {
         /* As on macOS, one range: libnx's switch.ld puts all code first. */
-        extern char __start__[], __rodata_start[];
-        ranges[0].first = (uintptr_t)__start__;
+        extern char _start[], __rodata_start[]; /* not switch.ld's absolute __start__ */
+        ranges[0].first = (uintptr_t)_start;
         ranges[0].last = (uintptr_t)__rodata_start;
         ranges[1].first = ranges[1].last = 0;
     }

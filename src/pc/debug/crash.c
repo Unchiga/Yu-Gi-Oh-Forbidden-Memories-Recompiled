@@ -81,8 +81,8 @@ static const char *region(uintptr_t address)
     uintptr_t image_low, image_high;
     DarwinImage_TextRange(&image_low, &image_high);
 #elif defined(__SWITCH__)
-    extern char __start__[], __rodata_start[]; /* libnx's switch.ld: the code, then read-only data */
-    uintptr_t image_low = (uintptr_t)__start__, image_high = (uintptr_t)__rodata_start;
+    extern char _start[], __rodata_start[]; /* crt0's entry starts the code (switch.ld's __start__ is absolute), read-only data follows */
+    uintptr_t image_low = (uintptr_t)_start, image_high = (uintptr_t)__rodata_start;
 #else
     extern char __executable_start[], etext[];
     uintptr_t image_low = (uintptr_t)__executable_start, image_high = (uintptr_t)etext;
