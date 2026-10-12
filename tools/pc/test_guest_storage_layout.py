@@ -110,6 +110,7 @@ def check_target_source_contract():
         "macos",
         "android-arm64-v8a",
         "android-x86",
+        "switch",
     }
     fixed_targets = (
         "linux",
@@ -122,6 +123,7 @@ def check_target_source_contract():
         BUILD_TARGETS[name]["memory_model"] == "fixed-32" for name in fixed_targets
     )
     assert BUILD_TARGETS["macos"]["memory_model"] == "translated-32"
+    assert BUILD_TARGETS["switch"]["memory_model"] == "translated-32"
 
     for name in fixed_targets:
         sources = set(native_sources(BUILD_TARGETS[name], None))
@@ -141,12 +143,13 @@ def check_target_source_contract():
         == BUILD_TARGETS["macos"]["architecture"]
     )
 
-    translated = set(native_sources(BUILD_TARGETS["macos"], None))
-    assert "src/pc/memory.c" in translated
-    assert "src/pc/guest/state_translated.c" in translated
-    assert "src/pc/guest/translated_state_arm64.S" in translated
-    assert not (FIXED_MEMORY & translated)
-    assert "src/pc/guest/setjmp_x86_64.S" not in translated
+    for name in ("macos", "switch"):
+        translated = set(native_sources(BUILD_TARGETS[name], None))
+        assert "src/pc/memory.c" in translated
+        assert "src/pc/guest/state_translated.c" in translated
+        assert "src/pc/guest/translated_state_arm64.S" in translated
+        assert not (FIXED_MEMORY & translated)
+        assert "src/pc/guest/setjmp_x86_64.S" not in translated
 
     try:
         native_sources("arm64", None)
