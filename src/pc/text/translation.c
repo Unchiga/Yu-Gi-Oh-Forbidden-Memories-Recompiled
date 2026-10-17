@@ -132,6 +132,8 @@ static void pin(TextUnit *unit)
     unit->data = moved; /* not freed again: a unit, once added, stays */
 }
 
+static void note_results(TextUnit *unit, const char *mod, const char *name);
+
 /* The startup text's layout (Text_Layout), once Text_Build is done. A
  * state holds addresses inside it: the same language and mods give the
  * same layout, but a pack, a mod's text file or the port's own strings
@@ -243,6 +245,7 @@ static void add_unit(int mod, const char *path, const char *name)
     units = bigger;
     units[unit_count++] = unit;
     pin(unit);
+    note_results(unit, Mods_Id(mod), name);
     /* A later file, or a later mod, has the last word on a string. */
     for (i = 0; i < unit->string_count; i++) overrides[unit->strings[i].id] = unit->data + unit->strings[i].offset;
     LOG(LOG_MODS, "text: %s: %s: %d strings, %lu bytes, %d jumps, at %p", Mods_Id(mod), name, unit->string_count,
@@ -271,6 +274,7 @@ static void add_language(void)
         return;
     }
     pin(language_unit);
+    note_results(language_unit, NULL, NULL);
     for (i = 0; i < language_unit->string_count; i++) {
         overrides[language_unit->strings[i].id] = language_unit->data + language_unit->strings[i].offset;
     }
@@ -309,6 +313,17 @@ void Text_Build(void)
 }
 
 TextLayout Text_Layout(void) { return layout; }
+
+static uintptr_t text_address(const unsigned char *pointer)
+{
+#ifdef MEMORIES_TRANSLATED
+    /* Channels store guest tokens, while a native global may still be a
+     * host pointer. Compare both in the guest address space. */
+    return GuestRuntime_EncodePointer((void *)pointer);
+#else
+    return (uintptr_t)pointer;
+#endif
+}
 
 /* View > Opponent's name for COM (hd_text.h) names the sides after the
  * duel too: strings 0x3E (YOU, or 1P in a 2P duel) and 0x3F (COM, or 2P)
@@ -423,16 +438,18 @@ static const unsigned char *side_name(int id)
     return side_text(results_player(), 0);
 }
 
-/* How far side_name(id) runs past the three letters of YOU or COM, in
- * pixels of the result screens (less than 0 for a shorter one). */
-static int side_shift(int id)
+/* How far a name runs past the `base` letters of the label it takes the
+ * place of (three, YOU or COM, in the game's), in pixels of the result
+ * screens (less than 0 for a shorter one); for side_name(id), side_shift. */
+static int name_shift(const unsigned char *name, int base)
 {
-    const unsigned char *name = side_name(id);
     int n = 0;
     if (!name) return 0;
     while (name[n] != 0xFF) n++;
-    return (n - 3) * TEXT_RESULTS_CELL;
+    return (n - base) * TEXT_RESULTS_CELL;
 }
+
+static int side_shift(int id) { return name_shift(side_name(id), 3); }
 
 /* The result screens set COM's column with {f8 02 NN}, a step right from
  * the end of YOU's, then call COM. For a longer name the copy of the
@@ -508,6 +525,336 @@ static const unsigned char *results_copy(const unsigned char *retail)
     }
     results_room = room;
     return room >= shift ? copy + (offset - TEXT_RESULTS_FROM) : NULL;
+}
+
+/* --- a translation's own result strings ---------------------------------- *
+ *
+ * A translation that gives the result screens (strings 0x40-0x45) text of
+ * its own calls its own YOU, COM and winner strings, not the game's: those
+ * it defines at 0x3E, 0x3F and 0x3D (and jumps to by the labels L050E,
+ * L051C and L0504), or, if it defines none, the game's. A call's operand is
+ * an index of the unit's targets (listing.h), so the sides are known by
+ * where the call lands. The names go in as in the game's strings, and the
+ * columns move the same way, in a copy of the span of the unit that the
+ * result strings take (the jumps between them stay in it); but the
+ * translation's labels are not three letters (VOCE is four), so each one's
+ * width is measured. A name the small font has no letters for, or a column
+ * that cannot move, leaves the translation's own label. */
+#define TEXT_UNIT_RESULTS 0x4000
+#define TEXT_UNIT_COPIES 2
+
+typedef struct {
+    const TextUnit *unit;
+    size_t from, size; /* the span of the unit's data copied */
+    int room, need;    /* as results_room: the least step before COM, and what the longest name needs */
+    int you, won;      /* as results_you, results_won */
+    unsigned char data[TEXT_UNIT_RESULTS];
+} UnitResults;
+static UnitResults unit_results[TEXT_UNIT_COPIES];
+
+static const TextUnit *unit_at(uintptr_t address, size_t *offset)
+{
+    int i;
+    for (i = -1; i < unit_count; i++) {
+        const TextUnit *unit = i < 0 ? language_unit : units[i];
+        if (unit && address >= text_address(unit->data) && address - text_address(unit->data) <= unit->size) {
+            *offset = (size_t)(address - text_address(unit->data));
+            return unit;
+        }
+    }
+    return NULL;
+}
+
+/* How many cells the string at `at` takes in a duel against the computer,
+ * in the result screens' fixed font: its letters, following the choice of
+ * {f8 17} (the player's side) or {f8 18} (the winner's) to the string a
+ * 1P duel takes. -1 when it cannot be told: a call, a state, a flag. */
+static int own_letters(const unsigned char *at)
+{
+    /* The operands of {f8 NN}, -1 where not known or not fixed. */
+    static const signed char operands[0x2B] = {
+        1, 1, 1, 5, 1, 2, 2, 2, 0, 0, 1, 1, 1, 6, 2, -1,
+        -1, 1, 0, 0, 1, 1, 0, -1, -1, 1, 0, 1, 1, 1, 1, 1,
+        1, 2, 1, -1, -1, 0, -1, 2, 2, 0, 0};
+    size_t offset;
+    const TextUnit *unit = unit_at(text_address(at), &offset);
+    int letters = 0, steps;
+    /* A malformed code at the unit's end must not be read past it. */
+    if (!unit) return -1;
+    for (steps = 0; steps < 256; steps++) {
+        const unsigned char *end = unit->data + unit->size;
+        int code;
+        if (at >= end) return -1;
+        code = *at;
+        if (code == 0xFF || code == 0xFE || code == 0xFA) return letters;
+        if (code < 0xF0) {
+            letters++;
+            at++;
+        } else if (code < 0xF6) {
+            if (at + 2 > end) return -1;
+            letters++;
+            at += 2;
+        } else if (code == 0xF8 && at + 2 <= end && (at[1] == 0x17 || at[1] == 0x18)) {
+            int pick = at[1] == 0x18 && gDuel_bWinnerSide ? 1 : 0;
+            unsigned operand;
+            if (at + 4 + 2 * pick > end) return -1;
+            operand = at[2 + 2 * pick] | at[3 + 2 * pick] << 8;
+            if (operand >= (unsigned)unit->target_count) return -1;
+            at = unit->targets[operand];
+            unit = unit_at(text_address(at), &offset);
+            if (!unit) return -1;
+        } else if (code == 0xF8 && at + 2 <= end && at[1] <= 0x2A && operands[at[1]] >= 0) {
+            if (at + 2 + operands[at[1]] > end) return -1;
+            at += 2 + operands[at[1]];
+        } else {
+            return -1;
+        }
+    }
+    return -1;
+}
+
+/* Whether `dest` is where a call for side `id` (a string of 0x3D-0x3F, at
+ * the game's place `at`) lands: the string the translation defines for it,
+ * the label it gave it, or the game's own. */
+static int side_lands(int id, unsigned at, const unsigned char *dest)
+{
+    int i, j;
+    if (dest == (const unsigned char *)(uintptr_t)(bases[TEXT_BANK_DIALOG] + at)) return 1;
+    if (overrides && overrides[id] == dest) return 1;
+    for (i = 0; i < unit_count; i++) {
+        for (j = 0; j < units[i]->label_count; j++) {
+            const TextLabel *label = &units[i]->labels[j];
+            if (label->bank == TEXT_BANK_DIALOG && label->name == at && units[i]->data + label->offset == dest) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* The side (TEXT_YOU_FIRST, TEXT_YOU or TEXT_COM) a call to `dest` is for,
+ * and how many cells its label takes (`*base`: 3 for the game's own YOU and
+ * COM); -1 when it is none, or the label's width cannot be told. */
+static int side_of(const unsigned char *dest, int *base)
+{
+    static const struct {
+        int id;
+        unsigned at;
+    } sides[3] = {{TEXT_YOU_FIRST, TEXT_YOU_FIRST_AT}, {TEXT_YOU, TEXT_YOU_AT}, {TEXT_COM, TEXT_COM_AT}};
+    int i;
+    for (i = 0; i < 3; i++) {
+        if (!side_lands(sides[i].id, sides[i].at, dest)) continue;
+        *base = dest == (const unsigned char *)(uintptr_t)(bases[TEXT_BANK_DIALOG] + sides[i].at)
+                    ? 3
+                    : own_letters(dest);
+        return *base < 0 ? -1 : sides[i].id;
+    }
+    return -1;
+}
+
+/* side_name(id) for a translation's labels: not You for a player with no
+ * name of their own, for whom the translation's own word stands. */
+static const unsigned char *unit_side_name(int id)
+{
+    const unsigned char *name = side_name(id);
+    int player = id == TEXT_YOU || (id == TEXT_YOU_FIRST && !gDuel_bWinnerSide);
+    return name && player && !strcmp(results_player(), "You") ? NULL : name;
+}
+
+/* The last control code of `unit` that starts before `at`, or -1. */
+static int control_before(const TextUnit *unit, uint32_t at)
+{
+    int low = 0, high = unit->control_count - 1, found = -1;
+    while (low <= high) {
+        int middle = (low + high) / 2;
+        if (unit->controls[middle] < at) {
+            found = middle;
+            low = middle + 1;
+        } else {
+            high = middle - 1;
+        }
+    }
+    return found;
+}
+
+/* step_before for a unit's copy `r`: the call at `call` (an offset of the
+ * unit's data) has the {f8 02 NN} that is the last control code before it
+ * step `shift` less; else four spaces before it become one. 0 if neither
+ * can. With `apply` 0 it only says so: a side's calls move together or not
+ * at all (the label would be drawn shifted by the ones that did). It reads
+ * the unit's control codes rather than the bytes: a letter past the game's
+ * (F1 F8, say) is no code. */
+static int unit_step_before(UnitResults *r, uint32_t call, int shift, int apply)
+{
+    const unsigned char *original = r->unit->data;
+    int last = control_before(r->unit, call), step;
+    uint32_t at = last < 0 ? 0 : r->unit->controls[last];
+    if (call < r->from + 4 || call >= r->from + r->size) return 0;
+    if (last >= 0 && at >= r->from && at + 3 <= call && original[at] == 0xF8 && original[at + 1] == 0x02) {
+        step = r->data[at + 2 - r->from] - shift;
+        if (step < 0 || step > 0xFF) return 0;
+        if (apply) r->data[at + 2 - r->from] = (unsigned char)step;
+        return 1;
+    }
+    step = 3 * TEXT_RESULTS_CELL - shift;
+    if ((last >= 0 && at >= call - 4) || original[call - 4] || original[call - 3] || original[call - 2] ||
+        original[call - 1] || step < 0 || step > 0xFF) {
+        return 0;
+    }
+    if (apply) {
+        r->data[call - 3 - r->from] = 0xF8;
+        r->data[call - 2 - r->from] = 0x02;
+        r->data[call - 1 - r->from] = (unsigned char)step;
+    }
+    return 1;
+}
+
+static UnitResults *unit_results_of(const TextUnit *unit)
+{
+    int i;
+    for (i = 0; i < TEXT_UNIT_COPIES; i++) {
+        if (unit_results[i].unit == unit) return &unit_results[i];
+    }
+    return NULL;
+}
+
+/* The copy of a unit's results that `address` is in, or NULL. */
+static UnitResults *unit_results_at(uintptr_t address)
+{
+    int i;
+    for (i = 0; i < TEXT_UNIT_COPIES; i++) {
+        UnitResults *r = &unit_results[i];
+        if (r->unit && address >= text_address(r->data) && address - text_address(r->data) <= r->size) return r;
+    }
+    return NULL;
+}
+
+/* The span of `unit`'s data that its result strings take; said once, as the
+ * unit is added (from `mod`'s file `name`, if it has them), when it is more
+ * than a copy holds: the duel results then keep the translation's own
+ * words in place of the names. */
+static void note_results(TextUnit *unit, const char *mod, const char *name)
+{
+    size_t from = (size_t)-1, last = 0, to = unit->size;
+    int i;
+    for (i = 0; i < unit->string_count; i++) {
+        const TextString *string = &unit->strings[i];
+        if (string->id < TEXT_RESULTS_FIRST || string->id > TEXT_RESULTS_LAST) continue;
+        if (string->offset < from) from = string->offset;
+        if (string->offset > last) last = string->offset;
+    }
+    unit->results_from = unit->results_to = 0;
+    if (from == (size_t)-1) return;
+    for (i = 0; i < unit->string_count; i++) {
+        if (unit->strings[i].offset > last && unit->strings[i].offset < to) to = unit->strings[i].offset;
+    }
+    unit->results_from = from;
+    unit->results_to = to;
+    if (to - from > TEXT_UNIT_RESULTS) {
+        LOG(LOG_MODS, "text: %s: %s: the result strings 40-45 span %lu bytes, more than %d: the duel results show no names",
+            mod ? mod : "language", name ? name : "", (unsigned long)(to - from), TEXT_UNIT_RESULTS);
+        if (mod) {
+            Mods_Note(mod, "%s: the result strings 40-45 span %lu bytes (the most is %d): list them together to show "
+                           "the names there", name, (unsigned long)(to - from), TEXT_UNIT_RESULTS);
+        }
+    }
+}
+
+/* A unit's result strings with the names fitted in, as results_copy does for
+ * the game's: the string `own` (which one of the unit's results_from..to
+ * holds) in a copy, or NULL when it is kept as it is (no name to show, or
+ * a column that cannot make room for it). */
+static const unsigned char *unit_results_copy(const unsigned char *own)
+{
+    static int next;
+    size_t at;
+    const TextUnit *unit = unit_at(text_address(own), &at);
+    UnitResults *r;
+    int i;
+    if (!side_name(TEXT_COM) || !unit || at < unit->results_from || at >= unit->results_to ||
+        unit->results_to - unit->results_from > TEXT_UNIT_RESULTS) {
+        return NULL;
+    }
+    r = unit_results_of(unit);
+    if (!r) {
+        r = &unit_results[next];
+        next = (next + 1) % TEXT_UNIT_COPIES;
+    }
+    r->unit = unit;
+    r->from = unit->results_from;
+    r->size = unit->results_to - unit->results_from;
+    r->room = 0x7FFF;
+    r->need = 0;
+    r->you = r->won = 1;
+    memcpy(r->data, unit->data + r->from, r->size);
+    for (i = 0; i < unit->target_count; i++) {
+        uint32_t call = unit->target_calls[i];
+        int base, id, shift;
+        if (call == TEXT_NO_CALL || call < r->from || call >= r->from + r->size) continue;
+        id = side_of(unit->targets[i], &base);
+        if (id == TEXT_COM) {
+            /* The step before COM, shorter by the name's letters past the label's. */
+            int last = control_before(unit, call);
+            uint32_t step_at = last < 0 ? 0 : unit->controls[last];
+            shift = (side_letters() - base) * TEXT_RESULTS_LETTER;
+            if (shift > r->need) r->need = shift;
+            if (last >= 0 && step_at >= r->from && step_at + 3 <= call && unit->data[step_at] == 0xF8 &&
+                unit->data[step_at + 1] == 0x02) {
+                unsigned char *step = r->data + step_at + 2 - r->from;
+                if (*step < r->room) r->room = *step;
+                if (shift > 0) *step = (unsigned char)(*step > shift ? *step - shift : 0);
+            } else if (shift > 0) {
+                r->room = 0;
+            }
+        } else if (id == TEXT_YOU || id == TEXT_YOU_FIRST) {
+            shift = name_shift(unit_side_name(id), base);
+            if (shift) {
+                int moved = unit_step_before(r, call, shift, 0);
+                if (id == TEXT_YOU) r->you &= moved;
+                else r->won &= moved;
+            }
+        }
+    }
+    /* A side whose calls can all move does; else none of them does. */
+    for (i = 0; i < unit->target_count; i++) {
+        uint32_t call = unit->target_calls[i];
+        int base, id;
+        if (call == TEXT_NO_CALL || call < r->from || call >= r->from + r->size) continue;
+        id = side_of(unit->targets[i], &base);
+        if ((id == TEXT_YOU && r->you) || (id == TEXT_YOU_FIRST && r->won)) {
+            int shift = name_shift(unit_side_name(id), base);
+            if (shift) unit_step_before(r, call, shift, 1);
+        }
+    }
+    return r->room >= r->need ? r->data + (at - r->from) : NULL;
+}
+
+/* Where a call or jump from a unit's result strings lands: `dest`, by the
+ * unit's targets, or the name of the side it calls, where the copy moved
+ * its column to fit (`copy`, the unit's copy that the cursor is in, or NULL
+ * for the unit's own text). From a copy a place within the span stays in
+ * the copy. */
+static unsigned char *unit_results_target(const TextUnit *unit, const UnitResults *copy, unsigned char *dest)
+{
+    const UnitResults *fit = unit_results_of(unit);
+    int base, id = side_of(dest, &base);
+    if (id >= 0) {
+        const unsigned char *side = unit_side_name(id);
+        /* The name only where the copy moved it to end where the label did. */
+        if (side && id != TEXT_COM && name_shift(side, base) &&
+            !(copy && fit && (id == TEXT_YOU ? fit->you : fit->won))) {
+            side = NULL;
+        }
+        if (side && id == TEXT_COM && side_letters() > base &&
+            !(fit && fit->room >= (side_letters() - base) * TEXT_RESULTS_LETTER)) {
+            side = NULL;
+        }
+        return side ? (unsigned char *)side : dest;
+    }
+    if (copy && dest >= unit->data + copy->from && dest < unit->data + copy->from + copy->size) {
+        return (unsigned char *)copy->data + (dest - (unit->data + copy->from));
+    }
+    return dest;
 }
 
 int Text_Overridden(int id) { return overrides && id >= 0 && id <= 0xFFFF && overrides[id]; }
@@ -612,6 +959,7 @@ const unsigned char *Text_CompileOwn(const char *listing, int id, size_t *size)
     units = bigger;
     units[unit_count++] = unit;
     pin(unit);
+    note_results(unit, NULL, "the port's own listing");
     LOG(LOG_MODS, "text: the port's own listing: %d strings, %lu bytes, at %p", unit->string_count,
         (unsigned long)unit->size, (void *)unit->data);
     for (i = 0; i < unit->string_count; i++) {
@@ -668,8 +1016,8 @@ const unsigned char *Text_Resolve(int id, const unsigned char *retail)
     if (id > STARS_NAME_TEXT && id <= STARS_NAME_TEXT + STARS_MAX && Stars_NameText(id - STARS_NAME_TEXT) &&
         (!own || Stars_Named(id - STARS_NAME_TEXT)))
         return Stars_NameText(id - STARS_NAME_TEXT);
-    if (!own && id >= TEXT_RESULTS_FIRST && id <= TEXT_RESULTS_LAST) {
-        const unsigned char *copy = results_copy(retail);
+    if (id >= TEXT_RESULTS_FIRST && id <= TEXT_RESULTS_LAST) {
+        const unsigned char *copy = own ? unit_results_copy(own) : results_copy(retail);
         if (copy) return copy;
     }
     return own ? own : retail;
@@ -691,17 +1039,6 @@ int Text_CutsMenuGlyph(int id, int x, int width, int y, int line_height, int hei
     return 1;
 }
 
-static uintptr_t text_address(const unsigned char *pointer)
-{
-#ifdef MEMORIES_TRANSLATED
-    /* Channels store guest tokens, while a native global may still be a
-     * host pointer. Compare both in the guest address space. */
-    return GuestRuntime_EncodePointer((void *)pointer);
-#else
-    return (uintptr_t)pointer;
-#endif
-}
-
 unsigned char *Text_Retarget(unsigned char *cursor, unsigned target)
 {
     int i;
@@ -715,6 +1052,14 @@ unsigned char *Text_Retarget(unsigned char *cursor, unsigned target)
         if (tower) return tower;
     }
     int copied = address >= results_at && address - results_at < sizeof(results);
+    {   /* A translation's own result strings, in the copy of them (unit_results). */
+        UnitResults *r = unit_results_at(address);
+        if (r) {
+            return unit_results_target(r->unit, r,
+                                       target < (unsigned)r->unit->target_count ? r->unit->targets[target]
+                                                                                 : r->unit->data + r->unit->size - 1);
+        }
+    }
     if (copied || (address & 0xFFFF0000u) == bases[TEXT_BANK_DIALOG]) {
         /* The retail result screens calling YOU, COM or the winner (COM
          * only when its column made room for the name). */
@@ -747,7 +1092,14 @@ unsigned char *Text_Retarget(unsigned char *cursor, unsigned target)
         if (unit && address >= text_address(unit->data) && address - text_address(unit->data) <= unit->size) {
             /* An operand past the unit's targets (a hand-edited byte) ends
              * the stream rather than jumping anywhere. */
-            return target < (unsigned)unit->target_count ? unit->targets[target] : unit->data + unit->size - 1;
+            unsigned char *dest = target < (unsigned)unit->target_count ? unit->targets[target]
+                                                                       : unit->data + unit->size - 1;
+            /* From the unit's result strings: the names go in. */
+            if (address - text_address(unit->data) >= unit->results_from &&
+                address - text_address(unit->data) < unit->results_to) {
+                return unit_results_target(unit, NULL, dest);
+            }
+            return dest;
         }
     }
     return (unsigned char *)((address & 0xFFFF0000u) | (target & 0xFFFF));

@@ -32,6 +32,7 @@ typedef struct {
     int bank, line;
     int is_label;
     unsigned value;
+    size_t call_at;      /* of the {call} or {jump} that has it, else (size_t)-1 */
 } Fixup;
 
 typedef struct {
@@ -41,6 +42,8 @@ typedef struct {
     int label_count, label_room;
     Fixup *fixups;
     int fixup_count, fixup_room;
+    uint32_t *marks;                 /* where each control code (F6-FF) starts */
+    int mark_count, mark_room;
     TextString *strings;
     int string_count, string_room;
     TextGlyphEncoder encode;
@@ -108,6 +111,15 @@ static int hex_byte(Compiler *c, const char *word)
     return (int)value;
 }
 
+/* A control code starts at `at`. */
+static void mark(Compiler *c, size_t at)
+{
+    uint32_t *place = grow(&c->marks, &c->mark_room, c->mark_count, sizeof(*c->marks));
+    if (!place) { c->failed = 1; return; }
+    *place = (uint32_t)at;
+    c->mark_count++;
+}
+
 /* A target operand: a label (LXXXX) or a retail offset in hexadecimal. */
 static void target(Compiler *c, int bank, const char *word)
 {
@@ -127,6 +139,7 @@ static void target(Compiler *c, int bank, const char *word)
     fixup->line = c->line;
     fixup->is_label = is_label;
     fixup->value = value;
+    fixup->call_at = (size_t)-1;
     c->fixup_count++;
     emit(c, 0);
     emit(c, 0);
@@ -204,8 +217,10 @@ static int code(Compiler *c, int bank, char *text)
         return IS("choose");
     }
     if ((IS("call") || IS("jump")) && count == 2) {
+        int first = c->fixup_count;
         emit(c, IS("call") ? 0xFC : 0xFD);
         target(c, bank, words[1]);
+        if (c->fixup_count > first) c->fixups[first].call_at = c->size - 3;
         return IS("jump");
     }
     if (IS("f8") && count >= 2) {
@@ -232,7 +247,7 @@ static int line_text(Compiler *c, int bank, const char *text, size_t length, int
         if (*at == '{') {
             char inside[256];
             const char *close = memchr(at, '}', (size_t)(end - at));
-            size_t size;
+            size_t size, before;
             int result;
             if (!close) {
                 say(c, "a { without its }");
@@ -243,7 +258,9 @@ static int line_text(Compiler *c, int bank, const char *text, size_t length, int
             memcpy(inside, at + 1, size);
             inside[size] = '\0';
             at = close + 1;
+            before = c->size;
             result = code(c, bank, inside);
+            if (c->size > before && c->data[before] >= 0xF6) mark(c, before);
             if (result < 0) *buffer = 1;   /* and, like {end}, the item is over */
             if (result != 0) {
                 /* Nothing but blanks may follow an item's end. */
@@ -443,7 +460,10 @@ TextUnit *TextListing_Compile(const char *text, size_t length, const uint32_t ba
          * the listing's, as after {end}: a listing written with a blank line
          * between its items (the FM Editor's importer) adds no line break. */
         if (c.cont && (!size || line[0] == '#')) continue;
-        if (pending) emit(&c, 0xFE);
+        if (pending) {
+            mark(&c, c.size);
+            emit(&c, 0xFE);
+        }
         pending = 0;
         c.cont = 0;
         if (line_text(&c, bank, line, size, &buffer)) {
@@ -461,6 +481,7 @@ TextUnit *TextListing_Compile(const char *text, size_t length, const uint32_t ba
         free(c.labels);
         free(c.fixups);
         free(c.strings);
+        free(c.marks);
         return NULL;
     }
     emit(&c, 0xFF);   /* a stream that runs off the last item ends there */
@@ -468,8 +489,11 @@ TextUnit *TextListing_Compile(const char *text, size_t length, const uint32_t ba
     unit->size = c.size;
     unit->strings = c.strings;
     unit->string_count = c.string_count;
+    unit->controls = c.marks;
+    unit->control_count = c.mark_count;
     unit->targets = calloc((size_t)(c.fixup_count ? c.fixup_count : 1), sizeof(*unit->targets));
-    if (c.fixup_count > 0xFFFF || !unit->targets) {
+    unit->target_calls = calloc((size_t)(c.fixup_count ? c.fixup_count : 1), sizeof(*unit->target_calls));
+    if (c.fixup_count > 0xFFFF || !unit->targets || !unit->target_calls) {
         say(&c, "too many jumps in one listing");
         free(c.labels);
         free(c.fixups);
@@ -494,6 +518,7 @@ TextUnit *TextListing_Compile(const char *text, size_t length, const uint32_t ba
         /* Undefined, or a plain offset: the retail text at that offset. */
         if (!where) where = (unsigned char *)(uintptr_t)(bases[fixup->bank] + fixup->value);
         unit->targets[i] = where;
+        unit->target_calls[i] = fixup->call_at == (size_t)-1 ? TEXT_NO_CALL : (uint32_t)fixup->call_at;
         c.data[fixup->position] = (unsigned char)(i & 0xFF);
         c.data[fixup->position + 1] = (unsigned char)(i >> 8);
     }
@@ -523,6 +548,8 @@ void TextListing_Free(TextUnit *unit)
     if (!unit) return;
     free(unit->data);
     free(unit->targets);
+    free(unit->target_calls);
+    free(unit->controls);
     free(unit->strings);
     free(unit->labels);
     free(unit);

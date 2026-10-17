@@ -27,16 +27,29 @@ typedef struct {
     uint32_t offset;       /* into data */
 } TextLabel;
 
+#define TEXT_NO_CALL 0xFFFFFFFFu
+
 typedef struct {
     unsigned char *data;
     size_t size;
     unsigned char **targets;   /* by operand */
     int target_count;
+    /* Where each target is jumped from, by operand: the offset into data of
+     * the {call} or {jump} that has it, else TEXT_NO_CALL (a choice's, a
+     * flag's). With the offsets of the unit's control codes (F6-FF, which a
+     * letter's second byte can look like), ascending, it lets the port
+     * find what comes before a call without reading letters as codes. */
+    uint32_t *target_calls;
+    uint32_t *controls;
+    int control_count;
     TextString *strings;
     int string_count;
     TextLabel *labels;         /* for the listings compiled after this one */
     int label_count;
     int not_utf8_lines, first_not_utf8_line;   /* left out, for the mod's status */
+    /* The span of data the result screens' strings (0x40-0x45) take, up to
+     * the next string; 0, 0 when the unit has none. Set by translation.c. */
+    size_t results_from, results_to;
 } TextUnit;
 
 /* The glyph code for a character (-1 for none), and what to say about a

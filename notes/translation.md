@@ -263,6 +263,26 @@ starts with a capital (Sumo Mago Martis: S.M. Martis), else its last word
 the English. The result screens show the same name over COM's column,
 an accented letter as its plain one (their small letters have none).
 
+A translation that gives the result screens words of its own (strings
+`40`-`45`) gets the names there too (View > Opponent's name for COM), when
+it calls its YOU, COM and WINNER the way the game's strings do: with `{call}`
+to the strings it defines at `3E` (YOU, or 1P), `3F` (COM, or 2P) and `3D`
+(`{f8 18}`: the winner's), by the labels `L050E`, `L051C` and `L0504`
+(retail's places), or to the game's own where it defines none. The port
+knows a call by where it lands, whatever the label is called, and measures
+the word the translation has there, the string a 1P duel takes: VOCÊ is four
+letters, so a player's name ends where it did, not where YOU did. The
+`{f8 02 NN}` right before each call (or, failing it, four spaces) is the
+step that moves; a string that builds YOU or COM in a way it cannot measure
+(a call or a flag first) keeps its word. The translation's own word also
+stays for what the small font cannot show, and when the player gave no name.
+Strings `40`-`45` should be listed together: the copy takes up to 16 KB
+of the file, from `40`'s first to the string after the last of them; a
+longer span is said once (the log and the mod's notes) and has no names.
+No shipped language (`languages/`) defines `40`-`45`, so with them the
+results are the game's own strings, named as before; only a mod (the pt-BR
+one) gives them words of its own.
+
 | Id | Duelist | Id | Duelist | Id | Duelist |
 |---|---|---|---|---|---|
 | `FE41` | Simon Muran | `FE4E` | Yami Bakura | `FE5B` | Desert Mage |
