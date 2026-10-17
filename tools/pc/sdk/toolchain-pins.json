@@ -1,0 +1,28 @@
+{
+  "comment": "What sdk/build-mod.bat and sdk/build-mod.sh download, once, into sdk/toolchain/. The launchers carry the same URLs and hashes in plain text (a batch file cannot read JSON); tools/pc/test_sdk_launchers.py keeps the three in step, and test_build_mod_toolchain.py keeps this file in step with the toolchain the game is built with.",
+  "llvm_mingw": {
+    "release": "20260922",
+    "clang": 23,
+    "windows": {
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-x86_64.zip",
+      "sha256": "e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666",
+      "bytes": 190725905
+    },
+    "linux": {
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-ubuntu-22.04-x86_64.tar.xz",
+      "sha256": "bb7bb7654b33d5aa8712acb837c963b2e0c56352560c76105270a3268c665c21",
+      "bytes": 83924028
+    }
+  },
+  "python": {
+    "comment": "Windows only: the embeddable CPython (python.org). Linux uses the system python3. The hash is the one python.org publishes beside the file (python-3.14.8-embed-amd64.zip.spdx.json).",
+    "minimum": "3.8",
+    "windows": {
+      "version": "3.14.8",
+      "url": "https://www.python.org/ftp/python/3.14.8/python-3.14.8-embed-amd64.zip",
+      "sha256": "a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310",
+      "bytes": 12601679,
+      "pth": "python314._pth"
+    }
+  }
+}

@@ -199,8 +199,11 @@ jobs:
           target = os.path.join(os.environ["RUNNER_TEMP"], "vt")
           os.makedirs(target, exist_ok=True)
           # The guest pass is in the SDK (sdk/tools/): a program of the archive as much as the game.
+          # So is the one-click launcher, a script that downloads a compiler: the kind of file
+          # scanners look at hardest, and it is public anyway.
           for archive, name in ((f"dist/yfm-redecomp-{version}-windows.zip", "/memories-pc.exe"),
                                 (f"dist/yfm-redecomp-{version}-windows.zip", "/memories-guest-ir.exe"),
+                                (f"dist/yfm-redecomp-{version}-windows.zip", "/build-mod.bat"),
                                 (f"dist/fm-editor-{version}-windows.zip", "/fm-editor.exe")):
               with zipfile.ZipFile(archive) as package:
                   member = next(entry for entry in package.namelist() if entry.endswith(name))
@@ -208,11 +211,11 @@ jobs:
                       handle.write(package.read(member))
           EOF
           status=0
-          # --timeout 600: three new files' analyses still leave the step's
+          # --timeout 600: four new files' analyses still leave the step's
           # 45 minutes room to write the summary.
           python tools/pc/vt_check.py --max "$VT_MAX_DETECTIONS" --timeout 600 \
-            --markdown "$RUNNER_TEMP/vt.md" --label memories-pc.exe --label memories-guest-ir.exe --label fm-editor.exe \
-            "$RUNNER_TEMP/vt/memories-pc.exe" "$RUNNER_TEMP/vt/memories-guest-ir.exe" "$RUNNER_TEMP/vt/fm-editor.exe" || status=$?
+            --markdown "$RUNNER_TEMP/vt.md" --label memories-pc.exe --label memories-guest-ir.exe --label build-mod.bat --label fm-editor.exe \
+            "$RUNNER_TEMP/vt/memories-pc.exe" "$RUNNER_TEMP/vt/memories-guest-ir.exe" "$RUNNER_TEMP/vt/build-mod.bat" "$RUNNER_TEMP/vt/fm-editor.exe" || status=$?
           {
             echo "### VirusTotal ($PACKAGE_VERSION)"
             echo
@@ -265,6 +268,117 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # The SDK's one-click mod build on a machine with nothing (notes/modding.md,
+  # "One click"): the SDK the package job packed, unpacked on a fresh runner, and
+  # its launcher run with PATH cut to the operating system, on the SDK's own
+  # example code mod. Windows: no Python and no clang on PATH at all. Linux: the
+  # system python3, which the launcher requires (it downloads only llvm-mingw),
+  # and the runner's own distribution clang, which cannot make the Android
+  # object, so that object coming out is the proof that the compiler the
+  # launcher fetched was the one used. The second run must download nothing.
+  # The objects are checked afterwards with the runner's Python
+  # (tools/pc/check_one_click.py: the three ELF files, their sections, the
+  # Android one when the SDK has the guest pass, what is left in toolchain/).
+  # The download is the proof and costs about 300 MB a run, so a pull request
+  # runs it only when it touches what the launchers are made of or ship
+  # (the scope step below); pushes, tags and manual runs always do. A pull
+  # request that does not touch them still gets a green job (every step but
+  # the scope one is skipped), so draft-release's dependency on it holds.
+  sdk-one-click:
+    if: github.event_name != 'workflow_dispatch' || inputs.platform != 'macos-arm64'
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: linux
+            runner: ubuntu-24.04
+          - system: windows
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Two commits: a pull request's merge commit and the base it merges into.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Does this run touch the one-click build
+        id: scope
+        run: |
+          touched=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/sdk/|tools/pc/package\.py$|tools/pc/build_mod\.py$|tools/pc/check_one_click\.py$|\.github/workflows/pc-release\.yml$)'; then
+            touched=false
+            echo "::notice title=SDK one-click build::not run: this pull request touches none of tools/pc/sdk/, package.py, build_mod.py, check_one_click.py or the workflow"
+          fi
+          echo "touched=$touched" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v5
+        if: steps.scope.outputs.touched == 'true'
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        if: steps.scope.outputs.touched == 'true'
+        with:
+          name: yfm-redecomp-${{ matrix.system }}
+          path: tmp/archives
+      # Unpacked as a player would: python's zipfile here, Explorer's there; the
+      # tar.gz keeps the mode of build-mod.sh, which is run as it is.
+      - name: Unpack the SDK
+        if: steps.scope.outputs.touched == 'true'
+        run: |
+          mkdir tmp/clean
+          if [ "${{ matrix.system }}" = windows ]; then
+            python -c "import glob, zipfile; zipfile.ZipFile(glob.glob('tmp/archives/yfm-redecomp-*-windows.zip')[0]).extractall('tmp/clean')"
+          else
+            tar -xzf tmp/archives/yfm-redecomp-*-linux.tar.gz -C tmp/clean
+          fi
+          mv tmp/clean/yfm-redecomp-* tmp/clean/game
+          cp -r tmp/clean/game/sdk/examples/mods/gameplay-rules tmp/clean/mod
+          ls tmp/clean/game/sdk
+      - name: Build the mod on a bare PATH (Windows)
+        if: steps.scope.outputs.touched == 'true' && runner.os == 'Windows'
+        shell: cmd
+        run: |
+          set "PATH=%SystemRoot%\System32;%SystemRoot%"
+          set "MEMORIES_SDK_NOPAUSE=1"
+          where python >nul 2>nul
+          if not errorlevel 1 (echo python is on the bare PATH & exit /b 1)
+          where clang >nul 2>nul
+          if not errorlevel 1 (echo clang is on the bare PATH & exit /b 1)
+          call tmp\clean\game\sdk\build-mod.bat tmp\clean\mod
+          if errorlevel 1 exit /b 1
+          call tmp\clean\game\sdk\build-mod.bat tmp\clean\mod > tmp\clean\second-run.txt 2>&1
+          if errorlevel 1 (type tmp\clean\second-run.txt & exit /b 1)
+          type tmp\clean\second-run.txt
+          findstr /c:"downloading" tmp\clean\second-run.txt
+          if not errorlevel 1 (echo the second run downloaded again & exit /b 1)
+          exit /b 0
+      - name: Build the mod on a bare PATH (Linux)
+        if: steps.scope.outputs.touched == 'true' && runner.os == 'Linux'
+        run: |
+          env -i HOME="$HOME" PATH=/usr/bin:/bin tmp/clean/game/sdk/build-mod.sh tmp/clean/mod
+          env -i HOME="$HOME" PATH=/usr/bin:/bin tmp/clean/game/sdk/build-mod.sh tmp/clean/mod > tmp/clean/second-run.txt 2>&1 || { cat tmp/clean/second-run.txt; exit 1; }
+          cat tmp/clean/second-run.txt
+          if grep -q downloading tmp/clean/second-run.txt; then echo "the second run downloaded again"; exit 1; fi
+      # The SDK of a pull request may lack the guest pass (sdk-guest-ir above): then
+      # the Android object is not proven, which is a warning there. Anywhere else a
+      # missing pass fails: a release SDK carries it.
+      - name: Check the objects
+        if: steps.scope.outputs.touched == 'true'
+        run: python tools/pc/check_one_click.py tmp/clean/mod --sdk tmp/clean/game/sdk $([ "$GITHUB_EVENT_NAME" = pull_request ] && echo --allow-no-guest-pass)
+      - name: Upload the objects
+        if: always() && steps.scope.outputs.touched == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-one-click-${{ matrix.system }}
+          path: |
+            tmp/clean/mod/*.o
+            tmp/clean/second-run.txt
+          if-no-files-found: warn
+          retention-days: 14
+
   # The guest pass the SDKs ship, one per system (tools/pc/build_sdk_guest_ir.py;
   # tools/pc/sdk_llvm.json pins the LLVM). The game itself is translated with
   # LLVM 21 and stays so; a mod's clang writes the IR the pass reads and
@@ -281,12 +395,17 @@ jobs:
   # own step as soon as it is built: a failure in the link or the checks
   # after it keeps the work (actions/cache saves only after a successful job).
   # A pull request must not pay for it: caches saved by master are readable
-  # by pull requests, so a run there takes the cache when it exists (linking
-  # the pass takes a minute), and builds the LLVM only when the pull request
-  # touches what the pass is made of (this job's paths below). Otherwise,
-  # with no cache yet (master has not run since the pin changed), it builds
-  # nothing and the package job packs without the pass (--no-guest-ir, which
-  # test_package.py then expects). Pushes, tags and manual runs always build.
+  # by pull requests (not those of another pull request's runs), so a run
+  # there takes the cache when it exists (linking the pass takes a minute: a
+  # cache HIT always builds the pass), and builds the LLVM itself on a MISS
+  # only when the pull request touches what the pass is made of or the
+  # one-click build that proves it (this job's paths below: a one-click pull
+  # request then proves the Android object, whatever the cache holds).
+  # Otherwise, on a miss with neither touched (master has not run since the
+  # pin changed), it builds nothing and the package job packs without the pass
+  # (--no-guest-ir, which test_package.py then expects, and sdk-one-click
+  # then warns that the Android object is not proven). Pushes, tags and
+  # manual runs always build.
   # The job stops, saying what is missing, if the archive lacks the headers
   # or libraries, or if sdk_llvm.json has no sha256 (`python
   # tools/pc/build_sdk_guest_ir.py --pin`).
@@ -317,11 +436,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Does this run touch what the pass is made of
+      # What the pass is made of, and what proves it in a mod build: the one-click
+      # launchers and the files that ship and check them (sdk-one-click below
+      # runs on a pull request for the same second list and would otherwise find
+      # an SDK without the pass, which cannot build the Android object).
+      - name: Does this run touch what the pass is made of, or the one-click build
         id: scope
         run: |
           touched=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/llvm/|tools/pc/build_sdk_guest_ir\.py$|tools/pc/sdk_llvm\.json$|tools/pc/fetch_tools\.py$|src/pc/memory_map\.h$)'; then
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/llvm/|tools/pc/build_sdk_guest_ir\.py$|tools/pc/sdk_llvm\.json$|tools/pc/fetch_tools\.py$|src/pc/memory_map\.h$|tools/pc/sdk/|tools/pc/package\.py$|tools/pc/build_mod\.py$|tools/pc/check_one_click\.py$|\.github/workflows/pc-release\.yml$)'; then
             touched=false
           fi
           echo "touched=$touched" >> "$GITHUB_OUTPUT"
@@ -680,7 +803,7 @@ jobs:
 
   draft-release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [package, android, package-macos]
+    needs: [package, sdk-one-click, android, package-macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

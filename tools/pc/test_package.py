@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check release archives without a ROM: layout, modes, no user data."""
 import argparse
+import json
 import struct
 from pathlib import Path, PurePosixPath
 import tarfile
@@ -67,6 +68,27 @@ def check_exe(image):
     # test path, which a release leaves out (MEMORIES_TEST_HOOKS).
     for name in (b"SetProcessDEPPolicy", b"GetProcessDEPPolicy", b"GetSystemDEPPolicy", b"MEMORIES_TEST_EXEC_GUEST"):
         assert name not in image, f"memories-pc.exe contains {name.decode()}"
+
+
+def check_launchers(path, root, contents, windows):
+    """The one-click build (tools/pc/sdk): both launchers and the pins they download,
+    in every SDK. The batch file with Windows' line ends (a bare LF mis-reads its
+    labels), the shell script with LF and executable, and the hashes they carry
+    the JSON's."""
+    names = ("sdk/build-mod.bat", "sdk/build-mod.sh", "sdk/toolchain-pins.json")
+    assert set(names) <= contents, f"the SDK lacks the one-click build: {sorted(set(names) - contents)}"
+    bat = read_bytes(path, f"{root}/sdk/build-mod.bat")
+    sh = read_bytes(path, f"{root}/sdk/build-mod.sh")
+    assert bat.count(b"\n") == bat.count(b"\r\n") > 100, "sdk/build-mod.bat needs CRLF line ends"
+    assert b"\r" not in sh and sh.startswith(b"#!/bin/sh\n"), "sdk/build-mod.sh needs LF line ends and a #!/bin/sh line"
+    pins = json.loads(read_bytes(path, f"{root}/sdk/toolchain-pins.json"))
+    for text, wanted in ((bat, (pins["llvm_mingw"]["windows"], pins["python"]["windows"])), (sh, (pins["llvm_mingw"]["linux"],))):
+        for entry in wanted:
+            assert entry["url"].encode() in text and entry["sha256"].encode() in text, \
+                f"a launcher does not carry the pin {entry['url']} of toolchain-pins.json"
+    if not windows:
+        with tarfile.open(path) as archive:
+            assert archive.getmember(f"{root}/sdk/build-mod.sh").mode & 0o111, "sdk/build-mod.sh must be executable"
 
 
 def check(path, guest_ir_wanted=True):
@@ -150,6 +172,7 @@ def check(path, guest_ir_wanted=True):
             with tarfile.open(path) as archive:
                 member = archive.getmember(f"{next(iter(roots))}/{guest_ir}")
                 assert member.mode & 0o111, f"{guest_ir} must be executable"
+    check_launchers(path, next(iter(roots)), contents, windows)
     shipped = {name: read_member(path, f"{next(iter(roots))}/{name}") for name in sorted(lists)}
     assert all(len(text.split()) > 1000 for text in shipped.values()), "an SDK export list is (nearly) empty"
     if not wide:

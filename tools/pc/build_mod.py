@@ -81,10 +81,13 @@ only where its inputs are the same, never because it is newer. A memo in
 tmp/pc/mod-build/.memo finds the key again without the preprocessor while
 none of the files it read has changed."""
 import argparse, concurrent.futures, filecmp, functools, glob, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time
-import build_process
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Before the first import of a sibling module: Windows' embeddable Python
+# (it has a ._pth file) and `python -I -P` start without the script's folder
+# on sys.path, and sdk/build-mod.bat runs the former.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_process
 # In the repository, or the copy in the sdk/ directory beside a game
 # (sdk/tools/build_mod.py, with the headers in sdk/include).
 SHIPPED = not os.path.isdir(os.path.join(ROOT, "src/pc/mods/sdk"))
@@ -1263,6 +1266,7 @@ def main():
     if asked and not wide:
         sys.exit(toolchain_help(missing_64bit() or ["llvm-objcopy"], wanted=asked))
     targets = options.target or (list(DEFAULT_TARGETS) if wide else ["i386"])
+    left_out = [target for target in DEFAULT_TARGETS if target not in targets] if not options.target else []
     if options.game and len(targets) != 1:
         parser.error("--game checks one target's names: name it with --target")
     if TRANSLATED in targets and TRANSLATED not in (options.target or ()):
@@ -1273,6 +1277,8 @@ def main():
         if problem:
             print(f"{problem}\nThe other objects are built; the Android one is not.", file=sys.stderr)
             targets.remove(TRANSLATED)
+            left_out.append(TRANSLATED)
+    built = []
     for target in targets:
         if target == "macos":
             from build_mod_arm64 import build as build_arm64_mod
@@ -1284,8 +1290,14 @@ def main():
         if not output:
             print(f"{options.directory}: no C sources; a data-only mod needs no build")
             break
+        built.append(target)
         if not options.target and not wide:
             print(toolchain_help(missing_64bit() or ["llvm-objcopy"], built=output), file=sys.stderr)
+    # Which objects came out, last, for a modder who looks only at the end
+    # (sdk/build-mod.bat): what an earlier message says was left out, and why.
+    if built:
+        print(f"build_mod: built {', '.join(built)}" +
+              (f"; NOT built: {', '.join(left_out)} (the message above says why)" if left_out else ""))
 
 
 if __name__ == "__main__":

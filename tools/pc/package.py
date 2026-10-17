@@ -44,6 +44,11 @@ builds). So packing the default three needs the Android build of the same
 tree first (build_game32.py --target android-arm64-v8a --release; notes/
 pc-release.md, "Local commands").
 
+Every SDK also carries the one-click build (tools/pc/sdk): sdk/build-mod.bat
+and sdk/build-mod.sh, which fetch their compiler (and, on Windows, a Python)
+once and build a code mod with nothing installed, and sdk/toolchain-pins.json,
+what they download.
+
 Every SDK also carries the guest pass (sdk/tools/memories-guest-ir[.exe]),
 which build_mod.py runs an Android (aarch64-translated) object through: a
 program of the archive's system, built against the LLVM of the SDK's own
@@ -89,6 +94,10 @@ EXPORT_BUILDS = {"i386": ["windows", "linux"], "x86_64-windows": ["windows-x64"]
 # What build_mod.py also needs of the Android game to build its object (the
 # guest pass's tables, build_game32.write_sdk), beside its export list.
 TRANSLATION_TABLES = ("mod_translation.json", "mod_signatures.json")
+# The one-click build, from tools/pc/sdk into every SDK: the launchers and the
+# pins they download (the launchers carry the same values; test_sdk_launchers.py).
+SDK_LAUNCHERS = ("build-mod.bat", "build-mod.sh", "toolchain-pins.json")
+LAUNCHER_SH = "build-mod.sh"
 # What the README's Mods section adds for the 64-bit Windows game, before
 # its paragraph on installing mods (tools/pc/release/README.txt).
 X64_MODS = """This is the 64-bit Windows game. A mod that contains code needs a 64-bit
@@ -299,6 +308,20 @@ def sdk_exports(system, exports_from=()):
     return lists
 
 
+def add_launchers(sdk):
+    """The one-click build into `sdk` (the folder's sdk/): build-mod.bat with
+    Windows' line ends (a batch file with bare LF mis-reads its labels),
+    build-mod.sh and the JSON with LF, and build-mod.sh executable."""
+    for name in SDK_LAUNCHERS:
+        with open(os.path.join(ROOT, "tools", "pc", "sdk", name), "rb") as handle:
+            data = handle.read().replace(b"\r\n", b"\n")
+        if name.endswith(".bat"):
+            data = data.replace(b"\n", b"\r\n")
+        with open(os.path.join(sdk, name), "wb") as handle:
+            handle.write(data)
+    os.chmod(os.path.join(sdk, LAUNCHER_SH), 0o755)
+
+
 def stage(system, label, exports=None, guest_ir=None):
     build_dir, executable, extras = BUILDS[system]
     build_dir = os.path.join(ROOT, build_dir)
@@ -320,6 +343,7 @@ def stage(system, label, exports=None, guest_ir=None):
         os.chmod(target, 0o755)
         if system.startswith("windows"):   # as the game's: stripped, with the PE checksum
             strip(target)
+    add_launchers(os.path.join(folder, "sdk"))
     # The other targets' export lists, beside this game's own (sdk_exports).
     for target, path in (exports or {}).items():
         shutil.copyfile(path, os.path.join(folder, "sdk", f"exports.{target}.txt"))
@@ -411,7 +435,7 @@ def pack(system, folder):
             info.uid = info.gid = 0
             info.uname = info.gname = ""
             if info.isfile():
-                info.mode = 0o755 if info.name.endswith(("/memories-pc", "/sdk/tools/" + GUEST_IR)) else 0o644
+                info.mode = 0o755 if info.name.endswith(("/memories-pc", "/sdk/tools/" + GUEST_IR, "/sdk/" + LAUNCHER_SH)) else 0o644
             return info
         with tarfile.open(base, "w:gz") as archive:
             archive.add(folder, os.path.basename(folder), filter=executable)

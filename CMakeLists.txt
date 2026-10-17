@@ -1010,6 +1010,12 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME pc_build_mod_toolchain
             COMMAND "${Python3_EXECUTABLE}" tools/pc/test_build_mod_toolchain.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # The SDK's one-click build (tools/pc/sdk): the pins the launchers carry,
+        # the embeddable Python's sys.path, and both launchers run on a fake SDK with
+        # archives made in the test (nothing downloaded, no compiler started).
+        add_test(NAME pc_sdk_launchers
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/test_sdk_launchers.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         # The guest pass an SDK ships (tools/pc/build_sdk_guest_ir.py): its
         # pin, the check of an LLVM archive, and package.py's use of it
         # (synthetic archives, nothing downloaded, no compiler started).

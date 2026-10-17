@@ -1927,7 +1927,8 @@ stays off with "needs an Android build of this mod" (or, when the mod has
 only the old `.aarch64.o` of the fixed-memory game, "was built for the
 fixed-memory Android game: rebuild this mod"). The notes end with how to
 make the missing object: rebuild the mod with `build_mod.py`
-([Building one](#building-one)). A mod ships
+([Building one](#building-one)), or with nothing installed, the SDK's
+`build-mod.bat` ([One click](#one-click-build-a-mod-with-nothing-installed)). A mod ships
 whichever objects it has beside its `mod.json`; `"library": "card-tweaks"`
 (or `"card-tweaks.o"`) names all of them, and `"libraries": {"x86_64-windows":
 "other.o"}` names one target's file outright. Mod authors supporting every
@@ -2051,6 +2052,103 @@ same with no mod hooking anything (the smoke screenshots are unchanged).
   `tanf`, `expf`, `logf`, `<ctype.h>` (ASCII, in the header) and `rand`/
   `srand`, which give the same numbers on Linux and Windows and leave the
   game's own random numbers (and so its duels) alone.
+
+### One click: build a mod with nothing installed
+
+No Python and no compiler? The release's `sdk` folder has a script that
+fetches what it needs once and builds every object your mod needs, the
+Android one included.
+
+**Windows.** 64-bit Windows 10 version 1803 (April 2018) or newer, or 11.
+Unpack the release and open its `sdk` folder. Drag your mod's
+folder (the one with `mod.json` and the `.c` files) onto `build-mod.bat`.
+Or double-click `build-mod.bat`, drag the folder into the window when it
+asks, and press Enter. When it ends, its last lines say which objects
+(`<library>.o`, `<library>.x86_64-windows.o`,
+`<library>.aarch64-translated.o`) were built, next to your mod's files and
+ready to play or to send, and which were not, and why. The window waits for a
+key when it was opened by a double-click. A release downloaded with a browser
+carries its mark of coming from the internet, and Windows SmartScreen may ask
+once when you start `build-mod.bat` ("More info", then "Run anyway"); the
+zip's *Properties*, *Unblock* before unpacking avoids the question. Windows 11
+for ARM runs the x64 downloads through its own emulation (not tested). If the
+folder you unpacked into has accents or another alphabet in its path, or a very
+long one, move it to something like `C:\yfm-sdk`: `tar` cannot unpack there.
+
+**Linux.** `sdk/build-mod.sh my-mod`. It needs `python3` (3.8 or newer),
+`curl` or `wget`, and `tar` with `xz`, on x86-64 with glibc 2.34 or newer and
+the libstdc++ of GCC 11 or newer (Ubuntu 22.04, Debian 12, Fedora 35 or
+newer): llvm-mingw's Linux build is made on Ubuntu 22.04 and its `clang`
+asks for exactly that (read from the version names in the program, not run
+on older systems). On Debian 11 or Ubuntu 20.04 the script says that `clang`
+does not start; use a clang 23 of your own through `MEMORIES_SDK_TOOLCHAIN`.
+
+**The first run downloads, once.** The files go into `sdk/toolchain/` beside
+the script, and nothing is installed or changed anywhere else on the
+computer (no registry, no PATH). Delete the folder to remove them; the next
+run fetches them again. After the first run it works offline.
+
+| What | Size | From | Windows | Linux |
+|---|---|---|---|---|
+| llvm-mingw 20260922 (clang, `ld.lld`, `llvm-objcopy`: the toolchain the game is built with) | 191 MB Windows (750 MB unpacked), 84 MB Linux (630 MB unpacked) | github.com/mstorsjo/llvm-mingw | yes | yes |
+| Python 3.14.8, the embeddable package | 13 MB | python.org | yes | no (your `python3`) |
+
+Each download is checked against a SHA-256 written in the script itself
+(and in `sdk/toolchain-pins.json`, which says the same) before it is unpacked,
+and unpacked with the programs Windows and Linux come with (`curl`, `tar` and
+`certutil` on Windows; `curl`, `tar` and `sha256sum` on Linux). The scripts
+are plain text. They run no PowerShell, decode nothing and download one file
+for each tool; the antivirus program that dislikes an unsigned `clang.exe`
+or `python.exe` after the download is the one to tell that you trust it
+(both are the projects' own releases, and the hash proves it).
+
+**If the hash is wrong** the script says `the SHA-256 of the download is
+wrong`, prints both hashes and the address, deletes the file and unpacks
+nothing. Run it again: a download cut short or changed on the way shows up
+like this. If it repeats, do not use the file; download it from the address
+in a browser and put it in `sdk/toolchain/downloads/` (the next run checks it
+and uses it), or use your own tools (below), and tell us. Offline, the same
+folder is where a file copied from another computer goes. Some company
+proxies and firewalls inspect HTTPS and either change the file (the hash
+catches that) or make `curl` stop at its certificate or revocation checks
+before a byte arrives: the script only accepts `https` addresses and does
+not switch those checks off, so the answer there is the browser download, or
+asking whoever runs the network.
+
+**Your own tools** (nothing is downloaded for what you name):
+
+| Variable | Meaning |
+|---|---|
+| `MEMORIES_SDK_PYTHON` | the Python to run `build_mod.py` with (any 3.8 or newer) |
+| `MEMORIES_SDK_TOOLCHAIN` | a folder with `clang`, `ld.lld` and `llvm-objcopy` in it, or in its `bin` (a llvm-mingw you unpacked yourself) |
+| `MEMORIES_SDK_NOPAUSE` | `1`: do not wait for a key at the end (a script that starts the `.bat`, or a terminal that runs it through `cmd /c`, would wait too) |
+
+A clang from your Linux distribution (`sudo apt install clang lld llvm`)
+builds the `i386` and `x86_64-windows` objects but not the Android one:
+the SDK's guest pass is built against LLVM 23 and the clang that writes the
+IR must be of the same LLVM major ([Android code
+mods](#android-code-mods-aarch64-translated)). The script's own download is
+llvm-mingw's clang 23, which does it.
+
+Anything after the folder goes to `build_mod.py`
+(`build-mod.bat my-mod --target i386`; `--out` keeps the objects elsewhere),
+and `build-mod.bat --setup` only fetches the tools, then stops. Running
+`build_mod.py` yourself, as below, is the same build.
+
+*For the SDK's maintainers.* The pins are in `tools/pc/sdk/toolchain-pins.json`
+and written again in the two scripts (a batch file cannot read JSON);
+`test_sdk_launchers.py` keeps them the same and `test_build_mod_toolchain.py`
+keeps them the toolchain the game is built with (`fetch_tools.py`,
+`build_win32_deps.py`). The Windows Python is the embeddable package, which
+starts in isolated mode (`python3xx._pth`): the script's folder is not on
+`sys.path`, so `build_mod.py` puts its own folder there before it imports
+its siblings, and the launcher leaves the `._pth` as it came. `package.py`
+ships the three files in every desktop SDK (`test_package.py` requires
+them), and the release workflow's `sdk-one-click` job runs each launcher on
+the packed SDK on a clean runner with only the operating system on PATH
+(`tools/pc/check_one_click.py` checks what came out); `build-mod.bat` also
+goes to VirusTotal with the shipped programs
+([pc-release.md](pc-release.md#virustotal)).
 
 ### Building one
 
