@@ -147,13 +147,16 @@ if(BUILD_TESTING)
     add_executable(memories_entry_layout_test tests/pc/entry_layout_test.c src/pc/text/entry_layout.c)
     add_executable(memories_state_remap_test tests/pc/state_remap_test.c src/pc/guest/state_remap.c)
     add_executable(memories_state_io_test tests/pc/state_io_test.c src/pc/guest/state_io.c)
+    add_executable(memories_translated_state_symbols_test tests/pc/translated_state_symbols_test.c
+                   src/pc/guest/translated_state_symbols.c)
     add_executable(memories_control_protocol_test tests/pc/control_protocol_test.c src/pc/debug/control_protocol.c)
     add_executable(memories_control_net_test tests/pc/control_net_test.c src/pc/debug/control_net.c)
     if(WIN32)
         target_link_libraries(memories_control_net_test PRIVATE ws2_32)
     endif()
     foreach(target memories_deck_shop_test memories_entry_layout_test memories_state_remap_test
-            memories_state_io_test memories_control_protocol_test memories_control_net_test)
+            memories_state_io_test memories_control_protocol_test memories_control_net_test
+            memories_translated_state_symbols_test)
         target_include_directories(${target} PRIVATE src)
         if(NOT MSVC)
             target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -167,6 +170,8 @@ if(BUILD_TESTING)
     add_test(NAME pc_entry_layout COMMAND memories_entry_layout_test)
     add_test(NAME pc_state_remap COMMAND memories_state_remap_test)
     add_test(NAME pc_state_io COMMAND memories_state_io_test)
+    # Save states across translated builds: carried right or refused.
+    add_test(NAME pc_translated_state_symbols COMMAND memories_translated_state_symbols_test)
     add_test(NAME pc_control_protocol COMMAND memories_control_protocol_test)
     add_test(NAME pc_control_net COMMAND memories_control_net_test)
     set_tests_properties(pc_control_net PROPERTIES TIMEOUT 15)
@@ -1004,6 +1009,12 @@ if(Python3_Interpreter_FOUND)
         # the llvm-mingw it points to (no compiler needed).
         add_test(NAME pc_build_mod_toolchain
             COMMAND "${Python3_EXECUTABLE}" tools/pc/test_build_mod_toolchain.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # The guest pass an SDK ships (tools/pc/build_sdk_guest_ir.py): its
+        # pin, the check of an LLVM archive, and package.py's use of it
+        # (synthetic archives, nothing downloaded, no compiler started).
+        add_test(NAME pc_build_sdk_guest_ir
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/test_build_sdk_guest_ir.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         # check_mod_abi.py unpacks only the release packages whose sha256
         # mod_compat.txt pins (synthetic packages, nothing downloaded).

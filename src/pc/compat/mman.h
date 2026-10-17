@@ -84,11 +84,20 @@ static inline int mprotect(void *address, size_t length, int prot)
                                                : ((prot & PROT_WRITE) ? PAGE_READWRITE : PAGE_READONLY);
     return VirtualProtect(address, (unsigned long)length, protect, &old) ? 0 : -1;
 }
-#elif defined(__APPLE__) && defined(MEMORIES_TRANSLATED)
+#elif defined(MEMORIES_TRANSLATED)
 #include <sys/mman.h>
-/* These requests allocate high host memory with a registered guest token.
- * They never replace an existing virtual-memory mapping. */
+/* The translated game (macOS, Android arm64): a fixed request (the text
+ * arena at 0x9C000000, low memory at 0x9E000000, the interpreter stack at
+ * 0x9FF00000, mod arenas) takes host memory wherever the system gives it
+ * and registers it with the translation runtime at the guest address asked
+ * for (translated_mman.c), so no fixed host address is needed: a range the
+ * system holds there (ART's spaces on a phone) changes nothing. They never
+ * replace an existing virtual-memory mapping. Darwin has no
+ * MAP_FIXED_NOREPLACE; Linux's (0x100000) is kept, so a unit that maps
+ * through <sys/mman.h> itself means the kernel's flag by it. */
+#ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x40000000
+#endif
 void *Memories_TranslatedMmap(void *, size_t, int, int, int, off_t);
 int Memories_TranslatedMunmap(void *, size_t);
 int Memories_TranslatedMprotect(void *, size_t, int);
@@ -112,7 +121,7 @@ int Memories_TranslatedMprotect(void *, size_t, int);
  * runtime maps below 4 GB itself) could take it in between, and MAP_FIXED
  * would map over that. MEMORIES_TEST_OLD_KERNEL=1, in a test build, drops
  * the flag as such a kernel does (notes/pc-build.md, "Android arm64"). */
-#if defined(_WIN32) || (defined(__APPLE__) && defined(MEMORIES_TRANSLATED))
+#if defined(_WIN32) || defined(MEMORIES_TRANSLATED)
 #define Memories_MapFixed mmap /* both refuse a taken address themselves */
 #else
 #include <errno.h>

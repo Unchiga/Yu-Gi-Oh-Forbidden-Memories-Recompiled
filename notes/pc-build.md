@@ -3801,7 +3801,10 @@ loads each code mod's `<library>.aarch64.o`.
 ## Android
 
 **Status (2026-10-04):** the app is **arm64-v8a** ("Android arm64" below:
-the target, its memory layout and the phone tests). `android-x86`, the
+the target, its memory layout and the phone tests). Since 2026-10-16 its
+game is the translated build, with no fixed host address ("The app's game
+is the translated one" there); the loader and save-state text below is the
+fixed game's (`--android-memory fixed`, and `android-x86`). `android-x86`, the
 target M1-M4 were made on with the emulator images, still builds as a
 development check of the shared code, but no APK is made for it and it is
 neither run nor shipped. The 32-bit ARM target (`armeabi-v7a`, M2) was
@@ -3934,10 +3937,17 @@ Testing aids: `environment.txt`, `NAME=value` per line, in the external
 files folder (or, for a debuggable build, the internal one, which `run-as`
 reaches on an image without root) sets environment variables before the
 port starts (the app has no environment of its own): `MEMORIES_TRACE`,
-`MEMORIES_INPUT` (scripted pad), `MEMORIES_DUMP_FRAME`, and so on. The
+`MEMORIES_INPUT` (scripted pad), `MEMORIES_DUMP_FRAME`, and so on. In a
+build without `--release` (test hooks), `MEMORIES_TEST_HOLD_GUEST=1` holds
+guest RAM's first 2 MiB (0x80000000) before the game maps it, as a phone's
+Java runtime does, and `MEMORIES_TEST_OLD_KERNEL=1` makes the fixed game's
+own mappings behave as on a kernel before 4.17 ("Android arm64", "The app's
+game is the translated one" and "Kernels before 4.17"); both are off unless
+set. The
 game's load address and load bias are logged at start (`adb logcat -s
 memories`); with bias 0 a crash's addresses are the build's own, for
-`llvm-symbolizer --obj=libgame.so`. On an emulator image with root the disc
+`llvm-symbolizer --obj=libgame.so` (the translated arm64 game is linked at
+0: its offset from the logged load address). On an emulator image with root the disc
 can also be pushed straight into the game folder:
 
 ```sh
@@ -4602,7 +4612,171 @@ audio, or assembly-replacement equivalence claim is made by these checks.
 
 ## Android arm64 (A1/A2, 2026-10-03)
 
-`--target android-arm64-v8a` builds libgame.so with G32
+### The app's game is the translated one (2026-10-16)
+
+`build_game32.py --target android-arm64-v8a` (the release workflow's
+Android job too) builds the **translated** game, the macOS memory model:
+`tools/pc/build_arm64.py --target android-arm64-translated` compiles every
+unit with the NDK's clang to IR, runs the guest pass
+(`tools/pc/llvm/guest_ir.cpp`, `llvm_guest.py`) and links `libgame.so` at 0
+(`-Wl,--build-id=sha1`, no `--image-base`); `build_android_translated` in
+`build_game32.py` then links the loader, copies the data mods and the
+language packs, builds the code mods through the same pass
+(`build_mod.py --target aarch64-translated`) with the SDK beside them,
+writes the identity files, and packs the APK as for the fixed game. Guest addresses are
+translated, not mapped, so the app needs no fixed host address at all: a
+phone whose Java runtime holds 0x80000000 (the large object space below)
+or 0xC0000000 starts the game all the same.
+
+- **The loader** (`android_loader.c`, built with
+  `-DMEMORIES_ANDROID_TRANSLATED`) is a plain `dlopen` of `libgame.so`,
+  wherever the system puts it, with no reservation; a library that will
+  not load still ends in the system's box with the device line. The
+  start-up report of #350 (`Platform_GuestMemoryHelp`,
+  `Android_OfferStartupReport`) stays for any other start failure.
+- **Fixed requests** (`compat/mman.h`): in any `MEMORIES_TRANSLATED` build
+  (macOS, Android) `mmap` with `MAP_FIXED_NOREPLACE` is
+  `Memories_TranslatedMmap` (`translated_mman.c`): host memory anywhere,
+  registered with the runtime at the guest address asked for. The text
+  arena (0x9C000000), low memory (0x9E000000) and the interpreter stack
+  (0x9FF00000) go that way, as on macOS; before, on Android they were raw
+  fixed mappings that the runtime did not know, so a held range broke the
+  translations and the interpreter stack. Linux's own flag value is kept.
+- **Save states** name the game by its GNU build ID (`translated_state_backend.c`,
+  `dl_iterate_phdr`) and are relocated to where it is loaded, so they carry
+  from one launch to the next; `check_load_bias` (`android.c`, which kept a
+  fixed game's states for one launch when it loaded elsewhere) is not
+  built. The log says `libgame.so at <address> (translated)`: a crash
+  address is symbolized as its offset from that. **Across builds** (an app
+  update, 2026-10-17): `symbols/<id>.txt` is version 2
+  (`tools/pc/translated_symbols.py`): every function, data object and
+  section start of `libgame.so` (linked at 0) by offset, statics qualified
+  by their unit (`duel.c:put`), with a hash of each one's content and of
+  the gap after it (dynamically relocated words and the instruction fields
+  that depend on placement left out). Crash reports add the load address
+  (`debug/symbols.c`, an ordinary unit, so its table is never in a state).
+  Every state carries its build's table (`arm64-symbols`). A state of
+  another build is either carried right or refused
+  (`translated_state_symbols.c`): a function's start goes to the function
+  of that name; a return address inside a function only on the native
+  stack and only when the function's content is the same; the start or
+  inside of a data object, or the gap after it (string pools), only when
+  its content (and the gap's) is the same; a name that is not unique,
+  aliases that split, code padding and veneers, and anything past the old
+  image are refused. The pre-load check classifies exactly the words
+  apply() relocates (the stack, the saved registers and the saved
+  `jmp_buf`s by the stack's rule), with the old image's size, and the load is refused,
+  with how many addresses changed, before anything is applied; PS1 RAM
+  (`memory`) is copied as it is and not scanned, as the same build's loads
+  never relocated it. A state of the fixed-memory game (v0.3.0) is
+  refused: "this state uses another architecture or state format". The
+  desktop games' tables (`state.c`) still number repeated statics by link
+  order (`put#2`), so a callback stored to one unit's static could be
+  carried to another unit's after the link order changes; the fix there
+  would be the same qualification by unit (STT_FILE on ELF, the COFF
+  `.file` records on Windows) in `write_build_identity`.
+- **Code mods** (2026-10-16, [modding.md, "Android code
+  mods"](modding.md#android-code-mods-aarch64-translated)) are
+  `<library>.aarch64-translated.o`: each unit of the mod through the guest
+  pass as the game's are, `-O2 -fPIC`, and a registration pair
+  (`MemoriesModRegisterGlobals`/`MemoriesModUnregisterGlobals`) that
+  `object_loader.c` calls before `MemoriesModInit` and on free. The loader
+  maps the image anywhere above 4 GB (`TRANSLATED_OBJECTS`): the code
+  reaches the game through GOT entries and veneers. `build_arm64.py` writes
+  what a mod is translated with beside the export table:
+  `mod_translation.json` (the aliases, the C library's runtime wrappers,
+  the pinned guest addresses, the pointer-free math the C library lends)
+  and `mod_signatures.json`; the SDK carries both with
+  `exports.aarch64-translated.txt`, and so do the desktop SDKs
+  (`package.py`, the release workflow's `sdk-exports-aarch64-translated`
+  artifact). A `.aarch64.o` of the fixed game stays off with "was built
+  for the fixed-memory Android game: rebuild this mod", whether it has its
+  own name or the new one (the `.memories.abi` tag). The APK carries the
+  four code mods built so: 3D Monsters, Hand Camera, AI Hard Mode and
+  yamyi's.
+- **Toolchain.** The pass is built against LLVM 21.1.8, the version of
+  `macos_toolchain.json`. On Linux (CI) `llvm_guest.py` fetches the official
+  `LLVM-21.1.8-Linux-X64.tar.xz` (`linux_toolchain.json`, SHA-256 checked)
+  and unpacks only `llvm-config`, the headers, the static libraries and
+  `lld` (about 620 MB of 2 GB; the `parts` of `linux_toolchain.json`) into
+  `tmp/pc/llvm-linux`; the system's `g++` compiles the pass (zlib1g-dev,
+  libzstd-dev and libxml2-dev for `--system-libs`). The archive's static
+  libraries are ThinLTO bitcode, not objects, which GNU ld cannot read
+  ("file format not recognized"), so the link is the archive's own `lld`
+  (`-B<llvm>/bin -fuse-ld=lld`), which compiles them with LLVM 21. On
+  Windows there is no official archive with the libraries:
+  `MEMORIES_GUEST_LLVM` names a local LLVM 21.1.8 build or install folder
+  (one whose `llvm-config` finds its headers under `include/` and its
+  libraries under `lib/`) and `MEMORIES_GUEST_CXX` the C++ compiler
+  (llvm-mingw's `clang++`, linked `-static`). The NDK's clang emits the IR.
+- **The SDK's guest pass** (2026-10-17). A mod's clang writes the IR the pass
+  reads and compiles the IR it writes, and LLVM reads the IR of its own
+  version or older, so the pass an SDK ships is built against the LLVM of
+  the SDK's own clang (llvm-mingw 20260922: clang 23.1.2 -> LLVM 23), where the
+  game stays translated with LLVM 21 (`llvm_guest.py`, untouched): the game
+  and a mod meet through `mod_translation.json`/`mod_signatures.json`, not a
+  compiler version. Only a clang of the pass's own LLVM both has its IR read
+  by the pass and reads the pass's (an older one reads a newer IR by luck, a
+  newer one is refused by the pass), so that is what `build_mod.py` demands
+  (`MEMORIES_MOD_ALLOW_OTHER_CLANG=1` lets an older one through, warning).
+  `tools/pc/build_sdk_guest_ir.py` builds it, pinned by
+  `tools/pc/sdk_llvm.json` (version, URL and SHA-256 per system; `--pin` fills
+  the digests from the release's published ones): on Linux from the official
+  release archive (headers, `llvm-config` and the static libraries unpacked
+  as `llvm_guest.py` does; the build stops saying what is missing if the
+  archive lacks them) with the system's `c++`, `-static`; on Windows from the
+  official source release, whose three libraries it needs (`LLVMCore`,
+  `LLVMIRReader`, `LLVMSupport`) are built with the SDK's llvm-mingw (the
+  official Windows archive is built for the MSVC C++ ABI, which llvm-mingw
+  cannot link), `-static` too. It runs the result (`--llvm-major`, then the
+  three operations on a unit) and reads its imports (only the system's DLLs
+  on Windows, no NEEDED entry on Linux) before it counts. Like `memories-pc.exe`
+  (notes/pc-release.md, "VirusTotal") it ships without symbols, on Windows
+  with version information (`windres`, the game's fields) and the PE
+  checksum `package.py` fills in; `test_package.py` holds it to the same
+  checks, and the release's VirusTotal step scans it too. `memories-guest-ir
+  --llvm-major` is what `build_mod.py` holds the modder's clang against; a
+  pass that cannot be started at all (a quarantined file) is named as that,
+  not taken for an older one. `package.py --guest-ir` puts it in each SDK
+  (`sdk/tools/memories-guest-ir[.exe]`; `test_package.py` requires it), and
+  the release workflow's `sdk-guest-ir` job builds one per system. The
+  `package` job then builds `mods/hand-camera` for Android from the packed
+  SDK with llvm-mingw alone (`check_sdk_mod.py`), and uploads the IR clang
+  and the pass wrote (`sdk-mod-ir-<system>`); the `android` job uploads the
+  same mod's through the game's own LLVM 21 pass (`sdk-mod-ir-llvm21`), to
+  diff.
+- **The fixed game** is still built with `--android-memory fixed` (or
+  `MEMORIES_ANDROID_MEMORY=fixed`), for comparison and for the aarch64
+  code mods; everything below about 0xC0000000 and the guest ranges is
+  about it.
+- **Test build hooks.** `build_arm64.py` adds `MEMORIES_TEST_HOOKS` to an
+  Android build without `--release`, as `build_game32.py` does.
+  `MEMORIES_TEST_HOLD_GUEST=1` in `environment.txt` holds 2 MiB of host
+  memory at 0x80000000 named as ART's large object space in both games: the
+  fixed one stops with "The game cannot start" ("Android's Java runtime
+  already uses memory this game needs (0x80000000-0x801FFFFF)", failed
+  step "the addresses from 0x80000000 to 0x801FFFFF could not be had
+  (something else in this process already holds them)", with or without
+  `MEMORIES_TEST_OLD_KERNEL=1`; v0.3.0 said "(File exists)" on the phones of
+  #372), the translated one starts. In the translated
+  game the value can list several addresses, 2 MiB held at each:
+  `0x80000000,0x9C000000,0x9E000000,0x9FF00000` also holds the text arena,
+  low memory and the interpreter stack, which it then takes elsewhere
+  (the fixed requests above) without a word in the log. An entry
+  `START-END` holds that whole range (each free 2 MiB of it when part is
+  taken already, as on the emulator): `0x762fd000-0x962fd000` is the large
+  object space of #372 (Retroid Pocket Nova, Android 13, where v0.3.0
+  stopped with "cannot map guest memory at 0x80000000: File exists"), which
+  the translated game starts past, with its code mods (2026-10-16). The device
+  runner's `MEMORIES_RUNNER_HOLD_LOW` (`tools/pc/android/runner.c`) holds
+  0x7C000000-0x9C000000 the same way.
+- **Speed:** on the x86_64 emulator, which runs arm64 code through a
+  translator, no speed figure means anything: the first-duel recording
+  (5241 VBlanks) played in the app in 131 s and 214 s translated (two runs)
+  and 186 s fixed (2026-10-16). A phone's per-frame timing is still to be
+  measured.
+
+`--target android-arm64-v8a --android-memory fixed` builds libgame.so with G32
 pointers (`WIDE` in build_game32.py: the windows-x64 flags), clang's
 `-mharden-sls=blr` thunks in AArch64 form (`branch_thunks.c`; the build
 checks that no `br`/`blr` escapes them), `setjmp_aarch64.S` and
@@ -4685,7 +4859,8 @@ to be confirmed by a player's report (below). Nothing in the app comes
 before the zygote's heap, and the game's addresses are linked in: the
 ways out are a game process that is not the zygote's child (a native
 process for the game, with the picture and input carried to the app) or
-a guest that is not at fixed addresses.
+a guest that is not at fixed addresses. The app now ships the second (the
+translated game, at the top of this section).
 
 **Kernels before 4.17 do not know `MAP_FIXED_NOREPLACE`** (Android 7-10
 phones: 3.18, 4.4, 4.9, 4.14) and take the address as a hint: a free range

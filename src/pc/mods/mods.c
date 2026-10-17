@@ -1220,6 +1220,27 @@ static int library_present(const Mod *mod)
     fclose(file);
     return 1;
 }
+
+#if defined(__ANDROID__) && defined(MEMORIES_TRANSLATED)
+/* Whether the mod has the object the fixed-memory Android game loaded
+ * (<library>.aarch64.o where this game's is <library>.aarch64-translated.o). */
+static int old_android_object(const Mod *mod)
+{
+    static const char ours[] = "." OBJECT_LOADER_TARGET ".o";
+    char path[PATH_MAX_];
+    size_t length = strlen(mod->library);
+    FILE *file;
+    if (length <= sizeof(ours) - 1 || strcmp(mod->library + length - (sizeof(ours) - 1), ours)) return 0;
+    if (snprintf(path, sizeof(path), "%s/%.*s.aarch64.o", mod->directory, (int)(length - (sizeof(ours) - 1)),
+                 mod->library) >= (int)sizeof(path)) {
+        return 0;
+    }
+    file = fopen(path, "rb");
+    if (!file) return 0;
+    fclose(file);
+    return 1;
+}
+#endif
 #endif
 
 static int load_library(Mod *mod)
@@ -1776,7 +1797,15 @@ static void activate_once(int index, int on)
 #if !(defined(__APPLE__) && defined(__aarch64__) && defined(MEMORIES_TRANSLATED))
         if (strcmp(OBJECT_LOADER_TARGET, "i386") && !mod->broken && mod->library[0] && !mod->object.image &&
             !mod->object.native_handle && !library_present(mod)) {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && defined(MEMORIES_TRANSLATED)
+            /* A mod made for the fixed-memory game has <library>.aarch64.o:
+             * the same code mod, which needs building again for this one. */
+            note(mod, old_android_object(mod) ? "was built for the fixed-memory Android game: ask the mod's author to "
+                                                "rebuild it (build_mod.py --target aarch64-translated); it has no %s"
+                                              : "needs an Android build of this mod: it has no %s (ask the mod's "
+                                                "author to rebuild it with build_mod.py --target aarch64-translated)",
+                 mod->library);
+#elif defined(__ANDROID__)
             note(mod, "needs an Android build of this mod: it has no %s (rebuild it with build_mod.py using clang)",
                  mod->library);
 #else

@@ -5,13 +5,19 @@ ENTRIES = {'func_8016AA6C': (0x8016AA6C, False),
            'func_80168FB4': (0x80168FB4, False),
            'func_801462B0': (0x801462B0, 'effect')}
 
-def validate_signature(name, signature):
+def validate_signature(name, signature, aapcs64=False):
     validate_c_abi(name, signature)
     expected = ([('i16', True), ('i16', True), ('i32', False), ('ptr', False)]
                 if name == 'func_801462B0' else
                 [('i32', False)] if ENTRIES[name][1] else [])
     actual = [(parameter['kind'], parameter['signext'])
               for parameter in signature['parameters']]
+    # Darwin's ARM64 ABI has the caller sign-extend the i16 arguments;
+    # AAPCS64 (Android, aapcs64=True) leaves that to the callee, so clang
+    # marks no parameter there and the bridge, built for the same target,
+    # agrees. Darwin keeps the strict check.
+    if aapcs64:
+        expected = [(kind, False) for kind, _ in expected]
     if (signature['result'] != 'void' or signature['variadic'] or
             actual != expected):
         raise ValueError(f'Unsupported direct overlay entry signature: {name}: {signature}')

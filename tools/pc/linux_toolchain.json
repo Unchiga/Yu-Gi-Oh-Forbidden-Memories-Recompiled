@@ -1,0 +1,20 @@
+{
+  "version": "21.1.8",
+  "archive": "LLVM-21.1.8-Linux-X64.tar.xz",
+  "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz",
+  "sha256": "b3b7f2801d15d50736acea3c73982994d025b01c2f035b91ae3b49d1b575732b",
+  "parts": [
+    "bin/llvm-config",
+    "bin/lld",
+    "bin/ld.lld",
+    "include/llvm/*",
+    "include/llvm-c/*",
+    "lib/libLLVM*"
+  ],
+  "unpacked": [
+    "bin/llvm-config",
+    "bin/ld.lld",
+    "include/llvm/Config/llvm-config.h",
+    "lib/libLLVMCore.a"
+  ]
+}

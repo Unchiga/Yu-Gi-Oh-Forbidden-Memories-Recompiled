@@ -32,6 +32,13 @@
 #define OBJECT_LOADER_TARGET "x86_64-windows"
 #elif defined(__x86_64__)
 #define OBJECT_LOADER_TARGET "x86_64-linux"   /* no game is built so; the loader's tests are */
+#elif defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
+/* The Android app's game: the translated one (notes/pc-build.md, "Android
+ * arm64"). Its mods go through the same guest pass as the game's own code
+ * (build_mod.py --target aarch64-translated) and register their globals
+ * with the translated runtime; an "aarch64" object, made for the
+ * fixed-memory game, is refused with what to do. */
+#define OBJECT_LOADER_TARGET "aarch64-translated"
 #elif defined(__aarch64__)
 #define OBJECT_LOADER_TARGET "aarch64"
 #else
@@ -54,6 +61,10 @@ typedef struct {
      * out, so a rebuild that makes the same code hashes the same. */
     uint32_t hash;
     void *native_handle;   /* macOS ARM64 dylib, retained while callbacks exist */
+    /* An aarch64-translated object's MemoriesModUnregisterGlobals, called
+     * on ObjectLoader_Free: its globals leave the translated runtime
+     * before the memory they are in is given back. */
+    void (*unregister)(void);
 } LoadedObject;
 
 /* Returns 0 and fills `object`, or -1 with the reason in `error`. */

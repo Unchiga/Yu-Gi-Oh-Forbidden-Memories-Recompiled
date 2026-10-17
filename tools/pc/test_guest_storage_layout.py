@@ -109,6 +109,7 @@ def check_target_source_contract():
         "windows-x64",
         "macos",
         "android-arm64-v8a",
+        "android-arm64-translated",
         "android-x86",
     }
     fixed_targets = (
@@ -147,6 +148,19 @@ def check_target_source_contract():
     assert "src/pc/guest/translated_state_arm64.S" in translated
     assert not (FIXED_MEMORY & translated)
     assert "src/pc/guest/setjmp_x86_64.S" not in translated
+
+    # Android arm64 on the translated backend: the macOS memory contract on
+    # the same CPU, without the fixed-address loader.
+    android_translated = BUILD_TARGETS["android-arm64-translated"]
+    assert android_translated["memory_model"] == "translated-32"
+    assert android_translated["architecture"] == BUILD_TARGETS["macos"]["architecture"]
+    translated_android = set(native_sources(android_translated, None))
+    assert "src/pc/memory.c" in translated_android
+    assert "src/pc/guest/state_translated.c" in translated_android
+    assert "src/pc/guest/translated_state_arm64.S" in translated_android
+    assert not (FIXED_MEMORY & translated_android)
+    assert "src/pc/guest/state_aarch64.S" not in translated_android
+    assert "src/pc/platform/android_loader.c" not in translated_android
 
     try:
         native_sources("arm64", None)

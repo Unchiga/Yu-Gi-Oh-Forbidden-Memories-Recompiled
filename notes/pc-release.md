@@ -93,11 +93,42 @@ Android packaging, so a fork can make the Mac artifact without Android release
 secrets. Manual runs only make Actions artifacts. The workflow must already exist on
 the default branch with `workflow_dispatch`; select the support branch in the
 Branch dropdown. See [GitHub manual workflow instructions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). The `android` job builds the
-arm64 APK and, with the release key (pushes, tags and manual runs; "Android
+arm64 APK (the translated game: it fetches the official LLVM 21.1.8 Linux
+archive once, cached as `tmp/pc/llvm-linux`, for the guest pass; notes/pc-build.md,
+"The app's game is the translated one") and, with the release key (pushes, tags and manual runs; "Android
 signing" below), uploads it signed as
 `yfm-redecomp-<version>-android-arm64.apk`. On a version tag, all jobs must
 succeed before the final job creates a **draft** GitHub release and attaches
-the packages.
+the packages. Each SDK carries the guest pass of its system
+(`sdk/tools/memories-guest-ir[.exe]`, built against the LLVM of the SDK's
+llvm-mingw clang by the `sdk-guest-ir` job: `tools/pc/sdk_llvm.json` pins it,
+notes/pc-build.md "The SDK's guest pass"), and the `package` job builds a
+bundled code mod for Android from the packed SDK to prove it
+(`sdk-mod-ir-*` artifacts).
+
+*The guest pass's LLVM in CI.* Its libraries are the costly part (a Windows
+build is up to an hour, the Linux archive 2 GB), so `sdk-guest-ir` caches
+them under a key of the pin, `fetch_tools.py` and the script, saving the
+cache in a step of its own as soon as they are built (a failure while
+linking the pass keeps the work). Caches saved by master are readable by
+pull requests, which therefore link the pass in a minute; a pull request
+builds the LLVM itself only when it touches what the pass is made of
+(`tools/pc/llvm/`, `build_sdk_guest_ir.py`, `sdk_llvm.json`,
+`fetch_tools.py`, `src/pc/memory_map.h`). A pull request that touches
+none of them while master has not yet saved the cache (right after the pin
+changed) builds no pass: its SDKs are packed with `package.py
+--no-guest-ir` and tested with `test_package.py --no-guest-ir`. Pushes,
+tags and manual runs always have the pass, or fail.
+
+*Changing the LLVM pin.* When llvm-mingw's clang changes major (the toolchain
+pinned in `tools/pc/fetch_tools.py` and `build_win32_deps.py`), the SDK's pass
+has to follow: edit `llvm_major`, `version` and both URLs in
+`tools/pc/sdk_llvm.json` (the version llvm-mingw's release notes name), clear
+the two `sha256` values, run `python tools/pc/build_sdk_guest_ir.py --pin`
+(it reads the digests GitHub publishes for the release; nothing is
+downloaded) and commit; change `LLVM_MINGW_CLANG` in `build_mod.py` and the
+numbers `notes/modding.md` names to match (`test_build_mod_toolchain.py`
+fails when the two disagree). The cache key follows the file.
 Reruns can update a draft but refuse to replace an already published release.
 Draft assets are not public until the draft is published; published release
 assets are the persistent download, subject to the repository's visibility.
@@ -498,7 +529,9 @@ was clean when it shipped), so compare variants scanned the same day.
 check itself failed (no key, network, quota, `--timeout`).
 
 **In CI.** The release workflow's *VirusTotal* step (Windows job) runs the
-script on the shipped `memories-pc.exe` and `fm-editor.exe`, taken from
+script on the shipped `memories-pc.exe`, the SDK's `memories-guest-ir.exe`
+(`sdk/tools/`, a program of its own that is built, stripped and given
+version information as the game is) and `fm-editor.exe`, taken from
 the archives, and writes the table, the matrix and the links into the job
 summary. It warns above `VT_MAX_DETECTIONS` (2) and never fails the build;
 when VirusTotal is down or slow it warns too, after at most 10 minutes an

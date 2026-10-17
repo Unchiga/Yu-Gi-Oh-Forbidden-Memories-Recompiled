@@ -1,5 +1,9 @@
+#ifdef __APPLE__
 #ifndef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE
+#endif
+#elif !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE /* MAP_ANONYMOUS (Android, Linux) */
 #endif
 #define MEMORIES_TRANSLATED_MMAN_IMPLEMENTATION
 #include "../../types.h"

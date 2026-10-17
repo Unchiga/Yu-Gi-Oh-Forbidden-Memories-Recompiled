@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #define MEMORIES_TRANSLATED_MMAN_IMPLEMENTATION
+#include "translated_state_symbols.h"
 #include "pc/compat/fs.h"
 #include "translated_state_backend.h"
 #include "state_arm64.h"
@@ -14,8 +15,12 @@
 #include "pc/platform/paths.h"
 #include "pc/platform/menu.h"
 #include "pc/debug/crash.h"
+#ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
+#else
+#include <link.h>
+#endif
 #include <sys/mman.h>
 #include <signal.h>
 #include <unistd.h>
@@ -46,16 +51,64 @@ static uint8_t *pending_image;
 static size_t pending_size;
 static MemoriesNativeMemoryState *pending_memory;
 static uintptr_t restore_image_base;
-static size_t restore_image_size;
 
 void Memories_NativeStateRelocateField(const char *tag, void *data, size_t size)
 {
     if (!pending_memory || !strcmp(tag, "soft_gpu") || !strcmp(tag, "gte") ||
         !strcmp(tag, "arm64-jump-floats")) return;
+    /* A jmp_buf ("arm64-jumps") holds what the stack and the saved
+     * registers do: callee-saved registers and a return address. */
     Memories_NativeMemoryRelocate(pending_memory, data, size, saved_entry.image_base,
-                                 restore_image_base, restore_image_size);
+                                 restore_image_base, saved_entry.image_size, !strcmp(tag, "arm64-jumps"));
 }
 
+#ifndef __APPLE__
+/* ELF (Android's libgame.so): the loaded object holding this function, its
+ * load span and its GNU build ID in place of the Mach-O UUID. */
+static int elf_object(struct dl_phdr_info *info, size_t size, void *data)
+{
+    NativeEntry *entry = data;
+    uintptr_t self = (uintptr_t)(void *)elf_object, low = UINTPTR_MAX, high = 0;
+    int uuid = 0;
+    (void)size;
+    for (int i = 0; i < info->dlpi_phnum; ++i) {
+        const ElfW(Phdr) *header = &info->dlpi_phdr[i];
+        if (header->p_type == PT_LOAD) {
+            uintptr_t start = info->dlpi_addr + header->p_vaddr;
+            if (start < low) low = start;
+            if (start + header->p_memsz > high) high = start + header->p_memsz;
+        }
+    }
+    if (self < low || self >= high) return 0;
+    for (int i = 0; i < info->dlpi_phnum; ++i) {
+        const ElfW(Phdr) *header = &info->dlpi_phdr[i];
+        const uint8_t *note = (const uint8_t *)(info->dlpi_addr + header->p_vaddr), *end = note + header->p_memsz;
+        if (header->p_type != PT_NOTE) continue;
+        while (note + 12 <= end) {
+            uint32_t name_size, desc_size, type;
+            memcpy(&name_size, note, 4);
+            memcpy(&desc_size, note + 4, 4);
+            memcpy(&type, note + 8, 4);
+            const uint8_t *desc = note + 12 + ((name_size + 3u) & ~3u);
+            if (type == 3 /* NT_GNU_BUILD_ID */ && name_size == 4 && !memcmp(note + 12, "GNU", 4) &&
+                desc + desc_size <= end && desc_size >= sizeof(entry->uuid)) {
+                memcpy(entry->uuid, desc, sizeof(entry->uuid));
+                uuid = 1;
+            }
+            note = desc + ((desc_size + 3u) & ~3u);
+        }
+    }
+    if (!uuid) return -1;
+    entry->image_base = low;
+    entry->image_size = high - low;
+    return 1;
+}
+
+static int executable(NativeEntry *entry)
+{
+    return dl_iterate_phdr(elf_object, entry) == 1 ? 0 : -1;
+}
+#else
 static int executable(NativeEntry *entry)
 {
     const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(0);
@@ -82,6 +135,7 @@ static int executable(NativeEntry *entry)
     entry->image_size = end - entry->image_base;
     return 0;
 }
+#endif
 static void hold(int enabled)
 {
     sigset_t signals;
@@ -95,6 +149,51 @@ static int boundary(void)
     return game_stack && Memories_Arm64Boundary.sp >= (uintptr_t)game_stack &&
            Memories_Arm64Boundary.sp < (uintptr_t)game_stack + STACK_SIZE && !(Memories_Arm64Boundary.sp & 15);
 }
+#ifdef __ANDROID__
+/* As the fixed backend (state.c): the game runs on game_stack, which ART
+ * does not know, so SDL work that may call Java runs on the thread's own
+ * stack, below where the process side waits (service.sp). */
+void Memories_CallOnStack(void (*function)(void *), void *argument, uintptr_t top);
+static unsigned jni_guard_count;
+
+static int on_game_stack(uintptr_t here)
+{
+    return game_stack && here >= (uintptr_t)game_stack && here < (uintptr_t)game_stack + STACK_SIZE;
+}
+
+void Memories_OnHostStack(void (*function)(void *), void *argument)
+{
+    uintptr_t here = (uintptr_t)__builtin_frame_address(0);
+    if (on_game_stack(here) && service.sp) {
+        Memories_CallOnStack(function, argument, (service.sp - 256u) & ~(uintptr_t)15);
+        return;
+    }
+    function(argument);
+}
+
+void Memories_JniGuard(const char *name)
+{
+    static const char *seen[48];
+    static unsigned seen_count;
+    uintptr_t here = (uintptr_t)__builtin_frame_address(0);
+    if (!on_game_stack(here)) return;
+    jni_guard_count++;
+    for (unsigned i = 0; i < seen_count; i++)
+        if (seen[i] == name) return;
+    if (seen_count < sizeof(seen) / sizeof(seen[0])) seen[seen_count++] = name;
+    fprintf(stderr, "memories-pc: %s, which may call Java, ran on the game stack (%p): Android's runtime refuses "
+            "that; its caller must go through Memories_OnHostStack\n", name, (void *)here);
+}
+
+unsigned Memories_JniGuardCount(void) { return jni_guard_count; }
+
+size_t Memories_HostStackUsed(size_t *painted, size_t *stack_size)
+{
+    *painted = *stack_size = 0;
+    return 0; /* MEMORIES_TEST_HOST_STACK is the fixed backend's */
+}
+#endif
+
 static void run_game(void)
 {
     game_result = game_entry();
@@ -109,7 +208,6 @@ static void apply(void)
     uintptr_t old_image = saved_entry.image_base;
     executable(&now);
     restore_image_base = now.image_base;
-    restore_image_size = now.image_size;
     hold(1);
     if (Memories_NativeMemoryApply(pending_memory)) {
         fprintf(stderr, "memories-pc: cannot recreate ARM64 state allocations\n");
@@ -120,8 +218,8 @@ static void apply(void)
      * is still a full pointer and adjacent counters never straddle fields. */
     chunk = Memories_StateFindChunk(&state, "arm64-stack", &length);
     Memories_NativeMemoryRelocate(pending_memory, (void *)chunk, length,
-                                 old_image, now.image_base, now.image_size);
-    Memories_NativeMemoryRestorePayloads(pending_memory, old_image, now.image_base, now.image_size);
+                                 old_image, now.image_base, saved_entry.image_size, 1);
+    Memories_NativeMemoryRestorePayloads(pending_memory, old_image, now.image_base, saved_entry.image_size);
     /* These serializers restore host-owned shop state and remap its text
      * before the saved PS1 memory is installed, as in the fixed backend. */
     DeckMenu_ShopState(&state);
@@ -134,10 +232,11 @@ static void apply(void)
     chunk = Memories_StateFindChunk(&state, "memory", &length);
     memcpy(GuestRuntime_Memory(), chunk, length);
     Memories_NativeMemoryRelocate(pending_memory, &saved_entry.context, 13 * sizeof(uint64_t),
-                                 old_image, now.image_base, now.image_size);
+                                 old_image, now.image_base, saved_entry.image_size, 1);
     chunk = Memories_StateFindChunk(&state, "arm64-stack", &length);
     memcpy((void *)(uintptr_t)saved_entry.context.sp, chunk, length);
     Memories_NativeMemoryFree(pending_memory); pending_memory = NULL;
+    Memories_NativeSymbolsClear();
     free(pending_image); pending_image = NULL; pending_size = 0;
     /* Complete the saved VSync boundary exactly as the fixed backend does;
      * otherwise the CPU sees a stale last_vsync after restoring its turn. */
@@ -211,6 +310,17 @@ int Memories_NativeStateSave(const char *path)
     Memories_StateWrite(&state, header, sizeof(header));
     field = (MemoriesStateField){&entry, sizeof(entry)};
     Memories_StateChunk(&state, "arm64-entry", &field, 1);
+    {
+        /* This build's symbol table, so that another build can carry the
+         * state over by name (translated_state_symbols.c). */
+        size_t table_length;
+        char *table = Memories_NativeSymbolsText(&table_length);
+        if (table) {
+            field = (MemoriesStateField){table, table_length};
+            Memories_StateChunk(&state, "arm64-symbols", &field, 1);
+            free(table);
+        }
+    }
     field = (MemoriesStateField){GuestRuntime_Memory(), sizeof(MemoriesMemory)};
     Memories_StateChunk(&state, "memory", &field, 1);
     failed = Memories_NativeMemorySave(&state);
@@ -254,7 +364,9 @@ int Memories_NativeStateLoad(const char *path, char *why, size_t size)
     size_t have, at;
     const uint8_t *chunk;
     const char *reason = "invalid or unreadable ARM64 save state";
+    int other_build = 0;
     if (!boundary()) return -2;
+    Memories_NativeSymbolsClear();
     file = path ? fopen(path, "rb") : NULL;
     if (!file) goto refused;
     if (fseek(file, 0, SEEK_END) || (length = ftell(file)) < 16 || fseek(file, 0, SEEK_SET)) {
@@ -267,7 +379,7 @@ int Memories_NativeStateLoad(const char *path, char *why, size_t size)
     if (memcmp(image, "YFMSTATE", 8)) goto refused;
     memcpy(header, image + 8, sizeof(header));
     if (header[0] != STATE_VERSION) { reason = "this state uses another architecture or state format"; goto refused; }
-    if (header[1] != Memories_StateBuildId()) { reason = "this state was made with a different ARM64 build"; goto refused; }
+    other_build = header[1] != Memories_StateBuildId();
     state = (MemoriesState){1, NULL, image, (size_t)length};
     if (!Memories_StateIntegrity(&state)) { reason = "the ARM64 state is truncated or its integrity check failed"; goto refused; }
     for (at = 16; at < state.image_size;) {
@@ -280,8 +392,17 @@ int Memories_NativeStateLoad(const char *path, char *why, size_t size)
     chunk = Memories_StateFindChunk(&state, "arm64-entry", &have);
     if (!chunk || have != sizeof(saved_entry)) goto refused;
     memcpy(&saved_entry, chunk, have);
-    if (executable(&now) || memcmp(now.uuid, saved_entry.uuid, sizeof(now.uuid)) || now.image_size != saved_entry.image_size) {
-        reason = "this state was made with a different ARM64 executable"; goto refused;
+    if (executable(&now)) goto refused;
+    if (memcmp(now.uuid, saved_entry.uuid, sizeof(now.uuid)) || now.image_size != saved_entry.image_size) other_build = 1;
+    if (other_build) {
+        /* Another build (an update): carried by the two symbol tables,
+         * or refused as before. */
+        chunk = Memories_StateFindChunk(&state, "arm64-symbols", &have);
+        if (!chunk || Memories_NativeSymbolsPrepare(chunk, have, saved_entry.image_size, now.image_size)) {
+            reason = "this state was made with a different build of the game, and one of the two has no symbol "
+                     "table to carry it over with";
+            goto refused;
+        }
     }
     if (saved_entry.stack_size != STACK_SIZE || saved_entry.context.sp < saved_entry.stack_base ||
         saved_entry.context.sp - saved_entry.stack_base >= STACK_SIZE || (saved_entry.context.sp & 15)) goto refused;
@@ -292,13 +413,62 @@ int Memories_NativeStateLoad(const char *path, char *why, size_t size)
     if (!Memories_StateCompatibleMods(&state)) { reason = "this state has different mods"; goto refused; }
     if (!Memories_StateCompatibleLanguage(&state, path, why, size)) { free(image); return -1; }
     pending_memory = Memories_NativeMemoryPrepare(&state, why, size);
-    if (!pending_memory) { free(image); return -1; }
+    if (!pending_memory) {
+        if (other_build && why && size) {
+            /* An update that added or resized a variable: the player is
+             * told that, the layout detail goes to the log. */
+            fprintf(stderr, "memories-pc: ARM64 state: %s\n", why);
+            snprintf(why, size, "this state was made with another build of the game, whose saved variables "
+                     "differ from this one's; save states don't carry over across this update (memory card "
+                     "saves do)");
+        }
+        Memories_NativeSymbolsClear(); free(image); return -1;
+    }
+    if (other_build) {
+        /* The words apply() relocates, classified as it will: the stack
+         * and the saved registers as stack, the saved regions word by
+         * word, and the subsystems' chunks, whose fields relocate at any
+         * offset, at every byte. Not "memory" (PS1 RAM, copied as it is:
+         * a guest store of a host address is lowered to a 4-byte token or
+         * aborts, the only saved native frames are on the game stack, and
+         * the same build's loads have never relocated it), nor the chunks
+         * relocation skips (Memories_NativeStateRelocateField). */
+        size_t missing = Memories_NativeMemoryUncarried(pending_memory, saved_entry.image_base);
+        missing += Memories_NativeSymbolsScan((const uint8_t *)&saved_entry.context, 13 * sizeof(uint64_t),
+                                              saved_entry.image_base, 1, 1);
+        for (at = 16; at + 20 <= state.image_size;) {
+            uint32_t bytes;
+            char tag[17] = {0};
+            memcpy(&bytes, image + at + 16, sizeof(bytes));
+            memcpy(tag, image + at, 16);
+            if (!strcmp(tag, "arm64-stack"))
+                missing += Memories_NativeSymbolsScan(image + at + 20, bytes, saved_entry.image_base, 1, 1);
+            else if (!strcmp(tag, "arm64-jumps"))
+                missing += Memories_NativeSymbolsScan(image + at + 20, bytes, saved_entry.image_base, 1, 0);
+            else if (strcmp(tag, "arm64-regions") && strcmp(tag, "arm64-entry") && strcmp(tag, "arm64-symbols") &&
+                     strcmp(tag, "memory") && strcmp(tag, "soft_gpu") && strcmp(tag, "gte") &&
+                     strcmp(tag, "arm64-jump-floats"))
+                missing += Memories_NativeSymbolsScan(image + at + 20, bytes, saved_entry.image_base, 0, 0);
+            at += 20 + bytes;
+        }
+        if (missing) {
+            Memories_NativeMemoryFree(pending_memory); pending_memory = NULL;
+            Memories_NativeSymbolsClear();
+            free(image);
+            if (why && size)
+                snprintf(why, size, "this state was made with another build of the game, and %u of its addresses "
+                         "into the game are in code or data that changed since", (unsigned)missing);
+            return -1;
+        }
+        fprintf(stderr, "memories-pc: ARM64 state from another build: carried over by its symbol table\n");
+    }
     pending_image = image;
     pending_size = state.image_size;
     last_slot = Memories_StateSlotFromPath(path);
     fprintf(stderr, "memories-pc: ARM64 state loading: %s\n", path);
     Memories_Arm64Restore(&service, 2);
 refused:
+    Memories_NativeSymbolsClear();
     free(image);
     if (why && size) snprintf(why, size, "%s", reason);
     return -1;

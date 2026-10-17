@@ -114,6 +114,17 @@
 #endif
 #define ABI OBJECT_LOADER_TARGET
 #define ABI_SECTION ".memories.abi"
+/* The Android app's translated game (object_loader.h): its objects come out
+ * of the guest pass, which pairs each unit's globals with a registration
+ * routine (MemoriesModRegisterGlobals, build_mod.py), and live anywhere in
+ * the host's address space, never below 4 GB, where the translated runtime
+ * takes an address for a guest one. */
+#if defined(__aarch64__) && defined(MEMORIES_TRANSLATED) && !defined(__APPLE__)
+#define TRANSLATED_OBJECTS 1
+#include "pc/guest/translated_runtime.h"   /* GuestRuntime_AutomaticSpace */
+#else
+#define TRANSLATED_OBJECTS 0
+#endif
 /* A 64-bit object's calls to a host function too far for the call's offset
  * (32 bits on x86-64, 28 on AArch64: the C library, far above 4 GB) go
  * through a veneer each, `jmp *[rip]` or `ldr x16, 8; br x16` and the
@@ -235,6 +246,15 @@ static int check_abi(Loader *loader, const Section *names)
         text = (const char *)loader->file + section->offset;
         length = strnlen(text, (size_t)section->size);
         if (length != strlen(ABI) || memcmp(text, ABI, length)) {
+#if TRANSLATED_OBJECTS
+            /* An object of the fixed-memory Android game (v0.3.0 and the
+             * builds before the translated one): its code reads guest
+             * memory at a fixed host address, which this game has not. */
+            if (length == 7 && !memcmp(text, "aarch64", 7)) {
+                return fail(loader, "was built for the fixed-memory Android game, which this one replaces: ask the "
+                                    "mod's author to rebuild it (build_mod.py --target aarch64-translated)");
+            }
+#endif
             return fail(loader, "was built for %.*s, and this game is " ABI "; build it with tools/pc/build_mod.py",
                         (int)length, text);
         }
@@ -442,6 +462,14 @@ static int bind_symbols(Loader *loader, unsigned char *image, ObjectResolver res
             }
             address = resolve ? resolve(name, context) : NULL;
             if (!address && symbol.bind != STB_WEAK) return fail(loader, "needs %s, which this game does not provide", name);
+#if TRANSLATED_OBJECTS
+            /* Below 4 GB the runtime would take it for a guest address (a
+             * pinned name the guest pass did not lower). */
+            if (address && (uintptr_t)address < 0x100000000ull) {
+                return fail(loader, "reaches %s at a guest address, which its code cannot use: ask the mod's author "
+                                    "to rebuild it with the current SDK", name);
+            }
+#endif
             loader->values[i] = (uintptr_t)address;
             loader->bound[i] = 1;
             loader->host[i] = 1;
@@ -917,7 +945,22 @@ static uint32_t fingerprint(const Loader *loader)
     return hash;
 }
 
-#if WIDE
+#if WIDE && TRANSLATED_OBJECTS
+/* The image's memory in the translated game: anywhere the system puts it,
+ * as long as it is above 4 GB. The code reaches the game through its GOT
+ * entries and veneers, and a guest slot holds a token for one of its
+ * functions, not the function's address. */
+static unsigned char *map_image(size_t size)
+{
+    void *got = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (got == MAP_FAILED) return NULL;
+    if ((uintptr_t)got < 0x100000000ull) {
+        munmap(got, size);
+        return NULL;
+    }
+    return got;
+}
+#elif WIDE
 /* Where a 64-bit game wants mod code: src/pc/guest/image.c holds a range
  * for it below 4 GB, so that a mod's function fits a game's 4-byte slot as
  * the game's own do. It returns 1 for a range compat/mman.h's mmap takes
@@ -1020,7 +1063,12 @@ int ObjectLoader_Load(const void *data, size_t size, ObjectResolver resolve, voi
 #if WIDE
     image = map_image(total);
     if (!image) {
+#if TRANSLATED_OBJECTS
+        fail(&loader, "finds no memory for its %u bytes above 4 GB, where the translated game keeps mod code",
+             (unsigned)total);
+#else
         fail(&loader, "finds no room for its %u bytes where the game's code can call it", (unsigned)total);
+#endif
         goto done;
     }
 #else
@@ -1050,6 +1098,30 @@ int ObjectLoader_Load(const void *data, size_t size, ObjectResolver resolve, voi
     }
 #if defined(__aarch64__)
     __builtin___clear_cache((char *)image, (char *)image + code_size);   /* AArch64's caches are not coherent */
+#endif
+#if TRANSLATED_OBJECTS
+    {
+        /* The guest pass's registration pair (build_mod.py): the globals
+         * join the translated runtime before MemoriesModInit runs. */
+        union { void *pointer; void (*function)(void); } registration, cleanup;
+        registration.pointer = ObjectLoader_Symbol(object, "MemoriesModRegisterGlobals");
+        cleanup.pointer = ObjectLoader_Symbol(object, "MemoriesModUnregisterGlobals");
+        if (!registration.pointer || !cleanup.pointer) {
+            fail(&loader, "was not built through the guest pass (no MemoriesModRegisterGlobals): ask the mod's "
+                          "author to rebuild it (build_mod.py --target aarch64-translated)");
+            goto done;
+        }
+        /* Registering past the end of the token arena aborts the game:
+         * refused here instead, with every byte the image's data could
+         * need (each global starts on 16 bytes). */
+        if (total - code_size + 16u * loader.symbol_count > GuestRuntime_AutomaticSpace()) {
+            fail(&loader, "has more data (%u bytes) than the game has room for, with the mods loaded before it",
+                 (unsigned)(total - code_size));
+            goto done;
+        }
+        registration.function();
+        object->unregister = cleanup.function;
+    }
 #endif
     result = 0;
 done:
@@ -1088,6 +1160,7 @@ void ObjectLoader_Free(LoadedObject *object)
         dlclose(object->native_handle);
     }
 #endif
+    if (object->unregister) object->unregister();
     if (object->image) munmap(object->image, object->size);
     free(object->symbols);
     free(object->strings);

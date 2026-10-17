@@ -1,5 +1,10 @@
-// Structured guest-memory compilation using LLVM 21's IR and verifier.
+// Structured guest-memory compilation using the IR and verifier of the LLVM it
+// is built against (`memories-guest-ir --llvm-major` says which). The game is
+// translated with LLVM 21. A mod's clang writes the IR this reads and compiles
+// the IR it writes, so an SDK ships a copy built against its own clang's LLVM
+// (tools/pc/build_sdk_guest_ir.py).
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -11,10 +16,13 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cstdint>
+#include <cstdlib>
 #include <string>
 #include "../../../src/pc/memory_map.h"
 
@@ -509,7 +517,17 @@ public:
 };
 
 int main(int argc, char **argv) {
-  if (argc != 5) fail("usage: memories-guest-ir <inspect|normalize|translate> input output options.json");
+  // Asked by build_mod.py, which holds it against the clang that writes the
+  // IR this reads (and reads the IR this writes).
+  if (argc == 2 && StringRef(argv[1]) == "--llvm-major") {
+    outs() << LLVM_VERSION_MAJOR << '\n';
+    return 0;
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--version") {
+    outs() << "memories-guest-ir (LLVM " << LLVM_VERSION_STRING << ")\n";
+    return 0;
+  }
+  if (argc != 5) fail("usage: memories-guest-ir <inspect|normalize|translate> input output options.json | --llvm-major | --version");
   LLVMContext context; SMDiagnostic error;
   auto module = parseIRFile(argv[2], error, context);
   if (!module) { error.print(argv[0], errs()); return 1; }

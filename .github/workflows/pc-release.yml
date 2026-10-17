@@ -28,8 +28,10 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.platform != 'macos-arm64'
     # Each archive's SDK carries every mod target's export list
     # (tools/pc/package.py): the arm64 game's from the android job, the
-    # 64-bit Windows game's from sdk-exports-x64, built from this commit.
-    needs: [android, sdk-exports-x64]
+    # 64-bit Windows game's from sdk-exports-x64, built from this commit; and
+    # the guest pass of its system (sdk-guest-ir), which build_mod.py runs the
+    # Android object through.
+    needs: [android, sdk-exports-x64, sdk-guest-ir]
     strategy:
       fail-fast: false
       matrix:
@@ -44,6 +46,8 @@ jobs:
       # Whether the repository has a VirusTotal key; the key itself is
       # handed only to the step that uses it.
       VT_ENABLED: ${{ secrets.VT_API_KEY != '' }}
+      # Whether the sdk-guest-ir job built this system's guest pass.
+      GUEST_IR_BUILT: ${{ needs.sdk-guest-ir.outputs[format('built-{0}', matrix.system)] }}
     defaults:
       run:
         shell: bash
@@ -70,7 +74,8 @@ jobs:
             tmp/pc/linux-sysroot-downloads
             tmp/pc/sdl-source
             tmp/pc/sdl-m32-portable
-          key: release-linux-${{ runner.os }}-${{ hashFiles('tools/pc/build_linux_sysroot.py', 'tools/pc/fetch_tools.py') }}
+            tmp/pc/llvm-mingw
+          key: release-linux-${{ runner.os }}-${{ hashFiles('tools/pc/build_linux_sysroot.py', 'tools/pc/fetch_tools.py', 'tools/pc/build_win32_deps.py') }}
       - name: Cache Windows dependencies
         if: runner.os == 'Windows'
         uses: actions/cache@v4
@@ -93,18 +98,57 @@ jobs:
       # runs the full adapter suite; this checks setup and the archives.
       - uses: actions/download-artifact@v4
         with:
-          name: sdk-exports-aarch64
+          name: sdk-exports-aarch64-translated
           path: tmp/sdk-exports/android-arm64-v8a
       - uses: actions/download-artifact@v4
         with:
           name: sdk-exports-x86_64-windows
           path: tmp/sdk-exports/win64
+      # The guest pass of this system. The sdk-guest-ir job did not build one
+      # only for a pull request that touches nothing it is made of while the
+      # LLVM cache (filled by master) is cold: that run packs SDKs without
+      # the pass (--no-guest-ir) and tests them as such. Any other run
+      # without it stops here: a release never ships an SDK that cannot
+      # build the Android object.
+      - uses: actions/download-artifact@v4
+        if: env.GUEST_IR_BUILT == 'true'
+        with:
+          name: sdk-guest-ir-${{ matrix.system }}
+          path: tmp/sdk-guest-ir
+      - name: Guest pass for the SDK
+        run: |
+          if [ "$GUEST_IR_BUILT" = true ]; then
+            echo "GUEST_IR_ARGS=--guest-ir tmp/sdk-guest-ir/memories-guest-ir${{ matrix.system == 'windows' && '.exe' || '' }}" >> "$GITHUB_ENV"
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            echo "::notice title=SDK guest pass::not built in this pull request (it touches none of its inputs and master's LLVM cache is cold): the SDKs are packed without it"
+            echo "GUEST_IR_ARGS=--no-guest-ir" >> "$GITHUB_ENV"
+          else
+            echo "::error title=SDK guest pass::the sdk-guest-ir job built no guest pass, and a release SDK carries one"
+            exit 1
+          fi
       - name: Build and package
         run: >-
           python tools/pc/package.py "${{ matrix.system }}" --skip-smoke --version "$PACKAGE_VERSION"
           --exports-from tmp/sdk-exports/android-arm64-v8a --exports-from tmp/sdk-exports/win64
+          $GUEST_IR_ARGS
       - name: Test archive structure
-        run: python tools/pc/test_package.py --archives dist
+        run: python tools/pc/test_package.py --archives dist $([ "$GUEST_IR_ARGS" = --no-guest-ir ] && echo --no-guest-ir)
+      # What a modder does with the SDK alone: unpack it and build a bundled
+      # code mod for Android with its own llvm-mingw clang and guest pass (no
+      # NDK, no checkout's pass). The IR from clang (*.raw.ll) and from the
+      # pass (*.ll) is kept: diff it against sdk-mod-ir-llvm21 (the same mod
+      # through the game's own LLVM 21 pass, the android job).
+      - name: Android code mod from the packed SDK
+        if: env.GUEST_IR_BUILT == 'true'
+        run: python tools/pc/check_sdk_mod.py "dist/yfm-redecomp-$PACKAGE_VERSION-${{ matrix.system }}.${{ matrix.system == 'windows' && 'zip' || 'tar.gz' }}" --ir-out tmp/sdk-mod-ir
+      - name: Upload the SDK pass's IR
+        if: always() && env.GUEST_IR_BUILT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-mod-ir-${{ matrix.system }}
+          path: tmp/sdk-mod-ir
+          if-no-files-found: warn
+          retention-days: 14
       # The SDK just built against every release in tools/pc/mod_compat.txt:
       # a mod made with one of them must still load and run (no disc needed).
       - name: Mods from earlier releases
@@ -144,7 +188,7 @@ jobs:
       - name: VirusTotal
         if: runner.os == 'Windows' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && env.VT_ENABLED == 'true'
         continue-on-error: true
-        timeout-minutes: 30
+        timeout-minutes: 45
         env:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
           VT_MAX_DETECTIONS: "2"
@@ -154,7 +198,9 @@ jobs:
           version = os.environ["PACKAGE_VERSION"]
           target = os.path.join(os.environ["RUNNER_TEMP"], "vt")
           os.makedirs(target, exist_ok=True)
+          # The guest pass is in the SDK (sdk/tools/): a program of the archive as much as the game.
           for archive, name in ((f"dist/yfm-redecomp-{version}-windows.zip", "/memories-pc.exe"),
+                                (f"dist/yfm-redecomp-{version}-windows.zip", "/memories-guest-ir.exe"),
                                 (f"dist/fm-editor-{version}-windows.zip", "/fm-editor.exe")):
               with zipfile.ZipFile(archive) as package:
                   member = next(entry for entry in package.namelist() if entry.endswith(name))
@@ -162,11 +208,11 @@ jobs:
                       handle.write(package.read(member))
           EOF
           status=0
-          # --timeout 600: two new files' analyses still leave the step's
-          # 30 minutes room to write the summary.
+          # --timeout 600: three new files' analyses still leave the step's
+          # 45 minutes room to write the summary.
           python tools/pc/vt_check.py --max "$VT_MAX_DETECTIONS" --timeout 600 \
-            --markdown "$RUNNER_TEMP/vt.md" --label memories-pc.exe --label fm-editor.exe \
-            "$RUNNER_TEMP/vt/memories-pc.exe" "$RUNNER_TEMP/vt/fm-editor.exe" || status=$?
+            --markdown "$RUNNER_TEMP/vt.md" --label memories-pc.exe --label memories-guest-ir.exe --label fm-editor.exe \
+            "$RUNNER_TEMP/vt/memories-pc.exe" "$RUNNER_TEMP/vt/memories-guest-ir.exe" "$RUNNER_TEMP/vt/fm-editor.exe" || status=$?
           {
             echo "### VirusTotal ($PACKAGE_VERSION)"
             echo
@@ -218,6 +264,125 @@ jobs:
             dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  # The guest pass the SDKs ship, one per system (tools/pc/build_sdk_guest_ir.py;
+  # tools/pc/sdk_llvm.json pins the LLVM). The game itself is translated with
+  # LLVM 21 and stays so; a mod's clang writes the IR the pass reads and
+  # compiles what it writes, and the SDK's clang is llvm-mingw's (23), so the
+  # SDK's pass is built against LLVM 23. Linux: the official release archive's
+  # headers and static libraries (the pass links statically, to run on any
+  # distribution). Windows: the official Windows archive is built for the MSVC
+  # C++ ABI, which llvm-mingw cannot link, so the three libraries the pass
+  # needs are built from the official source release with llvm-mingw itself.
+  #
+  # The LLVM is the expensive part (a Windows build is up to an hour on a
+  # runner, the Linux archive 2 GB to fetch), so it is cached under a key of
+  # what it is made of (the pin, fetch_tools.py, the script), saved by its
+  # own step as soon as it is built: a failure in the link or the checks
+  # after it keeps the work (actions/cache saves only after a successful job).
+  # A pull request must not pay for it: caches saved by master are readable
+  # by pull requests, so a run there takes the cache when it exists (linking
+  # the pass takes a minute), and builds the LLVM only when the pull request
+  # touches what the pass is made of (this job's paths below). Otherwise,
+  # with no cache yet (master has not run since the pin changed), it builds
+  # nothing and the package job packs without the pass (--no-guest-ir, which
+  # test_package.py then expects). Pushes, tags and manual runs always build.
+  # The job stops, saying what is missing, if the archive lacks the headers
+  # or libraries, or if sdk_llvm.json has no sha256 (`python
+  # tools/pc/build_sdk_guest_ir.py --pin`).
+  sdk-guest-ir:
+    if: github.event_name != 'workflow_dispatch' || inputs.platform != 'macos-arm64'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: linux
+            runner: ubuntu-24.04
+          - system: windows
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    # One output a system (a matrix job's outputs would overwrite each other).
+    outputs:
+      built-linux: ${{ steps.done.outputs.built-linux }}
+      built-windows: ${{ steps.done.outputs.built-windows }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Two commits: a pull request's merge commit and the base it merges into.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Does this run touch what the pass is made of
+        id: scope
+        run: |
+          touched=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/llvm/|tools/pc/build_sdk_guest_ir\.py$|tools/pc/sdk_llvm\.json$|tools/pc/fetch_tools\.py$|src/pc/memory_map\.h$)'; then
+            touched=false
+          fi
+          echo "touched=$touched" >> "$GITHUB_OUTPUT"
+      - name: Restore the LLVM the pass is built against
+        id: llvm
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            tmp/pc/sdk-llvm
+            tmp/pc/tools/llvm-mingw
+          key: sdk-llvm-${{ runner.os }}-${{ hashFiles('tools/pc/sdk_llvm.json', 'tools/pc/fetch_tools.py', 'tools/pc/build_sdk_guest_ir.py') }}
+      - name: Plan
+        id: plan
+        run: |
+          if [ "${{ steps.llvm.outputs.cache-hit }}" = true ] || [ "${{ steps.scope.outputs.touched }}" = true ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=SDK guest pass::not built: this pull request touches none of its inputs and master's LLVM cache is not there yet"
+          fi
+      # libz.a, libzstd.a and libtinfo.a: the pass links statically.
+      - name: Linux build tools
+        if: steps.plan.outputs.build == 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zlib1g-dev libzstd-dev libncurses-dev
+      - name: Archive version
+        if: steps.plan.outputs.build == 'true'
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            echo "PACKAGE_VERSION=$REF_NAME" >> "$GITHUB_ENV"
+          else
+            echo "PACKAGE_VERSION=dev-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+          fi
+      - name: Get the LLVM libraries
+        if: steps.plan.outputs.build == 'true'
+        run: python tools/pc/build_sdk_guest_ir.py --llvm-only --jobs 4
+      - name: Save the LLVM libraries
+        if: steps.plan.outputs.build == 'true' && steps.llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            tmp/pc/sdk-llvm
+            tmp/pc/tools/llvm-mingw
+          key: ${{ steps.llvm.outputs.cache-primary-key }}
+      - name: Build the guest pass
+        if: steps.plan.outputs.build == 'true'
+        run: MEMORIES_VERSION="$PACKAGE_VERSION" python tools/pc/build_sdk_guest_ir.py --out tmp/pc/sdk-guest-ir --jobs 4
+      - name: Upload the guest pass
+        if: steps.plan.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-guest-ir-${{ matrix.system }}
+          path: tmp/pc/sdk-guest-ir/memories-guest-ir*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Built
+        id: done
+        if: steps.plan.outputs.build == 'true'
+        run: echo "built-${{ matrix.system }}=true" >> "$GITHUB_OUTPUT"
 
   # The 64-bit Windows game's export list for the SDKs (not a package of its
   # own): sdk/exports.x86_64-windows.txt and the tree it was built from.
@@ -332,7 +497,7 @@ jobs:
   android:
     if: github.event_name != 'workflow_dispatch' || inputs.platform != 'macos-arm64'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       # Whether this run signs with the release key; the secrets themselves
       # are handed only to the step that uses them. The rule: a push to
@@ -366,7 +531,7 @@ jobs:
       # NDK added; ANDROID_NDK_ROOT is set to it, over the image's default.
       - name: Android SDK and NDK
         run: |
-          sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake ninja-build
+          sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake ninja-build zlib1g-dev libzstd-dev libxml2-dev
           sdkmanager="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           # Its progress bars fill the log: kept aside, and shown when it fails.
           if ! "$sdkmanager" --install "ndk;$ANDROID_NDK_VERSION" "build-tools;$ANDROID_BUILD_TOOLS" "platforms;$ANDROID_PLATFORM" > "$RUNNER_TEMP/sdkmanager.log" 2>&1; then
@@ -386,6 +551,15 @@ jobs:
             tmp/pc/android-deps/arm64-v8a
             tmp/pc/android-deps/java
           key: release-android-${{ env.ANDROID_NDK_VERSION }}-${{ hashFiles('tools/pc/build_android_deps.py', 'tools/pc/build_linux_sysroot.py', 'tools/pc/build_win32_deps.py', 'tools/pc/fetch_tools.py') }}
+      # LLVM 21.1.8's libraries, llvm-config and lld, which the translated
+      # game's guest pass is built and linked with (tools/pc/llvm_guest.py,
+      # linux_llvm: the official archive's parts it needs, about 620 MB of its
+      # 2 GB; linux_toolchain.json names them, so the key changes with them).
+      - name: Cache LLVM for the guest pass
+        uses: actions/cache@v4
+        with:
+          path: tmp/pc/llvm-linux
+          key: release-llvm-linux-${{ hashFiles('tools/pc/linux_toolchain.json') }}
       - name: Archive version
         env:
           REF_TYPE: ${{ github.ref_type }}
@@ -408,21 +582,48 @@ jobs:
           else
             echo "::notice title=Android::no release key in this run (only pushes and manual runs on master or a v* tag are signed, with the ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD secrets): the APK is built as a check, signed with a debug key, and not uploaded"
           fi
+      # The APK's game is the translated one (build_game32.py runs
+      # build_arm64.py --target android-arm64-translated; notes/pc-build.md,
+      # "Android arm64"): no fixed host address on the phone.
       # The build (the NDK, cmake, the dependencies' downloaded sources) runs
       # with no secret in its environment. It signs with the debug key; the
       # next step signs again with the release key.
       - name: Build the APK
         run: MEMORIES_VERSION="$PACKAGE_VERSION" python tools/pc/build_game32.py --target android-arm64-v8a --backend sdl --release --build tmp/pc/android-arm64-v8a
-      # The arm64 game's export list, for the desktop archives' SDKs (the
-      # package job): every run, signed or not; the list holds no secret.
-      - name: Upload the aarch64 export list
+      # The arm64 game's export list and guest-pass tables, for the desktop
+      # archives' SDKs (the package job; build_mod.py --target
+      # aarch64-translated): every run, signed or not; they hold no secret.
+      - name: Upload the aarch64-translated export list
         uses: actions/upload-artifact@v4
         with:
-          name: sdk-exports-aarch64
+          name: sdk-exports-aarch64-translated
           path: |
-            tmp/pc/android-arm64-v8a/sdk/exports.aarch64.txt
+            tmp/pc/android-arm64-v8a/sdk/exports.aarch64-translated.txt
+            tmp/pc/android-arm64-v8a/sdk/mod_translation.json
+            tmp/pc/android-arm64-v8a/sdk/mod_signatures.json
             tmp/pc/android-arm64-v8a/source
           if-no-files-found: error
+          retention-days: 14
+      # A bundled code mod through the game's own guest pass (the NDK's clang
+      # 21, LLVM 21), for diffing against the same mod through the SDK's pass
+      # (sdk-mod-ir-*, the package job): *.raw.ll from clang, *.ll from the
+      # pass. A check only: it does not stop the release. The APK build just
+      # built this mod with the same inputs, so its object is in the cache and
+      # a build would write no IR: the cache goes first.
+      - name: Android code mod through the game's guest pass
+        continue-on-error: true
+        run: |
+          rm -rf tmp/pc/mod-build
+          MEMORIES_MOD_CC="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
+            python tools/pc/build_mod.py mods/hand-camera --target aarch64-translated \
+            --game tmp/pc/android-arm64-v8a --out tmp/mod-ir21/out --ir-out tmp/mod-ir21/ir
+      - name: Upload the game pass's IR
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-mod-ir-llvm21
+          path: tmp/mod-ir21/ir
+          if-no-files-found: warn
           retention-days: 14
       # The secrets reach this step only. The keystore goes to the runner's
       # temporary folder, readable by this user only, its path stays in this

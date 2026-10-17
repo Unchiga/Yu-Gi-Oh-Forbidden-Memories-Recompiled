@@ -50,6 +50,19 @@ HOST_HEAP_UNITS = {"src/pc/render/texture_pack.c", "src/pc/render/gl_picture.c"}
 
 
 ROOT = Path(__file__).resolve().parents[2]
+# Set by main(): None on macOS; the NDK's bin folder for Android arm64
+# (--target android-arm64-translated).
+ANDROID_BIN = None
+NM = "nm"
+
+
+def c_symbol(name):
+    """An object-file symbol's C name: Mach-O prefixes an underscore, ELF not."""
+    if ANDROID_BIN:
+        return name
+    return name[1:] if name.startswith("_") else None
+
+
 ORDINARY = {
     "src/pc/memory.c",
     "src/pc/guest/state_translated.c",
@@ -57,6 +70,9 @@ ORDINARY = {
     "src/pc/guest/image_loader.c",
     "src/pc/mods/hooks.c",
     "src/pc/mods/object_loader.c",
+    # The crash-report table: host memory of its own, never a registered
+    # heap region, so a save state neither holds nor replaces it.
+    "src/pc/debug/symbols.c",
 }
 
 
@@ -83,6 +99,15 @@ def exclude_defined_storage(pin_maps, unit_ir):
         }
         for group, pins in pin_maps.items()
     }
+
+
+def object_arguments(build, objects):
+    """Objects as one response file where a command line is short (Windows)."""
+    if os.name != "nt":
+        return objects
+    listing = build / "objects.rsp"
+    listing.write_text("\n".join(path.replace("\\", "/") for path in objects) + "\n")
+    return ["@" + str(listing)]
 
 
 def run_logged(command, log):
@@ -166,13 +191,13 @@ def prepare_guest_units(jobs, groups, natives, ordinary, path_for, address_table
     )
     for s in ordinary:
         result = subprocess.run(
-            ["nm", "-g", str(path_for("obj", s, ".o"))], capture_output=True, text=True
+            [NM, "-g", str(path_for("obj", s, ".o"))], capture_output=True, text=True
         )
         native_defs |= {
-            line.split()[-1][1:]
+            c_symbol(line.split()[-1])
             for line in result.stdout.splitlines()
             if len(line.split()) == 3 and line.split()[1] != "U"
-        }
+        } - {None}
     group_defs = {
         g: set().union(
             *(
@@ -404,7 +429,7 @@ def generate_function_tables(
     for text in raw_text.values():
         for name, signature in inspect(text)["signatures"].items():
             if name in direct_overlay_bridges:
-                validate_signature(name, signature)
+                validate_signature(name, signature, aapcs64=ANDROID_BIN is not None)
     stubs = sorted(
         (
             all_declarations
@@ -497,13 +522,13 @@ def generate_mod_exports(
 ):
     """Publish symbols and LLVM signatures for the separate mod build."""
     defined_symbols = subprocess.check_output(
-        ["nm", "-gU", *[str(path_for("obj", source, ".o")) for source, group in jobs]],
+        [NM, "-gU", *object_arguments(build, [str(path_for("obj", source, ".o")) for source, group in jobs])],
         text=True,
     )
     public_symbols = {
-        parts[-1][1:]
+        c_symbol(parts[-1])
         for line in defined_symbols.splitlines()
-        if len(parts := line.split()) == 3 and parts[-1].startswith("_")
+        if len(parts := line.split()) == 3 and c_symbol(parts[-1])
     }
     exports = {
         name: name
@@ -515,8 +540,9 @@ def generate_mod_exports(
     )
     symbols = sorted(set(exports.values()))
     export_table = "#include <stdint.h>\ntypedef struct { const char *name; void *address; } MemoriesModExport;\n"
+    prefix = "" if ANDROID_BIN else "_"  # ELF names have no Mach-O underscore
     for index, name in enumerate(symbols):
-        export_table += f'extern char ModExport_{index}[] __asm__("_{name}");\n'
+        export_table += f'extern char ModExport_{index}[] __asm__("{prefix}{name}");\n'
     references = {name: f"ModExport_{index}" for index, name in enumerate(symbols)}
     entries = {name: references[target] for name, target in exports.items()}
     for name, address in pin_maps["native"].items():
@@ -525,7 +551,8 @@ def generate_mod_exports(
     export_table += (
         "const MemoriesModExport Memories_ModExports[] = {\n"
         + "".join(
-            f'{{"{name}", {value}}},\n' for name, value in sorted(entries.items())
+            # Indented as build_game32.py's table: build_mod.provided reads it.
+            f'    {{"{name}", {value}}},\n' for name, value in sorted(entries.items())
         )
         + "};\n"
     )
@@ -550,6 +577,41 @@ def generate_mod_exports(
     return export_object
 
 
+def write_mod_translation(build, address_tables):
+    """mod_translation.json: what build_mod.py --target aarch64-translated
+    puts a mod through the guest pass with, as build_mod_arm64.py does for
+    macOS from this folder: the names it renames (the game's aliases, the
+    host renames, rand to the mods' own generator, the C library to the
+    runtime's guest-pointer wrappers), the guest addresses of the game's
+    pinned data, and the pointer-free math the C library may lend
+    directly. With mod_signatures.json and exports.txt it is all a mod build
+    needs of the game; the SDK carries the three (build_game32.write_sdk)."""
+    from build_mod_arm64 import SYSTEM_MATH_IMPORTS, mod_pins
+
+    summary = json.loads((build / "summary.json").read_text())
+    aliases = dict(summary["aliases"])
+    aliases.update(
+        dict(
+            line.split()
+            for line in (ROOT / "config/pc/host_symbol_renames.txt").read_text().splitlines()
+            if line.strip()
+        )
+    )
+    aliases.update(rand="Mods_ModRand", srand="Mods_ModSrand")
+    runtime = sorted(HOST_LIBC | CHECKED_LIBC | {"malloc", "calloc", "realloc", "free"})
+    table = {
+        "format": 1,
+        "game_fingerprint": (build / "build-fingerprint.txt").read_text().strip(),
+        "aliases": aliases,
+        "runtime": {name: "GuestRuntime_" + name for name in runtime},
+        "pins": mod_pins(summary, address_tables.values()),
+        # abs and labs too: a mod is compiled freestanding, where clang
+        # calls them instead of expanding them as macOS's builtins.
+        "system_math": sorted(SYSTEM_MATH_IMPORTS | {"abs", "labs"}),
+    }
+    (build / "mod_translation.json").write_text(json.dumps(table, indent=1, sort_keys=True) + "\n")
+
+
 def link_game(
     build, jobs, path_for, tables, export_object, cc, sdk, flags, dependencies
 ):
@@ -563,6 +625,25 @@ def link_game(
     )
     if status:
         raise SystemExit("Table compilation failed: " + str(build / "logs/tables.log"))
+    if ANDROID_BIN:
+        # As build_game32.py links the fixed Android game, minus the fixed
+        # image base: the translated game loads wherever the system puts it.
+        command = [
+            cc, *darwin_flags(None), "-shared", "-o", str(build / "libgame.so"),
+            "-Wl,-Bsymbolic", "-Wl,--no-undefined", "-Wl,--wrap=exit", "-Wl,-soname,libgame.so",
+            "-Wl,-z,noexecstack", "-Wl,--export-dynamic",
+            # The state identity (translated_state_backend.c) is the GNU build ID.
+            "-Wl,--build-id=sha1",
+            *object_arguments(build, [str(path_for("obj", s, ".o")) for s, g in jobs]),
+            str(tables_obj), str(export_object),
+            f"-L{dependencies / 'lib'}", "-lSDL3", str(dependencies / "lib/libfreetype.a"),
+            str(dependencies / "lib/libpng16.a"), "-lz", "-lGLESv2", "-llog", "-landroid", "-lm", "-ldl",
+        ]
+        (build / "link-command.json").write_text(json.dumps(command, indent=2) + "\n")
+        status = run_logged(command, build / "logs/link.log")
+        print("Link " + ("failed: " + str(build / "logs/link.log") if status
+                         else "succeeded: " + str(build / "libgame.so")), flush=True)
+        return status
     command = [
         cc,
         *darwin_flags(sdk),
@@ -628,9 +709,16 @@ def link_game(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build", type=Path, default=ROOT / "tmp/pc/macos")
+    parser.add_argument("--target", choices=("macos", "android-arm64-translated"), default="macos")
+    parser.add_argument("--build", type=Path)
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--compile-only", action="store_true")
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="android-arm64-translated: leave out the test hooks (MEMORIES_TEST_HOOKS), as "
+             "build_game32.py --release does",
+    )
     parser.add_argument(
         "--instrument-softgpu",
         action="store_true",
@@ -643,19 +731,41 @@ def main():
         help="Enable O2 translated IR/native helpers and audited SoftGpu boundaries (default); frontend remains O0",
     )
     args = parser.parse_args()
-    llvm = toolchain()
-    cc = str(llvm / "bin/clang")
-    from macos_deps import ensure, sdk_path
+    # build_game32 (imported for release_version) takes its own --target
+    # from sys.argv when it is imported: it must not see this one.
+    import sys
 
-    dependencies = ensure(jobs=args.jobs)
-    sdk = str(sdk_path())
-    build = args.build.resolve()
+    sys.argv = [sys.argv[0]]
+    global ANDROID_BIN, NM
+    llvm = toolchain()
+    if args.target == "android-arm64-translated":
+        import build_android_deps
+
+        ANDROID_BIN = Path(build_android_deps.llvm_bin())
+        cc = str(ANDROID_BIN / "clang")
+        NM = str(ANDROID_BIN / "llvm-nm")
+        dependencies = ROOT / "tmp/pc/android-deps/arm64-v8a"
+        sdk = None
+    else:
+        cc = str(llvm / "bin/clang")
+        from macos_deps import ensure, sdk_path
+
+        dependencies = ensure(jobs=args.jobs)
+        sdk = str(sdk_path())
+    build = (args.build or ROOT / TARGETS[args.target]["build"]).resolve()
     for d in ["raw", "ir", "obj", "logs"]:
         (build / d).mkdir(parents=True, exist_ok=True)
     address_tables = maps()
     groups = game_sources()
-    target = TARGETS["macos"]
+    target = TARGETS[args.target]
     natives = native_sources(target)
+    if ANDROID_BIN:
+        # GLES has no desktop GL presenter (build_game32.py ANDROID_BACKEND);
+        # the loader is libmain.so's own unit.
+        natives = sorted(
+            {"src/pc/render/gl_desktop_none.c" if s == "src/pc/render/present_pass.c" else s
+             for s in natives}
+        )
     required = {
         "src/pc/guest/translated_image_backend.c",
         "src/pc/guest/state_translated.c",
@@ -686,6 +796,11 @@ def main():
     game_extra = ["-include", "src/pc/compat/pgxp_game.h"]
     if not args.optimize or args.instrument_softgpu:
         flags.append("-DMEMORIES_INSTRUMENT_SOFTGPU")
+    if ANDROID_BIN and not args.release:
+        # The test-only paths (MEMORIES_TEST_HOLD_GUEST and the others
+        # notes/pc-build.md lists), as in build_game32.py's builds that are
+        # not releases. macOS builds keep none.
+        flags.append("-DMEMORIES_TEST_HOOKS")
     # Keep compiler outputs tied to the complete toolchain and source state.
     # A reused tmp/pc/macos directory must never hide a translator, option,
     # compiler, or revision change behind timestamps alone.
@@ -802,6 +917,8 @@ def main():
     export_object = generate_mod_exports(
         build, jobs, path_for, raw_text, aliases, linked_defs, pin_maps, cc, flags
     )
+    if ANDROID_BIN:
+        write_mod_translation(build, address_tables)
     status = link_game(
         build, jobs, path_for, tables, export_object, cc, sdk, flags, dependencies
     )
@@ -813,7 +930,7 @@ def main():
             version=release_version(),
             fingerprint=fingerprint_file.read_text().strip(),
             binary_sha256=hashlib.sha256(
-                (build / "memories-arm64").read_bytes()
+                (build / ("libgame.so" if ANDROID_BIN else "memories-arm64")).read_bytes()
             ).hexdigest(),
         )
         (build / "build-identity.json").write_text(

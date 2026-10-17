@@ -102,11 +102,14 @@ int memories_ashmem_create(const char *name, unsigned size) /* android_compat.h 
 
 int main(int argc, char **argv); /* src/pc/guest/main.c */
 
-/* The game calls bzero (HOST_LIBC in build_game32.py); bionic has none. */
+#ifndef MEMORIES_TRANSLATED
+/* The game calls bzero (HOST_LIBC in build_game32.py); bionic has none.
+ * The translated build sends it to GuestRuntime_bzero instead. */
 void bzero(void *at, size_t size)
 {
     memset(at, 0, size);
 }
+#endif
 
 int Platform_HasDesktopGL(void)
 {
@@ -1376,10 +1379,13 @@ static void unpack_program(void)
     setenv("MEMORIES_PROGRAM_DIR", directory, 0);
 }
 
+#ifndef MEMORIES_TRANSLATED
 /* The loader could not put the game where it was linked (android_loader.c):
  * the addresses in a state saved now would not hold in the next launch, nor
  * those of the states saved before in this one. States then go to a folder
- * of this launch alone, emptied at the start. */
+ * of this launch alone, emptied at the start. Not for the translated game,
+ * which is loaded anywhere and carries its states by its build ID
+ * (translated_state_backend.c). */
 static void check_load_bias(void)
 {
     const char *bias = getenv("MEMORIES_ANDROID_LOAD_BIAS");
@@ -1402,6 +1408,7 @@ static void check_load_bias(void)
     fprintf(stderr, "memories-pc: the game is loaded %s bytes from its link address; save states are kept for "
                     "this launch only (%s)\n", bias, directory);
 }
+#endif
 
 /* The player's folder (the external files folder, top of this file), made
  * if it is not there yet; NULL when it cannot be, with the reason in `why`.
@@ -1487,7 +1494,9 @@ int Memories_AndroidMain(int argc, char **argv)
         fprintf(stderr, "memories-pc: environment.txt names the user folder: %s\n", named);
     }
     unpack_program();
+#ifndef MEMORIES_TRANSLATED
     check_load_bias();
+#endif
     /* The window is resizable, which SDL takes for "any orientation";
      * the game is a landscape picture. Which landscape follows what is
      * asked again once the window is made (Android_ApplyScreenRotation). */
@@ -1504,10 +1513,18 @@ int Memories_AndroidMain(int argc, char **argv)
         /* Where the game is: its link address when the loader's range held
          * (load bias 0), so crash addresses are the build's symbols' own. */
         Dl_info info;
+#ifdef MEMORIES_TRANSLATED
+        /* Linked at 0 and loaded where the system puts it: symbolize a
+         * crash address as its offset from this. */
+        fprintf(stderr, "memories-pc: Android, user folder %s, libgame.so at %p (translated)\n",
+                getenv("MEMORIES_USER_DIR") ? getenv("MEMORIES_USER_DIR") : "?",
+                dladdr((void *)Memories_AndroidMain, &info) ? info.dli_fbase : NULL);
+#else
         fprintf(stderr, "memories-pc: Android, user folder %s, libgame.so at %p (load bias %s)\n",
                 getenv("MEMORIES_USER_DIR") ? getenv("MEMORIES_USER_DIR") : "?",
                 dladdr((void *)Memories_AndroidMain, &info) ? info.dli_fbase : NULL,
                 getenv("MEMORIES_ANDROID_LOAD_BIAS") ? getenv("MEMORIES_ANDROID_LOAD_BIAS") : "?");
+#endif
     }
     /* main's status through __wrap_exit, as the game's own exit() */
     exit(main(1, args));

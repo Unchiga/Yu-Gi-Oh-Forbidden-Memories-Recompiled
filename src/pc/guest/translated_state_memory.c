@@ -2,9 +2,11 @@
 #ifndef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE
 #endif
+#include "translated_state_symbols.h"
 #include "translated_state_memory.h"
 #include "translated_runtime.h"
 #include "state_io.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -197,46 +199,75 @@ int Memories_NativeMemoryApply(MemoriesNativeMemoryState *pending)
     pending->applied = 1;
     return 0;
 }
+/* One native word of a saved state, where it belongs now: an address in
+ * the old image (classified by the OLD image's size) moves with the image,
+ * or for another build's state by the two symbol tables
+ * (translated_state_symbols.c), whose answer is certain or a refusal; an
+ * address in a saved region moves with that region. The pre-load check
+ * (Memories_NativeSymbolsScan over the same words with the same `stack`)
+ * has refused every state with a word that cannot be carried, so one here
+ * is a broken invariant, not a guess to make. */
+static uint64_t relocate_word(MemoriesNativeMemoryState *pending, uint64_t word, uintptr_t old_image,
+                              uintptr_t new_image, size_t old_size, int stack)
+{
+    if (word >= old_image && word - old_image < old_size) {
+        uint64_t mapped = word - old_image;
+        if (Memories_NativeSymbolsActive() && Memories_NativeSymbolsMap(word - old_image, stack, &mapped)) {
+            fprintf(stderr, "memories-pc: ARM64 state: offset 0x%llx passed the pre-load check and cannot be "
+                    "carried\n", (unsigned long long)(word - old_image));
+            abort();
+        }
+        return new_image + mapped;
+    }
+    if (pending->count && word >= pending->relocations[0].host) {
+        /* Upper bound selects the owning region at a shared endpoint.
+         * In a gap, the preceding region may own a one-past iterator.
+         * Pixels/PS1 words outside these ranges need no fixup. */
+        unsigned low = 0, high = pending->count;
+        const RelocationRegion *last = &pending->relocations[high - 1];
+        if (word <= last->host + last->length) {
+            while (low < high) {
+                unsigned mid = low + (high - low) / 2;
+                if (pending->relocations[mid].host <= word) low = mid + 1;
+                else high = mid;
+            }
+            const RelocationRegion *region = &pending->relocations[low - 1];
+            if (word - region->host <= region->length)
+                return pending->current[region->index] + (word - region->host);
+        }
+    }
+    return word;
+}
 void Memories_NativeMemoryRelocate(MemoriesNativeMemoryState *pending, void *data, size_t size,
-                                  uintptr_t old_image, uintptr_t new_image, size_t image_size)
+                                  uintptr_t old_image, uintptr_t new_image, size_t old_size, int stack)
 {
     uint8_t *bytes = data;
     /* Scan full native words only. PS1 addresses and integers stay 32 bits. */
     for (size_t offset = 0; offset <= size && size - offset >= sizeof(uint64_t); offset += sizeof(uint64_t)) {
         uint64_t word, relocated;
         memcpy(&word, bytes + offset, sizeof(word));
-        relocated = word;
-        if (word >= old_image && word - old_image < image_size) relocated = new_image + (word - old_image);
-        else if (pending->count && word >= pending->relocations[0].host) {
-            /* Upper bound selects the owning region at a shared endpoint.
-             * In a gap, the preceding region may own a one-past iterator.
-             * Pixels/PS1 words outside these ranges need no fixup. */
-            unsigned low = 0, high = pending->count;
-            const RelocationRegion *last = &pending->relocations[high - 1];
-            if (word <= last->host + last->length) {
-                while (low < high) {
-                    unsigned mid = low + (high - low) / 2;
-                    if (pending->relocations[mid].host <= word) low = mid + 1;
-                    else high = mid;
-                }
-                const RelocationRegion *region = &pending->relocations[low - 1];
-                if (word - region->host <= region->length)
-                    relocated = pending->current[region->index] + (word - region->host);
-            }
-        }
+        relocated = relocate_word(pending, word, old_image, new_image, old_size, stack);
         if (word != relocated) memcpy(bytes + offset, &relocated, sizeof(relocated));
     }
+}
+size_t Memories_NativeMemoryUncarried(MemoriesNativeMemoryState *pending, uintptr_t old_image)
+{
+    size_t missing = 0;
+    for (unsigned i = 0; i < pending->count; ++i)
+        if (pending->payload[i])
+            missing += Memories_NativeSymbolsScan(pending->payload[i], pending->saved[i].length, old_image, 0, 1);
+    return missing;
 }
 /* Copy only guest game globals and managed heap payloads. Subsystems keep
  * explicit serializers; OS objects in native globals are never copied. */
 void Memories_NativeMemoryRestorePayloads(MemoriesNativeMemoryState *pending,
-                                         uintptr_t old_image, uintptr_t new_image, size_t image_size)
+                                         uintptr_t old_image, uintptr_t new_image, size_t old_size)
 {
     for (unsigned i = 0; i < pending->count; ++i) {
         if (!pending->payload[i]) continue;
         void *host = (void *)pending->current[i];
         memcpy(host, pending->payload[i], pending->saved[i].length);
-        Memories_NativeMemoryRelocate(pending, host, pending->saved[i].length, old_image, new_image, image_size);
+        Memories_NativeMemoryRelocate(pending, host, pending->saved[i].length, old_image, new_image, old_size, 0);
     }
 }
 void Memories_NativeMemoryRemapGuests(MemoriesNativeMemoryState *pending, uint32_t from, uint32_t to, uint32_t size)

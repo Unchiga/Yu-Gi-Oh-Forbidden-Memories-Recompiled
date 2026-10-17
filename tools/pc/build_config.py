@@ -61,6 +61,19 @@ TARGETS = {
         "build": "tmp/pc/android-x86",
         "executable": "libgame.so",
     },
+    # Android arm64 on the translated backend (build_arm64.py --target
+    # android-arm64-translated): no fixed host address anywhere
+    # (notes/pc-build.md, "Android arm64").
+    "android-arm64-translated": {
+        "platform": "android",
+        "architecture": "arm64",
+        "abi": "android-lp64",
+        "memory_model": "translated-32",
+        "guest_assembly": "translated-arm64",
+        "driver": "build_arm64.py",
+        "build": "tmp/pc/android-arm64-translated",
+        "executable": "libgame.so",
+    },
     "macos": {
         "platform": "macos",
         "architecture": "arm64",

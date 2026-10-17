@@ -15,7 +15,9 @@ which are never printed or put on a command line), else a debug key kept
 under tmp/, never in the repository; either way the signer's certificate
 (DN, SHA-256) is printed and checked with apksigner verify. The activity is SDL's own SDLActivity: it loads libSDL3.so
 and libmain.so and calls SDL_main (src/pc/platform/android_loader.c), which
-loads libgame.so at its link address. The build's id, commit and symbol
+loads libgame.so: the arm64 app's translated game wherever the system puts
+it, a fixed game (--android-memory fixed, android-x86) at its link address.
+The build's id, commit and symbol
 table go in assets/build/, and the shipped mods and language packs under
 assets/build/files/ with their list in build/files.txt
 (src/pc/platform/android.c unpacks them).

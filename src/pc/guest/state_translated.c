@@ -1,5 +1,6 @@
 /* Native-stack entry and save-state requests for translated ARM64 game code. */
 #include "pc/compat/fs.h"
+#include "pc/platform/paths.h"
 #include "state.h"
 #include "types.h"
 #include "game/build_deck_transition_state.h"
@@ -236,9 +237,21 @@ void Memories_StateRemapRange(MemoriesState *state, uint32_t from,
 
 int Memories_SymbolTablePath(char *out, size_t size)
 {
-    /* The legacy table holds fixed uint32 code addresses. Exposing one as a
-     * native symbol table would silently truncate native ARM64 addresses. */
+    /* symbols/<buildid>.txt beside the game, as state.c's: in the
+     * translated build (libgame.so, linked at 0) its addresses are offsets
+     * into the image, which crash reports add the load address to
+     * (debug/symbols.c) and save states carry across builds with
+     * (translated_state_symbols.c). macOS ships none. */
+    const char *directory = Paths_ProgramDir();
+    char path[640], text[32] = "";
+    unsigned long id = 0;
+    FILE *file;
     if (out && size) out[0] = '\0';
-    errno = ENOTSUP;
-    return -1;
+    if (!directory || snprintf(path, sizeof(path), "%s/buildid", directory) >= (int)sizeof(path)) return -1;
+    file = fopen(path, "r");
+    if (!file) return -1;
+    if (fgets(text, sizeof(text), file)) id = strtoul(text, NULL, 16);
+    fclose(file);
+    if (!id || !out || snprintf(out, size, "%s/symbols/%08lx.txt", directory, id) >= (int)size) return -1;
+    return 0;
 }

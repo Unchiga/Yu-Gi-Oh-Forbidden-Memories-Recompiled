@@ -67,8 +67,10 @@ static void write_profile(void)
 
 void Profile_Init(void)
 {
- #ifndef __APPLE__
+ #if !defined(__APPLE__) && !defined(MEMORIES_TRANSLATED)
     extern char __start_game_text[], __stop_game_text[];
+#endif
+ #ifndef __APPLE__
 #ifndef _WIN32
     extern char __executable_start[], etext[];
 #endif
@@ -82,6 +84,12 @@ void Profile_Init(void)
         fprintf(stderr, "memories-pc: cannot find Mach-O executable text for profiling\n");
         return;
     }
+    ranges[1].first = ranges[1].last = 0;
+ #elif defined(MEMORIES_TRANSLATED)
+    /* ELF translated (Android): game and port code share the object's text,
+     * as on macOS; no separate game section. */
+    ranges[0].first = (uintptr_t)__executable_start;
+    ranges[0].last = (uintptr_t)etext;
     ranges[1].first = ranges[1].last = 0;
  #else
     ranges[0].first = (uintptr_t)__start_game_text;

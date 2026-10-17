@@ -27,10 +27,15 @@ linked at 0x40000000 without ASLR so that host code stays below 4 GB and
 within reach of the pinned guest addresses. Its default build directory is
 tmp/pc/win64.
 
-On Android (--target android-arm64-v8a: 64-bit ARM, with G32 as windows-x64;
-android-x86 builds for development and is not packaged) the
-toolchain is the NDK's clang and LLVM tools, and the libraries come from
-tools/pc/build_android_deps.py. The game is a position-independent shared
+On Android (--target android-arm64-v8a: 64-bit ARM; android-x86 builds for
+development and is not packaged) the toolchain is the NDK's clang and LLVM
+tools, and the libraries come from tools/pc/build_android_deps.py. The arm64
+app's game is the translated one (--android-memory translated, the default):
+tools/pc/build_arm64.py --target android-arm64-translated builds libgame.so,
+linked at 0 with no fixed host address, and build_android_translated adds the
+loader and the APK. --android-memory fixed (MEMORIES_ANDROID_MEMORY=fixed)
+builds the fixed game this file builds for the other targets, with G32 as
+windows-x64, described next. The fixed game is a position-independent shared
 object, libgame.so, linked at a fixed base; libmain.so, which SDL's Java shell
 loads and whose SDL_main it runs, is a loader that puts the game at that base
 (src/pc/platform/android_loader.c) and starts the port's main through
@@ -303,9 +308,15 @@ def flags_changed(path, flags):
     return os.path.getmtime(path)
 
 
-def link_android_loader(build, game):
+def link_android_loader(build, game, translated=False):
     """libmain.so, the loader SDL's Java shell runs (ANDROID_LOADER), once
-    the game's load span is known to fit the range it reserves."""
+    the game's load span is known to fit the range it reserves; for the
+    translated game (linked at 0), one that opens it anywhere."""
+    if translated:
+        run([CC, *ANDROID_FLAGS, "-O2", "-Wall", "-Werror", "-Isrc", "-shared", "-o", f"{build}/libmain.so",
+             "-Wl,--no-undefined", "-Wl,-z,noexecstack", "-DMEMORIES_ANDROID_TRANSLATED", ANDROID_LOADER,
+             "-llog", "-ldl"])
+        return
     low, high = None, 0
     for line in run([READELF, "-lW", game]).splitlines():
         parts = line.split()
@@ -809,6 +820,8 @@ def copy_if_changed(source, destination):
         shutil.copy2(source, destination)
 
 
+TRANSLATION_TABLES = ("mod_translation.json", "mod_signatures.json")
+
 def write_sdk(build, target="i386"):
     """<build>/sdk: what a mod is built against, beside the game."""
     sdk = f"{build}/sdk"
@@ -844,12 +857,116 @@ def write_sdk(build, target="i386"):
     for listed in own:
         with open(f"{sdk}/{listed}", "w") as handle:
             handle.write(names)
+    # The translated game's tables, which build_mod.py puts a mod through
+    # the guest pass with (aarch64-translated: build_arm64.py writes them),
+    # and the desktop SDKs carry too (tools/pc/package.py).
+    for name in TRANSLATION_TABLES:
+        if target == "aarch64-translated":
+            copy_if_changed(f"{build}/{name}", f"{sdk}/{name}")
+        elif os.path.exists(f"{sdk}/{name}"):
+            os.remove(f"{sdk}/{name}")   # from a build folder used for the Android game before
     for path in glob.glob(f"{sdk}/exports*.txt"):
         if os.path.basename(path) not in own:
             os.remove(path)   # another target's, in a folder reused for this one
     stale = f"{build}/include"   # the lone modapi.h copy from before the SDK
     if os.path.isdir(stale):
         shutil.rmtree(stale)
+
+def write_build_identity(build, output, keep, older=None):
+    """<build>/symbols/<id>.txt, buildid, commit and source for `output`;
+    the build id is returned.
+
+    Save states are carried between builds with these tables
+    (src/pc/guest/state.c): every function in the executable, because the
+    game keeps pointers to native routines as well as its own (HMD
+    primitive drivers, callbacks), and the game objects' variables: the
+    symbols keep(kind, address) takes. "address size name"; repeats of a
+    static name get #2, #3... in address order, which follows the link
+    order. The table's hash is the build id; `older`, a second name for the
+    same table."""
+    os.makedirs(f"{build}/symbols", exist_ok=True)
+    seen, table = {}, []
+    for line in run([NM, "-n", "-S", output]).splitlines():
+        parts = line.split()
+        if len(parts) != 4 or not c_name(parts[3]):
+            continue
+        parts[3] = c_name(parts[3])
+        if keep(parts[2], int(parts[0], 16)):
+            seen[parts[3]] = seen.get(parts[3], 0) + 1
+            name = parts[3] if seen[parts[3]] == 1 else f"{parts[3]}#{seen[parts[3]]}"
+            table.append(f"{parts[0]} {parts[1]} {name}\n")
+    if WINDOWS:
+        # PE symbols carry no sizes: a function runs to the next symbol, so
+        # crash and hang reports can name the routine an address is in.
+        rows = [row.split() for row in table]
+        for index, row in enumerate(rows):
+            if int(row[1], 16) == 0 and index + 1 < len(rows):
+                row[1] = f"{int(rows[index + 1][0], 16) - int(row[0], 16):08x}"
+        table = [" ".join(row) + "\n" for row in rows]
+    if not table:
+        sys.exit(f"{output}: no symbols to carry save states between builds with (the link dropped its symbol table)")
+    build_id = hashlib.sha256("".join(table).encode()).hexdigest()[:8]
+    for name in (build_id, older) if older else (build_id,):
+        with open(f"{build}/symbols/{name}.txt", "w") as handle:
+            handle.writelines(table)
+    with open(f"{build}/buildid", "w") as handle:
+        handle.write(build_id + "\n")
+    # The commit, for crash reports (src/pc/debug/monitor.c): "unknown" in
+    # a tree that is not a git checkout.
+    try:
+        commit = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=10"], capture_output=True,
+                                text=True, check=True).stdout.strip() or "unknown"
+    except (OSError, subprocess.CalledProcessError):
+        commit = "unknown"
+    with open(f"{build}/commit", "w") as handle:
+        handle.write(commit + "\n")
+    with open(f"{build}/source", "w") as handle:
+        handle.write(source_stamp() + "\n")
+    return build_id
+
+def package_android_build(build, game, build_id):
+    """The APK: libmain.so and `game` (libgame.so), with this build's id,
+    commit and symbol table (save states, crash reports) and what the
+    desktop games have beside them: the shipped mods (their objects checked
+    against this build's own export table) and the language packs, all
+    under assets/build/, which android.c unpacks into the program directory."""
+    import package_android
+    assets = {"build/buildid": f"{build}/buildid", "build/commit": f"{build}/commit",
+              f"build/symbols/{build_id}.txt": f"{build}/symbols/{build_id}.txt"}
+    assets.update(package_android.program_files(build, ("mods", "languages")))
+    if ANDROID_ABI in ANDROID_PACKAGED:
+        package_android.package(build, ANDROID_ABI, f"{build}/libmain.so", game, assets)
+    else:
+        print(f"{build}: android-{ANDROID_ABI} builds for development and is not packaged; the app is "
+              f"{', '.join('android-' + abi for abi in ANDROID_PACKAGED)}")
+
+def build_android_translated(options):
+    """--target android-arm64-v8a (the app): the translated game.
+    build_arm64.py --target android-arm64-translated compiles the game
+    through the guest pass (tools/pc/llvm_guest.py) and links libgame.so at
+    0 (notes/pc-build.md, "Android arm64"); here the loader, the data mods,
+    the language packs, the identity files and the APK, as for the fixed
+    game, and the code mods through the same guest pass (build_mod.py
+    --target aarch64-translated) with the SDK that builds them."""
+    command = [sys.executable, os.path.join(ROOT, "tools/pc/build_arm64.py"), "--target", "android-arm64-translated",
+               "--build", options.build, *(["--release"] if options.release else [])]
+    print("Android arm64: the translated game (" + " ".join(command[1:]) + ")", flush=True)
+    if subprocess.run(command, cwd=ROOT).returncode:
+        sys.exit("build_arm64.py --target android-arm64-translated failed (its logs are in "
+                 f"{options.build}/logs)")
+    output = f"{options.build}/libgame.so"
+    link_android_loader(options.build, output, translated=True)
+    build_mods(options.build, options.release, target="aarch64-translated")
+    copy_languages(options.build, options.release)
+    build_id = write_build_identity(options.build, output, lambda kind, address: kind in "TtDdBbRr")
+    # The table the app ships is version 2: offsets into libgame.so (linked
+    # at 0) with content hashes and unit-qualified statics, which crash
+    # reports and save states of another build go by
+    # (tools/pc/translated_symbols.py, translated_state_symbols.c).
+    import translated_symbols
+    with open(f"{options.build}/symbols/{build_id}.txt", "w", newline="\n") as handle:
+        handle.write(translated_symbols.table(output))
+    package_android_build(options.build, output, build_id)
 
 def source_stamp():
     """The tree a build was made from, written to <build>/source: the
@@ -939,6 +1056,11 @@ def main():
                              "ARM phones) or android-x86 (development, not packaged; notes/pc-build.md, \"Android\")")
     parser.add_argument("--release", action="store_true",
                         help="Windows GUI executable; omit the optional disc-derived executable icon")
+    parser.add_argument("--android-memory", choices=("translated", "fixed"),
+                        default=os.environ.get("MEMORIES_ANDROID_MEMORY") or "translated",
+                        help="android-arm64-v8a: the translated game (the app's: no fixed host address, "
+                             "build_arm64.py) or the fixed one (guest memory at its PlayStation addresses, "
+                             "for comparison and code mods; notes/pc-build.md, \"Android arm64\")")
     # A Windows build made on Linux gets a directory of its own, so both
     # executables and their objects sit side by side.
     parser.add_argument("--build", default="tmp/pc/win64" if X64 else
@@ -961,6 +1083,9 @@ def main():
             sys.exit("Android builds use the SDL backend")
         os.chdir(ROOT)
         build_android_deps.main(ANDROID_ABI)   # the first build: SDL3, libpng and FreeType for the ABI
+        if A64 and options.android_memory == "translated":
+            build_android_translated(options)
+            return
     elif WINDOWS:
         if options.backend != "sdl":
             sys.exit("Windows builds use the SDL backend")
@@ -1388,67 +1513,12 @@ def main():
         os.environ["MEMORIES_MOD_CC"] = CC
     build_mods(options.build, options.release, target="x86_64-windows" if X64 else "aarch64" if A64 else "i386")
     copy_languages(options.build, options.release)
-    # Save states are carried between builds with these tables
-    # (src/pc/guest/state.c): every function in the executable, because the
-    # game keeps pointers to native routines as well as its own (HMD
-    # primitive drivers, callbacks), and the game objects' variables.
-    # "address size name"; repeats of a static name get #2, #3... in address
-    # order, which follows the link order. The table's hash is the build id.
-    os.makedirs(f"{options.build}/symbols", exist_ok=True)
-    seen, table = {}, []
-    for line in run([NM, "-n", "-S", output]).splitlines():
-        parts = line.split()
-        if len(parts) != 4 or not c_name(parts[3]):
-            continue
-        parts[3] = c_name(parts[3])
-        address = int(parts[0], 16)
-        in_game = any(start <= address < start + 0x00400000 for start in fixed.values())
-        if parts[2] in "Tt" or (parts[2] in "DdBb" and in_game):
-            seen[parts[3]] = seen.get(parts[3], 0) + 1
-            name = parts[3] if seen[parts[3]] == 1 else f"{parts[3]}#{seen[parts[3]]}"
-            table.append(f"{parts[0]} {parts[1]} {name}\n")
-    if WINDOWS:
-        # PE symbols carry no sizes: a function runs to the next symbol, so
-        # crash and hang reports can name the routine an address is in.
-        rows = [row.split() for row in table]
-        for index, row in enumerate(rows):
-            if int(row[1], 16) == 0 and index + 1 < len(rows):
-                row[1] = f"{int(rows[index + 1][0], 16) - int(row[0], 16):08x}"
-        table = [" ".join(row) + "\n" for row in rows]
-    if not table:
-        sys.exit(f"{output}: no symbols to carry save states between builds with (the link dropped its symbol table)")
-    build_id = hashlib.sha256("".join(table).encode()).hexdigest()[:8]
-    for name in (build_id, digest.hexdigest()[:8]):  # the second serves states saved before build ids
-        with open(f"{options.build}/symbols/{name}.txt", "w") as handle:
-            handle.writelines(table)
-    with open(f"{options.build}/buildid", "w") as handle:
-        handle.write(build_id + "\n")
-    # The commit, for crash reports (src/pc/debug/monitor.c): "unknown" in
-    # a tree that is not a git checkout.
-    try:
-        commit = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=10"], capture_output=True,
-                                text=True, check=True).stdout.strip() or "unknown"
-    except (OSError, subprocess.CalledProcessError):
-        commit = "unknown"
-    with open(f"{options.build}/commit", "w") as handle:
-        handle.write(commit + "\n")
-    with open(f"{options.build}/source", "w") as handle:
-        handle.write(source_stamp() + "\n")
+    in_game = lambda address: any(start <= address < start + 0x00400000 for start in fixed.values())
+    build_id = write_build_identity(options.build, output, lambda kind, address: kind in "Tt" or
+                                    (kind in "DdBb" and in_game(address)),
+                                    older=digest.hexdigest()[:8])  # serves states saved before build ids
     if ANDROID:
-        # The APK carries this build's id, commit and symbol table (save
-        # states, crash reports) and what the desktop games have beside
-        # them: the shipped mods (their objects checked against this build's
-        # own export table) and the language packs, all under assets/build/,
-        # which android.c unpacks into the program directory.
-        import package_android
-        assets = {"build/buildid": f"{options.build}/buildid", "build/commit": f"{options.build}/commit",
-                  f"build/symbols/{build_id}.txt": f"{options.build}/symbols/{build_id}.txt"}
-        assets.update(package_android.program_files(options.build, ("mods", "languages")))
-        if ANDROID_ABI in ANDROID_PACKAGED:
-            package_android.package(options.build, ANDROID_ABI, f"{options.build}/libmain.so", output, assets)
-        else:
-            print(f"{options.build}: android-{ANDROID_ABI} builds for development and is not packaged; the app is "
-                  f"{', '.join('android-' + abi for abi in ANDROID_PACKAGED)}")
+        package_android_build(options.build, output, build_id)
     kinds = {name: functions.get(name, "outside_resident_image") for name in stubs}
     report = {"game_units": len(game), "pinned_data_symbols": len(pinned),
               "stubbed": {kind: sorted(n for n in stubs if kinds[n] == kind)

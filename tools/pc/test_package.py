@@ -7,23 +7,26 @@ import tarfile
 import zipfile
 
 # build_mod.py's targets: each has its export list in every SDK.
-TARGETS = ("i386", "x86_64-windows", "aarch64")
+TARGETS = ("i386", "x86_64-windows", "aarch64-translated")
+
+
+def read_bytes(path, name):
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path) as archive:
+            return archive.read(name)
+    with tarfile.open(path) as archive:
+        return archive.extractfile(name).read()
 
 
 def read_member(path, name):
-    if path.suffix == ".zip":
-        with zipfile.ZipFile(path) as archive:
-            return archive.read(name).decode()
-    with tarfile.open(path) as archive:
-        return archive.extractfile(name).read().decode()
+    return read_bytes(path, name).decode()
 
 
-def check_exe(image):
-    """The shipped .exe: stripped (tools/pc/package.py strip) and with a
-    resource section (version information), since virus scanners flag data
-    after the last section and programs that say nothing about themselves.
-    Its PDB is named without the builder's path: Bitdefender flagged the CI
-    builds, whose path was the GitHub runner's D:/a/..."""
+def check_pe(image, label):
+    """What virus scanners' heuristics hold against a program (notes/
+    pc-release.md, "VirusTotal"): a COFF symbol table, data after the last
+    section, no resource section (version information), a zero PE checksum
+    (tools/pc/package.py strip fills it in). Returns the PE header's offset."""
     header = struct.unpack_from("<I", image, 0x3C)[0]
     sections, _, symbols, symbol_count, optional = struct.unpack_from("<HIIIH", image, header + 6)
     table = header + 24 + optional
@@ -33,9 +36,28 @@ def check_exe(image):
         names.add(image[at:at + 8].rstrip(b"\0"))
         size, offset = struct.unpack_from("<II", image, at + 16)
         end = max(end, offset + size)
-    assert symbols == 0 and symbol_count == 0, "memories-pc.exe keeps its COFF symbol table"
-    assert len(image) == end, f"memories-pc.exe has {len(image) - end} bytes after its last section"
-    assert b".rsrc" in names, "memories-pc.exe has no resources (version information)"
+    assert symbols == 0 and symbol_count == 0, f"{label} keeps its COFF symbol table"
+    assert len(image) == end, f"{label} has {len(image) - end} bytes after its last section"
+    assert b".rsrc" in names, f"{label} has no resources (version information)"
+    # The PE checksum package.py fills in after the strip: ImageHlp's sum
+    # of the file's 16-bit words (its own field as 0), folded, plus the length.
+    field = header + 24 + 64
+    stored = struct.unpack_from("<I", image, field)[0]
+    padded = image[:field] + bytes(4) + image[field + 4:] + bytes(len(image) % 2)
+    total = sum(struct.unpack(f"<{len(padded) // 2}H", padded))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    assert stored == total + len(image), f"{label}'s PE checksum is {stored:#x}, not {total + len(image):#x}"
+    return header
+
+
+def check_exe(image):
+    """The shipped .exe: stripped (tools/pc/package.py strip) and with a
+    resource section (version information), since virus scanners flag data
+    after the last section and programs that say nothing about themselves.
+    Its PDB is named without the builder's path: Bitdefender flagged the CI
+    builds, whose path was the GitHub runner's D:/a/..."""
+    header = check_pe(image, "memories-pc.exe")
     marker = image.find(b"RSDS")
     assert marker >= 0, "memories-pc.exe has no CodeView record"
     pdb = image[marker + 24:image.index(b"\0", marker + 24)]
@@ -45,18 +67,9 @@ def check_exe(image):
     # test path, which a release leaves out (MEMORIES_TEST_HOOKS).
     for name in (b"SetProcessDEPPolicy", b"GetProcessDEPPolicy", b"GetSystemDEPPolicy", b"MEMORIES_TEST_EXEC_GUEST"):
         assert name not in image, f"memories-pc.exe contains {name.decode()}"
-    # The PE checksum package.py fills in after the strip: ImageHlp's sum
-    # of the file's 16-bit words (its own field as 0), folded, plus the length.
-    field = header + 24 + 64
-    stored = struct.unpack_from("<I", image, field)[0]
-    padded = image[:field] + bytes(4) + image[field + 4:] + bytes(len(image) % 2)
-    total = sum(struct.unpack(f"<{len(padded) // 2}H", padded))
-    while total >> 16:
-        total = (total & 0xFFFF) + (total >> 16)
-    assert stored == total + len(image), f"memories-pc.exe's PE checksum is {stored:#x}, not {total + len(image):#x}"
 
 
-def check(path):
+def check(path, guest_ir_wanted=True):
     windows = path.suffix == ".zip"
     # The 64-bit Windows game (package.py windows-x64): an x86-64
     # executable, with its code mods' x86_64-windows objects.
@@ -100,7 +113,8 @@ def check(path):
     # Each code mod beside the game has the object for this game's target,
     # and not another target's.
     objects = [name for name in contents if name.startswith("mods/") and name.endswith(".o")]
-    ours = [name for name in objects if name.endswith(".x86_64-windows.o") == wide and not name.endswith(".aarch64.o")]
+    ours = [name for name in objects if name.endswith(".x86_64-windows.o") == wide
+            and not name.endswith((".aarch64.o", ".aarch64-translated.o"))]
     assert objects and ours == objects, f"mods/ has another target's objects: {sorted(set(objects) - set(ours))}"
     # The SDK's export lists: one per target build_mod.py builds for, so it
     # checks every object it makes (tools/pc/package.py), and for a 32-bit
@@ -110,6 +124,32 @@ def check(path):
         lists.add("sdk/exports.txt")
     assert lists <= contents, f"the SDK lacks export lists: {sorted(lists - contents)}"
     assert {name for name in contents if name.startswith("sdk/exports")} == lists, "the SDK has other export lists"
+    # The Android game's guest-pass tables, for its aarch64-translated object.
+    tables = {"sdk/mod_translation.json", "sdk/mod_signatures.json"}
+    assert tables <= contents, f"the SDK lacks the Android game's tables: {sorted(tables - contents)}"
+    # The guest pass, which build_mod.py runs the Android object through
+    # (tools/pc/build_sdk_guest_ir.py): without it a modder cannot build that
+    # object from the SDK. A program of this archive's system, a real one
+    # (the LLVM it carries makes it megabytes), executable on Linux.
+    guest_ir = "sdk/tools/memories-guest-ir" + (".exe" if windows else "")
+    assert "sdk/tools/build_mod.py" in contents, "the SDK lacks tools/build_mod.py"
+    if not guest_ir_wanted:
+        assert guest_ir not in contents, f"{guest_ir} is in an SDK packed with --no-guest-ir"
+    else:
+        assert guest_ir in contents, f"the SDK lacks the guest pass ({guest_ir}): the Android object cannot be built from it"
+        program = read_bytes(path, f"{next(iter(roots))}/{guest_ir}")
+        assert program[:2] == b"MZ" if windows else program[:4] == b"\x7fELF", \
+            f"{guest_ir} is not a {'Windows' if windows else 'Linux'} program"
+        assert len(program) > 1_000_000, f"{guest_ir} is only {len(program)} bytes"
+        if windows:
+            # Treated as memories-pc.exe is, for the same scanners: no symbols,
+            # nothing after the last section, version information, the checksum.
+            header = check_pe(program, guest_ir)
+            assert struct.unpack_from("<H", program, header + 4)[0] == 0x8664, f"{guest_ir} is not an x86-64 program"
+        else:
+            with tarfile.open(path) as archive:
+                member = archive.getmember(f"{next(iter(roots))}/{guest_ir}")
+                assert member.mode & 0o111, f"{guest_ir} must be executable"
     shipped = {name: read_member(path, f"{next(iter(roots))}/{name}") for name in sorted(lists)}
     assert all(len(text.split()) > 1000 for text in shipped.values()), "an SDK export list is (nearly) empty"
     if not wide:
@@ -128,10 +168,13 @@ def check(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archives", type=Path, required=True)
+    parser.add_argument("--no-guest-ir", action="store_true",
+                        help="archives packed with package.py --no-guest-ir (a pull request's check, where the "
+                             "pass was not built): the SDK must not have one")
     args = parser.parse_args()
     archives = sorted(args.archives.glob("*.zip")) + sorted(args.archives.glob("*.tar.gz"))
     assert archives, "no release archives found"
-    sdks = {path: check(path) for path in archives}
+    sdks = {path: check(path, not args.no_guest_ir) for path in archives}
     # A target's list is one build's (tools/pc/package.py), the same in every
     # archive of one version; the i386 one is each system's own, the same in
     # both Windows archives.

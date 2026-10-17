@@ -25,6 +25,10 @@ typedef struct GuestRuntimeRegion {
     uint64_t identity;
 } GuestRuntimeRegion;
 void GuestRuntime_RegisterGlobal(void *host, size_t length, uint64_t identity, unsigned flags);
+/* Bytes of the token arena (where registered host data gets its guest
+ * address) not taken yet: a code mod is refused rather than registered
+ * past it, which aborts. Fragmentation may leave less in one piece. */
+size_t GuestRuntime_AutomaticSpace(void);
 void GuestRuntime_RegisterAllocation(void *host, size_t length);
 unsigned GuestRuntime_RegionCount(void);
 const GuestRuntimeRegion *GuestRuntime_Region(unsigned index);

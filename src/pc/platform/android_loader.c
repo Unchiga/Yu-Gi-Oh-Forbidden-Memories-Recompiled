@@ -1,6 +1,16 @@
 /* Android: libmain.so, the library SDL's Java shell loads and whose SDL_main
- * it runs, is only this loader. The game is libgame.so, linked at a fixed
- * base (MEMORIES_ANDROID_GAME_BASE, set by build_game32.py), and loaded here
+ * it runs, is only this loader, and the game is libgame.so.
+ *
+ * The arm64 app's game is the translated build (MEMORIES_ANDROID_TRANSLATED,
+ * set by build_game32.py): linked at 0, it holds no host address and is
+ * opened wherever the system puts it, with nothing reserved; its save states
+ * name it by its build ID (translated_state_backend.c). Its guest memory
+ * needs no fixed host range either, so a phone whose Java runtime holds
+ * 0x80000000 or 0xC0000000 starts it all the same. A library that will not
+ * load ends in the system's box with the device line, as below.
+ *
+ * The fixed game (build_game32.py --android-memory fixed, and android-x86)
+ * is linked at a fixed base (MEMORIES_ANDROID_GAME_BASE), and loaded here
  * into a range reserved at that very address, so it sits where it was
  * linked on every launch: the addresses a save state holds (return
  * addresses on the game stack, callbacks in guest RAM, the game's variables)
@@ -17,8 +27,10 @@
  * not just flash and close. */
 #ifdef __ANDROID__
 #include "pc/compat/fs.h" /* setenv, as every unit that names a file or a variable */
+#ifndef MEMORIES_ANDROID_TRANSLATED
 #include "pc/compat/mman.h" /* <sys/mman.h> and Memories_MapFixed */
 #include <android/dlext.h>
+#endif
 #include <android/log.h>
 #include <dlfcn.h>
 #include <stdint.h>
@@ -30,7 +42,7 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
-#ifndef MEMORIES_ANDROID_GAME_BASE
+#if !defined(MEMORIES_ANDROID_TRANSLATED) && !defined(MEMORIES_ANDROID_GAME_BASE)
 #error "build_game32.py defines MEMORIES_ANDROID_GAME_BASE and MEMORIES_ANDROID_GAME_SPAN"
 #endif
 
@@ -43,6 +55,7 @@ static void say(const char *text)
     __android_log_write(ANDROID_LOG_INFO, LOG_TAG, text);
 }
 
+#ifndef MEMORIES_ANDROID_TRANSLATED
 /* What holds the part of [low, high) that the reservation could not have:
  * to the log, and the first few, as "start-end name", to `held` for the
  * message the player sees (a screenshot of it is the report). */
@@ -70,6 +83,7 @@ static void say_occupants(uintptr_t low, uintptr_t high, char *held, size_t size
     }
     fclose(maps);
 }
+#endif
 
 /* "Xiaomi Redmi Note 8 Pro, Android 10 (API 29), Linux 4.14.141" */
 static void device_line(char *out, size_t size)
@@ -107,6 +121,29 @@ static int game_path(char *out, size_t size)
     return snprintf(out, size, "%.*s/libgame.so", (int)(slash - info.dli_fname), info.dli_fname) < (int)size ? 0 : -1;
 }
 
+#ifdef MEMORIES_ANDROID_TRANSLATED
+int SDL_main(int argc, char **argv)
+{
+    char path[1024], line[1500], device[300];
+    void *game;
+    GameMain run;
+    Dl_info info;
+    if (game_path(path, sizeof(path))) snprintf(path, sizeof(path), "libgame.so");
+    if (!(game = dlopen(path, RTLD_NOW))) {
+        device_line(device, sizeof(device));
+        snprintf(line, sizeof(line), "The game could not start: cannot load %s: %s\n\n%s", path, dlerror(), device);
+        fail(line);
+    }
+    run = (GameMain)dlsym(game, "Memories_AndroidMain");
+    if (!run) fail("The game could not start: libgame.so has no Memories_AndroidMain");
+    if (dladdr((void *)run, &info)) {
+        snprintf(line, sizeof(line), "memories-pc: libgame.so (translated) loaded at %p", info.dli_fbase);
+        say(line);
+    }
+    /* As below: Memories_AndroidMain ends the process itself. */
+    exit(run(argc, argv));
+}
+#else
 int SDL_main(int argc, char **argv)
 {
     char path[1024], line[1200];
@@ -191,4 +228,5 @@ int SDL_main(int argc, char **argv)
      * later, such as one SDL opens during main, run first). */
     exit(run(argc, argv));
 }
+#endif
 #endif

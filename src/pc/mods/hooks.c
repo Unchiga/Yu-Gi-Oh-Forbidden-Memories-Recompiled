@@ -47,9 +47,10 @@
 #include <unistd.h>   /* sysconf */
 #endif
 
-/* The macOS game (translated) registers each hookable function's body
- * instead (Hooks_Register); the Linux/Android arm64 game is patched. */
-#if defined(__APPLE__) && defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
+/* The translated game (macOS, Android arm64) registers each hookable
+ * function's body instead (Hooks_Register); the fixed arm64 game
+ * (build_game32.py's) is patched. */
+#if defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
 #define ARM64_HOOKS 1
 static struct { void *function, *body; } registered[8192];
 static unsigned registered_count;
@@ -219,6 +220,7 @@ static int writable(unsigned char *from, size_t size, int on)
     return 0;
 }
 
+#ifndef ARM64_HOOKS /* the translated game patches nothing (find_target) */
 /* The six bytes before, and the two at, the entry a patchable function has.
  * GCC writes single-byte nops; clang writes 66 90 at the entry. */
 static int patchable(const unsigned char *entry)
@@ -238,6 +240,7 @@ static int patchable(const unsigned char *entry)
     return 0;
 #endif
 }
+#endif
 
 static int find_target(unsigned char *entry)
 {

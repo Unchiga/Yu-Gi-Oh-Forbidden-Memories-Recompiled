@@ -54,7 +54,7 @@ extern void __x86_indirect_thunk_esi(void);
 #elif defined(__x86_64__) && defined(_WIN32)
 extern void ___chkstk_ms(void);
 extern void __x86_indirect_thunk_r11(void);
-#elif defined(__aarch64__) && !defined(__APPLE__)   /* the macOS game links dylibs */
+#elif defined(__aarch64__) && !defined(__APPLE__) && !defined(MEMORIES_TRANSLATED)   /* the macOS game links dylibs */
 /* The game's SLS thunks (branch_thunks.c), for the weak copies clang puts
  * in each AArch64 unit of a mod (object_loader.c binds those to these). */
 #define T(n) extern void __llvm_slsblr_thunk_x##n(void);
@@ -75,7 +75,7 @@ static int mod_rand(void)
     return (int)(mod_seed / 65536u % 32768u);
 }
 static void mod_srand(unsigned seed) { mod_seed = seed; }
-#if defined(__APPLE__) && defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
+#if defined(__aarch64__) && defined(MEMORIES_TRANSLATED)
 /* Direct imports from translated dylibs use the mod RNG, not the game RNG. */
 int Mods_ModRand(void) { return mod_rand(); }
 void Mods_ModSrand(unsigned seed) { mod_srand(seed); }
@@ -101,7 +101,7 @@ static const struct { const char *name; Function function; } functions[] = {
     F(__x86_indirect_thunk_edx), F(__x86_indirect_thunk_esi),
 #elif defined(__x86_64__) && defined(_WIN32)
     F(___chkstk_ms), F(__x86_indirect_thunk_r11),
-#elif defined(__aarch64__) && !defined(__APPLE__)   /* the macOS game links dylibs */
+#elif defined(__aarch64__) && !defined(__APPLE__) && !defined(MEMORIES_TRANSLATED)   /* the macOS game links dylibs */
     F(__llvm_slsblr_thunk_x0), F(__llvm_slsblr_thunk_x1), F(__llvm_slsblr_thunk_x10), F(__llvm_slsblr_thunk_x11),
     F(__llvm_slsblr_thunk_x12), F(__llvm_slsblr_thunk_x13), F(__llvm_slsblr_thunk_x14), F(__llvm_slsblr_thunk_x15),
     F(__llvm_slsblr_thunk_x16), F(__llvm_slsblr_thunk_x17), F(__llvm_slsblr_thunk_x19), F(__llvm_slsblr_thunk_x2),

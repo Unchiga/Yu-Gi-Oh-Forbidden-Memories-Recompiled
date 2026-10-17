@@ -6,6 +6,14 @@
 #include <string.h>
 #include <sys/mman.h>
 
+/* No game beside the test: no symbol table, so states stay same-build
+ * (translated_state_symbols.c). */
+int Memories_SymbolTablePath(char *out, size_t size)
+{
+    if (out && size) out[0] = 0;
+    return -1;
+}
+
 int main(void)
 {
     MemoriesMemory *old_ram = calloc(1, sizeof(*old_ram)), *new_ram = calloc(1, sizeof(*new_ram));

@@ -233,6 +233,15 @@ const GuestRuntimeRegion *GuestRuntime_Region(unsigned index)
 {
     return index < region_count ? &regions[index] : NULL;
 }
+size_t GuestRuntime_AutomaticSpace(void)
+{
+    size_t used = 0;
+    unsigned i;
+    for (i = 0; i < region_count; ++i)
+        if (regions[i].guest >= AUTOMATIC_BASE && regions[i].guest < AUTOMATIC_END)
+            used += ((size_t)regions[i].length + 15u) & ~(size_t)15u;
+    return used >= AUTOMATIC_END - AUTOMATIC_BASE ? 0 : AUTOMATIC_END - AUTOMATIC_BASE - used;
+}
 void GuestRuntime_RegisterGlobal(void *host, size_t length, uint64_t identity, unsigned flags)
 {
     unsigned i;
