@@ -126,6 +126,7 @@ static int disc_file_count, disc_layout_frozen, preparing_data;
 static Mod mods[MODS_MAX];
 static int mod_count;
 static unsigned activation_sequence;
+static unsigned change_count;   /* Mods_Changes */
 static int scanned;
 static int shut_down;   /* Mods_Shutdown has run: no mod code is called again */
 
@@ -1746,6 +1747,7 @@ static void activate_once(int index, int on)
 {
     Mod *mod = &mods[index];
     if (on == mod->active) return;
+    change_count++;   /* before it can fail: a rollback is a change too */
     if (on) {
         int option_count = Mods_OptionCount(index);
         if (option_count && !mod->runtime_options) {
@@ -2167,6 +2169,8 @@ int Mods_HasCode(int index) { return at(index) && Manifest_HasCode(Mods_Manifest
 unsigned Mods_CodeHash(int index) { return at(index) ? mods[index].code_hash : 0; }
 
 unsigned Mods_Sequence(int index) { return at(index) ? mods[index].sequence : 0; }
+
+unsigned Mods_Changes(void) { return change_count; }
 
 void Mods_OptionChanged(int index, int option)
 {

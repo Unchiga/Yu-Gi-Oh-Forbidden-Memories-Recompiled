@@ -66,7 +66,7 @@ static inline void scratch_template(char *out, size_t size, const char *name)
 static inline const char *const *scratch_kinds(size_t *count)
 {
     static const char *const kinds[] = {
-        "memories-audio", "memories-backend", "memories-card-identities", "memories-card-order", "memories-controls",
+        "memories-audio", "memories-backend", "memories-card-identities", "memories-card-layout-art", "memories-card-order", "memories-controls",
         "memories-decks", "memories-disc", "memories-fs", "memories-lifecycle", "memories-log",
         "memories-manager", "memories-mod-window", "memories-mods", "memories-packs", "memories-report-folder", "memories-rom", "memories-runtime",
         "memories-save-menu", "memories-save-slots", "memories-scratch-rules", "memories-settings",

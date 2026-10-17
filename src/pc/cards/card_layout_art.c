@@ -13,6 +13,7 @@
 #include "pc/render/soft_gpu.h"
 #include "pc/render/texture_pack.h"
 #include "pc/debug/log.h"
+#include "pc/mods/mods.h"
 #include "game/card_constants.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,11 @@
 #define FRAME_BANK 13   /* 1-12 the 3D Monsters mod, 14 star icons, 15 glyphs, 0 is real VRAM */
 /* An 8bpp texture page starts on a 64-word boundary. */
 #define LAYOUT_TPAGE(x, y) (0x80 | (FRAME_BANK << 11) | ((x) / 64) | (((y) / 256) << 4))
+
+/* Every cell function starts here (defined after the caches it drops): a mod
+ * switched on or off since the last call may have different pictures under the
+ * same paths (see CardLayoutArt_Clear). */
+static void sync_with_mods(void);
 
 /* PS1 hardware never actually draws a textured quad's own far-right or
  * far-bottom texel: gl_picture.c's own texel_left_out says so directly
@@ -175,6 +181,7 @@ static int small_cell(SmallKind *kind, const char *path, int *tpage, int *u, int
     char why[128];
     int i, x, y, cx, cy, row;
 
+    sync_with_mods();
     if (!path || !*path || !(bank = SoftGpu_Bank(FRAME_BANK))) return 0;
     for (i = 0; i < kind->count && !slot; i++) {
         if (kind->slots[i].used && !strcmp(kind->slots[i].path, path)) slot = &kind->slots[i];
@@ -301,6 +308,7 @@ int CardLayoutArt_BackCell(int card_id, int *tpage, int *u, int *v, int *clut, i
     char key[1040];
     int x, y, bw, bh;
 
+    sync_with_mods();
     if (!path || !*path || !(bank = SoftGpu_Bank(FRAME_BANK))) return 0;
     if (!CardLayout_StyleOf(card_id, &style)) return 0;
     bw = style.width;
@@ -325,8 +333,15 @@ int CardLayoutArt_BackCell(int card_id, int *tpage, int *u, int *v, int *clut, i
         snprintf(back_bank_path, sizeof(back_bank_path), "%s", key);
         back_built_w = bw;
         back_built_h = bh;
+        /* The one back the bank holds, with the one HD sprite of it.  The
+         * texture pack keeps a registration per size and finds the newest
+         * first, so an earlier style's smaller back left in place would keep
+         * covering its corner of this one's (and of a later return to its
+         * own).  Its own owner lets it go whole, whether or not this
+         * back has a PNG of its own to register. */
+        TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_BACK);
         if (back_png_w > 0 && back_png_h > 0) {
-            TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
+            TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_LAYOUT_BACK);
             TexturePack_AddBankSprite(FRAME_BANK, BACK_PAGE_X, BACK_PAGE_Y, 1, BACK_CLUT_X, BACK_CLUT_Y, 0, 0,
                                       bw, bh, path);
         }
@@ -468,6 +483,7 @@ int CardLayoutArt_FrameTile(int col, int row, int *tpage, int *clut, int *w, int
     int sx, sy, sx1, sy1;
     if (col < 0 || col >= FRAME_COLS || row < 0 || row >= FRAME_ROWS) return 0;
     if (!path || !*path) { LOG(LOG_CARD_LAYOUT, "FrameTile: no path"); return 0; }
+    sync_with_mods();
     if (!(bank = SoftGpu_Bank(FRAME_BANK))) { LOG(LOG_CARD_LAYOUT, "FrameTile: no bank"); return 0; }
     image = image_for(path, 1);
     if (!image || !image->indices) return 0;
@@ -529,6 +545,7 @@ int CardLayoutArt_DigitCell(int digit, int dim, int *tpage, int *u, int *v, int 
     uint16_t *bank, *page;
 
     if (digit < 0 || digit > 9) return 0;
+    sync_with_mods();
     if (!CardLayout_Digits(path, sizeof(path), &dw, &dh, &step)) return 0;
     if (!(bank = SoftGpu_Bank(FRAME_BANK))) return 0;
     digits_build(path);
@@ -761,6 +778,55 @@ static void layout_bank_registrations_lost(void)
     for (i = 0; i < TITLE_SLOTS; i++) title_masks[i].valid = 0;
 }
 
+/* Everything this file keeps of a picture, keyed by its path: a mod's pictures
+ * are read once and the path says nothing of the file's content, so a mod
+ * turned off and on with its PNGs edited in between (or another mod's under the
+ * same path) would go on drawing what was read first.  Drops the decoded
+ * pixels, the bank's "stored" bookkeeping, the HD registrations and every
+ * decoded PNG the texture pack keeps unused -- not only those still named here:
+ * a back, a digit strip or a sprite evicted earlier waits there as a spare, and
+ * would come back stale by its path.  The next draw reads them again.  Nothing
+ * is read here and the bank's texels stay until a draw writes over them. */
+void CardLayoutArt_Clear(void)
+{
+    int i, j;
+
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_DIGITS);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_BACK);
+    TexturePack_BankImagesForgetSpare();
+    for (i = 0; i < FRAME_CACHE; i++) free(images[i].indices);
+    memset(images, 0, sizeof(images));
+    memset(slots, 0, sizeof(slots));
+    for (i = 0; i < (int)(sizeof(small_kinds) / sizeof(small_kinds[0])); i++) {
+        for (j = 0; j < small_kinds[i]->count; j++) free(small_kinds[i]->slots[j].indices);
+        memset(small_kinds[i]->slots, 0, (size_t)small_kinds[i]->count * sizeof(SmallSlot));
+    }
+    free(back_indices);
+    back_indices = NULL;
+    back_path[0] = 0;
+    back_bank_path[0] = 0;
+    back_png_w = back_png_h = 0;
+    free(digits_indices);
+    digits_indices = NULL;
+    digits_path[0] = 0;
+    digits_bank_path[0] = 0;
+    digits_png_w = digits_png_h = 0;
+    for (i = 0; i < TITLE_SLOTS; i++) title_masks[i].valid = 0;
+}
+
+/* Mods_Changes moves when a mod goes on or off, and not otherwise, so a game
+ * with no mod change (or none at all) never gets here past the compare. */
+static void sync_with_mods(void)
+{
+    static unsigned seen;
+    unsigned now = Mods_Changes();
+
+    if (now == seen) return;
+    seen = now;
+    CardLayoutArt_Clear();
+}
+
 void CardLayoutArt_Prewarm(void)
 {
     static unsigned int frame;
@@ -768,6 +834,7 @@ void CardLayoutArt_Prewarm(void)
     char digits[1024] = "";
     int i, count, dw, dh, dstep;
 
+    sync_with_mods();
     if (++frame % 30) return;   /* the layout changes with a setting, not a frame */
     if (CardLayout_Digits(digits, sizeof(digits), &dw, &dh, &dstep) && strcmp(digits_path, digits)) {
         digits_build(digits);
@@ -782,6 +849,7 @@ void CardLayoutArt_Prewarm(void)
      * disabled, not merely because it supplies no large frame image. */
     if (!count && !CardLayout_Active()) {
         TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
+        TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_BACK);
         layout_bank_registrations_lost();
     }
     for (i = 0; i < count; i++) {

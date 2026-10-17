@@ -715,6 +715,26 @@ static void bank_sprites(void)
     TexturePack_Unload();
     assert(TexturePack_BankSample(14, 0, 0, 0, 0, 257, 1 << 16, 1 << 16, 2, &rgb) == 1 && rgb == 0xff0000);
     TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_STARS);
+    /* A PNG read once is kept by its path even after no sprite shows it (the
+     * spare images), so one edited on disk is read again only once the spares
+     * are forgotten; one a sprite still shows is not dropped. */
+    write_png("bank/e.png", red, 1, 1);
+    snprintf(a, sizeof(a), "%s/bank/e.png", root);
+    TexturePack_BankSpritesUseOwner(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
+    assert(TexturePack_AddBankSprite(13, 0, 0, 1, 0, 254, 0, 0, 4, 4, a));
+    TexturePack_BankImagesForgetSpare();   /* still shown: kept */
+    assert(TexturePack_BankSample(13, 0, 0, 1, 0, 254, 1 << 16, 1 << 16, 2, &rgb) == 1 && rgb == 0xff0000);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
+    write_png("bank/e.png", green, 1, 1);
+    assert(TexturePack_AddBankSprite(13, 0, 0, 1, 0, 254, 0, 0, 4, 4, a));
+    assert(TexturePack_BankSample(13, 0, 0, 1, 0, 254, 1 << 16, 1 << 16, 2, &rgb) == 1 && rgb == 0xff0000);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
+    TexturePack_BankImagesForgetSpare();
+    assert(TexturePack_AddBankSprite(13, 0, 0, 1, 0, 254, 0, 0, 4, 4, a));
+    assert(TexturePack_BankSample(13, 0, 0, 1, 0, 254, 1 << 16, 1 << 16, 2, &rgb) == 1 && rgb == 0x00ff00);
+    TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_LAYOUT_FRAME);
+    TexturePack_BankImagesForgetSpare();
+    TexturePack_BankImagesForgetSpare();   /* none left: nothing to do */
 }
 
 int main(void)

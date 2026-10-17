@@ -94,4 +94,10 @@ int CardLayoutArt_TitleCell(int source_tpage, int source_u, int source_v, int so
  * card first draws. */
 void CardLayoutArt_Prewarm(void);
 
+/* Drops every picture this file kept by path (decoded pixels, HD registrations,
+ * the texture pack's decoded PNGs) so the next draw reads them again.  Each cell
+ * function does it by itself when a mod has gone on or off since its last call
+ * (Mods_Changes); public for the test. */
+void CardLayoutArt_Clear(void);
+
 #endif

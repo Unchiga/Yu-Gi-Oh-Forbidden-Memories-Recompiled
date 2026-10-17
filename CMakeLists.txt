@@ -835,6 +835,18 @@ if(BUILD_TESTING)
         target_compile_options(memories_texture_pack_test PRIVATE -Wall -Wextra -Werror)
     endif()
     add_test(NAME pc_texture_pack COMMAND memories_texture_pack_test)
+    # The card frames' bank pictures (card_layout_art.c) against the real texture pack:
+    # the card-viewer back per style, and pictures read again after a mod change.
+    add_executable(memories_card_layout_art_test tests/pc/card_layout_art_test.c src/pc/render/texture_pack.c
+        src/pc/mods/json.c src/pc/platform/paths.c ${memories_platform_support})
+    target_compile_definitions(memories_card_layout_art_test PRIVATE _POSIX_C_SOURCE=200809L)
+    target_include_directories(memories_card_layout_art_test PRIVATE src)
+    target_link_libraries(memories_card_layout_art_test PRIVATE memories_pc_core PNG::PNG Threads::Threads)
+    if(NOT MSVC)
+        # -Wno-comment: card_layout_art.c writes "*w/*h" inside a comment.
+        target_compile_options(memories_card_layout_art_test PRIVATE -Wall -Wextra -Wno-comment -Werror)
+    endif()
+    add_test(NAME pc_card_layout_art COMMAND memories_card_layout_art_test)
     # A mod's .zip into the mods folder (src/pc/mods/import.c, the Android
     # Mods panel's Import): layouts, what counts as code, Replace, and the
     # .zip files refused before anything is written.

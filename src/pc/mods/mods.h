@@ -222,6 +222,9 @@ void Mods_SetCardNotes(const char *(*notes)(int id), int (*tag)(int id, const ch
 void Mods_Dispatch(MemoriesModEvent *event);
 int Mods_Notify(unsigned type, int a, int b, int c);
 unsigned Mods_Sequence(int mod);
+/* Counts each mod put in place or taken out (never an unchanged one), so a cache
+ * of what mods supplied can tell it is out of date. */
+unsigned Mods_Changes(void);
 int Mods_RuntimeOption(int mod, int option);
 /* One of an applied mod's settings changed (Mods_OptionSet): its texture
  * pack, whose parts may follow the setting, is loaded again. */
