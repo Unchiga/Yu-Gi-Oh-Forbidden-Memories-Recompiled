@@ -273,9 +273,19 @@ def stage(system, label, exports=None):
     os.makedirs(os.path.join(folder, "symbols"))
     for name in os.listdir(os.path.join(build_dir, "symbols")):
         path = os.path.join(build_dir, "symbols", name)
+        if name.endswith(".vars.txt"):
+            continue   # below: only this build's
         with open(path, "rb") as a, open(current, "rb") as b:
             if a.read() == b.read():
                 shutil.copy2(path, os.path.join(folder, "symbols", name))
+    # Its variable table too (<id>.vars.txt): the control channel names the
+    # game's variables from it (notes/agent-control.md), and without it
+    # Game.peek by name fails.
+    variables = current[:-len(".txt")] + ".vars.txt"
+    if not os.path.isfile(variables):
+        sys.exit(f"{variables}: the build has no variable table (build_game32.py writes it beside the symbol "
+                 "table; this build directory is from before): build again")
+    shutil.copy2(variables, os.path.join(folder, "symbols"))
     shutil.copy2(os.path.join(ROOT, "tools/pc/release/README.txt"), folder)
     if system == "windows-x64":
         with open(os.path.join(folder, "README.txt"), encoding="utf-8") as handle:

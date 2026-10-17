@@ -69,6 +69,21 @@ static int number(const char *text, int hex, uint32_t *out)
     return 0;
 }
 
+/* peek's and poke's address: hex, or @NAME[+OFF], a game variable by its name
+ * (OFF hex); the game finds where NAME is in this build. */
+static int address_argument(char *text, ControlCommand *command)
+{
+    char *plus;
+    if (!text || text[0] != '@') return number(text, 1, &command->address);
+    command->symbol = text + 1;
+    plus = strchr(command->symbol, '+');
+    if (plus) {
+        *plus = '\0';
+        if (number(plus + 1, 1, &command->offset)) return -1;
+    }
+    return *command->symbol ? 0 : -1;
+}
+
 static int at_end(char **cursor)
 {
     return word(cursor) == NULL;
@@ -122,14 +137,15 @@ int ControlProtocol_Parse(char *line, ControlCommand *command, uint8_t *data, ch
         }
     } else if (!strcmp(name, "peek")) {
         command->kind = CONTROL_PEEK;
-        if (number(word(&cursor), 1, &command->address) || number(word(&cursor), 0, &command->length) ||
+        if (address_argument(word(&cursor), command) || number(word(&cursor), 0, &command->length) ||
             !at_end(&cursor))
-            return fail(error, error_size, "usage: peek ADDR LEN (ADDR hex, LEN decimal)");
+            return fail(error, error_size, "usage: peek ADDR LEN (ADDR hex or @NAME[+OFF], LEN decimal)");
         if (command->length > CONTROL_DATA_MAX) return fail(error, error_size, "peek: at most 16384 bytes at once");
     } else if (!strcmp(name, "poke")) {
         size_t digits, i;
         command->kind = CONTROL_POKE;
-        if (number(word(&cursor), 1, &command->address)) return fail(error, error_size, "usage: poke ADDR HEX");
+        if (address_argument(word(&cursor), command))
+            return fail(error, error_size, "usage: poke ADDR HEX (ADDR hex or @NAME[+OFF])");
         argument = word(&cursor);
         if (!argument || !at_end(&cursor)) return fail(error, error_size, "usage: poke ADDR HEX");
         digits = strlen(argument);

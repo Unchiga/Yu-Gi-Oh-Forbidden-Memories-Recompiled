@@ -2976,7 +2976,10 @@ bit-identical. How (details in `src/pc/guest/state.h`):
     wrong one of its two buffers from then on. `build_game32.py` now puts
     them in `game_data` after everything else (`$n`), where no variable
     moves, and a variables chunk shorter than the section (a state from
-    before) restores the part it has. The other way round, an older build says the
+    before) restores the part it has. These variables are therefore not at
+    their retail addresses (nor on Linux: the game's `game_data`/`game_bss`
+    are not the guest RAM); the control channel finds them by name
+    (`peek @gGraphics_sViewportX`), see notes/agent-control.md. The other way round, an older build says the
     game's variables "do not match this build" and leaves them out: the
     state loads, but play does not go on as saved. Issue #229 was the same
     gap in Build Deck: its two panes lie side by side and the screen slides
@@ -3029,7 +3032,10 @@ bit-identical. How (details in `src/pc/guest/state.h`):
   grew). Every build files all of its functions and the game objects'
   variables in `tmp/pc/game32/symbols/<build id>.txt`, the id being the
   table's hash (also written to `tmp/pc/game32/buildid`, which the runtime
-  reads); the state header carries the id (format version 3; version 1
+  reads; beside it, `<build id>.vars.txt` names the variables the build
+  defines (game, module and native) and pins, and where, for the control
+  channel's `peek @NAME`, notes/agent-control.md; it is shipped with the
+  build); the state header carries the id (format version 3; version 1
   carried the game-source fingerprint, version 2 the build id of a game
   compiled without the indirect-branch thunks).
   A state from another build is

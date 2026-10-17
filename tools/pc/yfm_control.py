@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import struct
 import subprocess
@@ -70,12 +71,16 @@ JUMP_MODES = {"title": MODE["menu"], "debug": MODE["debug"], "duel": MODE["duel"
               "build_deck": MODE["build_deck"], "library": MODE["library"], "password": MODE["password"],
               "map": MODE["campaign_map"], "credits": MODE["credits"], "options": MODE["options"]}
 
-# Guest addresses by name. config/pc/guest_addresses.txt has every global the
-# build pins to its retail address, and is read when present (a checkout);
-# these are the fallbacks, from the headers named. The symbol table beside
-# the executable (symbols/<build id>.txt, for carrying states between builds)
-# holds only host addresses (functions and the game objects' own variables),
-# none of these.
+# Guest addresses by name. A variable a game unit (or the port's native code)
+# defines, all of the small data (.sdata and .sbss: gGraphics_sViewportX)
+# and a module's among them (gCampaignMap_Location), is not at its retail
+# address in a build, only a pinned one is. The build says which is which in
+# symbols/<id>.vars.txt, and peek and poke ask the game (Game.locate): a
+# defined name is read in the process, a pinned one at the retail address the
+# game gives, and a name the build has neither way is an error. This table,
+# config/pc/guest_addresses.txt (read when present, a checkout) with these
+# fallbacks from the headers named, is only for an executable too old to be
+# asked, which warns.
 FALLBACK = {
     "D_8009B26C": 0x8009B26C,             # main_mode_state.h: the active mode and its flags
     "gDuel_bOpponentID": 0x8009B361,      # the duellist the next duel is against
@@ -101,6 +106,13 @@ SIDE_SIZE, RECORD_SIZE, HAND_SIZE, DECK_SIZE, CARDS = 0x20, 0x1C, 5, 40, 722
 # five hand slots (D_800907CC), then the field (D_800907D8): five monster
 # zones and five spell and trap zones.
 HAND_RECORDS, MONSTER_RECORDS, SPELL_RECORDS = range(0, 5), range(5, 10), range(10, 15)
+
+
+# What a variable's name can be: C's, a function's static as the compiler
+# names it (Main_RunPasswordMenu.passwords: GCC may add a number to it on
+# Linux, which changes from one build to the next) and the build's #2 for a
+# repeated static. Not a '+' (peek's offset argument) nor a blank.
+VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*(#[0-9]+)?")
 
 
 class ControlError(RuntimeError):
@@ -171,6 +183,7 @@ class Game:
         self.out = Path(out).resolve()
         self.out.mkdir(parents=True, exist_ok=True)
         self.symbols = guest_addresses()
+        self._located: dict[str, int | str] = {}
         self.frame = self.vblank = 0
         self._buffer = b""
         settings_file = self.out / "settings.txt"
@@ -556,35 +569,88 @@ class Game:
         """FNV-1a of VRAM, as MEMORIES_FRAME_HASHES writes it."""
         return int(self.command("hash"), 16)
 
-    def address(self, where: int | str) -> int:
-        if isinstance(where, str):
-            if where not in self.symbols:
-                raise KeyError(f"no guest address named {where!r}: not in config/pc/guest_addresses.txt nor in "
-                               "yfm_control.FALLBACK")
-            return self.symbols[where]
-        return where
+    def locate(self, where: int | str) -> int | str:
+        """What peek and poke send for `where`: a guest address as it is, and
+        a name as "@name" when the game keeps the variable itself (what the
+        build defines: the small data, a module's, native code's, which is
+        not at its retail address), as the retail guest address the game gives
+        when the build pins it, and as the retail address of the table
+        (config/pc/guest_addresses.txt) when the build has the name in neither
+        way (no code of the game's refers to it: guest RAM is its only copy).
+        A name nobody has is a KeyError, one that is not a name a ValueError,
+        and a game with no variable table (a build without
+        symbols/<id>.vars.txt) a ControlError: neither falls back to a
+        guess."""
+        if not isinstance(where, str):
+            return where
+        if where not in self._located:
+            if not VARIABLE_NAME.fullmatch(where):
+                raise ValueError(f"{where!r} is not a variable name (letters, digits, _, . and # only; "
+                                 "use an address, or peek's offset argument, for an offset)")
+            try:
+                self.command(f"peek @{where} 1")
+                self._located[where] = f"@{where}"
+            except ControlError as error:
+                reason = str(error)
+                pinned = re.search(r"is pinned at retail address ([0-9a-f]{8})", reason)
+                if pinned:   # guest memory: the build's own table says where
+                    self._located[where] = int(pinned.group(1), 16)
+                elif "no variable table" in reason:
+                    raise ControlError(f"{where}: {reason}; its retail address would be a guess") from None
+                elif "usage: peek" in reason:   # an executable from before @NAME
+                    print(f"yfm_control: WARNING: this game cannot look up {where} (older than @NAME): using its "
+                          "retail address, which is wrong for small data and a module's variables", file=sys.stderr)
+                    if where not in self.symbols:
+                        raise KeyError(f"no variable named {where!r}: not in config/pc/guest_addresses.txt nor "
+                                       "yfm_control.FALLBACK") from None
+                    self._located[where] = self.symbols[where]
+                elif f"no variable {where} in this build" in reason:
+                    # The build's table is whole: a name in it is neither
+                    # defined nor pinned when no code of the game's refers to
+                    # it, and its only copy is the retail one in guest RAM.
+                    if where not in self.symbols:
+                        raise KeyError(f"no variable named {where!r}: this build neither defines nor pins it "
+                                       "(symbols/<id>.vars.txt) and the retail table "
+                                       "(config/pc/guest_addresses.txt) does not have it") from None
+                    self._located[where] = self.symbols[where]
+                else:
+                    raise
+        return self._located[where]
 
-    def peek(self, where: int | str, length: int) -> bytes:
-        """Guest memory (KSEG0, KSEG1 or physical; or a symbol's name)."""
-        address, data = self.address(where), b""
+    def address(self, where: int | str) -> int:
+        """The guest address of `where`; a ControlError for a variable the game
+        keeps itself (peek and poke reach it, and it has no guest address)."""
+        located = self.locate(where)
+        if isinstance(located, str):
+            raise ControlError(f"{where} is a variable of the game's own memory: it has no guest address; "
+                               "use peek and poke")
+        return located
+
+    def _spell(self, located: int | str, at: int) -> str:
+        return f"@{located[1:]}+{at:x}" if isinstance(located, str) else f"{located + at:08x}"
+
+    def peek(self, where: int | str, length: int, offset: int = 0) -> bytes:
+        """Guest memory (KSEG0, KSEG1 or physical; or a variable's name), from
+        `offset` bytes on."""
+        located, data = self.locate(where), b""
         while len(data) < length:
             count = min(16384, length - len(data))
-            data += bytes.fromhex(self.command(f"peek {address + len(data):08x} {count}"))
+            data += bytes.fromhex(self.command(f"peek {self._spell(located, offset + len(data))} {count}"))
         return data
 
-    def poke(self, where: int | str, data: bytes) -> None:
-        address = self.address(where)
+    def poke(self, where: int | str, data: bytes, offset: int = 0) -> None:
+        located = self.locate(where)
         for at in range(0, len(data), 16384):
-            self.command(f"poke {address + at:08x} {data[at:at + 16384].hex()}")
+            self.command(f"poke {self._spell(located, offset + at)} {data[at:at + 16384].hex()}")
 
     def u8(self, where: int | str, offset: int = 0) -> int:
-        return self.peek(self.address(where) + offset, 1)[0]
+        return self.peek(where, 1, offset)[0]
 
     def u16(self, where: int | str, offset: int = 0) -> int:
-        return struct.unpack("<H", self.peek(self.address(where) + offset, 2))[0]
+        return struct.unpack("<H", self.peek(where, 2, offset))[0]
 
     def u32(self, where: int | str, offset: int = 0) -> int:
-        return struct.unpack("<I", self.peek(self.address(where) + offset, 4))[0]
+        return struct.unpack("<I", self.peek(where, 4, offset))[0]
 
     def save(self, path: Path | str) -> Path:
         """A save state, here (relative paths go in the run's folder)."""

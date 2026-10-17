@@ -210,6 +210,12 @@ def main():
             [None],
         ),
         (
+            "symbols",
+            ["tests/pc/symbols_test.c", "src/pc/debug/symbols.c", "src/pc/compat/fs.c"],
+            [],
+            [None],
+        ),
+        (
             "control-net",
             ["tests/pc/control_net_test.c", "src/pc/debug/control_net.c"],
             [],

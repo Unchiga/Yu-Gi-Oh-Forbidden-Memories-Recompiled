@@ -453,6 +453,7 @@ if __name__ == "__main__":
     with open(os.path.join(build, "buildid")) as handle:
         build_id = handle.read().strip()
     assets = {"build/buildid": os.path.join(build, "buildid"), "build/commit": os.path.join(build, "commit"),
-              f"build/symbols/{build_id}.txt": os.path.join(build, "symbols", f"{build_id}.txt")}
+              f"build/symbols/{build_id}.txt": os.path.join(build, "symbols", f"{build_id}.txt"),
+              f"build/symbols/{build_id}.vars.txt": os.path.join(build, "symbols", f"{build_id}.vars.txt")}
     assets.update(program_files(build, ("mods", "languages")))
     package(build, sys.argv[2], os.path.join(build, "libmain.so"), os.path.join(build, "libgame.so"), assets)

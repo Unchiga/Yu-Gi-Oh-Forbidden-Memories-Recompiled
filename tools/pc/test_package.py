@@ -97,6 +97,12 @@ def check(path):
     assert required <= contents, f"missing files: {required - contents}"
     for directory in ("mods/", "symbols/", "sdk/"):
         assert any(name.startswith(directory) for name in contents), f"missing {directory}"
+    # The variable table the control channel names variables from, beside
+    # the symbol table of the same build id.
+    tables = {name for name in contents if name.startswith("symbols/") and name.endswith(".vars.txt")}
+    assert tables, "missing symbols/<build id>.vars.txt"
+    assert all(name[:-len(".vars.txt")] + ".txt" in contents for name in tables), \
+        f"{sorted(tables)}: not beside the symbol table of its build"
     # Each code mod beside the game has the object for this game's target,
     # and not another target's.
     objects = [name for name in contents if name.startswith("mods/") and name.endswith(".o")]

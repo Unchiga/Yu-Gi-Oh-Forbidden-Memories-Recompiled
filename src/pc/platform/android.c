@@ -1365,6 +1365,10 @@ static void unpack_program(void)
         snprintf(asset, sizeof(asset), "build/symbols/%s.txt", id);
         snprintf(path, sizeof(path), "%s/symbols/%s.txt", directory, id);
         ok = copy_asset(asset, path);
+        /* The variable table (control channel, symbols.c): not needed to play. */
+        snprintf(asset, sizeof(asset), "build/symbols/%s.vars.txt", id);
+        snprintf(path, sizeof(path), "%s/symbols/%s.vars.txt", directory, id);
+        copy_asset(asset, path);
         ok = unpack_files(directory) && ok;
         snprintf(path, sizeof(path), "%s/commit", directory);
         copy_asset("build/commit", path);

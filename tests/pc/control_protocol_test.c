@@ -51,6 +51,15 @@ static void commands(void)
     CHECK(parse("peek 1800000000 1", &c) == -1);
     CHECK(parse("poke 801D07E0 e8030000", &c) == 0 && c.kind == CONTROL_POKE && c.address == 0x801D07E0 &&
           c.length == 4 && data[0] == 0xe8 && data[1] == 0x03 && data[2] == 0 && data[3] == 0);
+    CHECK(parse("peek @gGraphics_sViewportX 2", &c) == 0 && c.kind == CONTROL_PEEK && c.length == 2 &&
+          !strcmp(c.symbol, "gGraphics_sViewportX") && c.offset == 0);
+    CHECK(parse("peek @D_8009B066+1a 4", &c) == 0 && !strcmp(c.symbol, "D_8009B066") && c.offset == 0x1a);
+    CHECK(parse("peek @name#2+0x10 1", &c) == 0 && !strcmp(c.symbol, "name#2") && c.offset == 0x10);
+    CHECK(parse("peek 801D0200 80", &c) == 0 && c.symbol == NULL && c.offset == 0);
+    CHECK(parse("poke @gGraphics_sViewportX+0 2800", &c) == 0 && c.kind == CONTROL_POKE && c.length == 2 &&
+          !strcmp(c.symbol, "gGraphics_sViewportX") && data[0] == 0x28 && data[1] == 0);
+    CHECK(parse("peek @ 1", &c) == -1 && parse("peek @+4 1", &c) == -1 && parse("peek @name+zz 1", &c) == -1);
+    CHECK(parse("poke @name+ 00", &c) == -1 && parse("poke @name", &c) == -1 && parse("peek @name", &c) == -1);
     CHECK(parse("poke 801D07E0 E8F", &c) == -1 && parse("poke 801D07E0 zz", &c) == -1);
     CHECK(parse("poke 801D07E0", &c) == -1 && parse("poke 801D07E0 00 00", &c) == -1);
     strcpy(big, "poke 80000000 ");

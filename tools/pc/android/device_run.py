@@ -69,6 +69,13 @@ def setup(build):
     # the runner saves states as build 0, and the app refuses them.
     if os.path.isfile(os.path.join(build, "buildid")):
         call("push", os.path.join(build, "buildid"), f"{REMOTE}/")
+        # and its variable table, which the control channel names variables
+        # from (notes/agent-control.md).
+        with open(os.path.join(build, "buildid")) as handle:
+            table = os.path.join(build, "symbols", handle.read().strip() + ".vars.txt")
+        if os.path.isfile(table):
+            call("shell", f"mkdir -p {REMOTE}/symbols")
+            call("push", table, f"{REMOTE}/symbols/")
     # The mods beside the game (the shipped ones, with their aarch64 objects),
     # where the runner's program directory has them: replaced whole.
     if os.path.isdir(os.path.join(build, "mods")):
