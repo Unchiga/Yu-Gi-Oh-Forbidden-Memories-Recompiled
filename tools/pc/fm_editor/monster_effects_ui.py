@@ -251,46 +251,15 @@ class ConditionDialog(FormDialog):
         self.vars["reset"].set(fx.RESET_LABELS[fx.RESET.index(reset)] if reset in fx.RESET else fx.RESET_LABELS[0])
 
         stat = c.get("stat", "atk")
-        if stat == "def":
-            self.vars["stat"].set("DEF")
-        elif stat in ("level", "lvl", "stars", "star"):
-            self.vars["stat"].set("Level")
-        else:
-            self.vars["stat"].set("ATK")
+        self.vars["stat"].set("DEF" if stat == "def" else "ATK")
 
         op = c.get("comparison") or c.get("op", ">=")
         self.vars["op"].set(fx.OP_LABELS[fx.OPS.index(op)] if op in fx.OPS else fx.OP_LABELS[3])
 
-        default_val = 4 if self.vars["stat"].get() == "Level" else 1500
-        self.vars["value"].set(str(c.get("value", default_val)))
+        self.vars["value"].set(str(c.get("value", 1500)))
 
-        if self.vars["stat"].get() == "Level":
-            self.val_spin.configure(from_=1, to=12, increment=1)
-        else:
-            self.val_spin.configure(from_=0, to=fx.AMOUNT_MAX, increment=100)
-
-        self.vars["stat"].trace_add("write", self.update_stat_bounds)
         self.vars["type"].trace_add("write", lambda *_: self.show_rows())
         self.show_rows()
-
-    def update_stat_bounds(self, *args):
-        stat = self.vars["stat"].get()
-        if stat == "Level":
-            self.val_spin.configure(from_=1, to=12, increment=1)
-            try:
-                cur = int(self.vars["value"].get().strip())
-                if cur < 1 or cur > 12:
-                    self.vars["value"].set("4")
-            except (ValueError, TypeError):
-                self.vars["value"].set("4")
-        else:
-            self.val_spin.configure(from_=0, to=fx.AMOUNT_MAX, increment=100)
-            try:
-                cur = int(self.vars["value"].get().strip())
-                if cur <= 12:
-                    self.vars["value"].set("1500")
-            except (ValueError, TypeError):
-                self.vars["value"].set("1500")
 
     def chosen(self, key, names, labels):
         text = self.vars[key].get()
@@ -340,12 +309,8 @@ class ConditionDialog(FormDialog):
                 val = int(self.vars["value"].get().strip())
             except ValueError:
                 return "Threshold must be a whole number."
-            if stat == "level":
-                if not 1 <= val <= 12:
-                    return "Level threshold must be 1 to 12."
-            else:
-                if not 0 <= val <= fx.AMOUNT_MAX:
-                    return f"Threshold must be 0 to {fx.AMOUNT_MAX}."
+            if not 0 <= val <= fx.AMOUNT_MAX:
+                return f"Threshold must be 0 to {fx.AMOUNT_MAX}."
             out["value"] = val
         elif c_type in ("lowest_atk", "highest_atk"):
             pass

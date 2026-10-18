@@ -1399,12 +1399,7 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(cond_card, {"type": "named_card", "card": 1, "whose": "own"})
         cond_atk = fx.normalize_condition({"type": "stat_threshold", "stat": "atk", "comparison": "<", "value": 1500})
         self.assertEqual(cond_atk, {"type": "stat_threshold", "stat": "atk", "comparison": "<", "value": 1500})
-        cond_lvl = fx.normalize_condition({"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7})
-        self.assertEqual(cond_lvl, {"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7})
-        self.assertEqual(fx.condition_words(cond_lvl), "Level >= 7")
-        self.assertEqual(fx.normalize_condition({"type": "stat_threshold", "stat": "stars", "comparison": "<=", "value": 4})["stat"], "level")
-        self.assertIsNone(fx.normalize_condition({"type": "stat_threshold", "stat": "level", "value": 13}))
-        self.assertIsNone(fx.normalize_condition({"type": "stat_threshold", "stat": "level", "value": 0}))
+        self.assertIsNone(fx.normalize_condition({"type": "stat_threshold", "stat": "level", "value": 7}))
         eff_cond = fx.normalize({"when": "face_up", "do": "battle_immunity",
                                  "conditions": [{"type": "lowest_atk"},
                                                 {"type": "first_attacked", "reset": "turn"}],

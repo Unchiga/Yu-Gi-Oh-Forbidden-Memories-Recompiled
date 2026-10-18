@@ -2659,30 +2659,25 @@ class MonsterEffectsGuiTest(GuiCase):
         from fm_editor.monster_effects_ui import ConditionDialog
         from fm_editor import monster_effects as fx
         app = self.app
-        # 1. Open with stat_threshold level
-        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7}, str)
-        self.assertEqual(dialog.vars["stat"].get(), "Level")
-        self.assertEqual(dialog.vars["value"].get(), "7")
-        self.assertEqual(int(dialog.val_spin.cget("to")), 12)
-        dialog.ok()
-        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7})
-
-        # 2. Open with stat_threshold atk, switch to Level
-        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "comparison": "<=", "value": 1500}, str)
+        # 1. Open with stat_threshold atk
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "comparison": ">=", "value": 1500}, str)
         self.assertEqual(dialog.vars["stat"].get(), "ATK")
-        self.assertEqual(int(dialog.val_spin.cget("to")), fx.AMOUNT_MAX)
-        dialog.vars["stat"].set("Level")
-        self.assertEqual(int(dialog.val_spin.cget("to")), 12)
-        self.assertEqual(dialog.vars["value"].get(), "4")
-        dialog.vars["value"].set("8")
+        self.assertEqual(dialog.vars["value"].get(), "1500")
         dialog.ok()
-        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "level", "comparison": "<=", "value": 8})
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "atk", "comparison": ">=", "value": 1500})
 
-        # 3. Invalid level value validation
-        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "level", "value": 4}, str)
-        dialog.vars["value"].set("15")
+        # 2. Switch to DEF
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "comparison": "<=", "value": 1500}, str)
+        dialog.vars["stat"].set("DEF")
+        dialog.vars["value"].set("2000")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "def", "comparison": "<=", "value": 2000})
+
+        # 3. Invalid value validation
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "value": 1500}, str)
+        dialog.vars["value"].set("-5")
         err = dialog.read(dialog)
-        self.assertEqual(err, "Level threshold must be 1 to 12.")
+        self.assertEqual(err, f"Threshold must be 0 to {fx.AMOUNT_MAX}.")
 
         # 4. Default reset is "In a turn"
         dialog = ConditionDialog(app, app.project, None, str)

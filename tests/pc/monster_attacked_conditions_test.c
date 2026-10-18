@@ -53,11 +53,6 @@ void DuelEffect_StartRetailCardEffect(int card, int param) {
 }
 void DuelCard_RemoveFromField(const DuelCardRecord *card) { (void)card; }
 int Cards_Valid(int card) { return card > 0 && card <= 722; }
-int Cards_Level(int card) {
-  if (card == 1) return 7;
-  if (card == 2) return 4;
-  return 3;
-}
 int Cards_CardEffects(int card, const MonsterEffect **effects) {
   (void)card;
   (void)effects;
@@ -241,42 +236,9 @@ static void test_first_second_third_attacked_sequence(void) {
        "3-attack survival match accurately)");
 }
 
-static void test_level_comparison_condition(void) {
-  MonsterEffect eff_lvl_ge7, eff_lvl_le4;
-
-  memset(&eff_lvl_ge7, 0, sizeof(eff_lvl_ge7));
-  eff_lvl_ge7.cond_count = 1;
-  eff_lvl_ge7.conditions[0].type = MONSTER_COND_STAT_THRESHOLD;
-  eff_lvl_ge7.conditions[0].stat = MONSTER_STAT_LEVEL;
-  eff_lvl_ge7.conditions[0].op = MONSTER_OP_GE;
-  eff_lvl_ge7.conditions[0].value = 7;
-
-  memset(&eff_lvl_le4, 0, sizeof(eff_lvl_le4));
-  eff_lvl_le4.cond_count = 1;
-  eff_lvl_le4.conditions[0].type = MONSTER_COND_STAT_THRESHOLD;
-  eff_lvl_le4.conditions[0].stat = MONSTER_STAT_LEVEL;
-  eff_lvl_le4.conditions[0].op = MONSTER_OP_LE;
-  eff_lvl_le4.conditions[0].value = 4;
-
-  reset_test_duel();
-
-  /* Card 1 is Level 7: meets Level >= 7, fails Level <= 4 */
-  D_801A7AD8[5].card_id = 1;
-  assert(MonsterEffects_ConditionsMet(5, &eff_lvl_ge7) == 1);
-  assert(MonsterEffects_ConditionsMet(5, &eff_lvl_le4) == 0);
-
-  /* Card 2 is Level 4: meets Level <= 4, fails Level >= 7 */
-  D_801A7AD8[5].card_id = 2;
-  assert(MonsterEffects_ConditionsMet(5, &eff_lvl_ge7) == 0);
-  assert(MonsterEffects_ConditionsMet(5, &eff_lvl_le4) == 1);
-
-  puts("test_level_comparison_condition: PASSED (Level >= 7 and Level <= 4 evaluated correctly)");
-}
-
 int main(void) {
   test_attacker_vs_defender();
   test_first_second_third_attacked_sequence();
-  test_level_comparison_condition();
   puts("\nAll monster attacked condition tests PASSED successfully!");
   return 0;
 }

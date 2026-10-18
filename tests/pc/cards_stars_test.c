@@ -668,28 +668,6 @@ static void monster_effect_conditions_and_battle_immunity(void) {
          MONSTER_COND_DESTROYED_AFTER_3_ATTACKS);
   assert(effects[0].conditions[1].reset == MONSTER_RESET_TURN);
 
-  /* Test level stat_threshold condition */
-  JsonDocument *doc_lvl = Json_Parse(
-      "[{\"replace\":28,\"monster_effects\":["
-      "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
-      "   \"conditions\":["
-      "     {\"type\":\"stat_threshold\",\"stat\":\"level\",\"comparison\":\">=\",\"value\":7},"
-      "     {\"type\":\"stat_threshold\",\"stat\":\"lvl\",\"comparison\":\"<\",\"value\":5}]}]}]",
-      error, sizeof(error));
-  assert(doc_lvl);
-  for (i = 0, entry = Json_At(Json_Root(doc_lvl), 0); entry;
-       i++, entry = Json_Next(entry))
-    add_entry("f", ".", i, entry, &context);
-  assert(Cards_MonsterEffects(28, &effects) == 1);
-  assert(effects[0].cond_count == 2);
-  assert(effects[0].conditions[0].type == MONSTER_COND_STAT_THRESHOLD);
-  assert(effects[0].conditions[0].stat == MONSTER_STAT_LEVEL);
-  assert(effects[0].conditions[0].op == MONSTER_OP_GE);
-  assert(effects[0].conditions[0].value == 7);
-  assert(effects[0].conditions[1].type == MONSTER_COND_STAT_THRESHOLD);
-  assert(effects[0].conditions[1].stat == MONSTER_STAT_LEVEL);
-  assert(effects[0].conditions[1].op == MONSTER_OP_LT);
-  assert(effects[0].conditions[1].value == 5);
 }
 
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's

@@ -54,7 +54,7 @@ CONDITION_LABELS = (
  
     "Can only be destroyed after two attacks",
     "Can only be destroyed after three attacks",
-    "Compare ATK/DEF/Level against a number",
+    "Compare ATK/DEF against a number",
     "Has the lowest ATK on field",
     "Has the highest ATK on field",
 )
@@ -63,7 +63,7 @@ CONDITION_HINTS = (
     "The first time this card is attacked (survives 1 attack, can be destroyed on the second attack).",
     "Can only be destroyed after two attacks (survives up to 2 attacks, can be destroyed on the third attack).",
     "Can only be destroyed after three attacks (survives up to 3 attacks, can be destroyed on the fourth attack).",
-    "This card's current effective ATK or DEF, or its printed Level, compared against a value (<, <=, >, >=).",
+    "This card's current effective ATK or DEF compared against a value (<, <=, >, >=).",
     "This card has strictly lower ATK than every other face-up monster on the field (ties disqualify).",
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
 )
@@ -71,8 +71,8 @@ RESET = ("turn", "copy", "duel")
 RESET_LABELS = ("In a turn", "This card copy", "In a duel")
 OPS = ("<", "<=", ">", ">=")
 OP_LABELS = ("Lower than (<)", "Lower or equal (<=)", "Higher than (>)", "Higher or equal (>=)")
-STATS = ("atk", "def", "level")
-STAT_LABELS = ("ATK", "DEF", "Level")
+STATS = ("atk", "def")
+STAT_LABELS = ("ATK", "DEF")
 COND_MODES = ("all", "any")
 COND_MODE_LABELS = ("All conditions must be met (AND)", "Any condition can be met (OR)")
 MAX_CONDITIONS = 4
@@ -206,8 +206,6 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
                 stat = "def"
             elif s in ("atk", "attack"):
                 stat = "atk"
-            elif s in ("level", "lvl", "stars", "star"):
-                stat = "level"
             else:
                 return None
         else:
@@ -232,9 +230,7 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         out["comparison"] = op
 
         val = cond.get("value", 0)
-        min_val = 1 if stat == "level" else 0
-        max_val = 12 if stat == "level" else AMOUNT_MAX
-        if not isinstance(val, int) or isinstance(val, bool) or not (min_val <= val <= max_val):
+        if not isinstance(val, int) or isinstance(val, bool) or not (0 <= val <= AMOUNT_MAX):
             return None
         out["value"] = val
     elif c_type in ("lowest_atk", "highest_atk"):
@@ -445,11 +441,10 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
             return f"can only be destroyed after three attacks ({scope})"
         return f"the first time attacked ({scope})"
     if c_type == "stat_threshold":
-        stat_raw = str(cond.get("stat", "atk")).lower()
-        stat_name = "Level" if stat_raw in ("level", "lvl", "stars", "star") else stat_raw.upper()
+        stat = str(cond.get("stat", "atk")).upper()
         op = cond.get("comparison") or cond.get("op", ">=")
         val = cond.get("value", 0)
-        return f"{stat_name} {op} {val}"
+        return f"{stat} {op} {val}"
     if c_type == "lowest_atk":
         return "lowest ATK on field"
     if c_type == "highest_atk":

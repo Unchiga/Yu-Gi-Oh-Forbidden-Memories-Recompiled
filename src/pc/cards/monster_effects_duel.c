@@ -921,16 +921,12 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
     int attack = 0, defense = 0, val, packed;
     DuelCardRecord *card = &D_801A7AD8[record];
 
-    if (cond->stat == MONSTER_STAT_LEVEL) {
-      val = Cards_Level(card->card_id);
-    } else {
-      s_evaluating_stats = 1;
-      packed = Duel_CalcCardStats(card);
-      s_evaluating_stats = 0;
-      attack = packed & 0xFFFF;
-      defense = (unsigned int)packed >> 16;
-      val = (cond->stat == MONSTER_STAT_DEF) ? defense : attack;
-    }
+    s_evaluating_stats = 1;
+    packed = Duel_CalcCardStats(card);
+    s_evaluating_stats = 0;
+    attack = packed & 0xFFFF;
+    defense = (unsigned int)packed >> 16;
+    val = (cond->stat == MONSTER_STAT_DEF) ? defense : attack;
 
     switch (cond->op) {
     case MONSTER_OP_LT:

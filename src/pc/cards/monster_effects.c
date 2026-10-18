@@ -37,8 +37,7 @@ const char *const MonsterEffect_OpNames[MONSTER_OP_COUNT] = {"<", "<=", ">",
 const char *const MonsterEffect_ResetNames[MONSTER_RESET_COUNT] = {
     "summon", "duel", "turn"};
 
-const char *const MonsterEffect_StatNames[MONSTER_STAT_COUNT] = {"atk", "def",
-                                                                 "level"};
+const char *const MonsterEffect_StatNames[MONSTER_STAT_COUNT] = {"atk", "def"};
 
 const char *const MonsterEffect_CondModeNames[MONSTER_COND_MODE_COUNT] = {
     "all", "any"};
@@ -344,13 +343,10 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
       const char *s = Json_String(val, "");
       if (!strcmp(s, "def") || !strcmp(s, "defense") || !strcmp(s, "DEF"))
         cond->stat = MONSTER_STAT_DEF;
-      else if (!strcmp(s, "level") || !strcmp(s, "lvl") || !strcmp(s, "Level") ||
-               !strcmp(s, "stars") || !strcmp(s, "star"))
-        cond->stat = MONSTER_STAT_LEVEL;
       else if (strcmp(s, "atk") && strcmp(s, "attack") && strcmp(s, "ATK")) {
         Mods_Note(mod,
                   "cards[%d]: monster_effects[%d]: conditions[%d]: \"stat\" "
-                  "must be atk, def or level",
+                  "must be atk or def",
                   index, n, c_idx);
         return 0;
       }
@@ -384,13 +380,6 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
     v = 0;
     if (number(mod, index, n, entry, "value", AMOUNT_MAX, &v) < 0)
       return 0;
-    if (cond->stat == MONSTER_STAT_LEVEL && (v < 1 || v > 12)) {
-      Mods_Note(mod,
-                "cards[%d]: monster_effects[%d]: conditions[%d]: level "
-                "threshold must be 1 to 12",
-                index, n, c_idx);
-      return 0;
-    }
     cond->value = (short)v;
     break;
   case MONSTER_COND_LOWEST_ATK:
