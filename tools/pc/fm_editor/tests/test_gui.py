@@ -2684,6 +2684,77 @@ class MonsterEffectsGuiTest(GuiCase):
         err = dialog.read(dialog)
         self.assertEqual(err, "Level threshold must be 1 to 12.")
 
+        # 4. Default reset is "In a turn"
+        dialog = ConditionDialog(app, app.project, None, str)
+        self.assertEqual(dialog.vars["reset"].get(), "In a turn")
+
+        # 5. Attack conditions disallowed when allow_attack=False
+        dialog = ConditionDialog(app, app.project, None, str, allow_attack=False)
+        self.assertNotIn("The first time it is attacked", dialog.cond_labels)
+        self.assertNotIn("first_attacked", dialog.cond_types)
+        # Attempting to force an attack condition type fails validation
+        dialog.vars["type"].set("The first time it is attacked")
+        err = dialog.read(dialog)
+        self.assertIsNotNone(err)
+
+    def test_effect_dialog_modifiers(self):
+        from fm_editor.monster_effects_ui import EffectDialog
+        from fm_editor import monster_effects as fx
+        app = self.app
+
+        # 1. Battle immunity defaults to "Always" and "In a turn", modifier row shown, reset hidden
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        self.assertEqual(dialog.vars["modifier"].get(), "Always")
+        self.assertEqual(dialog.vars["modifier_reset"].get(), "In a turn")
+        self.assertTrue(dialog.rows["modifier"][1].winfo_manager())
+        self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {"when": "face_up", "do": "battle_immunity", "target": "self"})
+
+        # 2. Select "The first time it is attacked" -> Resets dropdown appears, defaults to "In a turn"
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("The first time it is attacked")
+        self.assertTrue(dialog.rows["modifier_reset"][1].winfo_manager())
+        self.assertEqual(dialog.vars["modifier_reset"].get(), "In a turn")
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up",
+            "do": "battle_immunity",
+            "target": "self",
+            "conditions": [{"type": "first_attacked", "reset": "turn"}]
+        })
+
+        # 3. Re-open effect with attack condition: cleanly unpacked into Modifiers and Resets, not in tree
+        dialog = EffectDialog(app, app.project, dialog.result, str)
+        self.assertEqual(dialog.vars["modifier"].get(), "The first time it is attacked")
+        self.assertEqual(dialog.vars["modifier_reset"].get(), "In a turn")
+        self.assertEqual(len(dialog.conditions), 0)
+        # Change reset to "This card copy" and modifier to "Can only be destroyed after two attacks"
+        dialog.vars["modifier"].set("Can only be destroyed after two attacks")
+        dialog.vars["modifier_reset"].set("This card copy")
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up",
+            "do": "battle_immunity",
+            "target": "self",
+            "conditions": [{"type": "destroyed_after_2_attacks", "reset": "copy"}]
+        })
+
+        # 4. Modifiers and reset are hidden for other effects like "boost"
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "boost", "target": "self", "attack": 500}, str)
+        self.assertFalse(dialog.rows["modifier"][1].winfo_manager())
+        self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
+
+        # 5. Enforcement: monster cannot have more than 1 attack condition across its effects
+        existing_effect = {"when": "face_up", "do": "battle_immunity", "target": "self",
+                           "conditions": [{"type": "first_attacked", "reset": "turn"}]}
+        dialog = EffectDialog(app, app.project, None, str, effects=[existing_effect], index=None)
+        dialog.vars["when"].set("While face up")
+        dialog.vars["do"].set("Cannot be destroyed by battle")
+        dialog.vars["modifier"].set("Can only be destroyed after two attacks")
+        err = dialog.read(dialog)
+        self.assertEqual(err, "A monster can only have one condition related to a number of attacks.")
+
     def test_text_menu(self):
         from fm_editor import text_menu
         cards = self.app.cards

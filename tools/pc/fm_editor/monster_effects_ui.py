@@ -132,7 +132,7 @@ class EffectsBox(ttk.LabelFrame):
     def add(self):
         if self.cid is None:
             return
-        dialog = EffectDialog(self, self.project, None, self.label, self.app)
+        dialog = EffectDialog(self, self.project, None, self.label, self.app, effects=self.effects, index=None)
         self.wait_window(dialog)
         if dialog.result is not None:
             self.effects.append(dialog.result)
@@ -142,7 +142,7 @@ class EffectsBox(ttk.LabelFrame):
         n = self.selected()
         if n is None:
             return
-        dialog = EffectDialog(self, self.project, self.effects[n], self.label, self.app)
+        dialog = EffectDialog(self, self.project, self.effects[n], self.label, self.app, effects=self.effects, index=n)
         self.wait_window(dialog)
         if dialog.result is not None:
             self.effects[n] = dialog.result
@@ -167,8 +167,9 @@ class EffectsBox(ttk.LabelFrame):
 class ConditionDialog(FormDialog):
     """A dialog to create or edit a single condition for a monster effect."""
 
-    def __init__(self, master, project, condition, label, app=None):
+    def __init__(self, master, project, condition, label, app=None, allow_attack=True):
         self.project, self.label, self.app = project, label, app
+        self.allow_attack = allow_attack
         self.result = None
         self.start = condition or {"type": "named_card", "card": 1, "whose": "all"}
         super().__init__(master, "Condition" if condition is None else "Change condition",
@@ -196,8 +197,15 @@ class ConditionDialog(FormDialog):
             row += 1
             return widget
 
+        if self.allow_attack:
+            self.cond_types = list(fx.CONDITIONS)
+            self.cond_labels = list(fx.CONDITION_LABELS)
+        else:
+            self.cond_types = [ct for ct in fx.CONDITIONS if ct not in fx.ATTACK_CONDITIONS]
+            self.cond_labels = [fx.CONDITION_LABELS[fx.CONDITIONS.index(ct)] for ct in self.cond_types]
+
         line("type", "Condition", ttk.Combobox(body, textvariable=self.vars["type"],
-                                              values=list(fx.CONDITION_LABELS), state="readonly", width=32))
+                                              values=self.cond_labels, state="readonly", width=32))
         self.type_hint = ttk.Label(body, style="Hint.TLabel", wraplength=px(body, 320), justify="left")
         self.type_hint.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
@@ -224,10 +232,10 @@ class ConditionDialog(FormDialog):
             c_type = "destroyed_after_2_attacks"
         elif c_type in ("third_attacked", "destroyed_after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
             c_type = "destroyed_after_3_attacks"
-        if c_type in fx.CONDITIONS:
-            self.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index(c_type)])
+        if c_type in self.cond_types:
+            self.vars["type"].set(self.cond_labels[self.cond_types.index(c_type)])
         else:
-            self.vars["type"].set(fx.CONDITION_LABELS[0])
+            self.vars["type"].set(self.cond_labels[0])
 
         if c.get("card"):
             self.card_field.set(c["card"])
@@ -237,7 +245,7 @@ class ConditionDialog(FormDialog):
         whose = c.get("whose", "all")
         self.vars["whose"].set(fx.EACH_LABELS[fx.EACH.index(whose)] if whose in fx.EACH else fx.EACH_LABELS[2])
 
-        reset = c.get("reset", "copy")
+        reset = c.get("reset", "turn")
         if reset == "summon":
             reset = "copy"
         self.vars["reset"].set(fx.RESET_LABELS[fx.RESET.index(reset)] if reset in fx.RESET else fx.RESET_LABELS[0])
@@ -289,16 +297,12 @@ class ConditionDialog(FormDialog):
         return names[labels.index(text)] if text in labels else None
 
     def show_rows(self):
-        c_type = self.chosen("type", fx.CONDITIONS, fx.CONDITION_LABELS) or "named_card"
+        c_type = self.chosen("type", self.cond_types, self.cond_labels) or self.cond_types[0]
         self.type_hint.configure(text=fx.CONDITION_HINTS[fx.CONDITIONS.index(c_type)])
         shown = {"type"}
         if c_type == "named_card":
             shown |= {"card", "whose"}
-
-
         elif c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks"):
-
-            
             shown |= {"reset"}
         elif c_type == "stat_threshold":
             shown |= {"stat", "op", "value"}
@@ -310,9 +314,11 @@ class ConditionDialog(FormDialog):
                 widget.grid() if key in shown else widget.grid_remove()
 
     def read(self, dialog):
-        c_type = self.chosen("type", fx.CONDITIONS, fx.CONDITION_LABELS)
+        c_type = self.chosen("type", self.cond_types, self.cond_labels)
         if not c_type:
             return "Choose a condition type."
+        if c_type in fx.ATTACK_CONDITIONS and not self.allow_attack:
+            return "A monster can only have one condition related to a number of attacks."
         out = {"type": c_type}
         if c_type == "named_card":
             cid = self.card_field.get()
@@ -322,14 +328,9 @@ class ConditionDialog(FormDialog):
             whose = self.chosen("whose", fx.EACH, fx.EACH_LABELS)
             if whose and whose != "all":
                 out["whose"] = whose
-
-
         elif c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks"):
-
-            
-            reset = self.chosen("reset", fx.RESET, fx.RESET_LABELS)
-            if reset and reset not in ("copy", "summon"):
-                out["reset"] = reset
+            reset = self.chosen("reset", fx.RESET, fx.RESET_LABELS) or "turn"
+            out["reset"] = reset
         elif c_type == "stat_threshold":
             stat = self.chosen("stat", fx.STATS, fx.STAT_LABELS) or "atk"
             out["stat"] = stat
@@ -356,14 +357,23 @@ class EffectDialog(FormDialog):
     """One effect: when, what, and what that needs. result is the entry
     as the game reads it, or None when cancelled."""
 
-    def __init__(self, master, project, effect, label, app=None):
+    def __init__(self, master, project, effect, label, app=None, effects=None, index=None):
         """app: the window, whose game files give the lists' icons (none without)."""
         self.project, self.label, self.app = project, label, app
+        self.effects = effects or []
+        self.index = index
         self.result = None
         effect = fx.normalize(effect, project.resolve, self.attribute_choice) if effect else None
         self.start = effect or {"when": "summon", "do": "boost", "target": "self", "attack": 500}
         self.conditions = [dict(c) for c in (effect.get("conditions") or
                            ([effect["condition"]] if effect and "condition" in effect else []))] if effect else []
+        self.attack_cond = None
+        if effect and effect.get("do") == "battle_immunity":
+            for i, c in enumerate(self.conditions):
+                if c.get("type") in fx.ATTACK_CONDITIONS:
+                    self.attack_cond = c
+                    del self.conditions[i]
+                    break
         super().__init__(master, "Monster effect" if effect is None else "Change the monster effect", self.build,
                          self.read)
 
@@ -398,7 +408,7 @@ class EffectDialog(FormDialog):
         e = self.start
         self.vars = {k: tk.StringVar(dialog) for k in ("when", "do", "card", "target", "type", "attribute", "attack",
                                                  "defense", "amount", "each", "each_type", "each_attribute",
-                                                 "cond_mode")}
+                                                 "cond_mode", "modifier", "modifier_reset")}
         self.rows = {}
         row = 0
 
@@ -439,6 +449,12 @@ class EffectDialog(FormDialog):
         line("each_attribute", "Counting attribute", self.choice(body, "each_attribute", self.attribute_names(),
                                                                  self.attribute_icon))
 
+        # Modifiers field sits right on top of conditions (API 19)
+        line("modifier", "Modifiers", ttk.Combobox(body, textvariable=self.vars["modifier"],
+                                                   values=list(fx.MODIFIER_LABELS), state="readonly", width=30))
+        line("modifier_reset", "Resets", ttk.Combobox(body, textvariable=self.vars["modifier_reset"],
+                                                      values=list(fx.RESET_LABELS), state="readonly", width=30))
+
         # Conditions section (API 19)
         self.cond_frame = ttk.LabelFrame(body, text="Conditions (optional)", padding=6)
         c_frame, self.cond_tree = scrolled_tree(self.cond_frame, [("type", "Type"), ("details", "Condition")], [120, 240], 3, horizontal=True)
@@ -448,8 +464,8 @@ class EffectDialog(FormDialog):
 
         self.cond_buttons = {}
         for col, (key, text, cmd) in enumerate((("add", "Add...", self.add_condition),
-                                                ("edit", "Edit...", self.edit_condition),
-                                                ("remove", "Remove", self.remove_condition))):
+                                                 ("edit", "Edit...", self.edit_condition),
+                                                 ("remove", "Remove", self.remove_condition))):
             btn = ttk.Button(self.cond_frame, text=text, command=cmd, width=8)
             btn.grid(row=1, column=col, sticky="w", pady=(4, 0), padx=(0, 4))
             self.cond_buttons[key] = btn
@@ -478,12 +494,31 @@ class EffectDialog(FormDialog):
         self.vars["each_type"].set((each or {}).get("type", ANY))
         self.vars["each_attribute"].set(self.attribute_label((each or {}).get("attribute", ANY)))
 
+        if self.attack_cond:
+            raw_c_type = self.attack_cond.get("type")
+            if raw_c_type in ("second_attacked", "destroyed_after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
+                raw_c_type = "destroyed_after_2_attacks"
+            elif raw_c_type in ("third_attacked", "destroyed_after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
+                raw_c_type = "destroyed_after_3_attacks"
+            elif raw_c_type in ("after_one_attack", "destroyed_after_1_attack"):
+                raw_c_type = "first_attacked"
+            mod_idx = fx.MODIFIERS.index(raw_c_type) if raw_c_type in fx.MODIFIERS else 0
+            self.vars["modifier"].set(fx.MODIFIER_LABELS[mod_idx])
+            rst = self.attack_cond.get("reset", "turn")
+            if rst == "summon":
+                rst = "copy"
+            rst_idx = fx.RESET.index(rst) if rst in fx.RESET else 0
+            self.vars["modifier_reset"].set(fx.RESET_LABELS[rst_idx])
+        else:
+            self.vars["modifier"].set(fx.MODIFIER_LABELS[0])
+            self.vars["modifier_reset"].set(fx.RESET_LABELS[0])
+
         cond_mode = e.get("condition_mode", "all")
         self.vars["cond_mode"].set(fx.COND_MODE_LABELS[fx.COND_MODES.index(cond_mode)] if cond_mode in fx.COND_MODES else fx.COND_MODE_LABELS[0])
 
         self.fill_conditions()
 
-        for key in ("when", "do", "each"):
+        for key in ("when", "do", "each", "modifier"):
             self.vars[key].trace_add("write", lambda *_: self.show_rows())
         self.show_rows()
 
@@ -506,7 +541,12 @@ class EffectDialog(FormDialog):
     def add_condition(self):
         if len(self.conditions) >= fx.MAX_CONDITIONS:
             return
-        dlg = ConditionDialog(self, self.project, None, self.label, self.app)
+        do = self.chosen("do", fx.DO, fx.DO_LABELS)
+        mod = self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS)
+        has_attack = (fx.monster_has_attack_condition(self.effects, self.index) or
+                      (do == "battle_immunity" and mod != "always") or
+                      any(c.get("type") in fx.ATTACK_CONDITIONS for c in self.conditions))
+        dlg = ConditionDialog(self, self.project, None, self.label, self.app, allow_attack=not has_attack)
         self.wait_window(dlg)
         if dlg.result is not None:
             self.conditions.append(dlg.result)
@@ -517,7 +557,12 @@ class EffectDialog(FormDialog):
         if not sel:
             return
         idx = int(sel[0])
-        dlg = ConditionDialog(self, self.project, self.conditions[idx], self.label, self.app)
+        do = self.chosen("do", fx.DO, fx.DO_LABELS)
+        mod = self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS)
+        other_has_attack = (fx.monster_has_attack_condition(self.effects, self.index) or
+                            (do == "battle_immunity" and mod != "always") or
+                            any(c.get("type") in fx.ATTACK_CONDITIONS for i, c in enumerate(self.conditions) if i != idx))
+        dlg = ConditionDialog(self, self.project, self.conditions[idx], self.label, self.app, allow_attack=not other_has_attack)
         self.wait_window(dlg)
         if dlg.result is not None:
             self.conditions[idx] = dlg.result
@@ -566,6 +611,10 @@ class EffectDialog(FormDialog):
                                   "heal": {"amount"}, "damage": {"amount"},
                                   "destroy": {"target", "type", "attribute"},
                                   "battle_immunity": set()}[do]
+        if do == "battle_immunity":
+            shown.add("modifier")
+            if self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS) != "always":
+                shown.add("modifier_reset")
         if do in fx.EACH_DO:
             shown.add("each")
             if self.vars["each"].get() in fx.EACH_LABELS:
@@ -585,8 +634,22 @@ class EffectDialog(FormDialog):
         if not when or not do:
             return "Choose when and what."
         effect = {"when": when, "do": do}
+        all_conds = []
         if do == "battle_immunity":
             effect["target"] = "self"
+            mod = self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS) or "always"
+            if mod != "always":
+                if fx.monster_has_attack_condition(self.effects, self.index):
+                    return "A monster can only have one condition related to a number of attacks."
+                if any(c.get("type") in fx.ATTACK_CONDITIONS for c in self.conditions):
+                    return "A monster can only have one condition related to a number of attacks."
+                rst = self.chosen("modifier_reset", fx.RESET, fx.RESET_LABELS) or "turn"
+                cond_entry = {"type": mod}
+                if rst:
+                    cond_entry["reset"] = rst
+                all_conds = [cond_entry] + [dict(c) for c in self.conditions]
+            else:
+                all_conds = [dict(c) for c in self.conditions]
         elif do == "magic":
             text = self.vars["card"].get()
             effect["card"] = int(text.split(" ", 1)[0]) if text[:1].isdigit() else 0
@@ -622,12 +685,18 @@ class EffectDialog(FormDialog):
                     value = self.vars["each_" + key].get()
                     effect["for_each"][key] = self.attribute_value(value) if key == "attribute" else value
 
-        if when == "face_up" and self.conditions:
-            effect["conditions"] = [dict(c) for c in self.conditions]
-            mode_lbl = self.vars["cond_mode"].get()
-            mode = fx.COND_MODES[fx.COND_MODE_LABELS.index(mode_lbl)] if mode_lbl in fx.COND_MODE_LABELS else "all"
-            if mode != "all":
-                effect["condition_mode"] = mode
+        if when == "face_up":
+            if do != "battle_immunity":
+                all_conds = [dict(c) for c in self.conditions]
+                num_attacks = sum(1 for c in all_conds if c.get("type") in fx.ATTACK_CONDITIONS)
+                if num_attacks > 1 or (num_attacks == 1 and fx.monster_has_attack_condition(self.effects, self.index)):
+                    return "A monster can only have one condition related to a number of attacks."
+            if all_conds:
+                effect["conditions"] = all_conds
+                mode_lbl = self.vars["cond_mode"].get()
+                mode = fx.COND_MODES[fx.COND_MODE_LABELS.index(mode_lbl)] if mode_lbl in fx.COND_MODE_LABELS else "all"
+                if mode != "all":
+                    effect["condition_mode"] = mode
 
         effect = fx.normalize(effect, self.project.resolve, self.attribute_choice)
         if effect is None:

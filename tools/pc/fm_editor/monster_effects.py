@@ -67,8 +67,8 @@ CONDITION_HINTS = (
     "This card has strictly lower ATK than every other face-up monster on the field (ties disqualify).",
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
 )
-RESET = ("copy", "duel", "turn")
-RESET_LABELS = ("This card copy", "In a duel", "In a turn")
+RESET = ("turn", "copy", "duel")
+RESET_LABELS = ("In a turn", "This card copy", "In a duel")
 OPS = ("<", "<=", ">", ">=")
 OP_LABELS = ("Lower than (<)", "Lower or equal (<=)", "Higher than (>)", "Higher or equal (>=)")
 STATS = ("atk", "def", "level")
@@ -76,6 +76,28 @@ STAT_LABELS = ("ATK", "DEF", "Level")
 COND_MODES = ("all", "any")
 COND_MODE_LABELS = ("All conditions must be met (AND)", "Any condition can be met (OR)")
 MAX_CONDITIONS = 4
+
+ATTACK_CONDITIONS = (
+    "first_attacked",
+    "destroyed_after_2_attacks",
+    "destroyed_after_3_attacks",
+    "second_attacked",
+    "third_attacked",
+    "destroyed_after_two_attacks",
+    "destroyed_after_three_attacks",
+    "can_only_be_destroyed_after_two_attacks",
+    "can_only_be_destroyed_after_three_attacks",
+    "after_one_attack",
+    "destroyed_after_1_attack",
+)
+
+MODIFIERS = ("always", "first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks")
+MODIFIER_LABELS = (
+    "Always",
+    "The first time it is attacked",
+    "Can only be destroyed after two attacks",
+    "Can only be destroyed after three attacks",
+)
 
 # The disc's magic cards whose effect a monster may use: Magic cards whose
 # effect group does something at play time and asks nothing (no ritual).
@@ -322,6 +344,48 @@ def _filter(source: dict, out: dict, attribute_resolve=None, type_names=None) ->
     return True
 
 
+def effect_has_attack_condition(effect: dict) -> bool:
+    """True if effect contains any condition in ATTACK_CONDITIONS."""
+    if not isinstance(effect, dict):
+        return False
+    conds = effect.get("conditions")
+    if not conds and "condition" in effect:
+        conds = [effect["condition"]]
+    if not conds or not isinstance(conds, list):
+        return False
+    return any(isinstance(c, dict) and c.get("type") in ATTACK_CONDITIONS for c in conds)
+
+
+def monster_has_attack_condition(effects: list, exclude_index: int | None = None) -> bool:
+    """True if any effect other than exclude_index has an attack condition."""
+    if not isinstance(effects, list):
+        return False
+    for i, e in enumerate(effects):
+        if exclude_index is not None and i == exclude_index:
+            continue
+        if effect_has_attack_condition(e):
+            return True
+    return False
+
+
+def count_monster_attack_conditions(effects: list) -> int:
+    """Total count of attack conditions across all effects of a monster."""
+    if not isinstance(effects, list):
+        return 0
+    total = 0
+    for e in effects:
+        if not isinstance(e, dict):
+            continue
+        conds = e.get("conditions")
+        if not conds and "condition" in e:
+            conds = [e["condition"]]
+        if isinstance(conds, list):
+            for c in conds:
+                if isinstance(c, dict) and c.get("type") in ATTACK_CONDITIONS:
+                    total += 1
+    return total
+
+
 def problems(effects, resolve=None, attribute_resolve=None, type_names=None) -> list:
     """What the game would say of a card's "monster_effects"."""
     if effects is None:
@@ -340,6 +404,8 @@ def problems(effects, resolve=None, attribute_resolve=None, type_names=None) -> 
             out.append(f"monster effect {n + 1} is not one the game takes ({describe_raw(effect)})")
         else:
             taken += 1
+    if count_monster_attack_conditions(effects) > 1:
+        out.append("A monster can only have one condition related to a number of attacks.")
     return out
 
 
@@ -362,8 +428,8 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
         whose = cond.get("whose", "all")
         where = EACH_FIELDS[EACH.index(whose)] if whose in EACH else whose
         return f"{cname} is on {where}"
-    if c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks","second_attacked", "third_attacked"):
-        reset = cond.get("reset", "copy")
+    if c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks", "second_attacked", "third_attacked"):
+        reset = cond.get("reset", "turn")
         if reset == "summon":
             reset = "copy"
         scope = "this turn" if reset == "turn" else ("this duel" if reset == "duel" else "this card copy")

@@ -294,7 +294,7 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
   case MONSTER_COND_DESTROYED_AFTER_2_ATTACKS:
   case MONSTER_COND_DESTROYED_AFTER_3_ATTACKS:
     val = Json_Member(entry, "reset");
-    cond->reset = MONSTER_RESET_COPY;
+    cond->reset = MONSTER_RESET_TURN;
     if (val) {
       const char *rst = Json_String(val, "");
       if (!strcmp(rst, "copy") || !strcmp(rst, "summon") ||

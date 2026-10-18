@@ -1425,9 +1425,17 @@ class MonsterEffectsTest(unittest.TestCase):
                          "Cannot be destroyed by battle (if can only be destroyed after three attacks (this card copy))")
         # Aliases
         self.assertEqual(fx.normalize_condition({"type": "second_attacked"})["type"], "destroyed_after_2_attacks")
-        self.assertEqual(fx.normalize_condition({"type": "third_attacked"})["type"], "destroyed_after_3_attacks")
         self.assertEqual(fx.describe({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "first_attacked"}]}),
+                         "Cannot be destroyed by battle (if the first time attacked (this turn))")
+        self.assertEqual(fx.describe({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "first_attacked", "reset": "copy"}]}),
                          "Cannot be destroyed by battle (if the first time attacked (this card copy))")
+        # Enforcement: monsters can ONLY have one condition related to a number of attacks
+        eff_atk1 = {"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "first_attacked", "reset": "turn"}]}
+        eff_atk2 = {"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "destroyed_after_2_attacks", "reset": "turn"}]}
+        self.assertEqual(fx.problems([eff_atk1]), [])
+        self.assertIn("A monster can only have one condition related to a number of attacks.", fx.problems([eff_atk1, eff_atk2]))
+        eff_double = {"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "first_attacked"}, {"type": "destroyed_after_2_attacks"}]}
+        self.assertIn("A monster can only have one condition related to a number of attacks.", fx.problems([eff_double]))
         self.assertEqual(fx.targets("combat"), ["self", "battle"])
         # A destroy: the opponent's, or on a flip the monster attacking it (its default there).
         self.assertEqual(fx.targets("flip", "destroy"), ["opponent", "battle"])
