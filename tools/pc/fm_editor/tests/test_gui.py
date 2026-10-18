@@ -2613,7 +2613,7 @@ class MonsterEffectsGuiTest(GuiCase):
         # Combat offers no magic; face up only boosts.
         self.assertNotIn("Magic card effect", dialog.do_box.cget("values"))
         dialog.vars["when"].set("While face up")
-        self.assertEqual(list(dialog.do_box.cget("values")), ["Boost ATK/DEF"])
+        self.assertEqual(list(dialog.do_box.cget("values")), ["Boost ATK/DEF", "Cannot be destroyed by battle"])
         self.assertNotIn("The monster it battles", dialog.target_box.cget("values"))
         dialog.vars["type"].set("Dragon")
         dialog.ok()
@@ -2654,6 +2654,35 @@ class MonsterEffectsGuiTest(GuiCase):
         self.assertFalse(dialog.rows["each"][1].winfo_manager())
         dialog.ok()
         self.assertEqual(dialog.result, {"when": "summon", "do": "destroy", "target": "opponent"})
+
+    def test_condition_dialog(self):
+        from fm_editor.monster_effects_ui import ConditionDialog
+        from fm_editor import monster_effects as fx
+        app = self.app
+        # 1. Open with stat_threshold level
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7}, str)
+        self.assertEqual(dialog.vars["stat"].get(), "Level")
+        self.assertEqual(dialog.vars["value"].get(), "7")
+        self.assertEqual(int(dialog.val_spin.cget("to")), 12)
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7})
+
+        # 2. Open with stat_threshold atk, switch to Level
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "comparison": "<=", "value": 1500}, str)
+        self.assertEqual(dialog.vars["stat"].get(), "ATK")
+        self.assertEqual(int(dialog.val_spin.cget("to")), fx.AMOUNT_MAX)
+        dialog.vars["stat"].set("Level")
+        self.assertEqual(int(dialog.val_spin.cget("to")), 12)
+        self.assertEqual(dialog.vars["value"].get(), "4")
+        dialog.vars["value"].set("8")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "level", "comparison": "<=", "value": 8})
+
+        # 3. Invalid level value validation
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "level", "value": 4}, str)
+        dialog.vars["value"].set("15")
+        err = dialog.read(dialog)
+        self.assertEqual(err, "Level threshold must be 1 to 12.")
 
     def test_text_menu(self):
         from fm_editor import text_menu
@@ -2760,6 +2789,19 @@ class ColumnWidthTest(GuiCase):
         app.update()
         self.assertEqual(tree.column("name", "width"), 150)
         app.withdraw()
+
+    def test_horizontal_scrolled_tree(self):
+        from fm_editor import widgets
+        from tkinter import ttk
+        container = ttk.Frame(self.app)
+        frame, tree = widgets.scrolled_tree(container, [("a", "Col A"), ("b", "Col B")], [150, 400], 4, horizontal=True)
+        self.assertIsNotNone(tree)
+        self.assertIsNotNone(frame)
+        self.assertFalse(tree.column("a", "stretch"))
+        self.assertFalse(tree.column("b", "stretch"))
+        scrollbars = [w for w in frame.winfo_children() if isinstance(w, ttk.Scrollbar)]
+        self.assertEqual(len(scrollbars), 2)
+        container.destroy()
 
 
 class CardViewPreviewTest(GuiCase):

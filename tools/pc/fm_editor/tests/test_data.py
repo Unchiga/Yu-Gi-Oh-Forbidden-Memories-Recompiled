@@ -1386,7 +1386,48 @@ class MonsterEffectsTest(unittest.TestCase):
             self.assertIsNone(fx.normalize(effect), effect)
         # The target left out: the card itself, its side when destroyed.
         self.assertEqual(fx.normalize({"when": "destroyed", "do": "boost", "attack": 100})["target"], "own")
-        self.assertEqual(fx.actions("face_up"), ["boost"])
+        self.assertEqual(fx.actions("face_up"), ["boost", "battle_immunity"])
+        self.assertEqual(fx.normalize({"when": "face_up", "do": "battle_immunity"}),
+                         {"when": "face_up", "do": "battle_immunity", "target": "self"})
+        self.assertEqual(fx.describe({"when": "face_up", "do": "battle_immunity"}),
+                         "Cannot be destroyed by battle")
+        # Battle immunity cannot be applied to other triggers like combat or summon
+        self.assertIsNone(fx.normalize({"when": "combat", "do": "battle_immunity"}))
+        self.assertIsNone(fx.normalize({"when": "summon", "do": "battle_immunity"}))
+        # Conditions normalization and description
+        cond_card = fx.normalize_condition({"type": "named_card", "card": 1, "whose": "own"})
+        self.assertEqual(cond_card, {"type": "named_card", "card": 1, "whose": "own"})
+        cond_atk = fx.normalize_condition({"type": "stat_threshold", "stat": "atk", "comparison": "<", "value": 1500})
+        self.assertEqual(cond_atk, {"type": "stat_threshold", "stat": "atk", "comparison": "<", "value": 1500})
+        cond_lvl = fx.normalize_condition({"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7})
+        self.assertEqual(cond_lvl, {"type": "stat_threshold", "stat": "level", "comparison": ">=", "value": 7})
+        self.assertEqual(fx.condition_words(cond_lvl), "Level >= 7")
+        self.assertEqual(fx.normalize_condition({"type": "stat_threshold", "stat": "stars", "comparison": "<=", "value": 4})["stat"], "level")
+        self.assertIsNone(fx.normalize_condition({"type": "stat_threshold", "stat": "level", "value": 13}))
+        self.assertIsNone(fx.normalize_condition({"type": "stat_threshold", "stat": "level", "value": 0}))
+        eff_cond = fx.normalize({"when": "face_up", "do": "battle_immunity",
+                                 "conditions": [{"type": "lowest_atk"},
+                                                {"type": "first_attacked", "reset": "turn"}],
+                                 "condition_mode": "any"})
+        self.assertEqual(eff_cond["conditions"], [{"type": "lowest_atk"}, {"type": "first_attacked", "reset": "turn"}])
+        self.assertEqual(eff_cond["condition_mode"], "any")
+        self.assertEqual(fx.describe(eff_cond),
+                         "Cannot be destroyed by battle (if lowest ATK on field or the first time attacked (this turn))")
+        cond_second = fx.normalize_condition({"type": "destroyed_after_2_attacks", "reset": "duel"})
+        self.assertEqual(cond_second, {"type": "destroyed_after_2_attacks", "reset": "duel"})
+
+
+        self.assertEqual(fx.describe({"when": "face_up", "do": "battle_immunity", "conditions": [cond_second]}),
+                         "Cannot be destroyed by battle (if can only be destroyed after two attacks (this duel))")
+        cond_third = fx.normalize_condition({"type": "destroyed_after_3_attacks", "reset": "copy"})
+        self.assertEqual(cond_third, {"type": "destroyed_after_3_attacks", "reset": "copy"})
+        self.assertEqual(fx.describe({"when": "face_up", "do": "battle_immunity", "conditions": [cond_third]}),
+                         "Cannot be destroyed by battle (if can only be destroyed after three attacks (this card copy))")
+        # Aliases
+        self.assertEqual(fx.normalize_condition({"type": "second_attacked"})["type"], "destroyed_after_2_attacks")
+        self.assertEqual(fx.normalize_condition({"type": "third_attacked"})["type"], "destroyed_after_3_attacks")
+        self.assertEqual(fx.describe({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "first_attacked"}]}),
+                         "Cannot be destroyed by battle (if the first time attacked (this card copy))")
         self.assertEqual(fx.targets("combat"), ["self", "battle"])
         # A destroy: the opponent's, or on a flip the monster attacking it (its default there).
         self.assertEqual(fx.targets("flip", "destroy"), ["opponent", "battle"])

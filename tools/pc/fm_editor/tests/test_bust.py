@@ -333,7 +333,7 @@ class BustTest(unittest.TestCase):
         p = self.p
         roster.add_copy(p, 1, "Ghost").bust = three()
         self.assertEqual(needs(manifest.build(p), p), 17)
-        self.assertEqual(compat.HOST_API, 18)
+        self.assertEqual(compat.HOST_API, 19)
 
     def test_tower_names_an_expression(self):
         """[left: Ghost expression angry] and back; the checks know the bust."""

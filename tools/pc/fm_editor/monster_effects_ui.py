@@ -8,7 +8,7 @@ from tkinter import ttk
 from . import card_icons, manifest, monster_effects as fx
 from .icon_choice import IconChoice
 from .gamedata import ATTRIBUTE_NAMES, TYPE_MAGIC, TYPE_NAMES
-from .widgets import FormDialog, px, scrolled_tree
+from .widgets import CardField, FormDialog, px, scrolled_tree
 
 ANY = "Any"
 
@@ -22,7 +22,7 @@ class EffectsBox(ttk.LabelFrame):
         self.app, self.on_change = app, on_change
         self.cid = None
         self.effects = []
-        frame, self.tree = scrolled_tree(self, [("when", "When"), ("what", "Does")], [110, 250], 4)
+        frame, self.tree = scrolled_tree(self, [("when", "When"), ("what", "Does")], [110, 360], 4, horizontal=True)
         frame.grid(row=0, column=0, columnspan=6, sticky="we")
         self.list_frame = frame         # shown once there is an effect: an empty list took a quarter of the form
         self.columnconfigure(5, weight=1)
@@ -164,6 +164,194 @@ class EffectsBox(ttk.LabelFrame):
         self.store(n + step)
 
 
+class ConditionDialog(FormDialog):
+    """A dialog to create or edit a single condition for a monster effect."""
+
+    def __init__(self, master, project, condition, label, app=None):
+        self.project, self.label, self.app = project, label, app
+        self.result = None
+        self.start = condition or {"type": "named_card", "card": 1, "whose": "all"}
+        super().__init__(master, "Condition" if condition is None else "Change condition",
+                         self.build, self.read)
+
+    def build(self, dialog, body):
+        c = self.start
+        self.vars = {
+            "type": tk.StringVar(dialog),
+            "whose": tk.StringVar(dialog),
+            "reset": tk.StringVar(dialog),
+            "stat": tk.StringVar(dialog),
+            "op": tk.StringVar(dialog),
+            "value": tk.StringVar(dialog),
+        }
+        self.rows = {}
+        row = 0
+
+        def line(key, label, widget):
+            nonlocal row
+            caption = ttk.Label(body, text=label)
+            caption.grid(row=row, column=0, sticky="w", pady=2)
+            widget.grid(row=row, column=1, sticky="we", pady=2)
+            self.rows[key] = (caption, widget)
+            row += 1
+            return widget
+
+        line("type", "Condition", ttk.Combobox(body, textvariable=self.vars["type"],
+                                              values=list(fx.CONDITION_LABELS), state="readonly", width=32))
+        self.type_hint = ttk.Label(body, style="Hint.TLabel", wraplength=px(body, 320), justify="left")
+        self.type_hint.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        row += 1
+
+        self.card_field = CardField(body, lambda: self.project, width=24)
+        line("card", "Named card", self.card_field)
+        line("whose", "On field", ttk.Combobox(body, textvariable=self.vars["whose"],
+                                             values=list(fx.EACH_LABELS), state="readonly", width=32))
+
+        line("reset", "Resets", ttk.Combobox(body, textvariable=self.vars["reset"],
+                                            values=list(fx.RESET_LABELS), state="readonly", width=32))
+
+        line("stat", "Compare stat", ttk.Combobox(body, textvariable=self.vars["stat"],
+                                                 values=list(fx.STAT_LABELS), state="readonly", width=32))
+        line("op", "Operator", ttk.Combobox(body, textvariable=self.vars["op"],
+                                            values=list(fx.OP_LABELS), state="readonly", width=32))
+        self.val_spin = ttk.Spinbox(body, textvariable=self.vars["value"],
+                                    from_=0, to=fx.AMOUNT_MAX, increment=100, width=10)
+        line("value", "Threshold", self.val_spin)
+
+        c_type = c.get("type", "named_card")
+
+        if c_type in ("second_attacked", "destroyed_after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
+            c_type = "destroyed_after_2_attacks"
+        elif c_type in ("third_attacked", "destroyed_after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
+            c_type = "destroyed_after_3_attacks"
+        if c_type in fx.CONDITIONS:
+            self.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index(c_type)])
+        else:
+            self.vars["type"].set(fx.CONDITION_LABELS[0])
+
+        if c.get("card"):
+            self.card_field.set(c["card"])
+        else:
+            self.card_field.set(1)
+
+        whose = c.get("whose", "all")
+        self.vars["whose"].set(fx.EACH_LABELS[fx.EACH.index(whose)] if whose in fx.EACH else fx.EACH_LABELS[2])
+
+        reset = c.get("reset", "copy")
+        if reset == "summon":
+            reset = "copy"
+        self.vars["reset"].set(fx.RESET_LABELS[fx.RESET.index(reset)] if reset in fx.RESET else fx.RESET_LABELS[0])
+
+        stat = c.get("stat", "atk")
+        if stat == "def":
+            self.vars["stat"].set("DEF")
+        elif stat in ("level", "lvl", "stars", "star"):
+            self.vars["stat"].set("Level")
+        else:
+            self.vars["stat"].set("ATK")
+
+        op = c.get("comparison") or c.get("op", ">=")
+        self.vars["op"].set(fx.OP_LABELS[fx.OPS.index(op)] if op in fx.OPS else fx.OP_LABELS[3])
+
+        default_val = 4 if self.vars["stat"].get() == "Level" else 1500
+        self.vars["value"].set(str(c.get("value", default_val)))
+
+        if self.vars["stat"].get() == "Level":
+            self.val_spin.configure(from_=1, to=12, increment=1)
+        else:
+            self.val_spin.configure(from_=0, to=fx.AMOUNT_MAX, increment=100)
+
+        self.vars["stat"].trace_add("write", self.update_stat_bounds)
+        self.vars["type"].trace_add("write", lambda *_: self.show_rows())
+        self.show_rows()
+
+    def update_stat_bounds(self, *args):
+        stat = self.vars["stat"].get()
+        if stat == "Level":
+            self.val_spin.configure(from_=1, to=12, increment=1)
+            try:
+                cur = int(self.vars["value"].get().strip())
+                if cur < 1 or cur > 12:
+                    self.vars["value"].set("4")
+            except (ValueError, TypeError):
+                self.vars["value"].set("4")
+        else:
+            self.val_spin.configure(from_=0, to=fx.AMOUNT_MAX, increment=100)
+            try:
+                cur = int(self.vars["value"].get().strip())
+                if cur <= 12:
+                    self.vars["value"].set("1500")
+            except (ValueError, TypeError):
+                self.vars["value"].set("1500")
+
+    def chosen(self, key, names, labels):
+        text = self.vars[key].get()
+        return names[labels.index(text)] if text in labels else None
+
+    def show_rows(self):
+        c_type = self.chosen("type", fx.CONDITIONS, fx.CONDITION_LABELS) or "named_card"
+        self.type_hint.configure(text=fx.CONDITION_HINTS[fx.CONDITIONS.index(c_type)])
+        shown = {"type"}
+        if c_type == "named_card":
+            shown |= {"card", "whose"}
+
+
+        elif c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks"):
+
+            
+            shown |= {"reset"}
+        elif c_type == "stat_threshold":
+            shown |= {"stat", "op", "value"}
+        elif c_type in ("lowest_atk", "highest_atk"):
+            pass
+
+        for key, widgets in self.rows.items():
+            for widget in widgets:
+                widget.grid() if key in shown else widget.grid_remove()
+
+    def read(self, dialog):
+        c_type = self.chosen("type", fx.CONDITIONS, fx.CONDITION_LABELS)
+        if not c_type:
+            return "Choose a condition type."
+        out = {"type": c_type}
+        if c_type == "named_card":
+            cid = self.card_field.get()
+            if not cid:
+                return "Choose a card."
+            out["card"] = cid
+            whose = self.chosen("whose", fx.EACH, fx.EACH_LABELS)
+            if whose and whose != "all":
+                out["whose"] = whose
+
+
+        elif c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks"):
+
+            
+            reset = self.chosen("reset", fx.RESET, fx.RESET_LABELS)
+            if reset and reset not in ("copy", "summon"):
+                out["reset"] = reset
+        elif c_type == "stat_threshold":
+            stat = self.chosen("stat", fx.STATS, fx.STAT_LABELS) or "atk"
+            out["stat"] = stat
+            op = self.chosen("op", fx.OPS, fx.OP_LABELS) or ">="
+            out["comparison"] = op
+            try:
+                val = int(self.vars["value"].get().strip())
+            except ValueError:
+                return "Threshold must be a whole number."
+            if stat == "level":
+                if not 1 <= val <= 12:
+                    return "Level threshold must be 1 to 12."
+            else:
+                if not 0 <= val <= fx.AMOUNT_MAX:
+                    return f"Threshold must be 0 to {fx.AMOUNT_MAX}."
+            out["value"] = val
+        elif c_type in ("lowest_atk", "highest_atk"):
+            pass
+        self.result = out
+        return None
+
+
 class EffectDialog(FormDialog):
     """One effect: when, what, and what that needs. result is the entry
     as the game reads it, or None when cancelled."""
@@ -174,6 +362,8 @@ class EffectDialog(FormDialog):
         self.result = None
         effect = fx.normalize(effect, project.resolve, self.attribute_choice) if effect else None
         self.start = effect or {"when": "summon", "do": "boost", "target": "self", "attack": 500}
+        self.conditions = [dict(c) for c in (effect.get("conditions") or
+                           ([effect["condition"]] if effect and "condition" in effect else []))] if effect else []
         super().__init__(master, "Monster effect" if effect is None else "Change the monster effect", self.build,
                          self.read)
 
@@ -207,7 +397,8 @@ class EffectDialog(FormDialog):
     def build(self, dialog, body):
         e = self.start
         self.vars = {k: tk.StringVar(dialog) for k in ("when", "do", "card", "target", "type", "attribute", "attack",
-                                                 "defense", "amount", "each", "each_type", "each_attribute")}
+                                                 "defense", "amount", "each", "each_type", "each_attribute",
+                                                 "cond_mode")}
         self.rows = {}
         row = 0
 
@@ -247,6 +438,31 @@ class EffectDialog(FormDialog):
                                                        lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else None))
         line("each_attribute", "Counting attribute", self.choice(body, "each_attribute", self.attribute_names(),
                                                                  self.attribute_icon))
+
+        # Conditions section (API 19)
+        self.cond_frame = ttk.LabelFrame(body, text="Conditions (optional)", padding=6)
+        c_frame, self.cond_tree = scrolled_tree(self.cond_frame, [("type", "Type"), ("details", "Condition")], [120, 240], 3, horizontal=True)
+        c_frame.grid(row=0, column=0, columnspan=3, sticky="we")
+        self.cond_tree.bind("<Double-1>", lambda ev: self.edit_condition())
+        self.cond_tree.bind("<<TreeviewSelect>>", lambda ev: self.show_condition_buttons())
+
+        self.cond_buttons = {}
+        for col, (key, text, cmd) in enumerate((("add", "Add...", self.add_condition),
+                                                ("edit", "Edit...", self.edit_condition),
+                                                ("remove", "Remove", self.remove_condition))):
+            btn = ttk.Button(self.cond_frame, text=text, command=cmd, width=8)
+            btn.grid(row=1, column=col, sticky="w", pady=(4, 0), padx=(0, 4))
+            self.cond_buttons[key] = btn
+
+        mode_row = ttk.Frame(self.cond_frame)
+        mode_row.grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Label(mode_row, text="Mode:").pack(side="left", padx=(0, 4))
+        ttk.Combobox(mode_row, textvariable=self.vars["cond_mode"],
+                     values=list(fx.COND_MODE_LABELS), state="readonly", width=32).pack(side="left")
+
+        self.cond_frame.grid(row=row, column=0, columnspan=2, sticky="we", pady=(6, 2))
+        row += 1
+
         self.vars["when"].set(fx.when_label(e["when"]))
         self.vars["do"].set(fx.DO_LABELS[fx.DO.index(e["do"])])
         self.vars["card"].set(self.magic_label(e.get("card", 337)))
@@ -261,9 +477,59 @@ class EffectDialog(FormDialog):
         self.vars["each"].set(fx.EACH_LABELS[fx.EACH.index(each["whose"])] if each else fx.NO_EACH)
         self.vars["each_type"].set((each or {}).get("type", ANY))
         self.vars["each_attribute"].set(self.attribute_label((each or {}).get("attribute", ANY)))
+
+        cond_mode = e.get("condition_mode", "all")
+        self.vars["cond_mode"].set(fx.COND_MODE_LABELS[fx.COND_MODES.index(cond_mode)] if cond_mode in fx.COND_MODES else fx.COND_MODE_LABELS[0])
+
+        self.fill_conditions()
+
         for key in ("when", "do", "each"):
             self.vars[key].trace_add("write", lambda *_: self.show_rows())
         self.show_rows()
+
+    def fill_conditions(self):
+        self.cond_tree.delete(*self.cond_tree.get_children())
+        for idx, cond in enumerate(self.conditions):
+            c_type = cond.get("type", "")
+            lbl = fx.CONDITION_LABELS[fx.CONDITIONS.index(c_type)] if c_type in fx.CONDITIONS else c_type
+            details = fx.condition_words(cond, self.label)
+            self.cond_tree.insert("", "end", iid=str(idx), values=(lbl, details))
+        self.show_condition_buttons()
+
+    def show_condition_buttons(self):
+        sel = self.cond_tree.selection()
+        idx = int(sel[0]) if sel else None
+        self.cond_buttons["add"].state(["!disabled"] if len(self.conditions) < fx.MAX_CONDITIONS else ["disabled"])
+        self.cond_buttons["edit"].state(["!disabled"] if idx is not None else ["disabled"])
+        self.cond_buttons["remove"].state(["!disabled"] if idx is not None else ["disabled"])
+
+    def add_condition(self):
+        if len(self.conditions) >= fx.MAX_CONDITIONS:
+            return
+        dlg = ConditionDialog(self, self.project, None, self.label, self.app)
+        self.wait_window(dlg)
+        if dlg.result is not None:
+            self.conditions.append(dlg.result)
+            self.fill_conditions()
+
+    def edit_condition(self):
+        sel = self.cond_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        dlg = ConditionDialog(self, self.project, self.conditions[idx], self.label, self.app)
+        self.wait_window(dlg)
+        if dlg.result is not None:
+            self.conditions[idx] = dlg.result
+            self.fill_conditions()
+
+    def remove_condition(self):
+        sel = self.cond_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        del self.conditions[idx]
+        self.fill_conditions()
 
     def choice(self, body, key, values, icon_of):
         """A list with the game's icons beside its choices (icon_choice.py),
@@ -298,7 +564,8 @@ class EffectDialog(FormDialog):
             self.vars["target"].set(fx.TARGET_LABELS[fx.TARGET.index(targets[0])])
         shown = {"when", "do"} | {"magic": {"card"}, "boost": {"target", "type", "attribute", "attack", "defense"},
                                   "heal": {"amount"}, "damage": {"amount"},
-                                  "destroy": {"target", "type", "attribute"}}[do]
+                                  "destroy": {"target", "type", "attribute"},
+                                  "battle_immunity": set()}[do]
         if do in fx.EACH_DO:
             shown.add("each")
             if self.vars["each"].get() in fx.EACH_LABELS:
@@ -307,13 +574,20 @@ class EffectDialog(FormDialog):
             for widget in widgets:
                 widget.grid() if key in shown else widget.grid_remove()
 
+        if when == "face_up":
+            self.cond_frame.grid()
+        else:
+            self.cond_frame.grid_remove()
+
     def read(self, dialog):
         when = self.chosen("when", fx.WHEN, fx.WHEN_LABELS)
         do = self.chosen("do", fx.DO, fx.DO_LABELS)
         if not when or not do:
             return "Choose when and what."
         effect = {"when": when, "do": do}
-        if do == "magic":
+        if do == "battle_immunity":
+            effect["target"] = "self"
+        elif do == "magic":
             text = self.vars["card"].get()
             effect["card"] = int(text.split(" ", 1)[0]) if text[:1].isdigit() else 0
         elif do in fx.FILTERED:
@@ -347,6 +621,14 @@ class EffectDialog(FormDialog):
                 if self.vars["each_" + key].get() not in ("", ANY):
                     value = self.vars["each_" + key].get()
                     effect["for_each"][key] = self.attribute_value(value) if key == "attribute" else value
+
+        if when == "face_up" and self.conditions:
+            effect["conditions"] = [dict(c) for c in self.conditions]
+            mode_lbl = self.vars["cond_mode"].get()
+            mode = fx.COND_MODES[fx.COND_MODE_LABELS.index(mode_lbl)] if mode_lbl in fx.COND_MODE_LABELS else "all"
+            if mode != "all":
+                effect["condition_mode"] = mode
+
         effect = fx.normalize(effect, self.project.resolve, self.attribute_choice)
         if effect is None:
             return "The game cannot do that."

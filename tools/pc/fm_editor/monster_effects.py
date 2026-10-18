@@ -4,7 +4,7 @@
 entry, so the editor keeps it there (card_extra, or an added card's extra)."""
 from __future__ import annotations
 
-from .gamedata import ATTRIBUTE_NAMES, TYPE_NAMES, TYPE_MAGIC, is_monster_type
+from .gamedata import ATTRIBUTE_NAMES, TYPE_NAMES, TYPE_MAGIC, is_monster_type, CARD_ID_LIMIT
 
 # The game's names, in the order of its enums, and the editor's for them.
 WHEN = ("summon", "flip", "draw", "combat", "destroyed", "destroy_opponent", "face_up")
@@ -22,9 +22,9 @@ WHEN_HINTS = (
     "It won a battle that destroyed the other monster, and is still on the field: after the battle.",
     "All the while it is face up on the field: a boost that goes when it does.",
 )
-DO = ("magic", "boost", "heal", "damage", "destroy")
+DO = ("magic", "boost", "heal", "damage", "destroy", "battle_immunity")
 DO_LABELS = ("Magic card effect", "Boost ATK/DEF", "Heal its owner's LP", "Damage the opponent's LP",
-             "Destroy monsters")
+             "Destroy monsters", "Cannot be destroyed by battle")
 TARGET = ("self", "own", "others", "opponent", "all", "battle")
 TARGET_LABELS = ("This card", "Its owner's monsters", "Its owner's other monsters", "The opponent's monsters",
                  "Every monster", "The monster it battles")
@@ -37,6 +37,46 @@ EACH_LABELS = ("On its owner's field", "On the opponent's field", "On the whole 
 EACH_FIELDS = ("its owner's field", "the opponent's field", "the field")
 EACH_DO = ("boost", "heal", "damage")
 NO_EACH = "\u2014"
+
+# Conditions (API 19): requirements under which a while face-up effect applies.
+CONDITIONS = (
+    "named_card",
+    "first_attacked",
+    "destroyed_after_2_attacks",
+    "destroyed_after_3_attacks",
+    "stat_threshold",
+    "lowest_atk",
+    "highest_atk",
+)
+CONDITION_LABELS = (
+    "Named card on field",
+    "The first time it is attacked",
+ 
+    "Can only be destroyed after two attacks",
+    "Can only be destroyed after three attacks",
+    "Compare ATK/DEF/Level against a number",
+    "Has the lowest ATK on field",
+    "Has the highest ATK on field",
+)
+CONDITION_HINTS = (
+    "A specific card is face up on the field (own, opponent, or whole field).",
+    "The first time this card is attacked (survives 1 attack, can be destroyed on the second attack).",
+    "Can only be destroyed after two attacks (survives up to 2 attacks, can be destroyed on the third attack).",
+    "Can only be destroyed after three attacks (survives up to 3 attacks, can be destroyed on the fourth attack).",
+    "This card's current effective ATK or DEF, or its printed Level, compared against a value (<, <=, >, >=).",
+    "This card has strictly lower ATK than every other face-up monster on the field (ties disqualify).",
+    "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
+)
+RESET = ("copy", "duel", "turn")
+RESET_LABELS = ("This card copy", "In a duel", "In a turn")
+OPS = ("<", "<=", ">", ">=")
+OP_LABELS = ("Lower than (<)", "Lower or equal (<=)", "Higher than (>)", "Higher or equal (>=)")
+STATS = ("atk", "def", "level")
+STAT_LABELS = ("ATK", "DEF", "Level")
+COND_MODES = ("all", "any")
+COND_MODE_LABELS = ("All conditions must be met (AND)", "Any condition can be met (OR)")
+MAX_CONDITIONS = 4
+
 # The disc's magic cards whose effect a monster may use: Magic cards whose
 # effect group does something at play time and asks nothing (no ritual).
 MAGIC = (320, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348,
@@ -49,7 +89,9 @@ MAX_EFFECTS = 8
 def allowed(when: str, do: str, target: str | None = None) -> bool:
     """What the game takes (monster_effects.c MonsterEffect_Allowed)."""
     if when == "face_up":
-        return do == "boost" and target != "battle"
+        return (do == "boost" and target != "battle") or (do == "battle_immunity" and (target is None or target == "self"))
+    if do == "battle_immunity":
+        return False
     if when == "combat":
         return do in ("heal", "damage") or (do == "boost" and target in ("self", "battle"))
     if target == "battle" and when != "flip":
@@ -70,6 +112,8 @@ def targets(when: str, do: str = "boost") -> list:
 
 
 def default_target(when: str, do: str = "boost") -> str:
+    if do == "battle_immunity":
+        return "self"
     if do == "destroy":
         return "battle" if when == "flip" else "opponent"
     return "own" if when == "destroyed" else "self"
@@ -91,6 +135,91 @@ def _name(names, value) -> str | None:
     return key if key in names else None
 
 
+def normalize_condition(cond: dict, resolve=None) -> dict | None:
+    """A condition entry with its names in game spelling, or None if invalid."""
+    if not isinstance(cond, dict):
+        return None
+    raw_type = cond.get("type")
+    if raw_type in ("second_attacked", "destroyed_after_two_attacks", "after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
+        raw_type = "destroyed_after_2_attacks"
+    elif raw_type in ("third_attacked", "destroyed_after_three_attacks", "after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
+        raw_type = "destroyed_after_3_attacks"
+    elif raw_type in ("after_one_attack", "destroyed_after_1_attack"):
+        raw_type = "first_attacked"
+    c_type = _name(CONDITIONS, raw_type)
+    if not c_type:
+        return None
+    out = {"type": c_type}
+    if c_type == "named_card":
+        card = cond.get("card")
+        card = resolve(card) if resolve and card is not None else card
+        if not isinstance(card, int) or isinstance(card, bool) or not (1 <= card <= CARD_ID_LIMIT):
+            return None
+        out["card"] = card
+        if "whose" in cond:
+            whose = _name(EACH, cond["whose"])
+            if whose is None:
+                return None
+            out["whose"] = whose
+
+
+    elif c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks"):
+        if "reset" in cond:
+            reset_val = cond["reset"]
+            if reset_val == "summon":
+                reset_val = "copy"
+            reset = _name(RESET, reset_val)
+            if reset is None:
+                return None
+            out["reset"] = reset
+        if "comparison" in cond or "op" in cond:
+            op = cond.get("comparison") or cond.get("op")
+            if op in ("<=", "le", "lower_equal"):
+                out["comparison"] = "<="
+    elif c_type == "stat_threshold":
+        stat = cond.get("stat", "atk")
+        if isinstance(stat, str):
+            s = stat.lower()
+            if s in ("def", "defense"):
+                stat = "def"
+            elif s in ("atk", "attack"):
+                stat = "atk"
+            elif s in ("level", "lvl", "stars", "star"):
+                stat = "level"
+            else:
+                return None
+        else:
+            return None
+        out["stat"] = stat
+
+        op = cond.get("comparison") or cond.get("op") or ">="
+        if isinstance(op, str):
+            op = op.lower()
+            if op in ("<", "lower", "lt"):
+                op = "<"
+            elif op in ("<=", "lower_equal", "le"):
+                op = "<="
+            elif op in (">", "higher", "gt"):
+                op = ">"
+            elif op in (">=", "higher_equal", "ge"):
+                op = ">="
+            else:
+                return None
+        else:
+            return None
+        out["comparison"] = op
+
+        val = cond.get("value", 0)
+        min_val = 1 if stat == "level" else 0
+        max_val = 12 if stat == "level" else AMOUNT_MAX
+        if not isinstance(val, int) or isinstance(val, bool) or not (min_val <= val <= max_val):
+            return None
+        out["value"] = val
+    elif c_type in ("lowest_atk", "highest_atk"):
+        pass
+    return out
+
+
 def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=None) -> dict | None:
     """The entry with its names in the game's spelling, or None when the
     game would leave it out. `resolve` turns a card reference into an id;
@@ -109,6 +238,8 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
         if card not in MAGIC:
             return None
         out["card"] = card
+    elif do == "battle_immunity":
+        out["target"] = target
     elif do in FILTERED:
         out["target"] = target
         for key in ("attack", "defense") if do == "boost" else ():
@@ -136,6 +267,31 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
         out["for_each"] = {"whose": whose}
         if not _filter(each, out["for_each"], attribute_resolve, type_names):
             return None
+
+    if "condition_mode" in effect:
+        m = _name(COND_MODES, effect["condition_mode"])
+        if m is None:
+            return None
+        out["condition_mode"] = m
+
+    if "conditions" in effect:
+        raw_conds = effect["conditions"]
+        if not isinstance(raw_conds, list):
+            return None
+        norm_conds = []
+        for c in raw_conds[:MAX_CONDITIONS]:
+            nc = normalize_condition(c, resolve)
+            if nc is None:
+                return None
+            norm_conds.append(nc)
+        if norm_conds:
+            out["conditions"] = norm_conds
+    elif "condition" in effect:
+        nc = normalize_condition(effect["condition"], resolve)
+        if nc is None:
+            return None
+        out["conditions"] = [nc]
+
     return out
 
 
@@ -195,29 +351,88 @@ def when_label(when: str) -> str:
     return WHEN_LABELS[WHEN.index(when)] if when in WHEN else str(when)
 
 
+def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
+    """A short description of a condition."""
+    if not isinstance(cond, dict):
+        return ""
+    c_type = cond.get("type")
+    if c_type == "named_card":
+        card = cond.get("card")
+        cname = card_name(card) if card else "Card"
+        whose = cond.get("whose", "all")
+        where = EACH_FIELDS[EACH.index(whose)] if whose in EACH else whose
+        return f"{cname} is on {where}"
+    if c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks","second_attacked", "third_attacked"):
+        reset = cond.get("reset", "copy")
+        if reset == "summon":
+            reset = "copy"
+        scope = "this turn" if reset == "turn" else ("this duel" if reset == "duel" else "this card copy")
+
+
+
+        if c_type in ("destroyed_after_2_attacks", "second_attacked"):
+
+
+            return f"can only be destroyed after two attacks ({scope})"
+        
+        elif c_type == "destroyed_after_3_attacks":
+            return f"can only be destroyed after three attacks ({scope})"
+        return f"the first time attacked ({scope})"
+    if c_type == "stat_threshold":
+        stat_raw = str(cond.get("stat", "atk")).lower()
+        stat_name = "Level" if stat_raw in ("level", "lvl", "stars", "star") else stat_raw.upper()
+        op = cond.get("comparison") or cond.get("op", ">=")
+        val = cond.get("value", 0)
+        return f"{stat_name} {op} {val}"
+    if c_type == "lowest_atk":
+        return "lowest ATK on field"
+    if c_type == "highest_atk":
+        return "highest ATK on field"
+    return str(c_type)
+
+
+def conditions_words(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
+    """" (if ...)" string for conditions on an effect, or ""."""
+    conds = effect.get("conditions")
+    if not conds and "condition" in effect:
+        conds = [effect["condition"]]
+    if not conds:
+        return ""
+    mode = effect.get("condition_mode", "all")
+    connector = " and " if mode == "all" else " or "
+    texts = [condition_words(c, card_name) for c in conds if isinstance(c, dict)]
+    texts = [t for t in texts if t]
+    if not texts:
+        return ""
+    return f" (if {connector.join(texts)})"
+
+
 def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
     """What the effect does, in a line: "Raigeki", "Its owner's other
     Dragon monsters +500 ATK", "Heal its owner 800 LP", "This card: +300
     ATK for each face-up Dragon on the field"."""
     do = effect.get("do")
     each = for_each_words(effect.get("for_each"))
+    conds = conditions_words(effect, card_name)
+    if do == "battle_immunity":
+        return f"Cannot be destroyed by battle{conds}"
     if do == "magic":
-        return f"{card_name(effect.get('card'))} (its effect)"
+        return f"{card_name(effect.get('card'))} (its effect){conds}"
     if do == "heal":
-        return f"Its owner gains {effect.get('amount')} LP{each}"
+        return f"Its owner gains {effect.get('amount')} LP{each}{conds}"
     if do == "damage":
-        return f"The opponent loses {effect.get('amount')} LP{each}"
+        return f"The opponent loses {effect.get('amount')} LP{each}{conds}"
     target = effect.get("target", default_target(effect.get("when"), do))
     who = TARGET_LABELS[TARGET.index(target)] if target in TARGET else str(target)
     which = " ".join(str(effect[k]) for k in ("attribute", "type") if k in effect)
     if which:
         who += f" ({which} only)"
     if do == "destroy":
-        return f"Destroy {who[0].lower()}{who[1:]}"
+        return f"Destroy {who[0].lower()}{who[1:]}{conds}"
     stats = " ".join(f"{effect[k]:+d} {label}" for k, label in (("attack", "ATK"), ("defense", "DEF"))
                      if effect.get(k))
     lasting = " for the battle" if effect.get("when") == "combat" else ""
-    return f"{who}: {stats}{each}{lasting}"
+    return f"{who}: {stats}{each}{lasting}{conds}"
 
 
 def for_each_words(each) -> str:
@@ -230,3 +445,4 @@ def for_each_words(each) -> str:
     whose = each.get("whose", "all")
     field = EACH_FIELDS[EACH.index(whose)] if whose in EACH else str(whose)
     return f" for each face-up {which} on {field}"
+

@@ -19,7 +19,7 @@ from pathlib import Path
 from .gamedata import FRAME_COLOR_NAMES, TYPE_MAGIC
 from .model import type_named
 
-HOST_API = 18
+HOST_API = 19
 
 # The release each mod API first shipped in, for the hints. An API past the
 # last listed is newer than every release.
@@ -234,6 +234,13 @@ def features(manifest: dict, project=None) -> list:
             add(18, "a card's own frame style (\"frame_style\")")
     for what in _frame_features(manifest.get("card_layout")):
         add(18, what)
+    # --- API 19 -------------------------------------------------------------
+    for entry in _entries(manifest.get("cards")):
+        for effect in _entries(entry.get("monster_effects")):
+            if effect.get("do") == "battle_immunity":
+                add(19, "a monster effect's \"battle_immunity\"")
+            if "conditions" in effect or "condition" in effect:
+                add(19, "a monster effect's \"conditions\"")
     return out
 
 
