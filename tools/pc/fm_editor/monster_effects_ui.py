@@ -275,7 +275,7 @@ class ConditionDialog(FormDialog):
             shown |= {"reset"}
         elif c_type == "stat_threshold":
             shown |= {"stat", "op", "value"}
-        elif c_type in ("lowest_atk", "highest_atk"):
+        elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
             pass
 
         for key, widgets in self.rows.items():
@@ -312,7 +312,7 @@ class ConditionDialog(FormDialog):
             if not 0 <= val <= fx.AMOUNT_MAX:
                 return f"Threshold must be 0 to {fx.AMOUNT_MAX}."
             out["value"] = val
-        elif c_type in ("lowest_atk", "highest_atk"):
+        elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
             pass
         self.result = out
         return None

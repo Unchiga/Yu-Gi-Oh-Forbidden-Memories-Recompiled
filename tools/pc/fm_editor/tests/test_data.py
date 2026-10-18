@@ -1408,6 +1408,18 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(eff_cond["condition_mode"], "any")
         self.assertEqual(fx.describe(eff_cond),
                          "Cannot be destroyed by battle (if lowest ATK on field or the first time attacked (this turn))")
+        cond_fewer = fx.normalize_condition({"type": "fewer_monsters"})
+        self.assertEqual(cond_fewer, {"type": "fewer_monsters"})
+        self.assertEqual(fx.condition_words(cond_fewer), "you control fewer monsters than opponent")
+        cond_more = fx.normalize_condition({"type": "more_monsters"})
+        self.assertEqual(cond_more, {"type": "more_monsters"})
+        self.assertEqual(fx.condition_words(cond_more), "you control more monsters than your opponent")
+        self.assertEqual(fx.normalize_condition({"type": "fewer_monsters_than_opponent"})["type"], "fewer_monsters")
+        self.assertEqual(fx.normalize_condition({"type": "more_monsters_than_opponent"})["type"], "more_monsters")
+        eff_fewer = fx.normalize({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "fewer_monsters"}]})
+        self.assertEqual(fx.describe(eff_fewer), "Cannot be destroyed by battle (if you control fewer monsters than opponent)")
+        eff_more = fx.normalize({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "more_monsters"}]})
+        self.assertEqual(fx.describe(eff_more), "Cannot be destroyed by battle (if you control more monsters than your opponent)")
         cond_second = fx.normalize_condition({"type": "destroyed_after_2_attacks", "reset": "duel"})
         self.assertEqual(cond_second, {"type": "destroyed_after_2_attacks", "reset": "duel"})
 

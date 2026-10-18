@@ -47,6 +47,8 @@ CONDITIONS = (
     "stat_threshold",
     "lowest_atk",
     "highest_atk",
+    "fewer_monsters",
+    "more_monsters",
 )
 CONDITION_LABELS = (
     "Named card on field",
@@ -57,6 +59,8 @@ CONDITION_LABELS = (
     "Compare ATK/DEF against a number",
     "Has the lowest ATK on field",
     "Has the highest ATK on field",
+    "If you control fewer monsters than opponent",
+    "If you control more monsters than your opponent",
 )
 CONDITION_HINTS = (
     "A specific card is face up on the field (own, opponent, or whole field).",
@@ -66,6 +70,8 @@ CONDITION_HINTS = (
     "This card's current effective ATK or DEF compared against a value (<, <=, >, >=).",
     "This card has strictly lower ATK than every other face-up monster on the field (ties disqualify).",
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
+    "Active only while you control strictly fewer monsters than your opponent.",
+    "Active only while you control strictly more monsters than your opponent.",
 )
 RESET = ("turn", "copy", "duel")
 RESET_LABELS = ("In a turn", "This card copy", "In a duel")
@@ -168,6 +174,10 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         raw_type = "destroyed_after_3_attacks"
     elif raw_type in ("after_one_attack", "destroyed_after_1_attack"):
         raw_type = "first_attacked"
+    elif raw_type in ("fewer_monsters_than_opponent", "fewer_monsters_than_opp", "control_fewer_monsters"):
+        raw_type = "fewer_monsters"
+    elif raw_type in ("more_monsters_than_opponent", "more_monsters_than_opp", "control_more_monsters"):
+        raw_type = "more_monsters"
     c_type = _name(CONDITIONS, raw_type)
     if not c_type:
         return None
@@ -233,7 +243,7 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         if not isinstance(val, int) or isinstance(val, bool) or not (0 <= val <= AMOUNT_MAX):
             return None
         out["value"] = val
-    elif c_type in ("lowest_atk", "highest_atk"):
+    elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
         pass
     return out
 
@@ -449,6 +459,10 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
         return "lowest ATK on field"
     if c_type == "highest_atk":
         return "highest ATK on field"
+    if c_type == "fewer_monsters":
+        return "you control fewer monsters than opponent"
+    if c_type == "more_monsters":
+        return "you control more monsters than your opponent"
     return str(c_type)
 
 

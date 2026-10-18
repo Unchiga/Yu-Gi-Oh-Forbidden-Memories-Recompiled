@@ -76,11 +76,15 @@ enum {
   MONSTER_COND_LOWEST_ATK,  /* this card has the strictly lowest ATK on field */
   MONSTER_COND_HIGHEST_ATK, /* this card has the strictly highest ATK on field
                              */
+  MONSTER_COND_FEWER_MONSTERS, /* you control strictly fewer monsters than opponent */
+  MONSTER_COND_MORE_MONSTERS,  /* you control strictly more monsters than opponent */
   MONSTER_COND_COUNT
 };
 
 #define MONSTER_COND_SECOND_ATTACKED MONSTER_COND_DESTROYED_AFTER_2_ATTACKS
 #define MONSTER_COND_THIRD_ATTACKED MONSTER_COND_DESTROYED_AFTER_3_ATTACKS
+#define MONSTER_COND_FEWER_MONSTERS_THAN_OPPONENT MONSTER_COND_FEWER_MONSTERS
+#define MONSTER_COND_MORE_MONSTERS_THAN_OPPONENT MONSTER_COND_MORE_MONSTERS
 
 enum {
   MONSTER_OP_LT, /* < strictly lower */

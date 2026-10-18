@@ -2692,6 +2692,17 @@ class MonsterEffectsGuiTest(GuiCase):
         err = dialog.read(dialog)
         self.assertIsNotNone(err)
 
+        # 6. Fewer and more monsters conditions
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set("If you control fewer monsters than opponent")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "fewer_monsters"})
+
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set("If you control more monsters than your opponent")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "more_monsters"})
+
     def test_effect_dialog_modifiers(self):
         from fm_editor.monster_effects_ui import EffectDialog
         from fm_editor import monster_effects as fx

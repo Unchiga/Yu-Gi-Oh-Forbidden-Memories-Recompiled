@@ -667,7 +667,26 @@ static void monster_effect_conditions_and_battle_immunity(void) {
   assert(effects[0].conditions[1].type ==
          MONSTER_COND_DESTROYED_AFTER_3_ATTACKS);
   assert(effects[0].conditions[1].reset == MONSTER_RESET_TURN);
-
+  /* Test fewer_monsters and more_monsters conditions */
+  JsonDocument *doc3 = Json_Parse(
+      "[{\"replace\":29,\"monster_effects\":["
+      "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+      "   \"conditions\":["
+      "     {\"type\":\"fewer_monsters\"},"
+      "     {\"type\":\"more_monsters\"},"
+      "     {\"type\":\"fewer_monsters_than_opponent\"},"
+      "     {\"type\":\"more_monsters_than_opponent\"}]}]}]",
+      error, sizeof(error));
+  assert(doc3);
+  for (i = 0, entry = Json_At(Json_Root(doc3), 0); entry;
+       i++, entry = Json_Next(entry))
+    add_entry("f", ".", i, entry, &context);
+  assert(Cards_MonsterEffects(29, &effects) == 1);
+  assert(effects[0].cond_count == 4);
+  assert(effects[0].conditions[0].type == MONSTER_COND_FEWER_MONSTERS);
+  assert(effects[0].conditions[1].type == MONSTER_COND_MORE_MONSTERS);
+  assert(effects[0].conditions[2].type == MONSTER_COND_FEWER_MONSTERS);
+  assert(effects[0].conditions[3].type == MONSTER_COND_MORE_MONSTERS);
 }
 
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's

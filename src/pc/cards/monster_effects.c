@@ -31,7 +31,9 @@ const char *const MonsterEffect_CondNames[MONSTER_COND_COUNT] = {
     "destroyed_after_3_attacks",
     "stat_threshold",
     "lowest_atk",
-    "highest_atk"};
+    "highest_atk",
+    "fewer_monsters",
+    "more_monsters"};
 const char *const MonsterEffect_OpNames[MONSTER_OP_COUNT] = {"<", "<=", ">",
                                                              ">="};
 const char *const MonsterEffect_ResetNames[MONSTER_RESET_COUNT] = {
@@ -250,13 +252,26 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
     } else if (type_str && (!strcmp(type_str, "destroyed_after_1_attack") ||
                             !strcmp(type_str, "after_one_attack"))) {
       type = MONSTER_COND_FIRST_ATTACKED;
+    } else if (type_str &&
+               (!strcmp(type_str, "fewer_monsters_than_opponent") ||
+                !strcmp(type_str, "fewer_monsters_than_opp") ||
+                !strcmp(type_str, "control_fewer_monsters") ||
+                !strcmp(type_str, "fewer_monsters"))) {
+      type = MONSTER_COND_FEWER_MONSTERS;
+    } else if (type_str &&
+               (!strcmp(type_str, "more_monsters_than_opponent") ||
+                !strcmp(type_str, "more_monsters_than_opp") ||
+                !strcmp(type_str, "control_more_monsters") ||
+                !strcmp(type_str, "more_monsters"))) {
+      type = MONSTER_COND_MORE_MONSTERS;
     } else {
       Mods_Note(mod,
                 "cards[%d]: monster_effects[%d]: conditions[%d]: \"type\" must "
                 "be named_card, first_attacked, "
 
                 "destroyed_after_2_attacks, destroyed_after_3_attacks, "
-                "stat_threshold, lowest_atk or highest_atk",
+                "stat_threshold, lowest_atk, highest_atk, "
+                "fewer_monsters or more_monsters",
 
                 index, n, c_idx);
       return 0;
@@ -384,6 +399,8 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
     break;
   case MONSTER_COND_LOWEST_ATK:
   case MONSTER_COND_HIGHEST_ATK:
+  case MONSTER_COND_FEWER_MONSTERS:
+  case MONSTER_COND_MORE_MONSTERS:
     break;
   }
   return 1;

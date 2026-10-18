@@ -975,6 +975,26 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
     s_evaluating_stats = 0;
     return 1;
   }
+  case MONSTER_COND_FEWER_MONSTERS:
+  case MONSTER_COND_MORE_MONSTERS: {
+    int own_count = 0, opp_count = 0;
+    for (r = 0; r < MONSTER_RECORDS; r++) {
+      if (!monster_zone(r))
+        continue;
+      if (!S.card[r] &&
+          !(D_801A7AD8[r].flags & DUEL_CARD_FLAG_OCCUPIED &&
+            Cards_Valid(D_801A7AD8[r].card_id)))
+        continue;
+      if (owner(r) == owner(record))
+        own_count++;
+      else
+        opp_count++;
+    }
+    if (cond->type == MONSTER_COND_FEWER_MONSTERS)
+      return own_count < opp_count;
+    else
+      return own_count > opp_count;
+  }
   default:
     return 1;
   }

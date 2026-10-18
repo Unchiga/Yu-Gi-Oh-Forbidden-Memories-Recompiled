@@ -236,9 +236,71 @@ static void test_first_second_third_attacked_sequence(void) {
        "3-attack survival match accurately)");
 }
 
+static void test_fewer_and_more_monsters_condition(void) {
+  MonsterEffect eff_fewer, eff_more;
+
+  memset(&eff_fewer, 0, sizeof(eff_fewer));
+  eff_fewer.cond_count = 1;
+  eff_fewer.conditions[0].type = MONSTER_COND_FEWER_MONSTERS;
+
+  memset(&eff_more, 0, sizeof(eff_more));
+  eff_more.cond_count = 1;
+  eff_more.conditions[0].type = MONSTER_COND_MORE_MONSTERS;
+
+  reset_test_duel();
+
+  /* Case 1: Player controls 1 monster (slot 5), Opponent controls 2 monsters (slots 20, 21) */
+  D_801A7AD8[21].card_id = 2;
+  D_801A7AD8[21].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[21] = 2;
+  gMonsterEffects.face_up[21] = 1;
+
+  /* Evaluated from player's monster (slot 5): own=1, opp=2 */
+  assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 1);
+  assert(MonsterEffects_ConditionsMet(5, &eff_more) == 0);
+
+  /* Evaluated from opponent's monster (slot 20): own=2, opp=1 */
+  assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_more) == 1);
+
+  /* Case 2: Equal monsters: Player controls 2 (slots 5, 6), Opponent controls 2 (slots 20, 21) */
+  D_801A7AD8[6].card_id = 3;
+  D_801A7AD8[6].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[6] = 3;
+  gMonsterEffects.face_up[6] = 1;
+
+  assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(5, &eff_more) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_more) == 0);
+
+  /* Case 3: Player controls 3 monsters (slots 5, 6, 7), Opponent controls 1 (slot 20) */
+  D_801A7AD8[7].card_id = 4;
+  D_801A7AD8[7].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[7] = 4;
+  gMonsterEffects.face_up[7] = 1;
+
+  /* Remove opponent's second monster */
+  D_801A7AD8[21].card_id = 0;
+  D_801A7AD8[21].flags = 0;
+  gMonsterEffects.card[21] = 0;
+  gMonsterEffects.face_up[21] = 0;
+
+  /* Player own=3, opp=1 */
+  assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(5, &eff_more) == 1);
+
+  /* Opponent own=1, opp=3 */
+  assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 1);
+  assert(MonsterEffects_ConditionsMet(20, &eff_more) == 0);
+
+  puts("test_fewer_and_more_monsters_condition: PASSED (fewer/more monsters evaluated correctly)");
+}
+
 int main(void) {
   test_attacker_vs_defender();
   test_first_second_third_attacked_sequence();
+  test_fewer_and_more_monsters_condition();
   puts("\nAll monster attacked condition tests PASSED successfully!");
   return 0;
 }
