@@ -70,8 +70,8 @@ CONDITION_HINTS = (
     "This card's current effective ATK or DEF compared against a value (<, <=, >, >=).",
     "This card has strictly lower ATK than every other face-up monster on the field (ties disqualify).",
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
-    "Active only while you control strictly fewer monsters than your opponent.",
-    "Active only while you control strictly more monsters than your opponent.",
+    "Active only while you control strictly fewer monsters than your opponent (having 0 monsters counts; ties disqualify).",
+    "Active only while you control strictly more monsters than your opponent (opponent having 0 monsters counts; ties disqualify).",
 )
 RESET = ("turn", "copy", "duel")
 RESET_LABELS = ("In a turn", "This card copy", "In a duel")

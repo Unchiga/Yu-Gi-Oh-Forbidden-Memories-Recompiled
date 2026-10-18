@@ -101,6 +101,8 @@ static void queue(int card, int record, int when) {
   for (i = 0; i < n; i++) {
     if (effects[i].when != when)
       continue;
+    if (effects[i].cond_count && !MonsterEffects_ConditionsMet(record, &effects[i]))
+      continue;
     if (S.count == MONSTER_QUEUE_MAX) {
       LOG(LOG_DUEL_EFFECTS,
           "monster effects: queue full: card %d's %s effect dropped", card,
@@ -441,6 +443,8 @@ static int resolve(void) {
   if (index >= n)
     return 0;
   effect = &effects[index];
+  if (effect->cond_count && !MonsterEffects_ConditionsMet(trigger.record, effect))
+    return 0;
   trace(card_effect ? "resolving card" : "resolving", trigger.card,
         trigger.record, effect);
   S.chain++;
@@ -821,6 +825,8 @@ void MonsterEffects_Battle(void) {
       const MonsterEffect *effect = &effects[e];
       if (effect->when != MONSTER_WHEN_COMBAT)
         continue;
+      if (effect->cond_count && !MonsterEffects_ConditionsMet(record, effect))
+        continue;
 
       trace("battle", card, record, effect);
       count = times(effect, record);
@@ -867,6 +873,20 @@ void MonsterEffects_Battle(void) {
 }
 
 static int s_evaluating_stats = 0;
+
+static int slot_has_monster(int r) {
+  if (!monster_zone(r))
+    return 0;
+  if (trap_participant(r))
+    return 1;
+  if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_OCCUPIED)
+    return Cards_Valid(D_801A7AD8[r].card_id);
+  /* Fallback for test stubs where D_801A7AD8 is uninitialized but S.card was set */
+  if (!D_801A7AD8[r].flags && !D_801A7AD8[r].card_id && S.card[r] &&
+      Cards_Valid(S.card[r]))
+    return 1;
+  return 0;
+}
 
 static int evaluate_condition(int record, const MonsterCondition *cond) {
   int r;
@@ -979,17 +999,16 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
   case MONSTER_COND_MORE_MONSTERS: {
     int own_count = 0, opp_count = 0;
     for (r = 0; r < MONSTER_RECORDS; r++) {
-      if (!monster_zone(r))
-        continue;
-      if (!S.card[r] &&
-          !(D_801A7AD8[r].flags & DUEL_CARD_FLAG_OCCUPIED &&
-            Cards_Valid(D_801A7AD8[r].card_id)))
+      if (!slot_has_monster(r))
         continue;
       if (owner(r) == owner(record))
         own_count++;
       else
         opp_count++;
     }
+    /* Having 0 monsters is explicitly accounted for (e.g. 1 > 0 is true, 0 < 1 is true).
+     * If both players control an equal number of monsters (including 0 == 0 or 1 == 1),
+     * it is a tie and neither condition is satisfied (evaluates to 0). */
     if (cond->type == MONSTER_COND_FEWER_MONSTERS)
       return own_count < opp_count;
     else

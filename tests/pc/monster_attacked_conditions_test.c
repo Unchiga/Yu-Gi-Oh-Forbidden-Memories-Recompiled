@@ -294,7 +294,71 @@ static void test_fewer_and_more_monsters_condition(void) {
   assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 1);
   assert(MonsterEffects_ConditionsMet(20, &eff_more) == 0);
 
-  puts("test_fewer_and_more_monsters_condition: PASSED (fewer/more monsters evaluated correctly)");
+  /* Case 4: Opponent controls 0 monsters, Player controls 1 monster (slot 5) */
+  reset_test_duel();
+  /* In reset_test_duel(), slot 5 and slot 20 were set up. Clear slot 20 so opponent has 0 monsters. */
+  D_801A7AD8[20].card_id = 0;
+  D_801A7AD8[20].flags = 0;
+  gMonsterEffects.card[20] = 0;
+  gMonsterEffects.face_up[20] = 0;
+
+  /* Evaluated from player (slot 5): own=1, opp=0 -> more is true, fewer is false */
+  assert(MonsterEffects_ConditionsMet(5, &eff_more) == 1);
+  assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 0);
+
+  /* Case 5: Player controls 0 monsters, Opponent controls 1 monster (slot 20) */
+  D_801A7AD8[5].card_id = 0;
+  D_801A7AD8[5].flags = 0;
+  gMonsterEffects.card[5] = 0;
+  gMonsterEffects.face_up[5] = 0;
+
+  D_801A7AD8[20].card_id = 1;
+  D_801A7AD8[20].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[20] = 1;
+  gMonsterEffects.face_up[20] = 1;
+
+  /* Evaluated from player perspective (slot 5): own=0, opp=1 -> fewer is true, more is false */
+  assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 1);
+  assert(MonsterEffects_ConditionsMet(5, &eff_more) == 0);
+
+  /* Evaluated from opponent perspective (slot 20): own=1, opp=0 -> more is true, fewer is false */
+  assert(MonsterEffects_ConditionsMet(20, &eff_more) == 1);
+  assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 0);
+
+  /* Case 6: Tie at 0 monsters (both player and opponent control 0 monsters) */
+  D_801A7AD8[20].card_id = 0;
+  D_801A7AD8[20].flags = 0;
+  gMonsterEffects.card[20] = 0;
+  gMonsterEffects.face_up[20] = 0;
+
+  /* Evaluated from player perspective (slot 5): own=0, opp=0 -> tie, both false */
+  assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(5, &eff_more) == 0);
+
+  /* Evaluated from opponent perspective (slot 20): own=0, opp=0 -> tie, both false */
+  assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_more) == 0);
+
+  /* Case 7: Tie at 1 monster (both player and opponent control 1 monster) */
+  D_801A7AD8[5].card_id = 18;
+  D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[5] = 18;
+  gMonsterEffects.face_up[5] = 1;
+
+  D_801A7AD8[20].card_id = 1;
+  D_801A7AD8[20].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[20] = 1;
+  gMonsterEffects.face_up[20] = 1;
+
+  /* Evaluated from player perspective (slot 5): own=1, opp=1 -> tie, both false */
+  assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(5, &eff_more) == 0);
+
+  /* Evaluated from opponent perspective (slot 20): own=1, opp=1 -> tie, both false */
+  assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_more) == 0);
+
+  puts("test_fewer_and_more_monsters_condition: PASSED (fewer/more monsters with 0 monsters and ties evaluated correctly)");
 }
 
 int main(void) {
