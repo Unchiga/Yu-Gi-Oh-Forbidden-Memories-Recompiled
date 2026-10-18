@@ -1420,6 +1420,35 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(fx.describe(eff_fewer), "Cannot be destroyed by battle (if you control fewer monsters than opponent)")
         eff_more = fx.normalize({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "more_monsters"}]})
         self.assertEqual(fx.describe(eff_more), "Cannot be destroyed by battle (if you control more monsters than your opponent)")
+
+        # Control stat / level / type / attribute conditions
+        cond_cstat = fx.normalize_condition({"type": "control_stat", "presence": "control", "scope": "any", "stat": "atk", "comparison": ">", "value": 2000})
+        self.assertEqual(cond_cstat, {"type": "control_stat", "stat": "atk", "comparison": ">", "value": 2000})
+        self.assertEqual(fx.condition_words(cond_cstat), "you control a monster with ATK > 2000")
+        cond_ncstat = fx.normalize_condition({"type": "not_control_stat", "scope": "other", "stat": "def", "comparison": "<=", "value": 1500})
+        self.assertEqual(cond_ncstat, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "comparison": "<=", "value": 1500})
+        self.assertEqual(fx.condition_words(cond_ncstat), "you do not control another monster with DEF <= 1500")
+
+        cond_clevel = fx.normalize_condition({"type": "control_level", "presence": "control", "scope": "other", "comparison": ">=", "level": 7})
+        self.assertEqual(cond_clevel, {"type": "control_level", "scope": "other", "comparison": ">=", "level": 7})
+        self.assertEqual(fx.condition_words(cond_clevel), "you control another Level >= 7 monster")
+        cond_nclevel = fx.normalize_condition({"type": "not_control_level", "comparison": "==", "level": 5})
+        self.assertEqual(cond_nclevel, {"type": "control_level", "presence": "not_control", "comparison": "==", "level": 5})
+        self.assertEqual(fx.condition_words(cond_nclevel), "you do not control a Level 5 monster")
+
+        cond_ctype_only = fx.normalize_condition({"type": "control_type", "presence": "control", "card_type": "Dragon", "mode": "only"})
+        self.assertEqual(cond_ctype_only, {"type": "control_type", "card_type": "Dragon", "mode": "only"})
+        self.assertEqual(fx.condition_words(cond_ctype_only), "you only control Dragon monsters")
+        cond_ctype_one = fx.normalize_condition({"type": "not_control_type", "card_type": "Spellcaster", "mode": "at_least_one"})
+        self.assertEqual(cond_ctype_one, {"type": "control_type", "presence": "not_control", "card_type": "Spellcaster"})
+        self.assertEqual(fx.condition_words(cond_ctype_one), "you do not control a Spellcaster monster")
+
+        cond_cattr = fx.normalize_condition({"type": "control_attribute", "presence": "control", "attribute": "LIGHT", "scope": "any"})
+        self.assertEqual(cond_cattr, {"type": "control_attribute", "attribute": "LIGHT"})
+        self.assertEqual(fx.condition_words(cond_cattr), "you control a LIGHT monster")
+        cond_ncattr = fx.normalize_condition({"type": "not_control_attribute", "attribute": "DARK", "scope": "other"})
+        self.assertEqual(cond_ncattr, {"type": "control_attribute", "presence": "not_control", "scope": "other", "attribute": "DARK"})
+        self.assertEqual(fx.condition_words(cond_ncattr), "you do not control another DARK monster")
         cond_second = fx.normalize_condition({"type": "destroyed_after_2_attacks", "reset": "duel"})
         self.assertEqual(cond_second, {"type": "destroyed_after_2_attacks", "reset": "duel"})
 

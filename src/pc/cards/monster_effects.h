@@ -78,6 +78,10 @@ enum {
                              */
   MONSTER_COND_FEWER_MONSTERS, /* you control strictly fewer monsters than opponent */
   MONSTER_COND_MORE_MONSTERS,  /* you control strictly more monsters than opponent */
+  MONSTER_COND_CONTROL_STAT,   /* control (or not) a monster with (more/less ATK or DEF) */
+  MONSTER_COND_CONTROL_LEVEL,  /* control (or not) a monster with Level (specific / higher / fewer) */
+  MONSTER_COND_CONTROL_TYPE,   /* control (or not) a monster with Type (at least one or only) */
+  MONSTER_COND_CONTROL_ATTRIBUTE, /* control (or not) a monster with Attribute */
   MONSTER_COND_COUNT
 };
 
@@ -85,12 +89,17 @@ enum {
 #define MONSTER_COND_THIRD_ATTACKED MONSTER_COND_DESTROYED_AFTER_3_ATTACKS
 #define MONSTER_COND_FEWER_MONSTERS_THAN_OPPONENT MONSTER_COND_FEWER_MONSTERS
 #define MONSTER_COND_MORE_MONSTERS_THAN_OPPONENT MONSTER_COND_MORE_MONSTERS
+#define MONSTER_COND_CONTROL_MONSTER_STAT MONSTER_COND_CONTROL_STAT
+#define MONSTER_COND_CONTROL_MONSTER_LEVEL MONSTER_COND_CONTROL_LEVEL
+#define MONSTER_COND_CONTROL_MONSTER_TYPE MONSTER_COND_CONTROL_TYPE
+#define MONSTER_COND_CONTROL_MONSTER_ATTRIBUTE MONSTER_COND_CONTROL_ATTRIBUTE
 
 enum {
   MONSTER_OP_LT, /* < strictly lower */
   MONSTER_OP_LE, /* <= lower or equal */
   MONSTER_OP_GT, /* > strictly higher */
   MONSTER_OP_GE, /* >= higher or equal */
+  MONSTER_OP_EQ, /* == equal to */
   MONSTER_OP_COUNT
 };
 enum {
@@ -112,6 +121,11 @@ enum {
   MONSTER_COND_MODE_COUNT
 };
 
+enum {
+  MONSTER_COND_TYPE_AT_LEAST_ONE, /* at least one monster of type (default) */
+  MONSTER_COND_TYPE_ONLY          /* only control this type */
+};
+
 #define MONSTER_CONDITIONS_MAX 4
 
 typedef struct MonsterCondition {
@@ -121,7 +135,12 @@ typedef struct MonsterCondition {
   unsigned char reset; /* MONSTER_RESET_* */
   unsigned char stat;  /* MONSTER_STAT_ATK or MONSTER_STAT_DEF */
   unsigned char op;    /* MONSTER_OP_* */
-  short value;         /* stat threshold number */
+  short value;         /* stat threshold number or level */
+  unsigned char presence; /* 1 = control (default), 0 = do not control */
+  signed char card_type;  /* monster type: -1 any, or type id */
+  signed short attribute; /* attribute id: -1 any */
+  unsigned char type_mode; /* 0 = at least one (default), 1 = only control this type */
+  unsigned char scope;    /* 0 = all own (default), 1 = other monsters (exclude self) */
 } MonsterCondition;
 
 #define MONSTER_EFFECTS_MAX 8

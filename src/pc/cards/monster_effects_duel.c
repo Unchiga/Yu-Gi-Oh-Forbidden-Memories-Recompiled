@@ -957,6 +957,8 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
       return val > cond->value;
     case MONSTER_OP_GE:
       return val >= cond->value;
+    case MONSTER_OP_EQ:
+      return val == cond->value;
     default:
       return 0;
     }
@@ -1013,6 +1015,142 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
       return own_count < opp_count;
     else
       return own_count > opp_count;
+  }
+  case MONSTER_COND_CONTROL_STAT: {
+    int found = 0;
+    for (r = 0; r < MONSTER_RECORDS; r++) {
+      int attack, defense, val, packed, match;
+      if (!slot_has_monster(r))
+        continue;
+      if (owner(r) != owner(record))
+        continue;
+      if (cond->scope && r == record)
+        continue;
+      if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN)
+        continue;
+      s_evaluating_stats = 1;
+      packed = Duel_CalcCardStats(&D_801A7AD8[r]);
+      s_evaluating_stats = 0;
+      attack = packed & 0xFFFF;
+      defense = (unsigned int)packed >> 16;
+      val = (cond->stat == MONSTER_STAT_DEF) ? defense : attack;
+      match = 0;
+      switch (cond->op) {
+      case MONSTER_OP_LT:
+        match = (val < cond->value);
+        break;
+      case MONSTER_OP_LE:
+        match = (val <= cond->value);
+        break;
+      case MONSTER_OP_GT:
+        match = (val > cond->value);
+        break;
+      case MONSTER_OP_GE:
+        match = (val >= cond->value);
+        break;
+      case MONSTER_OP_EQ:
+        match = (val == cond->value);
+        break;
+      }
+      if (match) {
+        found = 1;
+        break;
+      }
+    }
+    return cond->presence ? found : !found;
+  }
+  case MONSTER_COND_CONTROL_LEVEL: {
+    int found = 0;
+    for (r = 0; r < MONSTER_RECORDS; r++) {
+      int card_id, level, match;
+      if (!slot_has_monster(r))
+        continue;
+      if (owner(r) != owner(record))
+        continue;
+      if (cond->scope && r == record)
+        continue;
+      if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN)
+        continue;
+      card_id = D_801A7AD8[r].card_id;
+      if (!card_id && S.card[r])
+        card_id = S.card[r];
+      level = Cards_Level(card_id);
+      if (level < 1)
+        continue;
+      match = 0;
+      switch (cond->op) {
+      case MONSTER_OP_LT:
+        match = (level < cond->value);
+        break;
+      case MONSTER_OP_LE:
+        match = (level <= cond->value);
+        break;
+      case MONSTER_OP_GT:
+        match = (level > cond->value);
+        break;
+      case MONSTER_OP_GE:
+        match = (level >= cond->value);
+        break;
+      case MONSTER_OP_EQ:
+        match = (level == cond->value);
+        break;
+      }
+      if (match) {
+        found = 1;
+        break;
+      }
+    }
+    return cond->presence ? found : !found;
+  }
+  case MONSTER_COND_CONTROL_TYPE: {
+    int total_monsters = 0;
+    int type_monsters = 0;
+    int satisfied = 0;
+    for (r = 0; r < MONSTER_RECORDS; r++) {
+      int card_id;
+      if (!slot_has_monster(r))
+        continue;
+      if (owner(r) != owner(record))
+        continue;
+      if (cond->scope && r == record)
+        continue;
+      if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN)
+        continue;
+      card_id = D_801A7AD8[r].card_id;
+      if (!card_id && S.card[r])
+        card_id = S.card[r];
+      total_monsters++;
+      if (cond->card_type < 0 ||
+          Cards_Type(card_id) == (unsigned char)cond->card_type)
+        type_monsters++;
+    }
+    if (cond->type_mode == MONSTER_COND_TYPE_ONLY)
+      satisfied = (total_monsters > 0 && type_monsters == total_monsters);
+    else
+      satisfied = (type_monsters > 0);
+    return cond->presence ? satisfied : !satisfied;
+  }
+  case MONSTER_COND_CONTROL_ATTRIBUTE: {
+    int found = 0;
+    for (r = 0; r < MONSTER_RECORDS; r++) {
+      int card_id;
+      if (!slot_has_monster(r))
+        continue;
+      if (owner(r) != owner(record))
+        continue;
+      if (cond->scope && r == record)
+        continue;
+      if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN)
+        continue;
+      card_id = D_801A7AD8[r].card_id;
+      if (!card_id && S.card[r])
+        card_id = S.card[r];
+      if (cond->attribute < 0 || Cards_Attribute(card_id) == cond->attribute) {
+        found = 1;
+        break;
+      }
+    }
+    return cond->presence ? found : !found;
   }
   default:
     return 1;

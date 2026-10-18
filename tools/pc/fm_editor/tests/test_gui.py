@@ -2703,6 +2703,45 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.ok()
         self.assertEqual(dialog.result, {"type": "more_monsters"})
 
+        # 7. Control stat condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_stat")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
+        dialog.vars["scope"].set(fx.SCOPE_LABELS[1])
+        dialog.vars["stat"].set("DEF")
+        dialog.vars["op"].set(fx.OP_LABELS[fx.OPS.index("<=")])
+        dialog.vars["value"].set("1500")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "comparison": "<=", "value": 1500})
+
+        # 8. Control level condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_level")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[0])
+        dialog.vars["scope"].set(fx.SCOPE_LABELS[0])
+        dialog.vars["op"].set(fx.OP_LABELS[fx.OPS.index(">=")])
+        dialog.vars["level"].set("7")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_level", "comparison": ">=", "level": 7})
+
+        # 9. Control type condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_type")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[0])
+        dialog.vars["type_mode"].set(fx.TYPE_MODE_LABELS[1])
+        dialog.vars["card_type"].set("Dragon")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_type", "mode": "only", "card_type": "Dragon"})
+
+        # 10. Control attribute condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_attribute")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
+        dialog.vars["scope"].set(fx.SCOPE_LABELS[1])
+        dialog.vars["attribute"].set("LIGHT")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_attribute", "presence": "not_control", "scope": "other", "attribute": "LIGHT"})
+
     def test_effect_dialog_modifiers(self):
         from fm_editor.monster_effects_ui import EffectDialog
         from fm_editor import monster_effects as fx

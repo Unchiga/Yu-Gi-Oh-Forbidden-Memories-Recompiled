@@ -49,6 +49,10 @@ CONDITIONS = (
     "highest_atk",
     "fewer_monsters",
     "more_monsters",
+    "control_stat",
+    "control_level",
+    "control_type",
+    "control_attribute",
 )
 CONDITION_LABELS = (
     "Named card on field",
@@ -61,6 +65,10 @@ CONDITION_LABELS = (
     "Has the highest ATK on field",
     "If you control fewer monsters than opponent",
     "If you control more monsters than your opponent",
+    "Control monster with ATK/DEF",
+    "Control monster with Level",
+    "Control monster with Type",
+    "Control monster with Attribute",
 )
 CONDITION_HINTS = (
     "A specific card is face up on the field (own, opponent, or whole field).",
@@ -72,16 +80,26 @@ CONDITION_HINTS = (
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
     "Active only while you control strictly fewer monsters than your opponent (having 0 monsters counts; ties disqualify).",
     "Active only while you control strictly more monsters than your opponent (opponent having 0 monsters counts; ties disqualify).",
+    "Control (or do not control) a monster with ATK or DEF compared against a value.",
+    "Control (or do not control) a monster with a specific Level, or higher/fewer Level than a number.",
+    "Control (or do not control) a monster of a specific Type (at least one, or only control that type).",
+    "Control (or do not control) a monster of a specific Attribute.",
 )
 RESET = ("turn", "copy", "duel")
 RESET_LABELS = ("In a turn", "This card copy", "In a duel")
-OPS = ("<", "<=", ">", ">=")
-OP_LABELS = ("Lower than (<)", "Lower or equal (<=)", "Higher than (>)", "Higher or equal (>=)")
+OPS = ("<", "<=", ">", ">=", "==")
+OP_LABELS = ("Lower than (<)", "Lower or equal (<=)", "Higher than (>)", "Higher or equal (>=)", "Equal to (=)")
 STATS = ("atk", "def")
 STAT_LABELS = ("ATK", "DEF")
 COND_MODES = ("all", "any")
 COND_MODE_LABELS = ("All conditions must be met (AND)", "Any condition can be met (OR)")
 MAX_CONDITIONS = 4
+PRESENCE = ("control", "not_control")
+PRESENCE_LABELS = ("You control", "You do not control")
+SCOPE = ("own", "other")
+SCOPE_LABELS = ("Any monster you control", "Another monster you control (exclude self)")
+TYPE_MODES = ("at_least_one", "only")
+TYPE_MODE_LABELS = ("At least one monster of this type", "Only control this type")
 
 ATTACK_CONDITIONS = (
     "first_attacked",
@@ -178,10 +196,24 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         raw_type = "fewer_monsters"
     elif raw_type in ("more_monsters_than_opponent", "more_monsters_than_opp", "control_more_monsters"):
         raw_type = "more_monsters"
+    elif raw_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
+        raw_type = "control_stat"
+    elif raw_type in ("control_monster_level", "monster_level", "not_control_level", "not_control_monster_level"):
+        raw_type = "control_level"
+    elif raw_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type"):
+        raw_type = "control_type"
+    elif raw_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute"):
+        raw_type = "control_attribute"
     c_type = _name(CONDITIONS, raw_type)
     if not c_type:
         return None
     out = {"type": c_type}
+    if c_type in ("control_stat", "control_level", "control_type", "control_attribute"):
+        is_not = str(cond.get("type", "")).startswith("not_") or cond.get("presence") in ("not_control", "not", "none", "no", "do_not_control")
+        if is_not:
+            out["presence"] = "not_control"
+        if cond.get("scope") in ("other", "others", "exclude_self"):
+            out["scope"] = "other"
     if c_type == "named_card":
         card = cond.get("card")
         card = resolve(card) if resolve and card is not None else card
@@ -233,6 +265,8 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
                 op = ">"
             elif op in (">=", "higher_equal", "ge"):
                 op = ">="
+            elif op in ("==", "=", "equal", "eq"):
+                op = "=="
             else:
                 return None
         else:
@@ -243,6 +277,80 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         if not isinstance(val, int) or isinstance(val, bool) or not (0 <= val <= AMOUNT_MAX):
             return None
         out["value"] = val
+    elif c_type == "control_stat":
+        stat = cond.get("stat", "atk")
+        if isinstance(stat, str):
+            s = stat.lower()
+            if s in ("def", "defense"):
+                stat = "def"
+            elif s in ("atk", "attack"):
+                stat = "atk"
+            else:
+                return None
+        else:
+            return None
+        out["stat"] = stat
+
+        op = cond.get("comparison") or cond.get("op") or ">="
+        if isinstance(op, str):
+            op = op.lower()
+            if op in ("<", "lower", "lt"):
+                op = "<"
+            elif op in ("<=", "lower_equal", "le"):
+                op = "<="
+            elif op in (">", "higher", "gt"):
+                op = ">"
+            elif op in (">=", "higher_equal", "ge"):
+                op = ">="
+            elif op in ("==", "=", "equal", "eq"):
+                op = "=="
+            else:
+                return None
+        else:
+            return None
+        out["comparison"] = op
+
+        val = cond.get("value", 0)
+        if not isinstance(val, int) or isinstance(val, bool) or not (0 <= val <= AMOUNT_MAX):
+            return None
+        out["value"] = val
+    elif c_type == "control_level":
+        op = cond.get("comparison") or cond.get("op") or "=="
+        if isinstance(op, str):
+            op = op.lower()
+            if op in ("==", "=", "equal", "eq"):
+                op = "=="
+            elif op in ("<", "lower", "lt", "fewer"):
+                op = "<"
+            elif op in ("<=", "lower_equal", "le", "fewer_equal"):
+                op = "<="
+            elif op in (">", "higher", "gt"):
+                op = ">"
+            elif op in (">=", "higher_equal", "ge"):
+                op = ">="
+            else:
+                return None
+        else:
+            return None
+        out["comparison"] = op
+
+        val = cond.get("level") if "level" in cond else cond.get("value", 1)
+        if not isinstance(val, int) or isinstance(val, bool) or not (1 <= val <= 12):
+            return None
+        out["level"] = val
+    elif c_type == "control_type":
+        mode = cond.get("mode") or cond.get("type_mode")
+        if mode in ("only", "only_control"):
+            out["mode"] = "only"
+        t = cond.get("card_type") or cond.get("monster_type")
+        if not t and cond.get("type") not in ("control_type", "not_control_type", "control_monster_type", "not_control_monster_type"):
+            t = cond.get("type")
+        if t is not None:
+            out["card_type"] = str(t)
+    elif c_type == "control_attribute":
+        attr = cond.get("attribute")
+        if attr is not None:
+            out["attribute"] = str(attr)
     elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
         pass
     return out
@@ -463,6 +571,34 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
         return "you control fewer monsters than opponent"
     if c_type == "more_monsters":
         return "you control more monsters than your opponent"
+    if c_type == "control_stat":
+        p = "you do not control" if cond.get("presence") == "not_control" else "you control"
+        sc = " another" if cond.get("scope") == "other" else " a"
+        stat = str(cond.get("stat", "atk")).upper()
+        op = cond.get("comparison") or cond.get("op", ">=")
+        val = cond.get("value", 0)
+        return f"{p}{sc} monster with {stat} {op} {val}"
+    if c_type == "control_level":
+        p = "you do not control" if cond.get("presence") == "not_control" else "you control"
+        sc = " another" if cond.get("scope") == "other" else " a"
+        op = cond.get("comparison") or cond.get("op", "==")
+        val = cond.get("level") if "level" in cond else cond.get("value", 1)
+        if op in ("==", "="):
+            return f"{p}{sc} Level {val} monster"
+        return f"{p}{sc} Level {op} {val} monster"
+    if c_type == "control_type":
+        p = cond.get("presence") == "not_control"
+        sc = " other" if cond.get("scope") == "other" else ""
+        t_name = str(cond.get("card_type") or cond.get("monster_type") or (cond.get("type") if cond.get("type") not in CONDITIONS else "Dragon"))
+        if cond.get("mode") == "only":
+            return f"you do not only control{sc} {t_name} monsters" if p else f"you only control{sc} {t_name} monsters"
+        else:
+            return f"you do not control{sc} a {t_name} monster" if p else f"you control{sc} a {t_name} monster"
+    if c_type == "control_attribute":
+        p = "you do not control" if cond.get("presence") == "not_control" else "you control"
+        sc = " another" if cond.get("scope") == "other" else " a"
+        attr = str(cond.get("attribute", "LIGHT")).upper()
+        return f"{p}{sc} {attr} monster"
     return str(c_type)
 
 

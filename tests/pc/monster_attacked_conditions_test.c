@@ -83,16 +83,27 @@ int Mods_Dispatch(int hook, void *data) {
   (void)data;
   return 0;
 }
+static int s_mock_type[1024] = {0};
+static int s_mock_attr[1024] = {0};
+static int s_mock_level[1024] = {0};
+
 int Cards_Type(int card) {
-  (void)card;
+  if (card > 0 && card < 1024) return s_mock_type[card];
   return 0;
 }
 int Cards_Attribute(int card) {
-  (void)card;
+  if (card > 0 && card < 1024) return s_mock_attr[card];
+  return 0;
+}
+int Cards_Level(int card) {
+  if (card > 0 && card < 1024) return s_mock_level[card];
   return 0;
 }
 s32 Duel_CalcCardStats(DuelCardRecord *card) {
-  (void)card;
+  int slot = card - &D_801A7AD8[0];
+  if (slot >= 0 && slot < 30) {
+    return gDuel_adwCardStats[slot];
+  }
   return 0;
 }
 void DuelEffect_CreateRequest(int a, int b, int c, int d, int e, int f) {
@@ -361,10 +372,250 @@ static void test_fewer_and_more_monsters_condition(void) {
   puts("test_fewer_and_more_monsters_condition: PASSED (fewer/more monsters with 0 monsters and ties evaluated correctly)");
 }
 
+static void test_control_stat_condition(void) {
+  MonsterEffect eff;
+  MonsterCondition *cond;
+
+  memset(&eff, 0, sizeof(eff));
+  eff.cond_count = 1;
+  eff.when = MONSTER_WHEN_FACE_UP;
+  cond = &eff.conditions[0];
+
+  /* Setup player monsters:
+   * Slot 5: card 10, ATK 1500, DEF 1200
+   * Slot 6: card 20, ATK 2500, DEF 2100
+   */
+  memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
+  memset(&gMonsterEffects, 0, sizeof(gMonsterEffects));
+
+  D_801A7AD8[5].card_id = 10;
+  D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[5] = 10;
+  gMonsterEffects.face_up[5] = 1;
+  gDuel_adwCardStats[5] = (1200 << 16) | 1500;
+
+  D_801A7AD8[6].card_id = 20;
+  D_801A7AD8[6].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[6] = 20;
+  gMonsterEffects.face_up[6] = 1;
+  gDuel_adwCardStats[6] = (2100 << 16) | 2500;
+
+  /* Test 1: control ATK > 2000 (presence=1, stat=ATK, op=GT, val=2000, scope=0) */
+  cond->type = MONSTER_COND_CONTROL_STAT;
+  cond->presence = 1;
+  cond->stat = MONSTER_STAT_ATK;
+  cond->op = MONSTER_OP_GT;
+  cond->value = 2000;
+  cond->scope = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
+  /* Test 2: control other monster with ATK > 2000 (scope=1) */
+  cond->scope = 1;
+  /* Evaluated from slot 5: other monster (slot 6) has 2500 > 2000 -> true */
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+  /* Evaluated from slot 6: other monster (slot 5) has 1500, not > 2000 -> false */
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
+
+  /* Test 3: not control monster with ATK > 3000 (presence=0, op=GT, val=3000, scope=0) -> true */
+  cond->presence = 0;
+  cond->scope = 0;
+  cond->value = 3000;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 4: not control monster with ATK > 2000 (presence=0, op=GT, val=2000, scope=0) -> false (slot 6 has 2500) */
+  cond->value = 2000;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  /* Test 5: DEF == 1200 (presence=1, stat=DEF, op=EQ, val=1200) -> true */
+  cond->presence = 1;
+  cond->stat = MONSTER_STAT_DEF;
+  cond->op = MONSTER_OP_EQ;
+  cond->value = 1200;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 6: Face-down slot 6 does not count */
+  cond->stat = MONSTER_STAT_ATK;
+  cond->op = MONSTER_OP_GT;
+  cond->value = 2000;
+  cond->scope = 0;
+  D_801A7AD8[6].flags |= DUEL_CARD_FLAG_FACE_DOWN;
+  /* Now only slot 5 is face-up (1500 ATK), so ATK > 2000 is false */
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  puts("test_control_stat_condition: PASSED");
+}
+
+static void test_control_level_condition(void) {
+  MonsterEffect eff;
+  MonsterCondition *cond;
+
+  memset(&eff, 0, sizeof(eff));
+  eff.cond_count = 1;
+  eff.when = MONSTER_WHEN_FACE_UP;
+  cond = &eff.conditions[0];
+
+  memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
+  memset(&gMonsterEffects, 0, sizeof(gMonsterEffects));
+
+  /* Slot 5: card 10, Level 4 */
+  D_801A7AD8[5].card_id = 10;
+  D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[5] = 10;
+  gMonsterEffects.face_up[5] = 1;
+  s_mock_level[10] = 4;
+
+  /* Slot 6: card 20, Level 7 */
+  D_801A7AD8[6].card_id = 20;
+  D_801A7AD8[6].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[6] = 20;
+  gMonsterEffects.face_up[6] = 1;
+  s_mock_level[20] = 7;
+
+  /* Test 1: control Level == 7 (presence=1, op=EQ, val=7, scope=0) -> true */
+  cond->type = MONSTER_COND_CONTROL_LEVEL;
+  cond->presence = 1;
+  cond->op = MONSTER_OP_EQ;
+  cond->value = 7;
+  cond->scope = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 2: control other monster with Level >= 7 (scope=1) */
+  cond->scope = 1;
+  cond->op = MONSTER_OP_GE;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
+
+  /* Test 3: not control monster with Level >= 8 (presence=0, op=GE, val=8) -> true */
+  cond->presence = 0;
+  cond->scope = 0;
+  cond->value = 8;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 4: not control monster with Level < 5 (presence=0, op=LT, val=5) -> false (slot 5 has level 4) */
+  cond->op = MONSTER_OP_LT;
+  cond->value = 5;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  puts("test_control_level_condition: PASSED");
+}
+
+static void test_control_type_condition(void) {
+  MonsterEffect eff;
+  MonsterCondition *cond;
+
+  memset(&eff, 0, sizeof(eff));
+  eff.cond_count = 1;
+  eff.when = MONSTER_WHEN_FACE_UP;
+  cond = &eff.conditions[0];
+
+  memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
+  memset(&gMonsterEffects, 0, sizeof(gMonsterEffects));
+
+  /* Slot 5: card 10, Type 1 */
+  D_801A7AD8[5].card_id = 10;
+  D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[5] = 10;
+  gMonsterEffects.face_up[5] = 1;
+  s_mock_type[10] = 1;
+
+  /* Slot 6: card 20, Type 0 */
+  D_801A7AD8[6].card_id = 20;
+  D_801A7AD8[6].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[6] = 20;
+  gMonsterEffects.face_up[6] = 1;
+  s_mock_type[20] = 0;
+
+  /* Test 1: control at least one Dragon (type=0, mode=at_least_one, presence=1) -> true */
+  cond->type = MONSTER_COND_CONTROL_TYPE;
+  cond->card_type = 0;
+  cond->type_mode = MONSTER_COND_TYPE_AT_LEAST_ONE;
+  cond->presence = 1;
+  cond->scope = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 2: only control Dragon (type=0, mode=only, presence=1) -> false (slot 5 is Type 1) */
+  cond->type_mode = MONSTER_COND_TYPE_ONLY;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  /* If slot 5 is cleared, only slot 6 (Type 0) is controlled -> only Dragon is true */
+  D_801A7AD8[5].flags = 0;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
+  /* Test 3: not control Zombie (type=2, presence=0, mode=at_least_one) -> true */
+  cond->card_type = 2;
+  cond->presence = 0;
+  cond->type_mode = MONSTER_COND_TYPE_AT_LEAST_ONE;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
+  /* Test 4: scope=1 (another Dragon you control) */
+  cond->card_type = 0;
+  cond->presence = 1;
+  cond->scope = 1;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
+
+  puts("test_control_type_condition: PASSED");
+}
+
+static void test_control_attribute_condition(void) {
+  MonsterEffect eff;
+  MonsterCondition *cond;
+
+  memset(&eff, 0, sizeof(eff));
+  eff.cond_count = 1;
+  eff.when = MONSTER_WHEN_FACE_UP;
+  cond = &eff.conditions[0];
+
+  memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
+  memset(&gMonsterEffects, 0, sizeof(gMonsterEffects));
+
+  /* Slot 5: card 10, Attribute 2 (LIGHT) */
+  D_801A7AD8[5].card_id = 10;
+  D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[5] = 10;
+  gMonsterEffects.face_up[5] = 1;
+  s_mock_attr[10] = 2;
+
+  /* Slot 6: card 20, Attribute 1 (DARK) */
+  D_801A7AD8[6].card_id = 20;
+  D_801A7AD8[6].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[6] = 20;
+  gMonsterEffects.face_up[6] = 1;
+  s_mock_attr[20] = 1;
+
+  /* Test 1: control LIGHT (attr=2, presence=1, scope=0) -> true */
+  cond->type = MONSTER_COND_CONTROL_ATTRIBUTE;
+  cond->attribute = 2;
+  cond->presence = 1;
+  cond->scope = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 2: control other LIGHT monster (scope=1) */
+  cond->scope = 1;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
+  /* Test 3: not control WATER (attr=3, presence=0) -> true */
+  cond->attribute = 3;
+  cond->presence = 0;
+  cond->scope = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 4: not control LIGHT (attr=2, presence=0) -> false */
+  cond->attribute = 2;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  puts("test_control_attribute_condition: PASSED");
+}
+
 int main(void) {
   test_attacker_vs_defender();
   test_first_second_third_attacked_sequence();
   test_fewer_and_more_monsters_condition();
+  test_control_stat_condition();
+  test_control_level_condition();
+  test_control_type_condition();
+  test_control_attribute_condition();
   puts("\nAll monster attacked condition tests PASSED successfully!");
   return 0;
 }

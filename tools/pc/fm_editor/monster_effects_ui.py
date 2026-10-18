@@ -184,6 +184,12 @@ class ConditionDialog(FormDialog):
             "stat": tk.StringVar(dialog),
             "op": tk.StringVar(dialog),
             "value": tk.StringVar(dialog),
+            "presence": tk.StringVar(dialog),
+            "scope": tk.StringVar(dialog),
+            "type_mode": tk.StringVar(dialog),
+            "card_type": tk.StringVar(dialog),
+            "attribute": tk.StringVar(dialog),
+            "level": tk.StringVar(dialog),
         }
         self.rows = {}
         row = 0
@@ -215,6 +221,9 @@ class ConditionDialog(FormDialog):
         line("whose", "On field", ttk.Combobox(body, textvariable=self.vars["whose"],
                                              values=list(fx.EACH_LABELS), state="readonly", width=32))
 
+        line("presence", "Presence", ttk.Combobox(body, textvariable=self.vars["presence"],
+                                                values=list(fx.PRESENCE_LABELS), state="readonly", width=32))
+
         line("reset", "Resets", ttk.Combobox(body, textvariable=self.vars["reset"],
                                             values=list(fx.RESET_LABELS), state="readonly", width=32))
 
@@ -226,12 +235,43 @@ class ConditionDialog(FormDialog):
                                     from_=0, to=fx.AMOUNT_MAX, increment=100, width=10)
         line("value", "Threshold", self.val_spin)
 
+        self.level_spin = ttk.Spinbox(body, textvariable=self.vars["level"],
+                                      from_=1, to=12, increment=1, width=10)
+        line("level", "Level", self.level_spin)
+
+        line("type_mode", "Requirement", ttk.Combobox(body, textvariable=self.vars["type_mode"],
+                                                     values=list(fx.TYPE_MODE_LABELS), state="readonly", width=32))
+
+        type_choices = list(TYPE_NAMES[:TYPE_MAGIC])
+        line("card_type", "Monster type", ttk.Combobox(body, textvariable=self.vars["card_type"],
+                                                      values=type_choices, state="readonly", width=32))
+
+        if self.project and "attributes" in self.project.other:
+            attr_names, _ = manifest._attribute_registry(self.project.other.get("attributes"))
+            attr_choices = list(attr_names.keys())
+        else:
+            attr_choices = list(ATTRIBUTE_NAMES)
+        line("attribute", "Attribute", ttk.Combobox(body, textvariable=self.vars["attribute"],
+                                                   values=attr_choices, state="readonly", width=32))
+
+        line("scope", "Scope", ttk.Combobox(body, textvariable=self.vars["scope"],
+                                            values=list(fx.SCOPE_LABELS), state="readonly", width=32))
+
         c_type = c.get("type", "named_card")
 
         if c_type in ("second_attacked", "destroyed_after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
             c_type = "destroyed_after_2_attacks"
         elif c_type in ("third_attacked", "destroyed_after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
             c_type = "destroyed_after_3_attacks"
+        elif c_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
+            c_type = "control_stat"
+        elif c_type in ("control_monster_level", "monster_level", "not_control_level", "not_control_monster_level"):
+            c_type = "control_level"
+        elif c_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type"):
+            c_type = "control_type"
+        elif c_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute"):
+            c_type = "control_attribute"
+
         if c_type in self.cond_types:
             self.vars["type"].set(self.cond_labels[self.cond_types.index(c_type)])
         else:
@@ -245,6 +285,25 @@ class ConditionDialog(FormDialog):
         whose = c.get("whose", "all")
         self.vars["whose"].set(fx.EACH_LABELS[fx.EACH.index(whose)] if whose in fx.EACH else fx.EACH_LABELS[2])
 
+        pres = c.get("presence", "control")
+        if str(c.get("type", "")).startswith("not_"):
+            pres = "not_control"
+        self.vars["presence"].set(fx.PRESENCE_LABELS[fx.PRESENCE.index(pres)] if pres in fx.PRESENCE else fx.PRESENCE_LABELS[0])
+
+        sc = c.get("scope", "own")
+        self.vars["scope"].set(fx.SCOPE_LABELS[fx.SCOPE.index(sc)] if sc in fx.SCOPE else fx.SCOPE_LABELS[0])
+
+        t_mode = c.get("mode", "at_least_one")
+        self.vars["type_mode"].set(fx.TYPE_MODE_LABELS[fx.TYPE_MODES.index(t_mode)] if t_mode in fx.TYPE_MODES else fx.TYPE_MODE_LABELS[0])
+
+        t_name = c.get("type") or c.get("card_type", type_choices[0])
+        self.vars["card_type"].set(t_name if t_name in type_choices else type_choices[0])
+
+        a_name = c.get("attribute", attr_choices[0])
+        self.vars["attribute"].set(a_name if a_name in attr_choices else attr_choices[0])
+
+        self.vars["level"].set(str(c.get("level") if "level" in c else c.get("value", 7)))
+
         reset = c.get("reset", "turn")
         if reset == "summon":
             reset = "copy"
@@ -253,7 +312,9 @@ class ConditionDialog(FormDialog):
         stat = c.get("stat", "atk")
         self.vars["stat"].set("DEF" if stat == "def" else "ATK")
 
-        op = c.get("comparison") or c.get("op", ">=")
+        op = c.get("comparison") or c.get("op", ">=" if c_type != "control_level" else "==")
+        if op == "=":
+            op = "=="
         self.vars["op"].set(fx.OP_LABELS[fx.OPS.index(op)] if op in fx.OPS else fx.OP_LABELS[3])
 
         self.vars["value"].set(str(c.get("value", 1500)))
@@ -263,7 +324,11 @@ class ConditionDialog(FormDialog):
 
     def chosen(self, key, names, labels):
         text = self.vars[key].get()
-        return names[labels.index(text)] if text in labels else None
+        if text in labels:
+            return names[labels.index(text)]
+        if text in names:
+            return text
+        return None
 
     def show_rows(self):
         c_type = self.chosen("type", self.cond_types, self.cond_labels) or self.cond_types[0]
@@ -275,6 +340,14 @@ class ConditionDialog(FormDialog):
             shown |= {"reset"}
         elif c_type == "stat_threshold":
             shown |= {"stat", "op", "value"}
+        elif c_type == "control_stat":
+            shown |= {"presence", "stat", "op", "value", "scope"}
+        elif c_type == "control_level":
+            shown |= {"presence", "op", "level", "scope"}
+        elif c_type == "control_type":
+            shown |= {"presence", "type_mode", "card_type", "scope"}
+        elif c_type == "control_attribute":
+            shown |= {"presence", "attribute", "scope"}
         elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
             pass
 
@@ -312,6 +385,65 @@ class ConditionDialog(FormDialog):
             if not 0 <= val <= fx.AMOUNT_MAX:
                 return f"Threshold must be 0 to {fx.AMOUNT_MAX}."
             out["value"] = val
+        elif c_type == "control_stat":
+            pres = self.chosen("presence", fx.PRESENCE, fx.PRESENCE_LABELS) or "control"
+            if pres == "not_control":
+                out["presence"] = "not_control"
+            stat = self.chosen("stat", fx.STATS, fx.STAT_LABELS) or "atk"
+            out["stat"] = stat
+            op = self.chosen("op", fx.OPS, fx.OP_LABELS) or ">="
+            out["comparison"] = op
+            try:
+                val = int(self.vars["value"].get().strip())
+            except ValueError:
+                return "Threshold must be a whole number."
+            if not 0 <= val <= fx.AMOUNT_MAX:
+                return f"Threshold must be 0 to {fx.AMOUNT_MAX}."
+            out["value"] = val
+            sc = self.chosen("scope", fx.SCOPE, fx.SCOPE_LABELS) or "own"
+            if sc == "other":
+                out["scope"] = "other"
+        elif c_type == "control_level":
+            pres = self.chosen("presence", fx.PRESENCE, fx.PRESENCE_LABELS) or "control"
+            if pres == "not_control":
+                out["presence"] = "not_control"
+            op = self.chosen("op", fx.OPS, fx.OP_LABELS) or "=="
+            out["comparison"] = op
+            try:
+                lvl = int(self.vars["level"].get().strip())
+            except ValueError:
+                return "Level must be a number."
+            if not 1 <= lvl <= 12:
+                return "Level must be 1 to 12."
+            out["level"] = lvl
+            sc = self.chosen("scope", fx.SCOPE, fx.SCOPE_LABELS) or "own"
+            if sc == "other":
+                out["scope"] = "other"
+        elif c_type == "control_type":
+            pres = self.chosen("presence", fx.PRESENCE, fx.PRESENCE_LABELS) or "control"
+            if pres == "not_control":
+                out["presence"] = "not_control"
+            mode = self.chosen("type_mode", fx.TYPE_MODES, fx.TYPE_MODE_LABELS) or "at_least_one"
+            if mode == "only":
+                out["mode"] = "only"
+            t = self.vars["card_type"].get()
+            if not t:
+                return "Choose a monster type."
+            out["card_type"] = t
+            sc = self.chosen("scope", fx.SCOPE, fx.SCOPE_LABELS) or "own"
+            if sc == "other":
+                out["scope"] = "other"
+        elif c_type == "control_attribute":
+            pres = self.chosen("presence", fx.PRESENCE, fx.PRESENCE_LABELS) or "control"
+            if pres == "not_control":
+                out["presence"] = "not_control"
+            attr = self.vars["attribute"].get()
+            if not attr:
+                return "Choose an attribute."
+            out["attribute"] = attr
+            sc = self.chosen("scope", fx.SCOPE, fx.SCOPE_LABELS) or "own"
+            if sc == "other":
+                out["scope"] = "other"
         elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
             pass
         self.result = out
