@@ -190,8 +190,10 @@ typedef struct MonsterEffect {
   signed char attacker_type;     /* -1 = any */
   signed short attacker_attribute; /* -1 = any */
   unsigned char attacker_stat;   /* 0 = none, 1 = ATK, 2 = DEF */
-  short attacker_amount;         /* threshold for higher than ATK/DEF */
-  unsigned char attacker_level;  /* 0 = none, 1..12 = higher than level */
+  unsigned char attacker_stat_op; /* MONSTER_OP_*: comparison (<, <=, >, >=, ==) */
+  short attacker_amount;         /* threshold for ATK/DEF */
+  unsigned char attacker_level;  /* 0 = none, 1..12 = level */
+  unsigned char attacker_level_op; /* MONSTER_OP_*: comparison (<, <=, >, >=, ==) */
   /* API 19: conditions */
   unsigned char cond_count;
   unsigned char cond_mode; /* MONSTER_COND_MODE_ALL or MONSTER_COND_MODE_ANY */

@@ -858,8 +858,10 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
     out->attacker_type = -1;
     out->attacker_attribute = -1;
     out->attacker_stat = 0;
+    out->attacker_stat_op = MONSTER_OP_GT;
     out->attacker_amount = 0;
     out->attacker_level = 0;
+    out->attacker_level_op = MONSTER_OP_GT;
     if (!mod_val)
       mod_val = Json_Member(entry, "battle_modifier");
     if (mod_val) {
@@ -976,6 +978,27 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
         out->attacker_stat = 1; /* ATK */
     }
 
+    const JsonValue *sop_val = Json_Member(entry, "attacker_stat_op");
+    if (!sop_val)
+      sop_val = Json_Member(entry, "stat_op");
+    if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT || !Json_Member(entry, "attacker_level_op")))
+      sop_val = Json_Member(entry, "comparison");
+    if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT || !Json_Member(entry, "attacker_level_op")))
+      sop_val = Json_Member(entry, "op");
+    if (sop_val) {
+      const char *op_str = Json_String(sop_val, "");
+      if (!strcmp(op_str, "<") || !strcmp(op_str, "lower") || !strcmp(op_str, "lt"))
+        out->attacker_stat_op = MONSTER_OP_LT;
+      else if (!strcmp(op_str, "<=") || !strcmp(op_str, "lower_equal") || !strcmp(op_str, "le"))
+        out->attacker_stat_op = MONSTER_OP_LE;
+      else if (!strcmp(op_str, ">") || !strcmp(op_str, "higher") || !strcmp(op_str, "gt"))
+        out->attacker_stat_op = MONSTER_OP_GT;
+      else if (!strcmp(op_str, ">=") || !strcmp(op_str, "higher_equal") || !strcmp(op_str, "ge"))
+        out->attacker_stat_op = MONSTER_OP_GE;
+      else if (!strcmp(op_str, "==") || !strcmp(op_str, "=") || !strcmp(op_str, "equal") || !strcmp(op_str, "eq"))
+        out->attacker_stat_op = MONSTER_OP_EQ;
+    }
+
     const JsonValue *am_val = Json_Member(entry, "attacker_amount");
     if (!am_val)
       am_val = Json_Member(entry, "amount");
@@ -988,6 +1011,27 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
         if (out->attacker_stat == 0)
           out->attacker_stat = 1; /* default to ATK */
       }
+    }
+
+    const JsonValue *lop_val = Json_Member(entry, "attacker_level_op");
+    if (!lop_val)
+      lop_val = Json_Member(entry, "level_op");
+    if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL || !Json_Member(entry, "attacker_stat_op")))
+      lop_val = Json_Member(entry, "comparison");
+    if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL || !Json_Member(entry, "attacker_stat_op")))
+      lop_val = Json_Member(entry, "op");
+    if (lop_val) {
+      const char *op_str = Json_String(lop_val, "");
+      if (!strcmp(op_str, "<") || !strcmp(op_str, "lower") || !strcmp(op_str, "lt"))
+        out->attacker_level_op = MONSTER_OP_LT;
+      else if (!strcmp(op_str, "<=") || !strcmp(op_str, "lower_equal") || !strcmp(op_str, "le"))
+        out->attacker_level_op = MONSTER_OP_LE;
+      else if (!strcmp(op_str, ">") || !strcmp(op_str, "higher") || !strcmp(op_str, "gt"))
+        out->attacker_level_op = MONSTER_OP_GT;
+      else if (!strcmp(op_str, ">=") || !strcmp(op_str, "higher_equal") || !strcmp(op_str, "ge"))
+        out->attacker_level_op = MONSTER_OP_GE;
+      else if (!strcmp(op_str, "==") || !strcmp(op_str, "=") || !strcmp(op_str, "equal") || !strcmp(op_str, "eq"))
+        out->attacker_level_op = MONSTER_OP_EQ;
     }
 
     const JsonValue *l_val = Json_Member(entry, "attacker_level");

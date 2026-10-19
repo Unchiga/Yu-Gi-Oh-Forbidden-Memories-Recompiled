@@ -2826,26 +2826,31 @@ class MonsterEffectsGuiTest(GuiCase):
 
         # 8. Attacked by Stat
         dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
-        dialog.vars["modifier"].set("If attacked by monster with higher ATK or DEF")
+        dialog.vars["modifier"].set("If attacked by a monster with higher / lower ATK or DEF")
         dialog.vars["attacker_stat"].set("ATK")
+        dialog.vars["attacker_stat_op"].set("Lower than (<)")
         dialog.vars["attacker_amount"].set("2500")
         self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat_op"][1].winfo_manager())
         self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
         dialog.ok()
         self.assertEqual(dialog.result, {
             "when": "face_up", "do": "battle_immunity", "target": "self",
-            "modifier": "attacked_by_stat", "attacker_stat": "atk", "attacker_amount": 2500
+            "modifier": "attacked_by_stat", "attacker_stat": "atk",
+            "attacker_stat_op": "<", "attacker_amount": 2500
         })
 
         # 9. Attacked by Level
         dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
-        dialog.vars["modifier"].set("If attacked by monster with higher Level")
+        dialog.vars["modifier"].set("If attacked by a monster with higher/lower level")
+        dialog.vars["attacker_level_op"].set("Lower or equal (<=)")
         dialog.vars["attacker_level"].set("7")
+        self.assertTrue(dialog.rows["attacker_level_op"][1].winfo_manager())
         self.assertTrue(dialog.rows["attacker_level"][1].winfo_manager())
         dialog.ok()
         self.assertEqual(dialog.result, {
             "when": "face_up", "do": "battle_immunity", "target": "self",
-            "modifier": "attacked_by_level", "attacker_level": 7
+            "modifier": "attacked_by_level", "attacker_level_op": "<=", "attacker_level": 7
         })
 
         # 10. Attacked by monster (combined criteria)
@@ -2854,19 +2859,24 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.vars["attacker_type"].set("Dragon")
         dialog.vars["attacker_attribute"].set("LIGHT")
         dialog.vars["attacker_stat"].set("DEF")
+        dialog.vars["attacker_stat_op"].set("Higher than (>)")
         dialog.vars["attacker_amount"].set("2000")
+        dialog.vars["attacker_level_op"].set("Higher than (>)")
         dialog.vars["attacker_level"].set("8")
         self.assertTrue(dialog.rows["attacker_type"][1].winfo_manager())
         self.assertTrue(dialog.rows["attacker_attribute"][1].winfo_manager())
         self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat_op"][1].winfo_manager())
         self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_level_op"][1].winfo_manager())
         self.assertTrue(dialog.rows["attacker_level"][1].winfo_manager())
         dialog.ok()
         self.assertEqual(dialog.result, {
             "when": "face_up", "do": "battle_immunity", "target": "self",
             "modifier": "attacked_by_monster", "attacker_type": "Dragon",
             "attacker_attribute": "Light", "attacker_stat": "def",
-            "attacker_amount": 2000, "attacker_level": 8
+            "attacker_stat_op": ">", "attacker_amount": 2000,
+            "attacker_level_op": ">", "attacker_level": 8
         })
 
     def test_text_menu(self):

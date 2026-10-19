@@ -890,6 +890,23 @@ static int slot_has_monster(int r) {
   return 0;
 }
 
+static int compare_op(int a, unsigned char op, int b) {
+  switch (op) {
+  case MONSTER_OP_LT:
+    return a < b;
+  case MONSTER_OP_LE:
+    return a <= b;
+  case MONSTER_OP_GT:
+    return a > b;
+  case MONSTER_OP_GE:
+    return a >= b;
+  case MONSTER_OP_EQ:
+    return a == b;
+  default:
+    return a > b;
+  }
+}
+
 static int evaluate_condition(int record, const MonsterCondition *cond) {
   int r;
   switch (cond->type) {
@@ -917,21 +934,7 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
     attack = packed & 0xFFFF;
     defense = (unsigned int)packed >> 16;
     val = (cond->stat == MONSTER_STAT_DEF) ? defense : attack;
-
-    switch (cond->op) {
-    case MONSTER_OP_LT:
-      return val < cond->value;
-    case MONSTER_OP_LE:
-      return val <= cond->value;
-    case MONSTER_OP_GT:
-      return val > cond->value;
-    case MONSTER_OP_GE:
-      return val >= cond->value;
-    case MONSTER_OP_EQ:
-      return val == cond->value;
-    default:
-      return 0;
-    }
+    return compare_op(val, cond->op, cond->value);
   }
   case MONSTER_COND_LOWEST_ATK: {
     int my_atk;
@@ -1237,11 +1240,11 @@ int MonsterEffects_HasBattleImmunity(int record) {
             att_val = (unsigned int)packed >> 16; /* DEF */
           else
             att_val = packed & 0xFFFF;            /* ATK */
-          if (att_val <= effects[e].attacker_amount)
+          if (!compare_op(att_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
             continue;
         } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL) {
           int lvl = Cards_Level(att_card);
-          if (lvl <= effects[e].attacker_level)
+          if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
             continue;
         } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER) {
           /* Combined criteria: check each criteria if configured */
@@ -1264,12 +1267,12 @@ int MonsterEffects_HasBattleImmunity(int record) {
               att_val = (unsigned int)packed >> 16; /* DEF */
             else
               att_val = packed & 0xFFFF;            /* ATK */
-            if (att_val <= effects[e].attacker_amount)
+            if (!compare_op(att_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
               continue;
           }
           if (effects[e].attacker_level > 0) {
             int lvl = Cards_Level(att_card);
-            if (lvl <= effects[e].attacker_level)
+            if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
               continue;
           }
         }

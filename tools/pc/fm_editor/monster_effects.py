@@ -138,8 +138,8 @@ MODIFIER_LABELS = (
     "Can only be destroyed after three attacks",
     "If attacked by monster of Type",
     "If attacked by monster of Attribute",
-    "If attacked by monster with higher ATK or DEF",
-    "If attacked by monster with higher Level",
+    "If attacked by a monster with higher / lower ATK or DEF",
+    "If attacked by a monster with higher/lower level",
     "If attacked by monster (combined criteria)",
 )
 
@@ -496,6 +496,25 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                             return None
                     elif mod_name == "attacked_by_stat":
                         return None
+                    sop = effect.get("attacker_stat_op") or effect.get("stat_op")
+                    if not sop and (mod_name == "attacked_by_stat" or "attacker_level_op" not in effect):
+                        sop = effect.get("comparison") or effect.get("op")
+                    if sop is None and (mod_name == "attacked_by_stat" or "attacker_stat" in out):
+                        sop = ">"
+                    if sop is not None:
+                        sop_str = str(sop)
+                        if sop_str in OPS:
+                            out["attacker_stat_op"] = sop_str
+                        elif sop_str in ("higher", "gt"):
+                            out["attacker_stat_op"] = ">"
+                        elif sop_str in ("lower", "lt"):
+                            out["attacker_stat_op"] = "<"
+                        elif sop_str in ("higher_equal", "ge"):
+                            out["attacker_stat_op"] = ">="
+                        elif sop_str in ("lower_equal", "le"):
+                            out["attacker_stat_op"] = "<="
+                        elif sop_str in ("=", "equal", "eq"):
+                            out["attacker_stat_op"] = "=="
                 if mod_name in ("attacked_by_level", "attacked_by_monster"):
                     lvl = effect.get("attacker_level") if "attacker_level" in effect else effect.get("level")
                     if lvl is not None:
@@ -505,6 +524,25 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                             return None
                     elif mod_name == "attacked_by_level":
                         return None
+                    lop = effect.get("attacker_level_op") or effect.get("level_op")
+                    if not lop and (mod_name == "attacked_by_level" or "attacker_stat_op" not in effect):
+                        lop = effect.get("comparison") or effect.get("op")
+                    if lop is None and (mod_name == "attacked_by_level" or "attacker_level" in out):
+                        lop = ">"
+                    if lop is not None:
+                        lop_str = str(lop)
+                        if lop_str in OPS:
+                            out["attacker_level_op"] = lop_str
+                        elif lop_str in ("higher", "gt"):
+                            out["attacker_level_op"] = ">"
+                        elif lop_str in ("lower", "lt"):
+                            out["attacker_level_op"] = "<"
+                        elif lop_str in ("higher_equal", "ge"):
+                            out["attacker_level_op"] = ">="
+                        elif lop_str in ("lower_equal", "le"):
+                            out["attacker_level_op"] = "<="
+                        elif lop_str in ("=", "equal", "eq"):
+                            out["attacker_level_op"] = "=="
     elif do in FILTERED:
         out["target"] = target
         for key in ("attack", "defense") if do == "boost" else ():
@@ -779,10 +817,32 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
         elif mod == "attacked_by_stat":
             s = effect.get("attacker_stat", "atk").upper()
             amt = effect.get("attacker_amount", 0)
-            return f"Cannot be destroyed by battle if attacked by a monster with higher {s} than {amt}{conds}"
+            op = effect.get("attacker_stat_op") or effect.get("comparison") or effect.get("op", ">")
+            if op == "<":
+                comp_str = f"lower {s} than {amt}"
+            elif op == "<=":
+                comp_str = f"{s} <= {amt}"
+            elif op == ">=":
+                comp_str = f"{s} >= {amt}"
+            elif op in ("==", "="):
+                comp_str = f"{s} equal to {amt}"
+            else:
+                comp_str = f"higher {s} than {amt}"
+            return f"Cannot be destroyed by battle if attacked by a monster with {comp_str}{conds}"
         elif mod == "attacked_by_level":
             lvl = effect.get("attacker_level", 1)
-            return f"Cannot be destroyed by battle if attacked by a monster with higher Level than {lvl}{conds}"
+            op = effect.get("attacker_level_op") or effect.get("comparison") or effect.get("op", ">")
+            if op == "<":
+                comp_str = f"lower Level than {lvl}"
+            elif op == "<=":
+                comp_str = f"Level <= {lvl}"
+            elif op == ">=":
+                comp_str = f"Level >= {lvl}"
+            elif op in ("==", "="):
+                comp_str = f"Level equal to {lvl}"
+            else:
+                comp_str = f"higher Level than {lvl}"
+            return f"Cannot be destroyed by battle if attacked by a monster with {comp_str}{conds}"
         elif mod == "attacked_by_monster":
             parts = []
             if "attacker_attribute" in effect:
@@ -792,9 +852,32 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
             crit = " ".join(parts) if parts else "monster"
             extra = []
             if "attacker_stat" in effect and "attacker_amount" in effect:
-                extra.append(f"higher {effect['attacker_stat'].upper()} than {effect['attacker_amount']}")
+                s = effect["attacker_stat"].upper()
+                amt = effect["attacker_amount"]
+                op = effect.get("attacker_stat_op") or effect.get("comparison") or effect.get("op", ">")
+                if op == "<":
+                    extra.append(f"lower {s} than {amt}")
+                elif op == "<=":
+                    extra.append(f"{s} <= {amt}")
+                elif op == ">=":
+                    extra.append(f"{s} >= {amt}")
+                elif op in ("==", "="):
+                    extra.append(f"{s} equal to {amt}")
+                else:
+                    extra.append(f"higher {s} than {amt}")
             if "attacker_level" in effect:
-                extra.append(f"higher Level than {effect['attacker_level']}")
+                lvl = effect["attacker_level"]
+                op = effect.get("attacker_level_op") or effect.get("comparison") or effect.get("op", ">")
+                if op == "<":
+                    extra.append(f"lower Level than {lvl}")
+                elif op == "<=":
+                    extra.append(f"Level <= {lvl}")
+                elif op == ">=":
+                    extra.append(f"Level >= {lvl}")
+                elif op in ("==", "="):
+                    extra.append(f"Level equal to {lvl}")
+                else:
+                    extra.append(f"higher Level than {lvl}")
             with_str = f" with {' and '.join(extra)}" if extra else ""
             return f"Cannot be destroyed by battle if attacked by a {crit}{with_str}{conds}"
         return f"Cannot be destroyed by battle{conds}"

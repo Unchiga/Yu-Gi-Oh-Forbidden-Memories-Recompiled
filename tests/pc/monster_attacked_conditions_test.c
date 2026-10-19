@@ -755,13 +755,14 @@ static void test_attacker_criteria_immunity(void) {
   assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
   /* --- Test 3: MONSTER_BATTLE_MOD_ATTACKED_BY_STAT --- */
-  /* Check higher ATK */
+  /* Check higher ATK (default / MONSTER_OP_GT) */
   memset(&eff, 0, sizeof(eff));
   eff.when = MONSTER_WHEN_FACE_UP;
   eff.action = MONSTER_DO_BATTLE_IMMUNITY;
   eff.target = MONSTER_TARGET_SELF;
   eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT;
-  eff.attacker_stat = 0; /* ATK */
+  eff.attacker_stat = 1; /* ATK */
+  eff.attacker_stat_op = MONSTER_OP_GT;
   eff.attacker_amount = 2500;
   s_test_effects[0] = eff;
 
@@ -774,8 +775,23 @@ static void test_attacker_criteria_immunity(void) {
   gDuel_adwCardStats[20] = 2000 | (2500 << 16); /* Lower -> 0 */
   assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
+  /* Check lower ATK (MONSTER_OP_LT) */
+  eff.attacker_stat_op = MONSTER_OP_LT;
+  eff.attacker_amount = 2500;
+  s_test_effects[0] = eff;
+
+  gDuel_adwCardStats[20] = 2000 | (2500 << 16); /* 2000 < 2500 -> immune */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  gDuel_adwCardStats[20] = 2500 | (2500 << 16); /* 2500 < 2500 is false */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  gDuel_adwCardStats[20] = 3000 | (2500 << 16); /* 3000 < 2500 is false */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
   /* Check higher DEF */
   eff.attacker_stat = 2; /* DEF */
+  eff.attacker_stat_op = MONSTER_OP_GT;
   eff.attacker_amount = 2000;
   s_test_effects[0] = eff;
 
@@ -785,13 +801,26 @@ static void test_attacker_criteria_immunity(void) {
   gDuel_adwCardStats[20] = 1000 | (1800 << 16); /* 1800 DEF <= 2000 */
   assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
+  /* Check lower DEF */
+  eff.attacker_stat_op = MONSTER_OP_LT;
+  eff.attacker_amount = 2000;
+  s_test_effects[0] = eff;
+
+  gDuel_adwCardStats[20] = 1000 | (1500 << 16); /* 1500 DEF < 2000 */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  gDuel_adwCardStats[20] = 1000 | (2500 << 16); /* 2500 DEF < 2000 is false */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
   /* --- Test 4: MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL --- */
+  /* Higher level (MONSTER_OP_GT) */
   memset(&eff, 0, sizeof(eff));
   eff.when = MONSTER_WHEN_FACE_UP;
   eff.action = MONSTER_DO_BATTLE_IMMUNITY;
   eff.target = MONSTER_TARGET_SELF;
   eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL;
   eff.attacker_level = 7;
+  eff.attacker_level_op = MONSTER_OP_GT;
   s_test_effects[0] = eff;
 
   s_mock_level[1] = 8; /* Level 8 > 7 */
@@ -803,6 +832,20 @@ static void test_attacker_criteria_immunity(void) {
   s_mock_level[1] = 4; /* Level 4 <= 7 */
   assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
+  /* Lower level (MONSTER_OP_LT) */
+  eff.attacker_level_op = MONSTER_OP_LT;
+  eff.attacker_level = 5;
+  s_test_effects[0] = eff;
+
+  s_mock_level[1] = 4; /* Level 4 < 5 -> immune */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  s_mock_level[1] = 5; /* Level 5 < 5 is false */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  s_mock_level[1] = 8; /* Level 8 < 5 is false */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
   /* --- Test 5: MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER (combined criteria) --- */
   memset(&eff, 0, sizeof(eff));
   eff.when = MONSTER_WHEN_FACE_UP;
@@ -812,8 +855,10 @@ static void test_attacker_criteria_immunity(void) {
   eff.attacker_type = 1;       /* Dragon */
   eff.attacker_attribute = 1;  /* LIGHT */
   eff.attacker_stat = 1;       /* ATK */
+  eff.attacker_stat_op = MONSTER_OP_GT;
   eff.attacker_amount = 2500;  /* ATK > 2500 */
   eff.attacker_level = 7;      /* Level > 7 */
+  eff.attacker_level_op = MONSTER_OP_GT;
   s_test_effects[0] = eff;
 
   /* Satisfy all: Dragon, LIGHT, ATK 3000, Level 8 */
@@ -821,6 +866,14 @@ static void test_attacker_criteria_immunity(void) {
   s_mock_attr[1] = 1;
   gDuel_adwCardStats[20] = 3000 | (2500 << 16);
   s_mock_level[1] = 8;
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  /* Test with lower stat / lower level in combined */
+  eff.attacker_stat_op = MONSTER_OP_LT;
+  eff.attacker_amount = 3500; /* ATK < 3500 */
+  eff.attacker_level_op = MONSTER_OP_LE;
+  eff.attacker_level = 8;    /* Level <= 8 */
+  s_test_effects[0] = eff;
   assert(MonsterEffects_HasBattleImmunity(5) == 1);
 
   /* Fail type */
@@ -834,12 +887,12 @@ static void test_attacker_criteria_immunity(void) {
   s_mock_attr[1] = 1;
 
   /* Fail ATK */
-  gDuel_adwCardStats[20] = 2400 | (2500 << 16);
+  gDuel_adwCardStats[20] = 4000 | (2500 << 16); /* 4000 is NOT < 3500 */
   assert(MonsterEffects_HasBattleImmunity(5) == 0);
   gDuel_adwCardStats[20] = 3000 | (2500 << 16);
 
   /* Fail Level */
-  s_mock_level[1] = 7;
+  s_mock_level[1] = 9; /* 9 is NOT <= 8 */
   assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
   puts("test_attacker_criteria_immunity: PASSED");

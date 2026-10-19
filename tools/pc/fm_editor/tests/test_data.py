@@ -1615,31 +1615,48 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(eff_attr["attacker_attribute"], "Dark")
         self.assertEqual(fx.describe(eff_attr), "Cannot be destroyed by battle if attacked by a Dark monster")
 
-        # 3. Attacked by stat
-        eff_stat = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "stat": "atk", "amount": 2500})
+        # 3. Attacked by stat (higher and lower)
+        eff_stat = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "stat": "atk", "op": ">", "amount": 2500})
         self.assertEqual(eff_stat["modifier"], "attacked_by_stat")
         self.assertEqual(eff_stat["attacker_stat"], "atk")
+        self.assertEqual(eff_stat["attacker_stat_op"], ">")
         self.assertEqual(eff_stat["attacker_amount"], 2500)
         self.assertEqual(fx.describe(eff_stat), "Cannot be destroyed by battle if attacked by a monster with higher ATK than 2500")
 
-        # 4. Attacked by level
+        eff_stat_lt = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "stat": "def", "attacker_stat_op": "<", "amount": 1500})
+        self.assertEqual(eff_stat_lt["attacker_stat_op"], "<")
+        self.assertEqual(fx.describe(eff_stat_lt), "Cannot be destroyed by battle if attacked by a monster with lower DEF than 1500")
+
+        eff_stat_le = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "stat": "def", "attacker_stat_op": "<=", "amount": 1500})
+        self.assertEqual(eff_stat_le["attacker_stat_op"], "<=")
+        self.assertEqual(fx.describe(eff_stat_le), "Cannot be destroyed by battle if attacked by a monster with DEF <= 1500")
+
+        # 4. Attacked by level (higher and lower)
         eff_lvl = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_level", "level": 7})
         self.assertEqual(eff_lvl["modifier"], "attacked_by_level")
+        self.assertEqual(eff_lvl["attacker_level_op"], ">")
         self.assertEqual(eff_lvl["attacker_level"], 7)
         self.assertEqual(fx.describe(eff_lvl), "Cannot be destroyed by battle if attacked by a monster with higher Level than 7")
+
+        eff_lvl_lt = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_level", "level_op": "<", "level": 4})
+        self.assertEqual(eff_lvl_lt["attacker_level_op"], "<")
+        self.assertEqual(fx.describe(eff_lvl_lt), "Cannot be destroyed by battle if attacked by a monster with lower Level than 4")
 
         # 5. Attacked by monster (combined)
         eff_comb = fx.normalize({
             "when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_monster",
-            "type": "Dragon", "attribute": "Light", "stat": "def", "amount": 2000, "level": 8
+            "type": "Dragon", "attribute": "Light", "stat": "def", "attacker_stat_op": "<", "amount": 2000,
+            "attacker_level_op": "<", "level": 8
         })
         self.assertEqual(eff_comb["modifier"], "attacked_by_monster")
         self.assertEqual(eff_comb["attacker_type"], "Dragon")
         self.assertEqual(eff_comb["attacker_attribute"], "Light")
         self.assertEqual(eff_comb["attacker_stat"], "def")
+        self.assertEqual(eff_comb["attacker_stat_op"], "<")
         self.assertEqual(eff_comb["attacker_amount"], 2000)
+        self.assertEqual(eff_comb["attacker_level_op"], "<")
         self.assertEqual(eff_comb["attacker_level"], 8)
-        self.assertIn("Light Dragon with higher DEF than 2000 and higher Level than 8", fx.describe(eff_comb))
+        self.assertIn("Light Dragon with lower DEF than 2000 and lower Level than 8", fx.describe(eff_comb))
 
         # Attacker criteria are not attack count conditions (they don't trigger the 1-attack-condition limit)
         self.assertEqual(fx.problems([eff_type, eff_attr, eff_stat, eff_lvl]), [])

@@ -537,7 +537,8 @@ class EffectDialog(FormDialog):
                                                  "defense", "amount", "each", "each_type", "each_attribute",
                                                  "cond_mode", "modifier", "modifier_reset",
                                                  "attacker_type", "attacker_attribute", "attacker_stat",
-                                                 "attacker_amount", "attacker_level")}
+                                                 "attacker_stat_op", "attacker_amount",
+                                                 "attacker_level_op", "attacker_level")}
         self.rows = {}
         row = 0
 
@@ -589,9 +590,13 @@ class EffectDialog(FormDialog):
                                                                      self.attribute_icon))
         line("attacker_stat", "Attacker stat", ttk.Combobox(body, textvariable=self.vars["attacker_stat"],
                                                             values=["None", "ATK", "DEF"], state="readonly", width=48))
-        line("attacker_amount", "Higher than", ttk.Spinbox(body, textvariable=self.vars["attacker_amount"], from_=0, to=fx.AMOUNT_MAX,
+        line("attacker_stat_op", "Stat comparison", ttk.Combobox(body, textvariable=self.vars["attacker_stat_op"],
+                                                                 values=list(fx.OP_LABELS), state="readonly", width=48))
+        line("attacker_amount", "Stat threshold", ttk.Spinbox(body, textvariable=self.vars["attacker_amount"], from_=0, to=fx.AMOUNT_MAX,
                                                            increment=100, width=12))
-        line("attacker_level", "Higher Level than", ttk.Spinbox(body, textvariable=self.vars["attacker_level"], from_=0, to=12,
+        line("attacker_level_op", "Level comparison", ttk.Combobox(body, textvariable=self.vars["attacker_level_op"],
+                                                                   values=list(fx.OP_LABELS), state="readonly", width=48))
+        line("attacker_level", "Attacker level", ttk.Spinbox(body, textvariable=self.vars["attacker_level"], from_=0, to=12,
                                                                 increment=1, width=12))
 
         # Conditions section (API 19)
@@ -646,7 +651,11 @@ class EffectDialog(FormDialog):
         self.vars["attacker_attribute"].set(self.attribute_label(e.get("attacker_attribute", ANY)))
         stat_val = e.get("attacker_stat", "")
         self.vars["attacker_stat"].set(stat_val.upper() if stat_val in ("atk", "def") else ("ATK" if self.attack_mod == "attacked_by_stat" else "None"))
+        stat_op = e.get("attacker_stat_op") or e.get("comparison") or e.get("op", ">")
+        self.vars["attacker_stat_op"].set(fx.OP_LABELS[fx.OPS.index(stat_op)] if stat_op in fx.OPS else fx.OP_LABELS[2])
         self.vars["attacker_amount"].set(str(e.get("attacker_amount", 1500)))
+        level_op = e.get("attacker_level_op") or (e.get("comparison") if self.attack_mod == "attacked_by_level" else None) or e.get("op", ">")
+        self.vars["attacker_level_op"].set(fx.OP_LABELS[fx.OPS.index(level_op)] if level_op in fx.OPS else fx.OP_LABELS[2])
         lvl_init = e.get("attacker_level", 4 if self.attack_mod == "attacked_by_level" else 0)
         self.vars["attacker_level"].set(str(lvl_init))
 
@@ -748,11 +757,11 @@ class EffectDialog(FormDialog):
             elif mod == "attacked_by_attribute":
                 shown.add("attacker_attribute")
             elif mod == "attacked_by_stat":
-                shown |= {"attacker_stat", "attacker_amount"}
+                shown |= {"attacker_stat", "attacker_stat_op", "attacker_amount"}
             elif mod == "attacked_by_level":
-                shown.add("attacker_level")
+                shown |= {"attacker_level_op", "attacker_level"}
             elif mod == "attacked_by_monster":
-                shown |= {"attacker_type", "attacker_attribute", "attacker_stat", "attacker_amount", "attacker_level"}
+                shown |= {"attacker_type", "attacker_attribute", "attacker_stat", "attacker_stat_op", "attacker_amount", "attacker_level_op", "attacker_level"}
         if do in fx.EACH_DO:
             shown.add("each")
             if self.vars["each"].get() in fx.EACH_LABELS:
@@ -800,6 +809,8 @@ class EffectDialog(FormDialog):
                 if s not in ("atk", "def"):
                     s = "atk"
                 effect["attacker_stat"] = s
+                sop = self.chosen("attacker_stat_op", fx.OPS, fx.OP_LABELS) or ">"
+                effect["attacker_stat_op"] = sop
                 try:
                     amt = int(self.vars["attacker_amount"].get().strip())
                 except ValueError:
@@ -809,6 +820,8 @@ class EffectDialog(FormDialog):
                 effect["attacker_amount"] = amt
             elif mod == "attacked_by_level":
                 effect["modifier"] = mod
+                lop = self.chosen("attacker_level_op", fx.OPS, fx.OP_LABELS) or ">"
+                effect["attacker_level_op"] = lop
                 try:
                     lvl = int(self.vars["attacker_level"].get().strip())
                 except ValueError:
@@ -827,6 +840,8 @@ class EffectDialog(FormDialog):
                 s = self.vars["attacker_stat"].get()
                 if s in ("ATK", "DEF"):
                     effect["attacker_stat"] = s.lower()
+                    sop = self.chosen("attacker_stat_op", fx.OPS, fx.OP_LABELS) or ">"
+                    effect["attacker_stat_op"] = sop
                     try:
                         amt = int(self.vars["attacker_amount"].get().strip())
                     except ValueError:
@@ -842,6 +857,8 @@ class EffectDialog(FormDialog):
                         return "Level must be a number."
                     if not 1 <= lvl <= 12:
                         return "Level must be 1 to 12."
+                    lop = self.chosen("attacker_level_op", fx.OPS, fx.OP_LABELS) or ">"
+                    effect["attacker_level_op"] = lop
                     effect["attacker_level"] = lvl
                 if not any(k in effect for k in ("attacker_type", "attacker_attribute", "attacker_stat", "attacker_level")):
                     return "Specify at least one attacker criteria (Type, Attribute, Stat, or Level)."
