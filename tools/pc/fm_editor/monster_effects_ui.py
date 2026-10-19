@@ -22,7 +22,7 @@ class EffectsBox(ttk.LabelFrame):
         self.app, self.on_change = app, on_change
         self.cid = None
         self.effects = []
-        frame, self.tree = scrolled_tree(self, [("when", "When"), ("what", "Does")], [110, 360], 4, horizontal=True)
+        frame, self.tree = scrolled_tree(self, [("when", "When"), ("what", "Does")], [110, 420], 4, horizontal=True)
         frame.grid(row=0, column=0, columnspan=6, sticky="we")
         self.list_frame = frame         # shown once there is an effect: an empty list took a quarter of the form
         self.columnconfigure(5, weight=1)
@@ -35,7 +35,7 @@ class EffectsBox(ttk.LabelFrame):
                                                         ("down", "Down", lambda: self.move(1)))):
             self.buttons[key] = ttk.Button(self, text=text, command=command, width=8 if column < 3 else 5)
             self.buttons[key].grid(row=1, column=column, sticky="w", pady=(4, 0), padx=(0, 4))
-        self.note = ttk.Label(self, style="Hint.TLabel", wraplength=px(self, 380), justify="left")
+        self.note = ttk.Label(self, style="Hint.TLabel", wraplength=px(self, 480), justify="left")
         self.note.grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
         # A disc card with no effects: "monster_effects": [] takes away any
         # an earlier mod gives it (cards.c), left out leaves them.
@@ -175,6 +175,9 @@ class ConditionDialog(FormDialog):
                          self.build, self.read)
 
     def build(self, dialog, body):
+        dialog.minsize(px(dialog, 620), 0)
+        dialog.resizable(True, False)
+        body.columnconfigure(1, weight=1)
         c = self.start
         self.vars = {
             "type": tk.StringVar(dialog),
@@ -195,7 +198,7 @@ class ConditionDialog(FormDialog):
         def line(key, label, widget):
             nonlocal row
             caption = ttk.Label(body, text=label)
-            caption.grid(row=row, column=0, sticky="w", pady=2)
+            caption.grid(row=row, column=0, sticky="w", pady=2, padx=(0, 8))
             widget.grid(row=row, column=1, sticky="we", pady=2)
             self.rows[key] = (caption, widget)
             row += 1
@@ -205,37 +208,37 @@ class ConditionDialog(FormDialog):
         self.cond_labels = list(fx.CONDITION_LABELS)
 
         line("type", "Condition", ttk.Combobox(body, textvariable=self.vars["type"],
-                                              values=self.cond_labels, state="readonly", width=32))
-        self.type_hint = ttk.Label(body, style="Hint.TLabel", wraplength=px(body, 320), justify="left")
+                                              values=self.cond_labels, state="readonly", width=48))
+        self.type_hint = ttk.Label(body, style="Hint.TLabel", wraplength=px(body, 580), justify="left")
         self.type_hint.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
 
-        self.card_field = CardField(body, lambda: self.project, width=24)
+        self.card_field = CardField(body, lambda: self.project, width=38)
         line("card", "Named card", self.card_field)
         line("whose", "On field", ttk.Combobox(body, textvariable=self.vars["whose"],
-                                             values=list(fx.EACH_LABELS), state="readonly", width=32))
+                                             values=list(fx.EACH_LABELS), state="readonly", width=48))
 
         line("presence", "Presence", ttk.Combobox(body, textvariable=self.vars["presence"],
-                                                values=list(fx.PRESENCE_LABELS), state="readonly", width=32))
+                                                values=list(fx.PRESENCE_LABELS), state="readonly", width=48))
 
         line("stat", "Compare stat", ttk.Combobox(body, textvariable=self.vars["stat"],
-                                                 values=list(fx.STAT_LABELS), state="readonly", width=32))
+                                                 values=list(fx.STAT_LABELS), state="readonly", width=48))
         line("op", "Operator", ttk.Combobox(body, textvariable=self.vars["op"],
-                                            values=list(fx.OP_LABELS), state="readonly", width=32))
+                                            values=list(fx.OP_LABELS), state="readonly", width=48))
         self.val_spin = ttk.Spinbox(body, textvariable=self.vars["value"],
-                                    from_=0, to=fx.AMOUNT_MAX, increment=100, width=10)
+                                    from_=0, to=fx.AMOUNT_MAX, increment=100, width=12)
         line("value", "Threshold", self.val_spin)
 
         self.level_spin = ttk.Spinbox(body, textvariable=self.vars["level"],
-                                      from_=1, to=12, increment=1, width=10)
+                                      from_=1, to=12, increment=1, width=12)
         line("level", "Level", self.level_spin)
 
         line("type_mode", "Requirement", ttk.Combobox(body, textvariable=self.vars["type_mode"],
-                                                     values=list(fx.TYPE_MODE_LABELS), state="readonly", width=32))
+                                                     values=list(fx.TYPE_MODE_LABELS), state="readonly", width=48))
 
         type_choices = list(TYPE_NAMES[:TYPE_MAGIC])
         line("card_type", "Monster type", ttk.Combobox(body, textvariable=self.vars["card_type"],
-                                                      values=type_choices, state="readonly", width=32))
+                                                      values=type_choices, state="readonly", width=48))
 
         if self.project and "attributes" in self.project.other:
             attr_names, _ = manifest._attribute_registry(self.project.other.get("attributes"))
@@ -243,10 +246,10 @@ class ConditionDialog(FormDialog):
         else:
             attr_choices = list(ATTRIBUTE_NAMES)
         line("attribute", "Attribute", ttk.Combobox(body, textvariable=self.vars["attribute"],
-                                                   values=attr_choices, state="readonly", width=32))
+                                                   values=attr_choices, state="readonly", width=48))
 
         line("scope", "Scope", ttk.Combobox(body, textvariable=self.vars["scope"],
-                                            values=list(fx.SCOPE_LABELS), state="readonly", width=32))
+                                            values=list(fx.SCOPE_LABELS), state="readonly", width=48))
 
         c_type = c.get("type", "named_card")
 
@@ -488,6 +491,9 @@ class EffectDialog(FormDialog):
         return self.custom_attribute_labels().get(label, label)
 
     def build(self, dialog, body):
+        dialog.minsize(px(dialog, 680), 0)
+        dialog.resizable(True, False)
+        body.columnconfigure(1, weight=1)
         e = self.start
         self.vars = {k: tk.StringVar(dialog) for k in ("when", "do", "card", "target", "type", "attribute", "attack",
                                                  "defense", "amount", "each", "each_type", "each_attribute",
@@ -498,34 +504,34 @@ class EffectDialog(FormDialog):
         def line(key, label, widget):
             nonlocal row
             caption = ttk.Label(body, text=label)
-            caption.grid(row=row, column=0, sticky="w", pady=2)
+            caption.grid(row=row, column=0, sticky="w", pady=2, padx=(0, 8))
             widget.grid(row=row, column=1, sticky="we", pady=2)
             self.rows[key] = (caption, widget)
             row += 1
             return widget
 
         line("when", "When", ttk.Combobox(body, textvariable=self.vars["when"], values=list(fx.WHEN_LABELS),
-                                          state="readonly", width=30))
-        self.when_hint = ttk.Label(body, style="Hint.TLabel", wraplength=px(body, 300), justify="left")
+                                          state="readonly", width=48))
+        self.when_hint = ttk.Label(body, style="Hint.TLabel", wraplength=px(body, 640), justify="left")
         self.when_hint.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
-        self.do_box = line("do", "Does", ttk.Combobox(body, textvariable=self.vars["do"], state="readonly", width=30))
+        self.do_box = line("do", "Does", ttk.Combobox(body, textvariable=self.vars["do"], state="readonly", width=48))
         line("card", "Magic card", self.choice(body, "card", [self.magic_label(c) for c in fx.MAGIC], lambda v: 0x14))
         self.target_box = line("target", "Whose", ttk.Combobox(body, textvariable=self.vars["target"],
-                                                               state="readonly", width=30))
+                                                               state="readonly", width=48))
         line("type", "Only type", self.choice(body, "type", [ANY] + TYPE_NAMES[:TYPE_MAGIC],
                                               lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else None))
         line("attribute", "Only attribute", self.choice(body, "attribute", self.attribute_names(), self.attribute_icon))
         pictures = card_icons.photos(self.app, body, 2) if self.app is not None else {}
         for key, label in (("attack", "ATK"), ("defense", "DEF")):
             line(key, label, ttk.Spinbox(body, textvariable=self.vars[key], from_=-fx.BOOST_MAX, to=fx.BOOST_MAX,
-                                         increment=100, width=10))
+                                         increment=100, width=12))
             if pictures.get(key):       # the sword and the shield, as the Cards tab's
                 self.rows[key][0].configure(image=pictures[key], compound="left")
         line("amount", "LP", ttk.Spinbox(body, textvariable=self.vars["amount"], from_=1, to=fx.AMOUNT_MAX,
-                                         increment=100, width=10))
+                                         increment=100, width=12))
         # "for_each": the number above made once per face-up monster counted.
-        line("each", "For each", ttk.Combobox(body, textvariable=self.vars["each"], state="readonly", width=30,
+        line("each", "For each", ttk.Combobox(body, textvariable=self.vars["each"], state="readonly", width=48,
                                               values=[fx.NO_EACH] + list(fx.EACH_LABELS)))
         line("each_type", "Counting type", self.choice(body, "each_type", [ANY] + TYPE_NAMES[:TYPE_MAGIC],
                                                        lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else None))
@@ -534,13 +540,14 @@ class EffectDialog(FormDialog):
 
         # Modifiers field sits right on top of conditions (API 19)
         line("modifier", "Modifiers", ttk.Combobox(body, textvariable=self.vars["modifier"],
-                                                   values=list(fx.MODIFIER_LABELS), state="readonly", width=30))
+                                                   values=list(fx.MODIFIER_LABELS), state="readonly", width=48))
         line("modifier_reset", "Resets", ttk.Combobox(body, textvariable=self.vars["modifier_reset"],
-                                                      values=list(fx.RESET_LABELS), state="readonly", width=30))
+                                                      values=list(fx.RESET_LABELS), state="readonly", width=48))
 
         # Conditions section (API 19)
         self.cond_frame = ttk.LabelFrame(body, text="Conditions (optional)", padding=6)
-        c_frame, self.cond_tree = scrolled_tree(self.cond_frame, [("type", "Type"), ("details", "Condition")], [120, 240], 3, horizontal=True)
+        self.cond_frame.columnconfigure(0, weight=1)
+        c_frame, self.cond_tree = scrolled_tree(self.cond_frame, [("type", "Type"), ("details", "Condition")], [160, 460], 3, horizontal=True)
         c_frame.grid(row=0, column=0, columnspan=3, sticky="we")
         self.cond_tree.bind("<Double-1>", lambda ev: self.edit_condition())
         self.cond_tree.bind("<<TreeviewSelect>>", lambda ev: self.show_condition_buttons())
@@ -554,10 +561,10 @@ class EffectDialog(FormDialog):
             self.cond_buttons[key] = btn
 
         mode_row = ttk.Frame(self.cond_frame)
-        mode_row.grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        mode_row.grid(row=2, column=0, columnspan=3, sticky="we", pady=(4, 0))
         ttk.Label(mode_row, text="Mode:").pack(side="left", padx=(0, 4))
         ttk.Combobox(mode_row, textvariable=self.vars["cond_mode"],
-                     values=list(fx.COND_MODE_LABELS), state="readonly", width=32).pack(side="left")
+                     values=list(fx.COND_MODE_LABELS), state="readonly", width=46).pack(side="left", fill="x", expand=True)
 
         self.cond_frame.grid(row=row, column=0, columnspan=2, sticky="we", pady=(6, 2))
         row += 1
@@ -642,8 +649,8 @@ class EffectDialog(FormDialog):
         """A list with the game's icons beside its choices (icon_choice.py),
         or a plain one without a window to take them from."""
         if self.app is None:
-            return ttk.Combobox(body, textvariable=self.vars[key], state="readonly", width=30, values=values)
-        return IconChoice(body, self.app, self.vars[key], values, icon_of, width=30)
+            return ttk.Combobox(body, textvariable=self.vars[key], state="readonly", width=48, values=values)
+        return IconChoice(body, self.app, self.vars[key], values, icon_of, width=48)
 
     def attribute_icon(self, value):
         ident = self.attribute_choice(value)
