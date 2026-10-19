@@ -535,7 +535,9 @@ class EffectDialog(FormDialog):
         e = self.start
         self.vars = {k: tk.StringVar(dialog) for k in ("when", "do", "card", "target", "type", "attribute", "attack",
                                                  "defense", "amount", "each", "each_type", "each_attribute",
-                                                 "cond_mode", "modifier", "modifier_reset")}
+                                                 "cond_mode", "modifier", "modifier_reset",
+                                                 "attacker_type", "attacker_attribute", "attacker_stat",
+                                                 "attacker_amount", "attacker_level")}
         self.rows = {}
         row = 0
 
@@ -581,6 +583,16 @@ class EffectDialog(FormDialog):
                                                    values=list(fx.MODIFIER_LABELS), state="readonly", width=48))
         line("modifier_reset", "Resets", ttk.Combobox(body, textvariable=self.vars["modifier_reset"],
                                                       values=list(fx.RESET_LABELS), state="readonly", width=48))
+        line("attacker_type", "Attacker type", self.choice(body, "attacker_type", [ANY] + TYPE_NAMES[:TYPE_MAGIC],
+                                                           lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else None))
+        line("attacker_attribute", "Attacker attribute", self.choice(body, "attacker_attribute", self.attribute_names(),
+                                                                     self.attribute_icon))
+        line("attacker_stat", "Attacker stat", ttk.Combobox(body, textvariable=self.vars["attacker_stat"],
+                                                            values=["None", "ATK", "DEF"], state="readonly", width=48))
+        line("attacker_amount", "Higher than", ttk.Spinbox(body, textvariable=self.vars["attacker_amount"], from_=0, to=fx.AMOUNT_MAX,
+                                                           increment=100, width=12))
+        line("attacker_level", "Higher Level than", ttk.Spinbox(body, textvariable=self.vars["attacker_level"], from_=0, to=12,
+                                                                increment=1, width=12))
 
         # Conditions section (API 19)
         self.cond_frame = ttk.LabelFrame(body, text="Conditions (optional)", padding=6)
@@ -629,6 +641,14 @@ class EffectDialog(FormDialog):
             rst = "copy"
         rst_idx = fx.RESET.index(rst) if rst in fx.RESET else 0
         self.vars["modifier_reset"].set(fx.RESET_LABELS[rst_idx])
+
+        self.vars["attacker_type"].set(e.get("attacker_type", ANY))
+        self.vars["attacker_attribute"].set(self.attribute_label(e.get("attacker_attribute", ANY)))
+        stat_val = e.get("attacker_stat", "")
+        self.vars["attacker_stat"].set(stat_val.upper() if stat_val in ("atk", "def") else ("ATK" if self.attack_mod == "attacked_by_stat" else "None"))
+        self.vars["attacker_amount"].set(str(e.get("attacker_amount", 1500)))
+        lvl_init = e.get("attacker_level", 4 if self.attack_mod == "attacked_by_level" else 0)
+        self.vars["attacker_level"].set(str(lvl_init))
 
         cond_mode = e.get("condition_mode", "all")
         self.vars["cond_mode"].set(fx.COND_MODE_LABELS[fx.COND_MODES.index(cond_mode)] if cond_mode in fx.COND_MODES else fx.COND_MODE_LABELS[0])
@@ -720,8 +740,19 @@ class EffectDialog(FormDialog):
                                   "battle_immunity": set()}[do]
         if do == "battle_immunity":
             shown.add("modifier")
-            if self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS) != "always":
+            mod = self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS)
+            if mod in fx.ATTACK_COUNT_MODIFIERS:
                 shown.add("modifier_reset")
+            elif mod == "attacked_by_type":
+                shown.add("attacker_type")
+            elif mod == "attacked_by_attribute":
+                shown.add("attacker_attribute")
+            elif mod == "attacked_by_stat":
+                shown |= {"attacker_stat", "attacker_amount"}
+            elif mod == "attacked_by_level":
+                shown.add("attacker_level")
+            elif mod == "attacked_by_monster":
+                shown |= {"attacker_type", "attacker_attribute", "attacker_stat", "attacker_amount", "attacker_level"}
         if do in fx.EACH_DO:
             shown.add("each")
             if self.vars["each"].get() in fx.EACH_LABELS:
@@ -745,12 +776,75 @@ class EffectDialog(FormDialog):
         if do == "battle_immunity":
             effect["target"] = "self"
             mod = self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS) or "always"
-            if mod != "always":
+            if mod in fx.ATTACK_COUNT_MODIFIERS:
                 if fx.monster_has_attack_condition(self.effects, self.index):
                     return "A monster can only have one condition related to a number of attacks."
                 effect["modifier"] = mod
                 rst = self.chosen("modifier_reset", fx.RESET, fx.RESET_LABELS) or "turn"
                 effect["reset"] = rst
+            elif mod == "attacked_by_type":
+                effect["modifier"] = mod
+                t = self.vars["attacker_type"].get()
+                if not t or t == ANY:
+                    return "Choose a monster type."
+                effect["attacker_type"] = t
+            elif mod == "attacked_by_attribute":
+                effect["modifier"] = mod
+                a = self.vars["attacker_attribute"].get()
+                if not a or a == ANY:
+                    return "Choose an attribute."
+                effect["attacker_attribute"] = self.attribute_value(a)
+            elif mod == "attacked_by_stat":
+                effect["modifier"] = mod
+                s = self.vars["attacker_stat"].get().lower()
+                if s not in ("atk", "def"):
+                    s = "atk"
+                effect["attacker_stat"] = s
+                try:
+                    amt = int(self.vars["attacker_amount"].get().strip())
+                except ValueError:
+                    return "Stat threshold must be a whole number."
+                if not 0 <= amt <= fx.AMOUNT_MAX:
+                    return f"Stat threshold must be 0 to {fx.AMOUNT_MAX}."
+                effect["attacker_amount"] = amt
+            elif mod == "attacked_by_level":
+                effect["modifier"] = mod
+                try:
+                    lvl = int(self.vars["attacker_level"].get().strip())
+                except ValueError:
+                    return "Level must be a number."
+                if not 1 <= lvl <= 12:
+                    return "Level must be 1 to 12."
+                effect["attacker_level"] = lvl
+            elif mod == "attacked_by_monster":
+                effect["modifier"] = mod
+                t = self.vars["attacker_type"].get()
+                if t and t != ANY:
+                    effect["attacker_type"] = t
+                a = self.vars["attacker_attribute"].get()
+                if a and a != ANY:
+                    effect["attacker_attribute"] = self.attribute_value(a)
+                s = self.vars["attacker_stat"].get()
+                if s in ("ATK", "DEF"):
+                    effect["attacker_stat"] = s.lower()
+                    try:
+                        amt = int(self.vars["attacker_amount"].get().strip())
+                    except ValueError:
+                        return "Stat threshold must be a whole number."
+                    if not 0 <= amt <= fx.AMOUNT_MAX:
+                        return f"Stat threshold must be 0 to {fx.AMOUNT_MAX}."
+                    effect["attacker_amount"] = amt
+                lvl_str = self.vars["attacker_level"].get().strip()
+                if lvl_str and lvl_str != "0":
+                    try:
+                        lvl = int(lvl_str)
+                    except ValueError:
+                        return "Level must be a number."
+                    if not 1 <= lvl <= 12:
+                        return "Level must be 1 to 12."
+                    effect["attacker_level"] = lvl
+                if not any(k in effect for k in ("attacker_type", "attacker_attribute", "attacker_stat", "attacker_level")):
+                    return "Specify at least one attacker criteria (Type, Attribute, Stat, or Level)."
             all_conds = [dict(c) for c in self.conditions]
         elif do == "magic":
             text = self.vars["card"].get()

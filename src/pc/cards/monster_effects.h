@@ -107,6 +107,11 @@ enum {
   MONSTER_BATTLE_MOD_FIRST_ATTACKED,  /* the first time it is attacked */
   MONSTER_BATTLE_MOD_AFTER_2_ATTACKS, /* can only be destroyed after two attacks */
   MONSTER_BATTLE_MOD_AFTER_3_ATTACKS, /* can only be destroyed after three attacks */
+  MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE,      /* if attacked by monster of specific type */
+  MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE, /* if attacked by monster of specific attribute */
+  MONSTER_BATTLE_MOD_ATTACKED_BY_STAT,      /* if attacked by monster with higher ATK or DEF */
+  MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL,     /* if attacked by monster with higher level */
+  MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER,   /* if attacked by monster matching criteria */
   MONSTER_BATTLE_MOD_COUNT
 };
 
@@ -182,6 +187,11 @@ typedef struct MonsterEffect {
   /* API 19: battle immunity modifiers (only when action == MONSTER_DO_BATTLE_IMMUNITY) */
   unsigned char battle_modifier; /* MONSTER_BATTLE_MOD_* */
   unsigned char battle_reset;    /* MONSTER_RESET_* */
+  signed char attacker_type;     /* -1 = any */
+  signed short attacker_attribute; /* -1 = any */
+  unsigned char attacker_stat;   /* 0 = none, 1 = ATK, 2 = DEF */
+  short attacker_amount;         /* threshold for higher than ATK/DEF */
+  unsigned char attacker_level;  /* 0 = none, 1..12 = higher than level */
   /* API 19: conditions */
   unsigned char cond_count;
   unsigned char cond_mode; /* MONSTER_COND_MODE_ALL or MONSTER_COND_MODE_ANY */

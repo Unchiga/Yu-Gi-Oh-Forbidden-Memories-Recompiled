@@ -120,12 +120,33 @@ ATTACK_CONDITIONS = (
     "destroyed_after_1_attack",
 )
 
-MODIFIERS = ("always", "first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks")
+MODIFIERS = (
+    "always",
+    "first_attacked",
+    "destroyed_after_2_attacks",
+    "destroyed_after_3_attacks",
+    "attacked_by_type",
+    "attacked_by_attribute",
+    "attacked_by_stat",
+    "attacked_by_level",
+    "attacked_by_monster",
+)
 MODIFIER_LABELS = (
     "Always",
     "The first time it is attacked",
     "Can only be destroyed after two attacks",
     "Can only be destroyed after three attacks",
+    "If attacked by monster of Type",
+    "If attacked by monster of Attribute",
+    "If attacked by monster with higher ATK or DEF",
+    "If attacked by monster with higher Level",
+    "If attacked by monster (combined criteria)",
+)
+
+ATTACK_COUNT_MODIFIERS = (
+    "first_attacked",
+    "destroyed_after_2_attacks",
+    "destroyed_after_3_attacks",
 )
 
 # The disc's magic cards whose effect a monster may use: Magic cards whose
@@ -404,16 +425,86 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                 mod = "destroyed_after_3_attacks"
             mod_name = _name(MODIFIERS, mod)
             if mod_name is None:
-                return None
+                if mod in ("first_time_attacked", "after_one_attack", "destroyed_after_1_attack"):
+                    mod_name = "first_attacked"
+                elif mod in ("second_attacked", "destroyed_after_two_attacks", "after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
+                    mod_name = "destroyed_after_2_attacks"
+                elif mod in ("third_attacked", "destroyed_after_three_attacks", "after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
+                    mod_name = "destroyed_after_3_attacks"
+                elif mod in ("attacked_type", "if_attacked_by_type"):
+                    mod_name = "attacked_by_type"
+                elif mod in ("attacked_attribute", "if_attacked_by_attribute"):
+                    mod_name = "attacked_by_attribute"
+                elif mod in ("attacked_stat", "if_attacked_by_stat"):
+                    mod_name = "attacked_by_stat"
+                elif mod in ("attacked_level", "if_attacked_by_level"):
+                    mod_name = "attacked_by_level"
+                elif mod in ("attacked_by", "attacked_by_monster", "if_attacked_by_monster"):
+                    mod_name = "attacked_by_monster"
+                else:
+                    return None
             if mod_name != "always":
                 out["modifier"] = mod_name
-                rst = effect.get("reset") or effect.get("modifier_reset") or effect.get("battle_reset") or "turn"
-                if rst in ("summon", "this_copy", "this_card_copy"):
-                    rst = "copy"
-                rst_name = _name(RESET, rst)
-                if rst_name is None:
-                    return None
-                out["reset"] = rst_name
+                if mod_name in ATTACK_COUNT_MODIFIERS:
+                    rst = effect.get("reset") or effect.get("modifier_reset") or effect.get("battle_reset") or "turn"
+                    if rst in ("summon", "this_copy", "this_card_copy"):
+                        rst = "copy"
+                    rst_name = _name(RESET, rst)
+                    if rst_name is None:
+                        return None
+                    out["reset"] = rst_name
+                if mod_name in ("attacked_by_type", "attacked_by_monster"):
+                    t = effect.get("attacker_type") or effect.get("type") or effect.get("card_type")
+                    if t is not None:
+                        names = type_names or TYPE_NAMES
+                        if isinstance(t, str):
+                            found = _letters_index(t, [name or "" for name in names])
+                            t = found if found is not None else _letters_index(t, TYPE_NAMES)
+                        if isinstance(t, int) and not isinstance(t, bool) and is_monster_type(t) and t != 0xFF:
+                            out["attacker_type"] = names[t] if t < len(names) and names[t] else TYPE_NAMES[t]
+                        elif mod_name == "attacked_by_type":
+                            return None
+                    elif mod_name == "attacked_by_type":
+                        return None
+                if mod_name in ("attacked_by_attribute", "attacked_by_monster"):
+                    a = effect.get("attacker_attribute") or effect.get("attribute")
+                    if a is not None:
+                        a = attribute_resolve(a) if attribute_resolve else (_letters_index(a, ATTRIBUTE_NAMES) if isinstance(a, str) else a)
+                        if isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= 255 and a not in (6, 7):
+                            out["attacker_attribute"] = ATTRIBUTE_NAMES[a] if a < len(ATTRIBUTE_NAMES) else a
+                        elif mod_name == "attacked_by_attribute":
+                            return None
+                    elif mod_name == "attacked_by_attribute":
+                        return None
+                if mod_name in ("attacked_by_stat", "attacked_by_monster"):
+                    st = effect.get("attacker_stat") or effect.get("stat")
+                    if st is not None:
+                        s_lower = str(st).lower()
+                        if s_lower in ("def", "defense"):
+                            out["attacker_stat"] = "def"
+                        elif s_lower in ("atk", "attack"):
+                            out["attacker_stat"] = "atk"
+                        elif mod_name == "attacked_by_stat":
+                            return None
+                    amt = effect.get("attacker_amount") if "attacker_amount" in effect else effect.get("amount") if "amount" in effect else effect.get("value")
+                    if amt is not None:
+                        if isinstance(amt, int) and not isinstance(amt, bool) and 0 <= amt <= AMOUNT_MAX:
+                            out["attacker_amount"] = amt
+                            if "attacker_stat" not in out:
+                                out["attacker_stat"] = "atk"
+                        elif mod_name == "attacked_by_stat":
+                            return None
+                    elif mod_name == "attacked_by_stat":
+                        return None
+                if mod_name in ("attacked_by_level", "attacked_by_monster"):
+                    lvl = effect.get("attacker_level") if "attacker_level" in effect else effect.get("level")
+                    if lvl is not None:
+                        if isinstance(lvl, int) and not isinstance(lvl, bool) and 1 <= lvl <= 12:
+                            out["attacker_level"] = lvl
+                        elif mod_name == "attacked_by_level":
+                            return None
+                    elif mod_name == "attacked_by_level":
+                        return None
     elif do in FILTERED:
         out["target"] = target
         for key in ("attack", "defense") if do == "boost" else ():
@@ -497,12 +588,12 @@ def _filter(source: dict, out: dict, attribute_resolve=None, type_names=None) ->
 
 
 def effect_has_attack_condition(effect: dict) -> bool:
-    """True if effect has a battle immunity attack modifier or (legacy) attack condition."""
+    """True if effect has a battle immunity attack count modifier or (legacy) attack condition."""
     if not isinstance(effect, dict):
         return False
     if effect.get("do") == "battle_immunity":
         mod = effect.get("modifier") or effect.get("battle_modifier")
-        if mod and mod != "always":
+        if mod and mod in ATTACK_COUNT_MODIFIERS:
             return True
     conds = effect.get("conditions")
     if not conds and "condition" in effect:
@@ -534,7 +625,7 @@ def count_monster_attack_conditions(effects: list) -> int:
             continue
         if e.get("do") == "battle_immunity":
             mod = e.get("modifier") or e.get("battle_modifier")
-            if mod and mod != "always":
+            if mod and mod in ATTACK_COUNT_MODIFIERS:
                 total += 1
         conds = e.get("conditions")
         if not conds and "condition" in e:
@@ -668,7 +759,7 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
     conds = conditions_words(effect, card_name)
     if do == "battle_immunity":
         mod = effect.get("modifier", "always")
-        if mod != "always":
+        if mod in ATTACK_COUNT_MODIFIERS:
             reset = effect.get("reset", "turn")
             if reset == "summon":
                 reset = "copy"
@@ -679,6 +770,33 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
                 return f"Cannot be destroyed by battle after two attacks ({scope_str}){conds}"
             elif mod == "destroyed_after_3_attacks":
                 return f"Cannot be destroyed by battle after three attacks ({scope_str}){conds}"
+        elif mod == "attacked_by_type":
+            t = effect.get("attacker_type", "monster")
+            return f"Cannot be destroyed by battle if attacked by a {t} monster{conds}"
+        elif mod == "attacked_by_attribute":
+            a = effect.get("attacker_attribute", "")
+            return f"Cannot be destroyed by battle if attacked by a {a} monster{conds}"
+        elif mod == "attacked_by_stat":
+            s = effect.get("attacker_stat", "atk").upper()
+            amt = effect.get("attacker_amount", 0)
+            return f"Cannot be destroyed by battle if attacked by a monster with higher {s} than {amt}{conds}"
+        elif mod == "attacked_by_level":
+            lvl = effect.get("attacker_level", 1)
+            return f"Cannot be destroyed by battle if attacked by a monster with higher Level than {lvl}{conds}"
+        elif mod == "attacked_by_monster":
+            parts = []
+            if "attacker_attribute" in effect:
+                parts.append(str(effect["attacker_attribute"]))
+            if "attacker_type" in effect:
+                parts.append(str(effect["attacker_type"]))
+            crit = " ".join(parts) if parts else "monster"
+            extra = []
+            if "attacker_stat" in effect and "attacker_amount" in effect:
+                extra.append(f"higher {effect['attacker_stat'].upper()} than {effect['attacker_amount']}")
+            if "attacker_level" in effect:
+                extra.append(f"higher Level than {effect['attacker_level']}")
+            with_str = f" with {' and '.join(extra)}" if extra else ""
+            return f"Cannot be destroyed by battle if attacked by a {crit}{with_str}{conds}"
         return f"Cannot be destroyed by battle{conds}"
     if do == "magic":
         return f"{card_name(effect.get('card'))} (its effect){conds}"

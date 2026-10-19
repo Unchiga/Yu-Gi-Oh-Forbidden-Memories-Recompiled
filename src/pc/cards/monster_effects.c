@@ -42,7 +42,12 @@ const char *const MonsterEffect_BattleModNames[MONSTER_BATTLE_MOD_COUNT] = {
     "always",
     "first_attacked",
     "destroyed_after_2_attacks",
-    "destroyed_after_3_attacks"};
+    "destroyed_after_3_attacks",
+    "attacked_by_type",
+    "attacked_by_attribute",
+    "attacked_by_stat",
+    "attacked_by_level",
+    "attacked_by_monster"};
 const char *const MonsterEffect_OpNames[MONSTER_OP_COUNT] = {"<", "<=", ">",
                                                              ">=", "=="};
 const char *const MonsterEffect_ResetNames[MONSTER_RESET_COUNT] = {
@@ -850,6 +855,11 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
     const JsonValue *rst_val = Json_Member(entry, "reset");
     out->battle_modifier = MONSTER_BATTLE_MOD_ALWAYS;
     out->battle_reset = MONSTER_RESET_TURN;
+    out->attacker_type = -1;
+    out->attacker_attribute = -1;
+    out->attacker_stat = 0;
+    out->attacker_amount = 0;
+    out->attacker_level = 0;
     if (!mod_val)
       mod_val = Json_Member(entry, "battle_modifier");
     if (mod_val) {
@@ -871,12 +881,26 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
                  !strcmp(m_str, "after_three_attacks") ||
                  !strcmp(m_str, "can_only_be_destroyed_after_three_attacks"))
           m = MONSTER_BATTLE_MOD_AFTER_3_ATTACKS;
+        else if (!strcmp(m_str, "attacked_type") ||
+                 !strcmp(m_str, "if_attacked_by_type"))
+          m = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE;
+        else if (!strcmp(m_str, "attacked_attribute") ||
+                 !strcmp(m_str, "if_attacked_by_attribute"))
+          m = MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE;
+        else if (!strcmp(m_str, "attacked_stat") ||
+                 !strcmp(m_str, "if_attacked_by_stat"))
+          m = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT;
+        else if (!strcmp(m_str, "attacked_level") ||
+                 !strcmp(m_str, "if_attacked_by_level"))
+          m = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL;
+        else if (!strcmp(m_str, "attacked_by") ||
+                 !strcmp(m_str, "attacked_by_monster") ||
+                 !strcmp(m_str, "if_attacked_by_monster"))
+          m = MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER;
         else {
           Mods_Note(mod,
-                    "cards[%d]: monster_effects[%d]: \"modifier\" must be "
-                    "always, first_attacked, destroyed_after_2_attacks, or "
-                    "destroyed_after_3_attacks",
-                    index, n);
+                    "cards[%d]: monster_effects[%d]: unknown battle immunity modifier \"%s\"",
+                    index, n, m_str);
           return 0;
         }
       }
@@ -901,6 +925,83 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
           return 0;
         }
         out->battle_reset = (unsigned char)r;
+      }
+    }
+
+    /* Attacker criteria */
+    const JsonValue *t_val = Json_Member(entry, "attacker_type");
+    if (!t_val)
+      t_val = Json_Member(entry, "type");
+    if (!t_val)
+      t_val = Json_Member(entry, "card_type");
+    if (!t_val)
+      t_val = Json_Member(entry, "monster_type");
+    if (t_val) {
+      long raw = Json_TypeOf(t_val) == JSON_NUMBER
+                     ? (long)Json_Number(t_val, -1)
+                     : Cards_TypeNamed(Json_String(t_val, ""));
+      if (raw >= 0 && raw <= 255 && Cards_IsMonsterType((int)raw)) {
+        out->attacker_type = (signed char)raw;
+      } else {
+        Mods_Note(mod,
+                  "cards[%d]: monster_effects[%d]: \"attacker_type\" must be a monster type",
+                  index, n);
+        return 0;
+      }
+    }
+
+    const JsonValue *a_val = Json_Member(entry, "attacker_attribute");
+    if (!a_val)
+      a_val = Json_Member(entry, "attribute");
+    if (a_val) {
+      int av = Attributes_Value(a_val);
+      if (av >= 0) {
+        out->attacker_attribute = (signed short)av;
+      } else {
+        Mods_Note(mod,
+                  "cards[%d]: monster_effects[%d]: \"attacker_attribute\" must be an attribute",
+                  index, n);
+        return 0;
+      }
+    }
+
+    const JsonValue *s_val = Json_Member(entry, "attacker_stat");
+    if (!s_val)
+      s_val = Json_Member(entry, "stat");
+    if (s_val) {
+      const char *s = Json_String(s_val, "");
+      if (!strcmp(s, "def") || !strcmp(s, "defense") || !strcmp(s, "DEF"))
+        out->attacker_stat = 2; /* DEF */
+      else if (!strcmp(s, "atk") || !strcmp(s, "attack") || !strcmp(s, "ATK"))
+        out->attacker_stat = 1; /* ATK */
+    }
+
+    const JsonValue *am_val = Json_Member(entry, "attacker_amount");
+    if (!am_val)
+      am_val = Json_Member(entry, "amount");
+    if (!am_val)
+      am_val = Json_Member(entry, "value");
+    if (am_val && Json_TypeOf(am_val) == JSON_NUMBER) {
+      int amt = (int)Json_Number(am_val, 0);
+      if (amt >= 0 && amt <= AMOUNT_MAX) {
+        out->attacker_amount = (short)amt;
+        if (out->attacker_stat == 0)
+          out->attacker_stat = 1; /* default to ATK */
+      }
+    }
+
+    const JsonValue *l_val = Json_Member(entry, "attacker_level");
+    if (!l_val)
+      l_val = Json_Member(entry, "level");
+    if (l_val && Json_TypeOf(l_val) == JSON_NUMBER) {
+      int lvl = (int)Json_Number(l_val, 0);
+      if (lvl >= 1 && lvl <= 12) {
+        out->attacker_level = (unsigned char)lvl;
+      } else {
+        Mods_Note(mod,
+                  "cards[%d]: monster_effects[%d]: \"attacker_level\" must be 1 to 12",
+                  index, n);
+        return 0;
       }
     }
     break;

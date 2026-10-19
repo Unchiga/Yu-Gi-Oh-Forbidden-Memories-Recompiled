@@ -2792,7 +2792,7 @@ class MonsterEffectsGuiTest(GuiCase):
         self.assertFalse(dialog.rows["modifier"][1].winfo_manager())
         self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
 
-        # 5. Enforcement: monster cannot have more than 1 attack modifier across its effects
+        # 5. Enforcement: monster cannot have more than 1 attack count modifier across its effects
         existing_effect = {"when": "face_up", "do": "battle_immunity", "target": "self",
                            "modifier": "first_attacked", "reset": "turn"}
         dialog = EffectDialog(app, app.project, None, str, effects=[existing_effect], index=None)
@@ -2801,6 +2801,73 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.vars["modifier"].set("Can only be destroyed after two attacks")
         err = dialog.read(dialog)
         self.assertEqual(err, "A monster can only have one condition related to a number of attacks.")
+
+        # 6. Attacker criteria modifiers do NOT conflict with attack count modifier
+        dialog.vars["modifier"].set("If attacked by monster of Type")
+        dialog.vars["attacker_type"].set("Dragon")
+        self.assertTrue(dialog.rows["attacker_type"][1].winfo_manager())
+        self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_type", "attacker_type": "Dragon"
+        })
+
+        # 7. Attacked by Attribute
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by monster of Attribute")
+        dialog.vars["attacker_attribute"].set("LIGHT")
+        self.assertTrue(dialog.rows["attacker_attribute"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_attribute", "attacker_attribute": "Light"
+        })
+
+        # 8. Attacked by Stat
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by monster with higher ATK or DEF")
+        dialog.vars["attacker_stat"].set("ATK")
+        dialog.vars["attacker_amount"].set("2500")
+        self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_stat", "attacker_stat": "atk", "attacker_amount": 2500
+        })
+
+        # 9. Attacked by Level
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by monster with higher Level")
+        dialog.vars["attacker_level"].set("7")
+        self.assertTrue(dialog.rows["attacker_level"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_level", "attacker_level": 7
+        })
+
+        # 10. Attacked by monster (combined criteria)
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by monster (combined criteria)")
+        dialog.vars["attacker_type"].set("Dragon")
+        dialog.vars["attacker_attribute"].set("LIGHT")
+        dialog.vars["attacker_stat"].set("DEF")
+        dialog.vars["attacker_amount"].set("2000")
+        dialog.vars["attacker_level"].set("8")
+        self.assertTrue(dialog.rows["attacker_type"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_attribute"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_level"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_monster", "attacker_type": "Dragon",
+            "attacker_attribute": "Light", "attacker_stat": "def",
+            "attacker_amount": 2000, "attacker_level": 8
+        })
 
     def test_text_menu(self):
         from fm_editor import text_menu

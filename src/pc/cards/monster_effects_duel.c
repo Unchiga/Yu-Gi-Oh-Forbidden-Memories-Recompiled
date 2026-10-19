@@ -1193,15 +1193,87 @@ int MonsterEffects_HasBattleImmunity(int record) {
       if (record != S.trap_battle_record[1])
         continue;
 
-      if (effects[e].battle_reset == MONSTER_RESET_SUMMON)
-        count = S.attacked_summon[record];
-      else if (effects[e].battle_reset == MONSTER_RESET_TURN)
-        count = S.attacked_turn[record];
-      else if (effects[e].battle_reset == MONSTER_RESET_DUEL)
-        count = S.attacked_duel[record];
+      if (effects[e].battle_modifier <= MONSTER_BATTLE_MOD_AFTER_3_ATTACKS) {
+        if (effects[e].battle_reset == MONSTER_RESET_SUMMON)
+          count = S.attacked_summon[record];
+        else if (effects[e].battle_reset == MONSTER_RESET_TURN)
+          count = S.attacked_turn[record];
+        else if (effects[e].battle_reset == MONSTER_RESET_DUEL)
+          count = S.attacked_duel[record];
 
-      if (count <= 0 || count > target_count)
-        continue;
+        if (count <= 0 || count > target_count)
+          continue;
+      } else {
+        /* Attacker criteria modifiers:
+         * MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE,
+         * MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE,
+         * MONSTER_BATTLE_MOD_ATTACKED_BY_STAT,
+         * MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL,
+         * MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER */
+        int att_rec = S.trap_battle_record[0];
+        int att_card;
+        if (!monster_zone(att_rec))
+          continue;
+        att_card = D_801A7AD8[att_rec].card_id;
+        if (!att_card && S.card[att_rec])
+          att_card = S.card[att_rec];
+        if (!att_card)
+          continue;
+
+        if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE) {
+          int t = Cards_Type(att_card);
+          if (t != effects[e].attacker_type)
+            continue;
+        } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE) {
+          int a = Cards_Attribute(att_card);
+          if (a != effects[e].attacker_attribute)
+            continue;
+        } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT) {
+          int packed, att_val;
+          s_evaluating_stats = 1;
+          packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]);
+          s_evaluating_stats = 0;
+          if (effects[e].attacker_stat == 2)
+            att_val = (unsigned int)packed >> 16; /* DEF */
+          else
+            att_val = packed & 0xFFFF;            /* ATK */
+          if (att_val <= effects[e].attacker_amount)
+            continue;
+        } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL) {
+          int lvl = Cards_Level(att_card);
+          if (lvl <= effects[e].attacker_level)
+            continue;
+        } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER) {
+          /* Combined criteria: check each criteria if configured */
+          if (effects[e].attacker_type >= 0 && (unsigned char)effects[e].attacker_type != 0xFF) {
+            int t = Cards_Type(att_card);
+            if (t != effects[e].attacker_type)
+              continue;
+          }
+          if (effects[e].attacker_attribute >= 0 && (unsigned char)effects[e].attacker_attribute != 0xFF) {
+            int a = Cards_Attribute(att_card);
+            if (a != effects[e].attacker_attribute)
+              continue;
+          }
+          if (effects[e].attacker_stat > 0 || effects[e].attacker_amount > 0) {
+            int packed, att_val;
+            s_evaluating_stats = 1;
+            packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]);
+            s_evaluating_stats = 0;
+            if (effects[e].attacker_stat == 2)
+              att_val = (unsigned int)packed >> 16; /* DEF */
+            else
+              att_val = packed & 0xFFFF;            /* ATK */
+            if (att_val <= effects[e].attacker_amount)
+              continue;
+          }
+          if (effects[e].attacker_level > 0) {
+            int lvl = Cards_Level(att_card);
+            if (lvl <= effects[e].attacker_level)
+              continue;
+          }
+        }
+      }
     }
 
     return 1;

@@ -704,6 +704,147 @@ static void test_field_spell_condition(void) {
   puts("test_field_spell_condition: PASSED");
 }
 
+static void test_attacker_criteria_immunity(void) {
+  MonsterEffect eff;
+  reset_test_duel();
+
+  /* Zone 5 is defender (card 18), Zone 20 is attacker (card 1) */
+  gDuel_wSceneStateFlags = PHASE_BATTLE;
+  gMonsterEffects.trap_battle_record[0] = 20;
+  gMonsterEffects.trap_battle_record[1] = 5;
+
+  s_test_effect_count = 1;
+
+  /* --- Test 1: MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE --- */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE;
+  eff.attacker_type = 1; /* Dragon */
+  s_test_effects[0] = eff;
+
+  s_mock_type[1] = 1; /* Attacker is Dragon */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+  /* Attacker itself does not have immunity */
+  assert(MonsterEffects_HasBattleImmunity(20) == 0);
+
+  s_mock_type[1] = 2; /* Attacker is Spellcaster */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  /* Outside battle, immunity must be 0 */
+  gMonsterEffects.trap_battle_record[0] = -1;
+  gMonsterEffects.trap_battle_record[1] = -1;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+  gMonsterEffects.trap_battle_record[0] = 20;
+  gMonsterEffects.trap_battle_record[1] = 5;
+
+  /* --- Test 2: MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE --- */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE;
+  eff.attacker_attribute = 1; /* LIGHT */
+  s_test_effects[0] = eff;
+
+  s_mock_attr[1] = 1; /* Attacker is LIGHT */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  s_mock_attr[1] = 2; /* Attacker is DARK */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  /* --- Test 3: MONSTER_BATTLE_MOD_ATTACKED_BY_STAT --- */
+  /* Check higher ATK */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT;
+  eff.attacker_stat = 0; /* ATK */
+  eff.attacker_amount = 2500;
+  s_test_effects[0] = eff;
+
+  gDuel_adwCardStats[20] = 3000 | (2500 << 16); /* 3000 ATK, 2500 DEF */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  gDuel_adwCardStats[20] = 2500 | (2500 << 16); /* Equal -> strictly higher required */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  gDuel_adwCardStats[20] = 2000 | (2500 << 16); /* Lower -> 0 */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  /* Check higher DEF */
+  eff.attacker_stat = 2; /* DEF */
+  eff.attacker_amount = 2000;
+  s_test_effects[0] = eff;
+
+  gDuel_adwCardStats[20] = 1000 | (2500 << 16); /* 2500 DEF > 2000 */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  gDuel_adwCardStats[20] = 1000 | (1800 << 16); /* 1800 DEF <= 2000 */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  /* --- Test 4: MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL --- */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL;
+  eff.attacker_level = 7;
+  s_test_effects[0] = eff;
+
+  s_mock_level[1] = 8; /* Level 8 > 7 */
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  s_mock_level[1] = 7; /* Equal -> 0 */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  s_mock_level[1] = 4; /* Level 4 <= 7 */
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  /* --- Test 5: MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER (combined criteria) --- */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER;
+  eff.attacker_type = 1;       /* Dragon */
+  eff.attacker_attribute = 1;  /* LIGHT */
+  eff.attacker_stat = 1;       /* ATK */
+  eff.attacker_amount = 2500;  /* ATK > 2500 */
+  eff.attacker_level = 7;      /* Level > 7 */
+  s_test_effects[0] = eff;
+
+  /* Satisfy all: Dragon, LIGHT, ATK 3000, Level 8 */
+  s_mock_type[1] = 1;
+  s_mock_attr[1] = 1;
+  gDuel_adwCardStats[20] = 3000 | (2500 << 16);
+  s_mock_level[1] = 8;
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  /* Fail type */
+  s_mock_type[1] = 2;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+  s_mock_type[1] = 1;
+
+  /* Fail attribute */
+  s_mock_attr[1] = 2;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+  s_mock_attr[1] = 1;
+
+  /* Fail ATK */
+  gDuel_adwCardStats[20] = 2400 | (2500 << 16);
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+  gDuel_adwCardStats[20] = 3000 | (2500 << 16);
+
+  /* Fail Level */
+  s_mock_level[1] = 7;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+  puts("test_attacker_criteria_immunity: PASSED");
+}
+
 int main(void) {
   test_attacker_vs_defender();
   test_first_second_third_attacked_sequence();
@@ -713,6 +854,7 @@ int main(void) {
   test_control_type_condition();
   test_control_attribute_condition();
   test_field_spell_condition();
+  test_attacker_criteria_immunity();
   puts("\nAll monster attacked condition tests PASSED successfully!");
   return 0;
 }
