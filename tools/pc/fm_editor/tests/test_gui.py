@@ -2734,6 +2734,14 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.ok()
         self.assertEqual(dialog.result, {"type": "control_attribute", "presence": "not_control", "scope": "other", "attribute": "LIGHT"})
 
+        # 10. Field spell condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("field_spell")])
+        dialog.vars["field"].set("Forest")
+        dialog.vars["field_status"].set("Is not active")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "field_spell", "field": "forest", "presence": "not_active"})
+
     def test_effect_dialog_modifiers(self):
         from fm_editor.monster_effects_ui import EffectDialog
         from fm_editor import monster_effects as fx

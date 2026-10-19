@@ -27,6 +27,8 @@
 #include "tables.h"
 #include <string.h>
 
+extern u8 gDuel_bTerrain;
+
 /* The mods' event numbers what happened as the cards' "when" does. */
 typedef char MonsterEffects_events_match
     [MEMORIES_MONSTER_SUMMON == MONSTER_WHEN_SUMMON &&
@@ -1119,6 +1121,20 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
       }
     }
     return cond->presence ? found : !found;
+  }
+  case MONSTER_COND_FIELD_SPELL: {
+    /* gDuel_bTerrain holds 0 (normal/none), 1 (Forest) .. 6 (Yami) */
+    int current_terrain = (int)gDuel_bTerrain;
+    int is_match = 0;
+    if (cond->field_spell == MONSTER_FIELD_ANY) {
+      /* Any field spell is active (terrain != 0) */
+      is_match = (current_terrain >= 1 && current_terrain <= 6);
+    } else {
+      /* Specific field spell is active */
+      is_match = (current_terrain == cond->field_spell);
+    }
+    /* presence: 1 = is active (default), 0 = is not active */
+    return cond->presence ? is_match : !is_match;
   }
   default:
     return 1;

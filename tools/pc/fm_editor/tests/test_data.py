@@ -1450,6 +1450,27 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(cond_ncattr, {"type": "control_attribute", "presence": "not_control", "scope": "other", "attribute": "DARK"})
         self.assertEqual(fx.condition_words(cond_ncattr), "you do not control another DARK monster")
 
+        # Field spell condition tests
+        cond_fld_any = fx.normalize_condition({"type": "field_spell", "field": "any", "presence": "active"})
+        self.assertEqual(cond_fld_any, {"type": "field_spell", "field": "any", "presence": "active"})
+        self.assertEqual(fx.condition_words(cond_fld_any), "a field spell is active")
+
+        cond_fld_no = fx.normalize_condition({"type": "not_field_spell", "field": "any"})
+        self.assertEqual(cond_fld_no, {"type": "field_spell", "field": "any", "presence": "not_active"})
+        self.assertEqual(fx.condition_words(cond_fld_no), "no field spell is active")
+
+        cond_fld_forest = fx.normalize_condition({"type": "field_spell", "field": "forest", "presence": "active"})
+        self.assertEqual(cond_fld_forest, {"type": "field_spell", "field": "forest", "presence": "active"})
+        self.assertEqual(fx.condition_words(cond_fld_forest), "Forest is active")
+
+        cond_fld_umi_not = fx.normalize_condition({"type": "terrain", "field": "umi", "status": "not_active"})
+        self.assertEqual(cond_fld_umi_not, {"type": "field_spell", "field": "umi", "presence": "not_active"})
+        self.assertEqual(fx.condition_words(cond_fld_umi_not), "Umi (Sea) is not active")
+
+        cond_fld_card = fx.normalize_condition({"type": "field_magic", "card": 332, "status": "active"})
+        self.assertEqual(cond_fld_card, {"type": "field_spell", "field": "mountain", "presence": "active"})
+        self.assertEqual(fx.condition_words(cond_fld_card), "Mountain is active")
+
         # Attack conditions are NOT conditions (normalize_condition returns None)
         self.assertIsNone(fx.normalize_condition({"type": "first_attacked"}))
         self.assertIsNone(fx.normalize_condition({"type": "destroyed_after_2_attacks"}))

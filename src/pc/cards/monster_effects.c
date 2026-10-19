@@ -34,7 +34,10 @@ const char *const MonsterEffect_CondNames[MONSTER_COND_COUNT] = {
     "control_stat",
     "control_level",
     "control_type",
-    "control_attribute"};
+    "control_attribute",
+    "field_spell"};
+const char *const MonsterEffect_FieldNames[MONSTER_FIELD_COUNT] = {
+    "any", "forest", "wasteland", "mountain", "sogen", "umi", "yami"};
 const char *const MonsterEffect_BattleModNames[MONSTER_BATTLE_MOD_COUNT] = {
     "always",
     "first_attacked",
@@ -288,13 +291,24 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
       type = MONSTER_COND_CONTROL_ATTRIBUTE;
       if (!strncmp(type_str, "not_", 4))
         cond->presence = 0;
+    } else if (type_str &&
+               (!strcmp(type_str, "field_spell") ||
+                !strcmp(type_str, "field") ||
+                !strcmp(type_str, "terrain") ||
+                !strcmp(type_str, "field_magic") ||
+                !strcmp(type_str, "not_field_spell") ||
+                !strcmp(type_str, "not_field") ||
+                !strcmp(type_str, "not_terrain"))) {
+      type = MONSTER_COND_FIELD_SPELL;
+      if (!strncmp(type_str, "not_", 4))
+        cond->presence = 0;
     } else {
       Mods_Note(mod,
                 "cards[%d]: monster_effects[%d]: conditions[%d]: \"type\" must "
                 "be named_card, "
                 "stat_threshold, lowest_atk, highest_atk, "
                 "fewer_monsters, more_monsters, "
-                "control_stat, control_level, control_type or control_attribute",
+                "control_stat, control_level, control_type, control_attribute or field_spell",
                 index, n, c_idx);
       return 0;
     }
@@ -597,6 +611,70 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
         return 0;
       }
       cond->attribute = (signed short)v;
+    }
+    break;
+  }
+  case MONSTER_COND_FIELD_SPELL: {
+    val = Json_Member(entry, "presence");
+    if (!val)
+      val = Json_Member(entry, "status");
+    if (!val)
+      val = Json_Member(entry, "active");
+    if (val) {
+      if (Json_TypeOf(val) == JSON_STRING) {
+        const char *s = Json_String(val, "");
+        if (!strcmp(s, "not_active") || !strcmp(s, "inactive") ||
+            !strcmp(s, "not_control") || !strcmp(s, "not") || !strcmp(s, "0"))
+          cond->presence = 0;
+        else
+          cond->presence = 1;
+      } else if (Json_TypeOf(val) == JSON_BOOL) {
+        cond->presence = (unsigned char)Json_Bool(val, 1);
+      } else if (Json_TypeOf(val) == JSON_NUMBER) {
+        cond->presence = (int)Json_Number(val, 1) != 0;
+      }
+    }
+    val = Json_Member(entry, "field");
+    if (!val)
+      val = Json_Member(entry, "field_spell");
+    if (!val)
+      val = Json_Member(entry, "terrain");
+    if (!val)
+      val = Json_Member(entry, "card");
+    cond->field_spell = MONSTER_FIELD_ANY;
+    if (val) {
+      if (Json_TypeOf(val) == JSON_NUMBER) {
+        int num = (int)Json_Number(val, 0);
+        if (num >= 330 && num <= 335)
+          cond->field_spell = (unsigned char)(num - 329); /* 330->1 (Forest) .. 335->6 (Yami) */
+        else if (num >= 1 && num <= 6)
+          cond->field_spell = (unsigned char)num;
+        else
+          cond->field_spell = MONSTER_FIELD_ANY;
+      } else if (Json_TypeOf(val) == JSON_STRING) {
+        const char *s = Json_String(val, "any");
+        if (!strcmp(s, "forest") || !strcmp(s, "Forest") || !strcmp(s, "330"))
+          cond->field_spell = MONSTER_FIELD_FOREST;
+        else if (!strcmp(s, "wasteland") || !strcmp(s, "Wasteland") ||
+                 !strcmp(s, "desert") || !strcmp(s, "Desert") || !strcmp(s, "331"))
+          cond->field_spell = MONSTER_FIELD_WASTELAND;
+        else if (!strcmp(s, "mountain") || !strcmp(s, "Mountain") || !strcmp(s, "332"))
+          cond->field_spell = MONSTER_FIELD_MOUNTAIN;
+        else if (!strcmp(s, "sogen") || !strcmp(s, "Sogen") ||
+                 !strcmp(s, "meadow") || !strcmp(s, "Meadow") ||
+                 !strcmp(s, "grassland") || !strcmp(s, "333"))
+          cond->field_spell = MONSTER_FIELD_SOGEN;
+        else if (!strcmp(s, "umi") || !strcmp(s, "Umi") ||
+                 !strcmp(s, "sea") || !strcmp(s, "Sea") ||
+                 !strcmp(s, "ocean") || !strcmp(s, "water") || !strcmp(s, "334"))
+          cond->field_spell = MONSTER_FIELD_UMI;
+        else if (!strcmp(s, "yami") || !strcmp(s, "Yami") ||
+                 !strcmp(s, "dark") || !strcmp(s, "Dark") ||
+                 !strcmp(s, "darkness") || !strcmp(s, "335"))
+          cond->field_spell = MONSTER_FIELD_YAMI;
+        else
+          cond->field_spell = MONSTER_FIELD_ANY;
+      }
     }
     break;
   }

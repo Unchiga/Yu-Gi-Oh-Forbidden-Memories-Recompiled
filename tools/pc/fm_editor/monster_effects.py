@@ -50,6 +50,7 @@ CONDITIONS = (
     "control_level",
     "control_type",
     "control_attribute",
+    "field_spell",
 )
 CONDITION_LABELS = (
     "Named card on field",
@@ -62,6 +63,7 @@ CONDITION_LABELS = (
     "Control monster with Level",
     "Control monster with Type",
     "Control monster with Attribute",
+    "Field spell active or not active",
 )
 CONDITION_HINTS = (
     "A specific card is face up on the field (own, opponent, or whole field).",
@@ -74,6 +76,7 @@ CONDITION_HINTS = (
     "Control (or do not control) a monster with a specific Level, or higher/fewer Level than a number.",
     "Control (or do not control) a monster of a specific Type (at least one, or only control that type).",
     "Control (or do not control) a monster of a specific Attribute.",
+    "A field spell is active, or a specific field spell is active or not active (Forest, Wasteland, Mountain, Sogen, Umi, Yami).",
 )
 RESET = ("turn", "copy", "duel")
 RESET_LABELS = ("In a turn", "This card copy", "In a duel")
@@ -90,6 +93,18 @@ SCOPE = ("own", "other")
 SCOPE_LABELS = ("Any monster you control", "Another monster you control (exclude self)")
 TYPE_MODES = ("at_least_one", "only")
 TYPE_MODE_LABELS = ("At least one monster of this type", "Only control this type")
+FIELD_SPELLS = ("any", "forest", "wasteland", "mountain", "sogen", "umi", "yami")
+FIELD_SPELL_LABELS = (
+    "Any field spell",
+    "Forest",
+    "Wasteland",
+    "Mountain",
+    "Sogen (Meadow)",
+    "Umi (Sea)",
+    "Yami (Dark)",
+)
+FIELD_STATUS = ("active", "not_active")
+FIELD_STATUS_LABELS = ("Is active", "Is not active")
 
 ATTACK_CONDITIONS = (
     "first_attacked",
@@ -188,6 +203,8 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         raw_type = "control_type"
     elif raw_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute"):
         raw_type = "control_attribute"
+    elif raw_type in ("field_spell", "field", "terrain", "field_magic", "not_field_spell", "not_field", "not_terrain"):
+        raw_type = "field_spell"
     c_type = _name(CONDITIONS, raw_type)
     if not c_type:
         return None
@@ -320,6 +337,38 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         attr = cond.get("attribute")
         if attr is not None:
             out["attribute"] = str(attr)
+    elif c_type == "field_spell":
+        fld = cond.get("field") or cond.get("field_spell") or cond.get("terrain") or cond.get("card") or "any"
+        if isinstance(fld, int) and not isinstance(fld, bool):
+            if 330 <= fld <= 335:
+                fld = FIELD_SPELLS[fld - 330 + 1]
+            elif 0 <= fld < len(FIELD_SPELLS):
+                fld = FIELD_SPELLS[fld]
+            else:
+                return None
+        elif isinstance(fld, str):
+            fld_lower = fld.lower()
+            if fld_lower in ("sea", "ocean"):
+                fld = "umi"
+            elif fld_lower in ("meadow", "grassland"):
+                fld = "sogen"
+            elif fld_lower in ("dark", "darkness"):
+                fld = "yami"
+            else:
+                fld_val = _name(FIELD_SPELLS, fld_lower)
+                if fld_val is None:
+                    return None
+                fld = fld_val
+        else:
+            return None
+        out["field"] = fld
+
+        status = cond.get("presence") or cond.get("status") or cond.get("state")
+        is_not = str(cond.get("type", "")).startswith("not_") or status in ("not_active", "inactive", "not", "none", "no", "not_control", "false", False)
+        if is_not:
+            out["presence"] = "not_active"
+        else:
+            out["presence"] = "active"
     elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
         pass
     return out
@@ -580,6 +629,17 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
         sc = " another" if cond.get("scope") == "other" else " a"
         attr = str(cond.get("attribute", "LIGHT")).upper()
         return f"{p}{sc} {attr} monster"
+    if c_type == "field_spell":
+        fld = cond.get("field", "any")
+        is_active = cond.get("presence", "active") != "not_active"
+        if fld in FIELD_SPELLS:
+            idx = FIELD_SPELLS.index(fld)
+            fld_label = FIELD_SPELL_LABELS[idx]
+        else:
+            fld_label = str(fld)
+        if fld == "any":
+            return "a field spell is active" if is_active else "no field spell is active"
+        return f"{fld_label} is active" if is_active else f"{fld_label} is not active"
     return str(c_type)
 
 

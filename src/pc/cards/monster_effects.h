@@ -76,6 +76,7 @@ enum {
   MONSTER_COND_CONTROL_LEVEL,  /* control (or not) a monster with Level (specific / higher / fewer) */
   MONSTER_COND_CONTROL_TYPE,   /* control (or not) a monster with Type (at least one or only) */
   MONSTER_COND_CONTROL_ATTRIBUTE, /* control (or not) a monster with Attribute */
+  MONSTER_COND_FIELD_SPELL,    /* field spell is active or specific field spell is not active */
   MONSTER_COND_COUNT
 };
 
@@ -85,6 +86,20 @@ enum {
 #define MONSTER_COND_CONTROL_MONSTER_LEVEL MONSTER_COND_CONTROL_LEVEL
 #define MONSTER_COND_CONTROL_MONSTER_TYPE MONSTER_COND_CONTROL_TYPE
 #define MONSTER_COND_CONTROL_MONSTER_ATTRIBUTE MONSTER_COND_CONTROL_ATTRIBUTE
+#define MONSTER_COND_FIELD MONSTER_COND_FIELD_SPELL
+#define MONSTER_COND_TERRAIN MONSTER_COND_FIELD_SPELL
+
+/* Field spell types for MONSTER_COND_FIELD_SPELL (API 19) */
+enum {
+  MONSTER_FIELD_ANY,       /* 0: Any field spell is active */
+  MONSTER_FIELD_FOREST,    /* 1: Forest (card 330) */
+  MONSTER_FIELD_WASTELAND, /* 2: Wasteland (card 331) */
+  MONSTER_FIELD_MOUNTAIN,  /* 3: Mountain (card 332) */
+  MONSTER_FIELD_SOGEN,     /* 4: Sogen / Meadow (card 333) */
+  MONSTER_FIELD_UMI,       /* 5: Umi / Sea (card 334) */
+  MONSTER_FIELD_YAMI,      /* 6: Yami / Dark (card 335) */
+  MONSTER_FIELD_COUNT
+};
 
 /* Battle immunity modifiers (API 19): specific to MONSTER_DO_BATTLE_IMMUNITY */
 enum {
@@ -141,11 +156,12 @@ typedef struct MonsterCondition {
   unsigned char stat;  /* MONSTER_STAT_ATK or MONSTER_STAT_DEF */
   unsigned char op;    /* MONSTER_OP_* */
   short value;         /* stat threshold number or level */
-  unsigned char presence; /* 1 = control (default), 0 = do not control */
+  unsigned char presence; /* 1 = control / active (default), 0 = do not control / not active */
   signed char card_type;  /* monster type: -1 any, or type id */
   signed short attribute; /* attribute id: -1 any */
   unsigned char type_mode; /* 0 = at least one (default), 1 = only control this type */
   unsigned char scope;    /* 0 = all own (default), 1 = other monsters (exclude self) */
+  unsigned char field_spell; /* MONSTER_FIELD_*: 0 any, 1 Forest ... 6 Yami */
 } MonsterCondition;
 
 #define MONSTER_EFFECTS_MAX 8
@@ -182,6 +198,7 @@ extern const char *const MonsterEffect_OpNames[MONSTER_OP_COUNT];
 extern const char *const MonsterEffect_ResetNames[MONSTER_RESET_COUNT];
 extern const char *const MonsterEffect_StatNames[MONSTER_STAT_COUNT];
 extern const char *const MonsterEffect_CondModeNames[MONSTER_COND_MODE_COUNT];
+extern const char *const MonsterEffect_FieldNames[MONSTER_FIELD_COUNT];
 
 /* Whether `card` is a retail magic card whose effect a monster may use: a
  * Magic card of the disc with play-time work that asks the player nothing

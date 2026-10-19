@@ -191,6 +191,8 @@ class ConditionDialog(FormDialog):
             "card_type": tk.StringVar(dialog),
             "attribute": tk.StringVar(dialog),
             "level": tk.StringVar(dialog),
+            "field": tk.StringVar(dialog),
+            "field_status": tk.StringVar(dialog),
         }
         self.rows = {}
         row = 0
@@ -251,6 +253,11 @@ class ConditionDialog(FormDialog):
         line("scope", "Scope", ttk.Combobox(body, textvariable=self.vars["scope"],
                                             values=list(fx.SCOPE_LABELS), state="readonly", width=48))
 
+        line("field", "Field spell", ttk.Combobox(body, textvariable=self.vars["field"],
+                                                 values=list(fx.FIELD_SPELL_LABELS), state="readonly", width=48))
+        line("field_status", "Status", ttk.Combobox(body, textvariable=self.vars["field_status"],
+                                                   values=list(fx.FIELD_STATUS_LABELS), state="readonly", width=48))
+
         c_type = c.get("type", "named_card")
 
         if c_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
@@ -261,6 +268,8 @@ class ConditionDialog(FormDialog):
             c_type = "control_type"
         elif c_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute"):
             c_type = "control_attribute"
+        elif c_type in ("field_spell", "field", "terrain", "field_magic", "not_field_spell", "not_field", "not_terrain"):
+            c_type = "field_spell"
 
         if c_type in self.cond_types:
             self.vars["type"].set(self.cond_labels[self.cond_types.index(c_type)])
@@ -304,6 +313,28 @@ class ConditionDialog(FormDialog):
 
         self.vars["value"].set(str(c.get("value", 1500)))
 
+        fld = c.get("field") or c.get("field_spell") or c.get("terrain") or "any"
+        if isinstance(fld, int) and 330 <= fld <= 335:
+            fld = fx.FIELD_SPELLS[fld - 330 + 1]
+        elif isinstance(fld, int) and 0 <= fld < len(fx.FIELD_SPELLS):
+            fld = fx.FIELD_SPELLS[fld]
+        elif isinstance(fld, str):
+            fld_lower = fld.lower()
+            if fld_lower in ("sea", "ocean"):
+                fld = "umi"
+            elif fld_lower in ("meadow", "grassland"):
+                fld = "sogen"
+            elif fld_lower in ("dark", "darkness"):
+                fld = "yami"
+        fld_idx = fx.FIELD_SPELLS.index(fld) if fld in fx.FIELD_SPELLS else 0
+        self.vars["field"].set(fx.FIELD_SPELL_LABELS[fld_idx])
+
+        f_status = c.get("presence") or c.get("status") or ("not_active" if str(c.get("type", "")).startswith("not_") else "active")
+        if f_status in ("not_active", "inactive", "not_control", "not", "0", False):
+            self.vars["field_status"].set(fx.FIELD_STATUS_LABELS[1])
+        else:
+            self.vars["field_status"].set(fx.FIELD_STATUS_LABELS[0])
+
         self.vars["type"].trace_add("write", lambda *_: self.show_rows())
         self.show_rows()
 
@@ -331,6 +362,8 @@ class ConditionDialog(FormDialog):
             shown |= {"presence", "type_mode", "card_type", "scope"}
         elif c_type == "control_attribute":
             shown |= {"presence", "attribute", "scope"}
+        elif c_type == "field_spell":
+            shown |= {"field", "field_status"}
         elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
             pass
 
@@ -422,6 +455,11 @@ class ConditionDialog(FormDialog):
             sc = self.chosen("scope", fx.SCOPE, fx.SCOPE_LABELS) or "own"
             if sc == "other":
                 out["scope"] = "other"
+        elif c_type == "field_spell":
+            fld = self.chosen("field", fx.FIELD_SPELLS, fx.FIELD_SPELL_LABELS) or "any"
+            out["field"] = fld
+            st = self.chosen("field_status", fx.FIELD_STATUS, fx.FIELD_STATUS_LABELS) or "active"
+            out["presence"] = st
         elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
             pass
         self.result = out

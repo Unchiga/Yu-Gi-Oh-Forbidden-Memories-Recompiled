@@ -38,6 +38,7 @@ s32 gDuel_adwCardStats[1024];
 u8 gDuel_bEffectState = 0;
 u16 gDuel_wCardEffectFlags = 0;
 u8 gDuel_bQuitDialogState = 0;
+u8 gDuel_bTerrain = 0;
 
 MonsterEffectsState gMonsterEffects = {0};
 const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {
@@ -627,6 +628,82 @@ static void test_control_attribute_condition(void) {
   puts("test_control_attribute_condition: PASSED");
 }
 
+static void test_field_spell_condition(void) {
+  MonsterEffect eff;
+  MonsterCondition *cond;
+
+  memset(&eff, 0, sizeof(eff));
+  eff.cond_count = 1;
+  eff.when = MONSTER_WHEN_FACE_UP;
+  cond = &eff.conditions[0];
+  cond->type = MONSTER_COND_FIELD_SPELL;
+
+  memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
+  memset(&gMonsterEffects, 0, sizeof(gMonsterEffects));
+
+  /* Slot 5 monster */
+  D_801A7AD8[5].card_id = 10;
+  D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[5] = 10;
+  gMonsterEffects.face_up[5] = 1;
+
+  /* Test 1: Any field spell active (field=0, presence=1) */
+  cond->field_spell = MONSTER_FIELD_ANY;
+  cond->presence = 1;
+  gDuel_bTerrain = 0; /* Normal / Arena / No field */
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  gDuel_bTerrain = MONSTER_FIELD_FOREST;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  gDuel_bTerrain = MONSTER_FIELD_YAMI;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 2: Any field spell NOT active (field=0, presence=0) */
+  cond->presence = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  gDuel_bTerrain = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 3: Specific field spell active: Umi (field=5, presence=1) */
+  cond->field_spell = MONSTER_FIELD_UMI;
+  cond->presence = 1;
+  gDuel_bTerrain = MONSTER_FIELD_UMI;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  gDuel_bTerrain = MONSTER_FIELD_FOREST;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  gDuel_bTerrain = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  /* Test 4: Specific field spell NOT active: Forest (field=1, presence=0) */
+  cond->field_spell = MONSTER_FIELD_FOREST;
+  cond->presence = 0;
+  gDuel_bTerrain = MONSTER_FIELD_FOREST;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  gDuel_bTerrain = MONSTER_FIELD_WASTELAND;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  gDuel_bTerrain = 0;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Test 5: Verify all field spell types 1 to 6 (Forest..Yami) */
+  for (int f = MONSTER_FIELD_FOREST; f <= MONSTER_FIELD_YAMI; f++) {
+    cond->field_spell = (unsigned char)f;
+    cond->presence = 1;
+    gDuel_bTerrain = (u8)f;
+    assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+    gDuel_bTerrain = (u8)((f == MONSTER_FIELD_YAMI) ? MONSTER_FIELD_FOREST : (f + 1));
+    assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+  }
+
+  puts("test_field_spell_condition: PASSED");
+}
+
 int main(void) {
   test_attacker_vs_defender();
   test_first_second_third_attacked_sequence();
@@ -635,6 +712,7 @@ int main(void) {
   test_control_level_condition();
   test_control_type_condition();
   test_control_attribute_condition();
+  test_field_spell_condition();
   puts("\nAll monster attacked condition tests PASSED successfully!");
   return 0;
 }
