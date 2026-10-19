@@ -26,9 +26,6 @@ const char *const MonsterEffect_EachNames[MONSTER_EACH_COUNT] = {
 const char *const MonsterEffect_CondNames[MONSTER_COND_COUNT] = {
     "none",
     "named_card",
-    "first_attacked",
-    "destroyed_after_2_attacks",
-    "destroyed_after_3_attacks",
     "stat_threshold",
     "lowest_atk",
     "highest_atk",
@@ -38,6 +35,11 @@ const char *const MonsterEffect_CondNames[MONSTER_COND_COUNT] = {
     "control_level",
     "control_type",
     "control_attribute"};
+const char *const MonsterEffect_BattleModNames[MONSTER_BATTLE_MOD_COUNT] = {
+    "always",
+    "first_attacked",
+    "destroyed_after_2_attacks",
+    "destroyed_after_3_attacks"};
 const char *const MonsterEffect_OpNames[MONSTER_OP_COUNT] = {"<", "<=", ">",
                                                              ">=", "=="};
 const char *const MonsterEffect_ResetNames[MONSTER_RESET_COUNT] = {
@@ -238,32 +240,11 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
   const char *type_str = Json_String(Json_Member(entry, "type"), NULL);
   type = named(type_str, MonsterEffect_CondNames, MONSTER_COND_COUNT);
   if (type <= MONSTER_COND_NONE || type >= MONSTER_COND_COUNT) {
-
     if (type_str &&
-        (!strcmp(type_str, "second_attacked") ||
-         !strcmp(type_str, "destroyed_after_two_attacks") ||
-         !strcmp(type_str, "after_two_attacks") ||
-         !strcmp(type_str, "can_only_be_destroyed_after_two_attacks"))) {
-
-      type = MONSTER_COND_DESTROYED_AFTER_2_ATTACKS;
-
-    } else if (type_str &&
-               (!strcmp(type_str, "third_attacked") ||
-                !strcmp(type_str, "destroyed_after_three_attacks") ||
-
-                !strcmp(type_str, "destroyed_after_three_attacks") ||
-                !strcmp(type_str, "after_three_attacks") ||
-                !strcmp(type_str,
-                        "can_only_be_destroyed_after_three_attacks"))) {
-      type = MONSTER_COND_DESTROYED_AFTER_3_ATTACKS;
-    } else if (type_str && (!strcmp(type_str, "destroyed_after_1_attack") ||
-                            !strcmp(type_str, "after_one_attack"))) {
-      type = MONSTER_COND_FIRST_ATTACKED;
-    } else if (type_str &&
-               (!strcmp(type_str, "fewer_monsters_than_opponent") ||
-                !strcmp(type_str, "fewer_monsters_than_opp") ||
-                !strcmp(type_str, "control_fewer_monsters") ||
-                !strcmp(type_str, "fewer_monsters"))) {
+        (!strcmp(type_str, "fewer_monsters_than_opponent") ||
+         !strcmp(type_str, "fewer_monsters_than_opp") ||
+         !strcmp(type_str, "control_fewer_monsters") ||
+         !strcmp(type_str, "fewer_monsters"))) {
       type = MONSTER_COND_FEWER_MONSTERS;
     } else if (type_str &&
                (!strcmp(type_str, "more_monsters_than_opponent") ||
@@ -310,8 +291,7 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
     } else {
       Mods_Note(mod,
                 "cards[%d]: monster_effects[%d]: conditions[%d]: \"type\" must "
-                "be named_card, first_attacked, "
-                "destroyed_after_2_attacks, destroyed_after_3_attacks, "
+                "be named_card, "
                 "stat_threshold, lowest_atk, highest_atk, "
                 "fewer_monsters, more_monsters, "
                 "control_stat, control_level, control_type or control_attribute",
@@ -344,53 +324,6 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
         return 0;
       }
       cond->whose = (unsigned char)(v + 1);
-    }
-    break;
-  case MONSTER_COND_FIRST_ATTACKED:
-  case MONSTER_COND_DESTROYED_AFTER_2_ATTACKS:
-  case MONSTER_COND_DESTROYED_AFTER_3_ATTACKS:
-    val = Json_Member(entry, "reset");
-    cond->reset = MONSTER_RESET_TURN;
-    if (val) {
-      const char *rst = Json_String(val, "");
-      if (!strcmp(rst, "copy") || !strcmp(rst, "summon") ||
-          !strcmp(rst, "this_copy") || !strcmp(rst, "this_card_copy")) {
-        cond->reset = MONSTER_RESET_COPY;
-      } else {
-        v = named(rst, MonsterEffect_ResetNames, MONSTER_RESET_COUNT);
-        if (v < 0) {
-          Mods_Note(mod,
-                    "cards[%d]: monster_effects[%d]: conditions[%d]: \"reset\" "
-                    "must be copy, summon, duel or turn",
-                    index, n, c_idx);
-          return 0;
-        }
-        cond->reset = (unsigned char)v;
-      }
-    }
-    val = Json_Member(entry, "count");
-    if (!val)
-      val = Json_Member(entry, "times");
-    if (val) {
-      int cnt = (int)Json_Number(val, 1);
-
-      if (cnt == 2)
-        cond->type = MONSTER_COND_DESTROYED_AFTER_2_ATTACKS;
-      else if (cnt == 3)
-        cond->type = MONSTER_COND_DESTROYED_AFTER_3_ATTACKS;
-
-      else if (cnt == 1)
-        cond->type = MONSTER_COND_FIRST_ATTACKED;
-    }
-    val = Json_Member(entry, "op");
-    if (!val)
-      val = Json_Member(entry, "comparison");
-    cond->op = 0;
-    if (val) {
-      v = named(Json_String(val, NULL), MonsterEffect_OpNames,
-                MONSTER_OP_COUNT);
-      if (v >= 0)
-        cond->op = (unsigned char)v;
     }
     break;
   case MONSTER_COND_STAT_THRESHOLD:
@@ -834,8 +767,66 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
       return 0;
     break;
   }
-  case MONSTER_DO_BATTLE_IMMUNITY:
+  case MONSTER_DO_BATTLE_IMMUNITY: {
+    const JsonValue *mod_val = Json_Member(entry, "modifier");
+    const JsonValue *rst_val = Json_Member(entry, "reset");
+    out->battle_modifier = MONSTER_BATTLE_MOD_ALWAYS;
+    out->battle_reset = MONSTER_RESET_TURN;
+    if (!mod_val)
+      mod_val = Json_Member(entry, "battle_modifier");
+    if (mod_val) {
+      const char *m_str = Json_String(mod_val, "");
+      int m = named(m_str, MonsterEffect_BattleModNames,
+                    MONSTER_BATTLE_MOD_COUNT);
+      if (m < 0) {
+        if (!strcmp(m_str, "first_time_attacked") ||
+            !strcmp(m_str, "after_one_attack") ||
+            !strcmp(m_str, "destroyed_after_1_attack"))
+          m = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
+        else if (!strcmp(m_str, "second_attacked") ||
+                 !strcmp(m_str, "destroyed_after_two_attacks") ||
+                 !strcmp(m_str, "after_two_attacks") ||
+                 !strcmp(m_str, "can_only_be_destroyed_after_two_attacks"))
+          m = MONSTER_BATTLE_MOD_AFTER_2_ATTACKS;
+        else if (!strcmp(m_str, "third_attacked") ||
+                 !strcmp(m_str, "destroyed_after_three_attacks") ||
+                 !strcmp(m_str, "after_three_attacks") ||
+                 !strcmp(m_str, "can_only_be_destroyed_after_three_attacks"))
+          m = MONSTER_BATTLE_MOD_AFTER_3_ATTACKS;
+        else {
+          Mods_Note(mod,
+                    "cards[%d]: monster_effects[%d]: \"modifier\" must be "
+                    "always, first_attacked, destroyed_after_2_attacks, or "
+                    "destroyed_after_3_attacks",
+                    index, n);
+          return 0;
+        }
+      }
+      out->battle_modifier = (unsigned char)m;
+    }
+    if (!rst_val)
+      rst_val = Json_Member(entry, "modifier_reset");
+    if (!rst_val)
+      rst_val = Json_Member(entry, "battle_reset");
+    if (rst_val) {
+      const char *r_str = Json_String(rst_val, "");
+      if (!strcmp(r_str, "copy") || !strcmp(r_str, "summon") ||
+          !strcmp(r_str, "this_copy") || !strcmp(r_str, "this_card_copy")) {
+        out->battle_reset = MONSTER_RESET_COPY;
+      } else {
+        int r = named(r_str, MonsterEffect_ResetNames, MONSTER_RESET_COUNT);
+        if (r < 0) {
+          Mods_Note(mod,
+                    "cards[%d]: monster_effects[%d]: \"reset\" must be copy, "
+                    "summon, duel or turn",
+                    index, n);
+          return 0;
+        }
+        out->battle_reset = (unsigned char)r;
+      }
+    }
     break;
+  }
   default:
     v = 0;
     if (number(mod, index, n, entry, "amount", AMOUNT_MAX, &v) < 0)

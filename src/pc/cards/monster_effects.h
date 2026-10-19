@@ -65,12 +65,6 @@ enum {
 enum {
   MONSTER_COND_NONE,
   MONSTER_COND_NAMED_CARD,     /* named card is face up on the field */
-  MONSTER_COND_FIRST_ATTACKED, /* the first time this card is attacked */
-
-  MONSTER_COND_DESTROYED_AFTER_2_ATTACKS, /* can only be destroyed after two
-                                             attacks */
-  MONSTER_COND_DESTROYED_AFTER_3_ATTACKS, /* can only be destroyed after three
-                                             attacks */
   MONSTER_COND_STAT_THRESHOLD, /* this card's current ATK or DEF compared
                                   against a value */
   MONSTER_COND_LOWEST_ATK,  /* this card has the strictly lowest ATK on field */
@@ -85,14 +79,26 @@ enum {
   MONSTER_COND_COUNT
 };
 
-#define MONSTER_COND_SECOND_ATTACKED MONSTER_COND_DESTROYED_AFTER_2_ATTACKS
-#define MONSTER_COND_THIRD_ATTACKED MONSTER_COND_DESTROYED_AFTER_3_ATTACKS
 #define MONSTER_COND_FEWER_MONSTERS_THAN_OPPONENT MONSTER_COND_FEWER_MONSTERS
 #define MONSTER_COND_MORE_MONSTERS_THAN_OPPONENT MONSTER_COND_MORE_MONSTERS
 #define MONSTER_COND_CONTROL_MONSTER_STAT MONSTER_COND_CONTROL_STAT
 #define MONSTER_COND_CONTROL_MONSTER_LEVEL MONSTER_COND_CONTROL_LEVEL
 #define MONSTER_COND_CONTROL_MONSTER_TYPE MONSTER_COND_CONTROL_TYPE
 #define MONSTER_COND_CONTROL_MONSTER_ATTRIBUTE MONSTER_COND_CONTROL_ATTRIBUTE
+
+/* Battle immunity modifiers (API 19): specific to MONSTER_DO_BATTLE_IMMUNITY */
+enum {
+  MONSTER_BATTLE_MOD_ALWAYS,          /* always immune to battle destruction (default) */
+  MONSTER_BATTLE_MOD_FIRST_ATTACKED,  /* the first time it is attacked */
+  MONSTER_BATTLE_MOD_AFTER_2_ATTACKS, /* can only be destroyed after two attacks */
+  MONSTER_BATTLE_MOD_AFTER_3_ATTACKS, /* can only be destroyed after three attacks */
+  MONSTER_BATTLE_MOD_COUNT
+};
+
+#define MONSTER_BATTLE_MOD_DESTROYED_AFTER_2_ATTACKS MONSTER_BATTLE_MOD_AFTER_2_ATTACKS
+#define MONSTER_BATTLE_MOD_DESTROYED_AFTER_3_ATTACKS MONSTER_BATTLE_MOD_AFTER_3_ATTACKS
+#define MONSTER_BATTLE_MOD_SECOND_ATTACKED MONSTER_BATTLE_MOD_AFTER_2_ATTACKS
+#define MONSTER_BATTLE_MOD_THIRD_ATTACKED MONSTER_BATTLE_MOD_AFTER_3_ATTACKS
 
 enum {
   MONSTER_OP_LT, /* < strictly lower */
@@ -132,7 +138,6 @@ typedef struct MonsterCondition {
   unsigned char type;  /* MONSTER_COND_* */
   unsigned char whose; /* MONSTER_EACH_*: own, opponent, all (for named card) */
   unsigned short card; /* named card id */
-  unsigned char reset; /* MONSTER_RESET_* */
   unsigned char stat;  /* MONSTER_STAT_ATK or MONSTER_STAT_DEF */
   unsigned char op;    /* MONSTER_OP_* */
   short value;         /* stat threshold number or level */
@@ -158,6 +163,9 @@ typedef struct MonsterEffect {
                          monster counted */
   signed char each_type;
   signed short each_attribute; /* what is counted: -1 any */
+  /* API 19: battle immunity modifiers (only when action == MONSTER_DO_BATTLE_IMMUNITY) */
+  unsigned char battle_modifier; /* MONSTER_BATTLE_MOD_* */
+  unsigned char battle_reset;    /* MONSTER_RESET_* */
   /* API 19: conditions */
   unsigned char cond_count;
   unsigned char cond_mode; /* MONSTER_COND_MODE_ALL or MONSTER_COND_MODE_ANY */
@@ -169,6 +177,7 @@ extern const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT];
 extern const char *const MonsterEffect_TargetNames[MONSTER_TARGET_COUNT];
 extern const char *const MonsterEffect_EachNames[MONSTER_EACH_COUNT];
 extern const char *const MonsterEffect_CondNames[MONSTER_COND_COUNT];
+extern const char *const MonsterEffect_BattleModNames[MONSTER_BATTLE_MOD_COUNT];
 extern const char *const MonsterEffect_OpNames[MONSTER_OP_COUNT];
 extern const char *const MonsterEffect_ResetNames[MONSTER_RESET_COUNT];
 extern const char *const MonsterEffect_StatNames[MONSTER_STAT_COUNT];

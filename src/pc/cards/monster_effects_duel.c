@@ -905,38 +905,6 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
     }
     return count > 0;
   }
-  case MONSTER_COND_FIRST_ATTACKED:
-
-  case MONSTER_COND_DESTROYED_AFTER_2_ATTACKS:
-  case MONSTER_COND_DESTROYED_AFTER_3_ATTACKS: {
-    int now = phase(), in_battle;
-    int target_count = 1;
-    int count = 0;
-
-    if (cond->type == MONSTER_COND_DESTROYED_AFTER_2_ATTACKS)
-      target_count = 2;
-    else if (cond->type == MONSTER_COND_DESTROYED_AFTER_3_ATTACKS)
-      target_count = 3;
-
-    /* Must be in combat and the monster must be the defender being attacked.
-     * If the monster attacks, the condition is false and the effect does not
-     * apply. */
-    in_battle = (now == PHASE_BATTLE || now == 12);
-    if (!in_battle)
-      return 0;
-
-    if (record != S.trap_battle_record[1])
-      return 0;
-
-    if (cond->reset == MONSTER_RESET_SUMMON)
-      count = S.attacked_summon[record];
-    else if (cond->reset == MONSTER_RESET_TURN)
-      count = S.attacked_turn[record];
-    else if (cond->reset == MONSTER_RESET_DUEL)
-      count = S.attacked_duel[record];
-
-    return count <= target_count && count > 0;
-  }
   case MONSTER_COND_STAT_THRESHOLD: {
     int attack = 0, defense = 0, val, packed;
     DuelCardRecord *card = &D_801A7AD8[record];
@@ -1186,8 +1154,41 @@ int MonsterEffects_HasBattleImmunity(int record) {
       continue;
     if (effects[e].action != MONSTER_DO_BATTLE_IMMUNITY)
       continue;
-    if (MonsterEffects_ConditionsMet(record, &effects[e]))
-      return 1;
+    if (!MonsterEffects_ConditionsMet(record, &effects[e]))
+      continue;
+
+    /* Battle immunity modifiers (API 19) */
+    if (effects[e].battle_modifier != MONSTER_BATTLE_MOD_ALWAYS) {
+      int now = phase(), in_battle;
+      int target_count = 1;
+      int count = 0;
+
+      if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS)
+        target_count = 2;
+      else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS)
+        target_count = 3;
+
+      /* Must be in combat and the monster must be the defender being attacked.
+       * If the monster attacks, it does not get battle immunity. */
+      in_battle = (now == PHASE_BATTLE || now == 12);
+      if (!in_battle)
+        continue;
+
+      if (record != S.trap_battle_record[1])
+        continue;
+
+      if (effects[e].battle_reset == MONSTER_RESET_SUMMON)
+        count = S.attacked_summon[record];
+      else if (effects[e].battle_reset == MONSTER_RESET_TURN)
+        count = S.attacked_turn[record];
+      else if (effects[e].battle_reset == MONSTER_RESET_DUEL)
+        count = S.attacked_duel[record];
+
+      if (count <= 0 || count > target_count)
+        continue;
+    }
+
+    return 1;
   }
   return 0;
 }

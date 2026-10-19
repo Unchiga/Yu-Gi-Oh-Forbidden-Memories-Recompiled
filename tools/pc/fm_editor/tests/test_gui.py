@@ -2679,20 +2679,12 @@ class MonsterEffectsGuiTest(GuiCase):
         err = dialog.read(dialog)
         self.assertEqual(err, f"Threshold must be 0 to {fx.AMOUNT_MAX}.")
 
-        # 4. Default reset is "In a turn"
+        # 4. Attack conditions are not in ConditionDialog
         dialog = ConditionDialog(app, app.project, None, str)
-        self.assertEqual(dialog.vars["reset"].get(), "In a turn")
-
-        # 5. Attack conditions disallowed when allow_attack=False
-        dialog = ConditionDialog(app, app.project, None, str, allow_attack=False)
         self.assertNotIn("The first time it is attacked", dialog.cond_labels)
         self.assertNotIn("first_attacked", dialog.cond_types)
-        # Attempting to force an attack condition type fails validation
-        dialog.vars["type"].set("The first time it is attacked")
-        err = dialog.read(dialog)
-        self.assertIsNotNone(err)
 
-        # 6. Fewer and more monsters conditions
+        # 5. Fewer and more monsters conditions
         dialog = ConditionDialog(app, app.project, None, str)
         dialog.vars["type"].set("If you control fewer monsters than opponent")
         dialog.ok()
@@ -2703,7 +2695,7 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.ok()
         self.assertEqual(dialog.result, {"type": "more_monsters"})
 
-        # 7. Control stat condition
+        # 6. Control stat condition
         dialog = ConditionDialog(app, app.project, None, str)
         dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_stat")])
         dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
@@ -2714,7 +2706,7 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.ok()
         self.assertEqual(dialog.result, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "comparison": "<=", "value": 1500})
 
-        # 8. Control level condition
+        # 7. Control level condition
         dialog = ConditionDialog(app, app.project, None, str)
         dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_level")])
         dialog.vars["presence"].set(fx.PRESENCE_LABELS[0])
@@ -2724,7 +2716,7 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.ok()
         self.assertEqual(dialog.result, {"type": "control_level", "comparison": ">=", "level": 7})
 
-        # 9. Control type condition
+        # 8. Control type condition
         dialog = ConditionDialog(app, app.project, None, str)
         dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_type")])
         dialog.vars["presence"].set(fx.PRESENCE_LABELS[0])
@@ -2733,7 +2725,7 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.ok()
         self.assertEqual(dialog.result, {"type": "control_type", "mode": "only", "card_type": "Dragon"})
 
-        # 10. Control attribute condition
+        # 9. Control attribute condition
         dialog = ConditionDialog(app, app.project, None, str)
         dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_attribute")])
         dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
@@ -2766,10 +2758,11 @@ class MonsterEffectsGuiTest(GuiCase):
             "when": "face_up",
             "do": "battle_immunity",
             "target": "self",
-            "conditions": [{"type": "first_attacked", "reset": "turn"}]
+            "modifier": "first_attacked",
+            "reset": "turn",
         })
 
-        # 3. Re-open effect with attack condition: cleanly unpacked into Modifiers and Resets, not in tree
+        # 3. Re-open effect with modifier: cleanly unpacked into Modifiers and Resets, not in tree
         dialog = EffectDialog(app, app.project, dialog.result, str)
         self.assertEqual(dialog.vars["modifier"].get(), "The first time it is attacked")
         self.assertEqual(dialog.vars["modifier_reset"].get(), "In a turn")
@@ -2782,7 +2775,8 @@ class MonsterEffectsGuiTest(GuiCase):
             "when": "face_up",
             "do": "battle_immunity",
             "target": "self",
-            "conditions": [{"type": "destroyed_after_2_attacks", "reset": "copy"}]
+            "modifier": "destroyed_after_2_attacks",
+            "reset": "copy",
         })
 
         # 4. Modifiers and reset are hidden for other effects like "boost"
@@ -2790,9 +2784,9 @@ class MonsterEffectsGuiTest(GuiCase):
         self.assertFalse(dialog.rows["modifier"][1].winfo_manager())
         self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
 
-        # 5. Enforcement: monster cannot have more than 1 attack condition across its effects
+        # 5. Enforcement: monster cannot have more than 1 attack modifier across its effects
         existing_effect = {"when": "face_up", "do": "battle_immunity", "target": "self",
-                           "conditions": [{"type": "first_attacked", "reset": "turn"}]}
+                           "modifier": "first_attacked", "reset": "turn"}
         dialog = EffectDialog(app, app.project, None, str, effects=[existing_effect], index=None)
         dialog.vars["when"].set("While face up")
         dialog.vars["do"].set("Cannot be destroyed by battle")

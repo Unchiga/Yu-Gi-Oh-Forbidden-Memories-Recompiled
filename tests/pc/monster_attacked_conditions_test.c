@@ -161,9 +161,8 @@ static void test_attacker_vs_defender(void) {
   effect.when = MONSTER_WHEN_FACE_UP;
   effect.action = MONSTER_DO_BATTLE_IMMUNITY;
   effect.target = MONSTER_TARGET_SELF;
-  effect.cond_count = 1;
-  effect.conditions[0].type = MONSTER_COND_FIRST_ATTACKED;
-  effect.conditions[0].reset = MONSTER_RESET_TURN;
+  effect.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
+  effect.battle_reset = MONSTER_RESET_TURN;
 
   s_test_effects[0] = effect;
   s_test_effect_count = 1;
@@ -172,8 +171,8 @@ static void test_attacker_vs_defender(void) {
 
   /* --- Case 1: Outside of battle (PHASE_FIELD) --- */
   gDuel_wSceneStateFlags = PHASE_FIELD;
-  assert(!MonsterEffects_ConditionsMet(5, &effect));
-  assert(!MonsterEffects_ConditionsMet(20, &effect));
+  assert(!MonsterEffects_HasBattleImmunity(5));
+  assert(!MonsterEffects_HasBattleImmunity(20));
 
   /* --- Case 2: Kuriboh (zone 5) ATTACKS Blue-Eyes (zone 20) --- */
   /* Kuriboh is attacker (trap_battle_record[0]), Blue-Eyes is defender
@@ -186,36 +185,47 @@ static void test_attacker_vs_defender(void) {
   gMonsterEffects.attacked_turn[20] = 1;
   gMonsterEffects.attacked_turn[5] = 0; /* Kuriboh was not attacked */
 
-  /* The attacker (5) is attacking, NOT attacked -> condition MUST be FALSE! */
-  assert(MonsterEffects_ConditionsMet(5, &effect) == 0);
+  /* The attacker (5) is attacking, NOT attacked -> battle immunity MUST be FALSE! */
   assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
-  /* The defender (20) was attacked for the first time -> condition is TRUE for
-   * 20 */
-  assert(MonsterEffects_ConditionsMet(20, &effect) == 1);
+  /* The defender (20) was attacked for the first time -> battle immunity is TRUE for 20 */
   assert(MonsterEffects_HasBattleImmunity(20) == 1);
 
-  puts("test_attacker_vs_defender: PASSED (attacker does not get effect, "
+  puts("test_attacker_vs_defender: PASSED (attacker does not get battle immunity, "
        "defender does)");
 }
 
 static void test_first_second_third_attacked_sequence(void) {
-  MonsterEffect eff_first, eff_second, eff_third;
+  MonsterEffect eff_first, eff_second, eff_third, eff_boost;
 
   memset(&eff_first, 0, sizeof(eff_first));
-  eff_first.cond_count = 1;
-  eff_first.conditions[0].type = MONSTER_COND_FIRST_ATTACKED;
-  eff_first.conditions[0].reset = MONSTER_RESET_TURN;
+  eff_first.when = MONSTER_WHEN_FACE_UP;
+  eff_first.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff_first.target = MONSTER_TARGET_SELF;
+  eff_first.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
+  eff_first.battle_reset = MONSTER_RESET_TURN;
 
   memset(&eff_second, 0, sizeof(eff_second));
-  eff_second.cond_count = 1;
-  eff_second.conditions[0].type = MONSTER_COND_DESTROYED_AFTER_2_ATTACKS;
-  eff_second.conditions[0].reset = MONSTER_RESET_TURN;
+  eff_second.when = MONSTER_WHEN_FACE_UP;
+  eff_second.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff_second.target = MONSTER_TARGET_SELF;
+  eff_second.battle_modifier = MONSTER_BATTLE_MOD_AFTER_2_ATTACKS;
+  eff_second.battle_reset = MONSTER_RESET_TURN;
 
   memset(&eff_third, 0, sizeof(eff_third));
-  eff_third.cond_count = 1;
-  eff_third.conditions[0].type = MONSTER_COND_DESTROYED_AFTER_3_ATTACKS;
-  eff_third.conditions[0].reset = MONSTER_RESET_TURN;
+  eff_third.when = MONSTER_WHEN_FACE_UP;
+  eff_third.action = MONSTER_DO_BATTLE_IMMUNITY;
+  eff_third.target = MONSTER_TARGET_SELF;
+  eff_third.battle_modifier = MONSTER_BATTLE_MOD_AFTER_3_ATTACKS;
+  eff_third.battle_reset = MONSTER_RESET_TURN;
+
+  /* Verify boosts are never affected by battle modifiers */
+  memset(&eff_boost, 0, sizeof(eff_boost));
+  eff_boost.when = MONSTER_WHEN_FACE_UP;
+  eff_boost.action = MONSTER_DO_BOOST;
+  eff_boost.target = MONSTER_TARGET_SELF;
+  eff_boost.attack = 500;
+  eff_boost.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
 
   reset_test_duel();
   gDuel_wSceneStateFlags = PHASE_BATTLE;
@@ -224,24 +234,33 @@ static void test_first_second_third_attacked_sequence(void) {
 
   /* --- Attack 1 --- */
   gMonsterEffects.attacked_turn[5] = 1;
-  assert(MonsterEffects_ConditionsMet(5, &eff_first) == 1);
-  assert(MonsterEffects_ConditionsMet(5, &eff_second) == 1);
-  assert(MonsterEffects_ConditionsMet(5, &eff_third) == 1);
+  s_test_effects[0] = eff_first;
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+  s_test_effects[0] = eff_second;
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+  s_test_effects[0] = eff_third;
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+  /* Boost is not affected by battle modifier, conditions met is true */
+  assert(MonsterEffects_ConditionsMet(5, &eff_boost) == 1);
 
   /* --- Attack 2 --- */
   gMonsterEffects.attacked_turn[5] = 2;
-  assert(MonsterEffects_ConditionsMet(5, &eff_first) ==
-         0); /* Destroyed after 1 attack */
-  assert(MonsterEffects_ConditionsMet(5, &eff_second) ==
-         1); /* Still protected: can only be destroyed after two attacks */
-  assert(MonsterEffects_ConditionsMet(5, &eff_third) == 1);
+  s_test_effects[0] = eff_first;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0); /* Immune only 1st attack */
+  s_test_effects[0] = eff_second;
+  assert(MonsterEffects_HasBattleImmunity(5) == 1); /* Still protected */
+  s_test_effects[0] = eff_third;
+  assert(MonsterEffects_HasBattleImmunity(5) == 1);
 
   /* --- Attack 4 --- */
   gMonsterEffects.attacked_turn[5] = 4;
-  assert(MonsterEffects_ConditionsMet(5, &eff_first) == 0);
-  assert(MonsterEffects_ConditionsMet(5, &eff_second) == 0);
-  assert(MonsterEffects_ConditionsMet(5, &eff_third) ==
-         0); /* Destroyed after three attacks */
+  s_test_effects[0] = eff_first;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+  s_test_effects[0] = eff_second;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0);
+  s_test_effects[0] = eff_third;
+  assert(MonsterEffects_HasBattleImmunity(5) == 0); /* Destroyed after 3 attacks */
 
   puts("test_first_second_third_attacked_sequence: PASSED (1st, 2-attack, and "
        "3-attack survival match accurately)");

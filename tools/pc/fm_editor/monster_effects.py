@@ -41,9 +41,6 @@ NO_EACH = "\u2014"
 # Conditions (API 19): requirements under which a while face-up effect applies.
 CONDITIONS = (
     "named_card",
-    "first_attacked",
-    "destroyed_after_2_attacks",
-    "destroyed_after_3_attacks",
     "stat_threshold",
     "lowest_atk",
     "highest_atk",
@@ -56,10 +53,6 @@ CONDITIONS = (
 )
 CONDITION_LABELS = (
     "Named card on field",
-    "The first time it is attacked",
- 
-    "Can only be destroyed after two attacks",
-    "Can only be destroyed after three attacks",
     "Compare ATK/DEF against a number",
     "Has the lowest ATK on field",
     "Has the highest ATK on field",
@@ -72,9 +65,6 @@ CONDITION_LABELS = (
 )
 CONDITION_HINTS = (
     "A specific card is face up on the field (own, opponent, or whole field).",
-    "The first time this card is attacked (survives 1 attack, can be destroyed on the second attack).",
-    "Can only be destroyed after two attacks (survives up to 2 attacks, can be destroyed on the third attack).",
-    "Can only be destroyed after three attacks (survives up to 3 attacks, can be destroyed on the fourth attack).",
     "This card's current effective ATK or DEF compared against a value (<, <=, >, >=).",
     "This card has strictly lower ATK than every other face-up monster on the field (ties disqualify).",
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
@@ -186,13 +176,7 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
     if not isinstance(cond, dict):
         return None
     raw_type = cond.get("type")
-    if raw_type in ("second_attacked", "destroyed_after_two_attacks", "after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
-        raw_type = "destroyed_after_2_attacks"
-    elif raw_type in ("third_attacked", "destroyed_after_three_attacks", "after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
-        raw_type = "destroyed_after_3_attacks"
-    elif raw_type in ("after_one_attack", "destroyed_after_1_attack"):
-        raw_type = "first_attacked"
-    elif raw_type in ("fewer_monsters_than_opponent", "fewer_monsters_than_opp", "control_fewer_monsters"):
+    if raw_type in ("fewer_monsters_than_opponent", "fewer_monsters_than_opp", "control_fewer_monsters"):
         raw_type = "fewer_monsters"
     elif raw_type in ("more_monsters_than_opponent", "more_monsters_than_opp", "control_more_monsters"):
         raw_type = "more_monsters"
@@ -225,21 +209,6 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
             if whose is None:
                 return None
             out["whose"] = whose
-
-
-    elif c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks"):
-        if "reset" in cond:
-            reset_val = cond["reset"]
-            if reset_val == "summon":
-                reset_val = "copy"
-            reset = _name(RESET, reset_val)
-            if reset is None:
-                return None
-            out["reset"] = reset
-        if "comparison" in cond or "op" in cond:
-            op = cond.get("comparison") or cond.get("op")
-            if op in ("<=", "le", "lower_equal"):
-                out["comparison"] = "<="
     elif c_type == "stat_threshold":
         stat = cond.get("stat", "atk")
         if isinstance(stat, str):
@@ -376,6 +345,26 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
         out["card"] = card
     elif do == "battle_immunity":
         out["target"] = target
+        mod = effect.get("modifier") or effect.get("battle_modifier")
+        if mod:
+            if mod in ("first_time_attacked", "after_one_attack", "destroyed_after_1_attack"):
+                mod = "first_attacked"
+            elif mod in ("second_attacked", "destroyed_after_two_attacks", "after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
+                mod = "destroyed_after_2_attacks"
+            elif mod in ("third_attacked", "destroyed_after_three_attacks", "after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
+                mod = "destroyed_after_3_attacks"
+            mod_name = _name(MODIFIERS, mod)
+            if mod_name is None:
+                return None
+            if mod_name != "always":
+                out["modifier"] = mod_name
+                rst = effect.get("reset") or effect.get("modifier_reset") or effect.get("battle_reset") or "turn"
+                if rst in ("summon", "this_copy", "this_card_copy"):
+                    rst = "copy"
+                rst_name = _name(RESET, rst)
+                if rst_name is None:
+                    return None
+                out["reset"] = rst_name
     elif do in FILTERED:
         out["target"] = target
         for key in ("attack", "defense") if do == "boost" else ():
@@ -459,19 +448,23 @@ def _filter(source: dict, out: dict, attribute_resolve=None, type_names=None) ->
 
 
 def effect_has_attack_condition(effect: dict) -> bool:
-    """True if effect contains any condition in ATTACK_CONDITIONS."""
+    """True if effect has a battle immunity attack modifier or (legacy) attack condition."""
     if not isinstance(effect, dict):
         return False
+    if effect.get("do") == "battle_immunity":
+        mod = effect.get("modifier") or effect.get("battle_modifier")
+        if mod and mod != "always":
+            return True
     conds = effect.get("conditions")
     if not conds and "condition" in effect:
         conds = [effect["condition"]]
-    if not conds or not isinstance(conds, list):
-        return False
-    return any(isinstance(c, dict) and c.get("type") in ATTACK_CONDITIONS for c in conds)
+    if isinstance(conds, list):
+        return any(isinstance(c, dict) and c.get("type") in ATTACK_CONDITIONS for c in conds)
+    return False
 
 
 def monster_has_attack_condition(effects: list, exclude_index: int | None = None) -> bool:
-    """True if any effect other than exclude_index has an attack condition."""
+    """True if any effect other than exclude_index has an attack condition or modifier."""
     if not isinstance(effects, list):
         return False
     for i, e in enumerate(effects):
@@ -483,13 +476,17 @@ def monster_has_attack_condition(effects: list, exclude_index: int | None = None
 
 
 def count_monster_attack_conditions(effects: list) -> int:
-    """Total count of attack conditions across all effects of a monster."""
+    """Total count of attack conditions and modifiers across all effects of a monster."""
     if not isinstance(effects, list):
         return 0
     total = 0
     for e in effects:
         if not isinstance(e, dict):
             continue
+        if e.get("do") == "battle_immunity":
+            mod = e.get("modifier") or e.get("battle_modifier")
+            if mod and mod != "always":
+                total += 1
         conds = e.get("conditions")
         if not conds and "condition" in e:
             conds = [e["condition"]]
@@ -542,22 +539,6 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
         whose = cond.get("whose", "all")
         where = EACH_FIELDS[EACH.index(whose)] if whose in EACH else whose
         return f"{cname} is on {where}"
-    if c_type in ("first_attacked", "destroyed_after_2_attacks", "destroyed_after_3_attacks", "second_attacked", "third_attacked"):
-        reset = cond.get("reset", "turn")
-        if reset == "summon":
-            reset = "copy"
-        scope = "this turn" if reset == "turn" else ("this duel" if reset == "duel" else "this card copy")
-
-
-
-        if c_type in ("destroyed_after_2_attacks", "second_attacked"):
-
-
-            return f"can only be destroyed after two attacks ({scope})"
-        
-        elif c_type == "destroyed_after_3_attacks":
-            return f"can only be destroyed after three attacks ({scope})"
-        return f"the first time attacked ({scope})"
     if c_type == "stat_threshold":
         stat = str(cond.get("stat", "atk")).upper()
         op = cond.get("comparison") or cond.get("op", ">=")
@@ -626,6 +607,18 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
     each = for_each_words(effect.get("for_each"))
     conds = conditions_words(effect, card_name)
     if do == "battle_immunity":
+        mod = effect.get("modifier", "always")
+        if mod != "always":
+            reset = effect.get("reset", "turn")
+            if reset == "summon":
+                reset = "copy"
+            scope_str = "this turn" if reset == "turn" else ("this duel" if reset == "duel" else "this card copy")
+            if mod == "first_attacked":
+                return f"Cannot be destroyed by battle the first time attacked ({scope_str}){conds}"
+            elif mod == "destroyed_after_2_attacks":
+                return f"Cannot be destroyed by battle after two attacks ({scope_str}){conds}"
+            elif mod == "destroyed_after_3_attacks":
+                return f"Cannot be destroyed by battle after three attacks ({scope_str}){conds}"
         return f"Cannot be destroyed by battle{conds}"
     if do == "magic":
         return f"{card_name(effect.get('card'))} (its effect){conds}"
