@@ -49,8 +49,10 @@ extern s8 D_8009B208;
 extern s8 D_8009B209;
 extern s16 D_8009B1A4[2];
 extern u8 D_8009B174;
+extern s8 D_8009B1B9;
 s32 func_8001EFD4(DisplayObject *left, DisplayObject *right);
 s32 Duel_CalcBattleAttack(DuelCardRecord *card, DuelCardRecord *opponent);
+#define DUEL_EFFECT_REQUEST_VIEW(request) ((DuelEffectRequest *)(request))
 
 #define S gMonsterEffects
 #define PHASE_STARTUP 1
@@ -678,12 +680,14 @@ int MonsterEffects_Update(void) {
     }
 
     /* Piercing damage (API 19): damage calculation when attacking a monster in defense position */
+    int battle_step = D_8009B174 & 0xF;
     if (monster_zone(att_rec) && monster_zone(def_rec) && !S.piercing_applied &&
         ((D_8009B178[1] & 0x800) || (D_801A7AD8[def_rec].flags & DUEL_CARD_FLAG_DEFENSE_POSITION)) &&
-        D_8009B174 >= 4) {
+        battle_step >= 4) {
       if (MonsterEffects_HasPiercingDamage(att_rec, def_rec)) {
         int diff = 0;
-        if (D_800E9EF0[0] && D_800E9EF0[1]) {
+        if (D_800E9EF0[0] && D_800E9EF0[1] &&
+            (D_801A7AD8[def_rec].flags & DUEL_CARD_FLAG_DEFENSE_POSITION)) {
           diff = func_8001EFD4((DisplayObject *)D_800E9EF0[0], (DisplayObject *)D_800E9EF0[1]);
         } else {
           int att_atk = Duel_CalcBattleAttack(&D_801A7AD8[att_rec], &D_801A7AD8[def_rec]);
@@ -697,10 +701,37 @@ int MonsterEffects_Update(void) {
           if (life < 0) life = 0;
           opp_state->life_points.signed_value = (short)life;
           D_8009B1A4[1] = (short)diff;
+          S.piercing_damage = (short)diff;
           D_8009B1C8->rank.effective_attacks++;
         }
       }
       S.piercing_applied = 1;
+    }
+    if (S.piercing_applied && S.piercing_damage > 0) {
+      /* When zoomed in during 2D battle, retail's state 8 allocates Effect 2
+       * for hit/damage presentation and reads D_8009B1A4[1] into req->field_12
+       * (damage number) and req->field_1A (slash tier: 0 small, 1 medium, 2 large),
+       * playing sound SE 0x10 + req->field_1A.
+       * Effect 2 (func_80153200) renders the exact same slash animation and
+       * calls func_801566D4 to draw the damage number on screen whenever number != 0.
+       * Maintain D_8009B1A4[1] across states 4..8, and ensure the allocated Effect 2
+       * request has the slash tier and number populated. */
+      if (battle_step >= 4 && battle_step <= 8) {
+        D_8009B1A4[1] = S.piercing_damage;
+      }
+      if (battle_step == 8 && D_8009B1B9 == 1 && D_8009B17C) {
+        DuelEffectRequest *req = DUEL_EFFECT_REQUEST_VIEW(D_8009B17C);
+        if (req && req->field_12 == 0) {
+          int tier = S.piercing_damage / 1000;
+          if (tier >= 3) tier = 2;
+          req->field_12 = S.piercing_damage;
+          req->field_1A = tier;
+        }
+      }
+    }
+    if (battle_step >= 11) {
+      S.piercing_applied = 0;
+      S.piercing_damage = 0;
     }
   }
   /* Only as a hand or field phase begins, before its first step: within
@@ -817,6 +848,7 @@ void MonsterEffects_Battle(void) {
   records[0] = attacker->field_6A;
   records[1] = defender ? defender->field_6A : -1;
   S.piercing_applied = 0;
+  S.piercing_damage = 0;
   if (monster_zone(records[1])) {
     S.attacked_summon[records[1]]++;
     S.attacked_turn[records[1]]++;

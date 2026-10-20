@@ -82,8 +82,9 @@ typedef struct {
     unsigned char attacked_summon[MONSTER_RECORDS];
     unsigned char attacked_turn[MONSTER_RECORDS];
     unsigned char attacked_duel[MONSTER_RECORDS];
-    /* API 19: piercing damage applied flag for current combat exchange */
+    /* API 19: piercing damage applied flag and damage value for current combat exchange */
     unsigned char piercing_applied;
+    short piercing_damage;
 } MonsterEffectsState;
 
 extern MonsterEffectsState gMonsterEffects;

@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "game/duel_card.h"
+#include "game/duel_effect_request.h"
 #include "game/duel_side_state.h"
 #include "pc/cards/monster_effects.h"
 #include "pc/cards/monster_effects_duel.h"
@@ -31,6 +32,8 @@ s8 D_8009B209 = -1;
 s16 D_8009B22A = 0;
 u16 D_8009B178[2] = {0, 0};
 u16 D_8009B1A4[2] = {0, 0};
+s8 D_8009B1B9 = 0;
+u8 *D_8009B17C = 0;
 u8 D_800E9F64[256];
 void *D_800E9EF0[4] = {0};
 u8 D_800EAE88[16] = {0};
@@ -121,13 +124,9 @@ s32 Duel_CalcBattleAttack(DuelCardRecord *card, DuelCardRecord *opponent) {
   (void)opponent;
   return Duel_CalcCardStats(card) & 0xFFFF;
 }
-void DuelEffect_CreateRequest(int a, int b, int c, int d, int e, int f) {
-  (void)a;
-  (void)b;
-  (void)c;
-  (void)d;
-  (void)e;
-  (void)f;
+DuelEffectRequest *DuelEffect_CreateRequest(s32 id) {
+  (void)id;
+  return 0;
 }
 int Tables_StatCapEither(int val, int diff) { return val + diff; }
 
@@ -966,10 +965,28 @@ static void test_piercing_damage(void) {
   assert(s_mock_last_damage_amount == 1000);   /* 2500 ATK - 1500 DEF = 1000 */
   assert(D_8009B1A4[1] == 1000);               /* Popup set for retail battle state 8 */
 
-  /* Subsequent frames in the same battle do NOT re-inflict */
+  /* Subsequent frames in the same battle do NOT re-inflict LP damage */
   s_mock_last_damage_amount = 0;
   MonsterEffects_Update();
   assert(s_mock_last_damage_amount == 0);
+
+  /* Case C: State 8 hit presentation maintains D_8009B1A4[1] and populates Effect 2 request */
+  D_8009B1A4[1] = 0; /* simulate retail state 3 overwriting to 0 */
+  D_8009B174 = 8;
+  D_8009B1B9 = 1;
+  DuelEffectRequest mock_eff_req = {0};
+  D_8009B17C = (u8 *)&mock_eff_req;
+  MonsterEffects_Update();
+  assert(D_8009B1A4[1] == 1000);              /* Restored to piercing damage for State 8 */
+  assert(mock_eff_req.field_12 == 1000);      /* Damage number set for slash text */
+  assert(mock_eff_req.field_1A == 1);         /* 1000 / 1000 = tier 1 medium slash effect */
+  D_8009B17C = 0;
+
+  /* When battle ends (state 11), piercing state resets */
+  D_8009B174 = 11;
+  MonsterEffects_Update();
+  assert(gMonsterEffects.piercing_applied == 0);
+  assert(gMonsterEffects.piercing_damage == 0);
 
   /* --- Test 2: MONSTER_PIERCING_MOD_TYPE --- */
   eff.battle_modifier = MONSTER_PIERCING_MOD_TYPE;
