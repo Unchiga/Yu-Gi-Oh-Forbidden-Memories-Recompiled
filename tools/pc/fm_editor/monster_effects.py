@@ -922,7 +922,6 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
         return f"{p}{sc} Level {op} {val} monster"
     if c_type == "control_type":
         p = cond.get("presence") in ("not_control", "not_present")
-        sc = " other" if cond.get("scope") == "other" else ""
         t_name = str(cond.get("card_type") or cond.get("monster_type") or (cond.get("type") if cond.get("type") not in CONDITIONS else "Dragon"))
         whose = cond.get("whose") or cond.get("field") or "own"
         if whose == "opponent":
@@ -935,11 +934,13 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
             return f"no {t_name} monster is present on the field" if p else f"a {t_name} monster is present on the field"
         else:
             if cond.get("mode") == "only":
+                sc = " other" if cond.get("scope") == "other" else ""
                 return f"you do not only control{sc} {t_name} monsters" if p else f"you only control{sc} {t_name} monsters"
-            return f"you do not control{sc} a {t_name} monster" if p else f"you control{sc} a {t_name} monster"
+            p_str = "you do not control" if p else "you control"
+            sc = " another" if cond.get("scope") == "other" else " a"
+            return f"{p_str}{sc} {t_name} monster"
     if c_type == "control_attribute":
         p = cond.get("presence") in ("not_control", "not_present")
-        sc = " other" if cond.get("scope") == "other" else ""
         attr = str(cond.get("attribute", "LIGHT")).upper()
         whose = cond.get("whose") or cond.get("field") or "own"
         if whose == "opponent":
@@ -952,8 +953,11 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
             return f"no {attr} monster is present on the field" if p else f"a {attr} monster is present on the field"
         else:
             if cond.get("mode") == "only":
+                sc = " other" if cond.get("scope") == "other" else ""
                 return f"you do not only control{sc} {attr} monsters" if p else f"you only control{sc} {attr} monsters"
-            return f"you do not control{sc} a {attr} monster" if p else f"you control{sc} a {attr} monster"
+            p_str = "you do not control" if p else "you control"
+            sc = " another" if cond.get("scope") == "other" else " a"
+            return f"{p_str}{sc} {attr} monster"
     if c_type == "field_spell":
         fld = cond.get("field", "any")
         is_active = cond.get("presence", "active") != "not_active"

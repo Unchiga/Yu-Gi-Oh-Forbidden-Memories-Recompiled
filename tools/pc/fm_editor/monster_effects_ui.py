@@ -356,6 +356,13 @@ class ConditionDialog(FormDialog):
 
     def show_rows(self):
         c_type = self.chosen("type", self.cond_types, self.cond_labels) or self.cond_types[0]
+        if hasattr(self, "_last_type") and self._last_type != c_type:
+            prev_default = "all" if self._last_type == "named_card" else "own"
+            cur_whose = self.chosen("whose", fx.EACH, fx.EACH_LABELS)
+            if cur_whose == prev_default:
+                new_default = "all" if c_type == "named_card" else "own"
+                self.vars["whose"].set(fx.EACH_LABELS[fx.EACH.index(new_default)])
+        self._last_type = c_type
         self.type_hint.configure(text=fx.CONDITION_HINTS[fx.CONDITIONS.index(c_type)])
         shown = {"type"}
         if c_type == "named_card":
