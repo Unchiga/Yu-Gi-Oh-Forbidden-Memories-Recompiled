@@ -38,6 +38,7 @@ enum {
   MONSTER_DO_DESTROY, /* the other side's monsters (or the one it battles)
                        * destroyed, as Warrior Elimination destroys */
   MONSTER_DO_BATTLE_IMMUNITY, /* cannot be destroyed by battle (API 19) */
+  MONSTER_DO_PIERCING,        /* piercing battle damage (API 19) */
   MONSTER_DO_COUNT
 };
 enum {
@@ -120,6 +121,21 @@ enum {
 #define MONSTER_BATTLE_MOD_SECOND_ATTACKED MONSTER_BATTLE_MOD_AFTER_2_ATTACKS
 #define MONSTER_BATTLE_MOD_THIRD_ATTACKED MONSTER_BATTLE_MOD_AFTER_3_ATTACKS
 
+/* Piercing damage modifiers (API 19): specific to MONSTER_DO_PIERCING */
+enum {
+  MONSTER_PIERCING_MOD_ALWAYS = 0,
+  MONSTER_PIERCING_MOD_ATTACKS_TYPE = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE,
+  MONSTER_PIERCING_MOD_ATTACKS_ATTRIBUTE = MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE,
+  MONSTER_PIERCING_MOD_ATTACKS_STAT = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT,
+  MONSTER_PIERCING_MOD_ATTACKS_LEVEL = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL,
+  MONSTER_PIERCING_MOD_ATTACKS_MONSTER = MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER,
+};
+#define MONSTER_PIERCING_MOD_TYPE MONSTER_PIERCING_MOD_ATTACKS_TYPE
+#define MONSTER_PIERCING_MOD_ATTRIBUTE MONSTER_PIERCING_MOD_ATTACKS_ATTRIBUTE
+#define MONSTER_PIERCING_MOD_STAT MONSTER_PIERCING_MOD_ATTACKS_STAT
+#define MONSTER_PIERCING_MOD_LEVEL MONSTER_PIERCING_MOD_ATTACKS_LEVEL
+#define MONSTER_PIERCING_MOD_MONSTER MONSTER_PIERCING_MOD_ATTACKS_MONSTER
+
 enum {
   MONSTER_OP_LT, /* < strictly lower */
   MONSTER_OP_LE, /* <= lower or equal */
@@ -184,8 +200,8 @@ typedef struct MonsterEffect {
                          monster counted */
   signed char each_type;
   signed short each_attribute; /* what is counted: -1 any */
-  /* API 19: battle immunity modifiers (only when action == MONSTER_DO_BATTLE_IMMUNITY) */
-  unsigned char battle_modifier; /* MONSTER_BATTLE_MOD_* */
+  /* API 19: battle immunity & piercing modifiers (when action == MONSTER_DO_BATTLE_IMMUNITY or MONSTER_DO_PIERCING) */
+  unsigned char battle_modifier; /* MONSTER_BATTLE_MOD_* or MONSTER_PIERCING_MOD_* */
   unsigned char battle_reset;    /* MONSTER_RESET_* */
   signed char attacker_type;     /* -1 = any */
   signed short attacker_attribute; /* -1 = any */

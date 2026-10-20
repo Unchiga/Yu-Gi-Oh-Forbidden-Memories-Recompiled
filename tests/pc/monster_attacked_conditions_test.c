@@ -30,6 +30,7 @@ s8 D_8009B208 = -1;
 s8 D_8009B209 = -1;
 s16 D_8009B22A = 0;
 u16 D_8009B178[2] = {0, 0};
+u16 D_8009B1A4[2] = {0, 0};
 u8 D_800E9F64[256];
 void *D_800E9EF0[4] = {0};
 u8 D_800EAE88[16] = {0};
@@ -42,7 +43,7 @@ u8 gDuel_bTerrain = 0;
 
 MonsterEffectsState gMonsterEffects = {0};
 const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {
-    "magic", "boost", "heal", "damage", "destroy", "battle_immunity"};
+    "magic", "boost", "heal", "damage", "destroy", "battle_immunity", "piercing"};
 const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT] = {
     "summon",           "flip",   "draw", "combat", "destroyed",
     "destroy_opponent", "face_up"};
@@ -75,9 +76,13 @@ void Log_Printf(int cat, const char *fmt, ...) {
   (void)cat;
   (void)fmt;
 }
-void Mods_DamageLife(int side, int damage) {
-  (void)side;
-  (void)damage;
+static int s_mock_last_damaged_side = -1;
+static int s_mock_last_damage_amount = 0;
+int Mods_DamageLife(int side, int life, int damage, int kind) {
+  (void)kind;
+  s_mock_last_damaged_side = side;
+  s_mock_last_damage_amount = damage;
+  return life - damage;
 }
 int Mods_Dispatch(int hook, void *data) {
   (void)hook;
@@ -106,6 +111,15 @@ s32 Duel_CalcCardStats(DuelCardRecord *card) {
     return gDuel_adwCardStats[slot];
   }
   return 0;
+}
+int func_8001EFD4(DuelCardRecord *attacker, DuelCardRecord *defender) {
+  int atk = Duel_CalcCardStats(attacker) & 0xFFFF;
+  int def = (Duel_CalcCardStats(defender) >> 16) & 0xFFFF;
+  return atk - def;
+}
+s32 Duel_CalcBattleAttack(DuelCardRecord *card, DuelCardRecord *opponent) {
+  (void)opponent;
+  return Duel_CalcCardStats(card) & 0xFFFF;
 }
 void DuelEffect_CreateRequest(int a, int b, int c, int d, int e, int f) {
   (void)a;
@@ -140,6 +154,12 @@ static void reset_test_duel(void) {
   D_8009B1B0[1] = 0;
   D_8009B208 = -1;
   D_8009B209 = -1;
+  D_8009B1A4[0] = 0;
+  D_8009B1A4[1] = 0;
+  s_mock_last_damaged_side = -1;
+  s_mock_last_damage_amount = 0;
+  D_800E9FF0[0].life_points.signed_value = 8000;
+  D_800E9FF0[1].life_points.signed_value = 8000;
   gMonsterEffects.ready = 1;
   gMonsterEffects.trap_battle_record[0] = -1;
   gMonsterEffects.trap_battle_record[1] = -1;
@@ -898,6 +918,251 @@ static void test_attacker_criteria_immunity(void) {
   puts("test_attacker_criteria_immunity: PASSED");
 }
 
+static void test_piercing_damage(void) {
+  MonsterEffect eff;
+  reset_test_duel();
+
+  /* --- Test 1: MONSTER_PIERCING_MOD_ALWAYS --- */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_PIERCING;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
+
+  s_test_effects[0] = eff;
+  s_test_effect_count = 1;
+
+  /* Check HasPiercingDamage */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+
+  /* Not face up -> no piercing */
+  gMonsterEffects.face_up[5] = 0;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  gMonsterEffects.face_up[5] = 1;
+
+  /* --- Test Battle Damage Application in MonsterEffects_Update() --- */
+  gDuel_wSceneStateFlags = PHASE_BATTLE;
+  gMonsterEffects.trap_battle_record[0] = 5;
+  gMonsterEffects.trap_battle_record[1] = 20;
+  D_8009B1D5 = 0; /* Player's turn: player monster 5 attacks opponent monster 20 */
+
+  /* Case A: Defender is in ATTACK position (D_8009B178[1] & 0x800 == 0) */
+  D_8009B178[1] = 0;
+  gDuel_adwCardStats[5] = 2500 | (1000 << 16);  /* ATK 2500 */
+  gDuel_adwCardStats[20] = 1200 | (1500 << 16); /* DEF 1500 */
+  D_8009B174 = 4;
+  s_mock_last_damage_amount = 0;
+  MonsterEffects_Update();
+  assert(s_mock_last_damage_amount == 0); /* No piercing on attack position */
+
+  /* Case B: Defender is in DEFENSE position (D_8009B178[1] & 0x800 != 0) */
+  D_8009B178[1] = 0x800;
+  MonsterEffects_Battle(); /* Reset state for new battle */
+  D_8009B174 = 4;
+  s_mock_last_damage_amount = 0;
+  D_8009B1A4[1] = 0;
+  MonsterEffects_Update();
+  assert(s_mock_last_damaged_side == 1);       /* Opponent takes damage */
+  assert(s_mock_last_damage_amount == 1000);   /* 2500 ATK - 1500 DEF = 1000 */
+  assert(D_8009B1A4[1] == 1000);               /* Popup set for retail battle state 8 */
+
+  /* Subsequent frames in the same battle do NOT re-inflict */
+  s_mock_last_damage_amount = 0;
+  MonsterEffects_Update();
+  assert(s_mock_last_damage_amount == 0);
+
+  /* --- Test 2: MONSTER_PIERCING_MOD_TYPE --- */
+  eff.battle_modifier = MONSTER_PIERCING_MOD_TYPE;
+  eff.attacker_type = 1; /* Dragon */
+  s_test_effects[0] = eff;
+
+  s_mock_type[1] = 1; /* Opponent card 1 is Dragon */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  s_mock_type[1] = 2; /* Opponent card 1 is Spellcaster */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  s_mock_type[1] = 1;
+
+  /* --- Test 3: MONSTER_PIERCING_MOD_ATTRIBUTE --- */
+  eff.battle_modifier = MONSTER_PIERCING_MOD_ATTRIBUTE;
+  eff.attacker_attribute = 1; /* LIGHT */
+  s_test_effects[0] = eff;
+
+  s_mock_attr[1] = 1; /* LIGHT */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  s_mock_attr[1] = 2; /* DARK */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  s_mock_attr[1] = 1;
+
+  /* --- Test 4: MONSTER_PIERCING_MOD_STAT (higher / lower ATK & DEF) --- */
+  eff.battle_modifier = MONSTER_PIERCING_MOD_STAT;
+
+  /* 4a. DEF < 2000 */
+  eff.attacker_stat = 2; /* DEF */
+  eff.attacker_stat_op = MONSTER_OP_LT;
+  eff.attacker_amount = 2000;
+  s_test_effects[0] = eff;
+
+  gDuel_adwCardStats[20] = 1200 | (1500 << 16); /* DEF 1500 < 2000 -> true */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  gDuel_adwCardStats[20] = 1200 | (2500 << 16); /* DEF 2500 < 2000 -> false */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  /* 4b. DEF > 2000 */
+  eff.attacker_stat_op = MONSTER_OP_GT;
+  s_test_effects[0] = eff;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1); /* DEF 2500 > 2000 */
+  gDuel_adwCardStats[20] = 1200 | (1500 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  /* 4c. DEF <= 1500 */
+  eff.attacker_stat_op = MONSTER_OP_LE;
+  eff.attacker_amount = 1500;
+  s_test_effects[0] = eff;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1); /* 1500 <= 1500 */
+  gDuel_adwCardStats[20] = 1200 | (1501 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  /* 4d. DEF >= 1500 */
+  eff.attacker_stat_op = MONSTER_OP_GE;
+  eff.attacker_amount = 1500;
+  s_test_effects[0] = eff;
+  gDuel_adwCardStats[20] = 1200 | (1500 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  gDuel_adwCardStats[20] = 1200 | (1499 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  /* 4e. DEF == 1500 */
+  eff.attacker_stat_op = MONSTER_OP_EQ;
+  eff.attacker_amount = 1500;
+  s_test_effects[0] = eff;
+  gDuel_adwCardStats[20] = 1200 | (1500 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  gDuel_adwCardStats[20] = 1200 | (1501 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  /* 4f. ATK > 1500 and ATK < 1500 */
+  eff.attacker_stat = 1; /* ATK */
+  eff.attacker_stat_op = MONSTER_OP_GT;
+  eff.attacker_amount = 1500;
+  s_test_effects[0] = eff;
+  gDuel_adwCardStats[20] = 2000 | (1500 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  gDuel_adwCardStats[20] = 1000 | (1500 << 16);
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  eff.attacker_stat_op = MONSTER_OP_LT;
+  s_test_effects[0] = eff;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1); /* 1000 < 1500 */
+
+  /* --- Test 5: MONSTER_PIERCING_MOD_LEVEL (higher / lower level) --- */
+  eff.battle_modifier = MONSTER_PIERCING_MOD_LEVEL;
+  eff.attacker_level = 6;
+  eff.attacker_level_op = MONSTER_OP_GT;
+  s_test_effects[0] = eff;
+
+  s_mock_level[1] = 8; /* Level 8 > 6 */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  s_mock_level[1] = 6; /* Level 6 > 6 is false */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  eff.attacker_level_op = MONSTER_OP_LT;
+  s_test_effects[0] = eff;
+  s_mock_level[1] = 4; /* Level 4 < 6 */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  s_mock_level[1] = 6; /* Level 6 < 6 is false */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  eff.attacker_level_op = MONSTER_OP_LE;
+  s_test_effects[0] = eff;
+  s_mock_level[1] = 6; /* Level 6 <= 6 */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+  s_mock_level[1] = 7; /* Level 7 <= 6 is false */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  /* --- Test 6: MONSTER_PIERCING_MOD_MONSTER (combined criteria) --- */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_PIERCING;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_PIERCING_MOD_MONSTER;
+  eff.attacker_type = 1;       /* Dragon */
+  eff.attacker_attribute = 1;  /* LIGHT */
+  eff.attacker_stat = 2;       /* DEF */
+  eff.attacker_stat_op = MONSTER_OP_LT;
+  eff.attacker_amount = 2000;  /* DEF < 2000 */
+  eff.attacker_level = 8;      /* Level <= 8 */
+  eff.attacker_level_op = MONSTER_OP_LE;
+  s_test_effects[0] = eff;
+
+  /* Defender satisfies all: Dragon, LIGHT, DEF 1500, Level 8 */
+  s_mock_type[1] = 1;
+  s_mock_attr[1] = 1;
+  gDuel_adwCardStats[20] = 1200 | (1500 << 16);
+  s_mock_level[1] = 8;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+
+  /* Fail type */
+  s_mock_type[1] = 2;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  s_mock_type[1] = 1;
+
+  /* Fail attribute */
+  s_mock_attr[1] = 2;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  s_mock_attr[1] = 1;
+
+  /* Fail stat */
+  gDuel_adwCardStats[20] = 1200 | (2500 << 16); /* 2500 is not < 2000 */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  gDuel_adwCardStats[20] = 1200 | (1500 << 16);
+
+  /* Fail level */
+  s_mock_level[1] = 9; /* 9 is not <= 8 */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  s_mock_level[1] = 8;
+
+  /* --- Test 7: While Face-Up Conditions working with Piercing Damage --- */
+  memset(&eff, 0, sizeof(eff));
+  eff.when = MONSTER_WHEN_FACE_UP;
+  eff.action = MONSTER_DO_PIERCING;
+  eff.target = MONSTER_TARGET_SELF;
+  eff.battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
+
+  /* Add condition: field_spell active (Umi = 5) */
+  eff.cond_count = 1;
+  eff.conditions[0].type = MONSTER_COND_FIELD_SPELL;
+  eff.conditions[0].field_spell = 5; /* Umi */
+  eff.conditions[0].presence = 1;    /* is active */
+  s_test_effects[0] = eff;
+
+  gDuel_bTerrain = 5; /* Umi */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+
+  gDuel_bTerrain = 1; /* Forest */
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+
+  /* Add second condition: named card (card 18 Kuriboh) on whole field */
+  eff.cond_count = 2;
+  eff.cond_mode = MONSTER_COND_MODE_ALL;
+  eff.conditions[1].type = MONSTER_COND_NAMED_CARD;
+  eff.conditions[1].card = 18;
+  eff.conditions[1].whose = MONSTER_EACH_ALL;
+  s_test_effects[0] = eff;
+
+  /* Both conditions met: Umi active, card 18 face up in zone 5 */
+  gDuel_bTerrain = 5;
+  gMonsterEffects.card[5] = 18;
+  gMonsterEffects.face_up[5] = 1;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+
+  /* Fail second condition (card 18 face down) */
+  gMonsterEffects.face_up[5] = 0;
+  assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+  gMonsterEffects.face_up[5] = 1;
+
+  puts("test_piercing_damage: PASSED");
+}
+
 int main(void) {
   test_attacker_vs_defender();
   test_first_second_third_attacked_sequence();
@@ -908,6 +1173,7 @@ int main(void) {
   test_control_attribute_condition();
   test_field_spell_condition();
   test_attacker_criteria_immunity();
+  test_piercing_damage();
   puts("\nAll monster attacked condition tests PASSED successfully!");
   return 0;
 }

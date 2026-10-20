@@ -47,6 +47,10 @@ extern u16 D_8009B162;
 extern s8 D_8009B1B0[2];
 extern s8 D_8009B208;
 extern s8 D_8009B209;
+extern s16 D_8009B1A4[2];
+extern u8 D_8009B174;
+s32 func_8001EFD4(DisplayObject *left, DisplayObject *right);
+s32 Duel_CalcBattleAttack(DuelCardRecord *card, DuelCardRecord *opponent);
 
 #define S gMonsterEffects
 #define PHASE_STARTUP 1
@@ -672,6 +676,32 @@ int MonsterEffects_Update(void) {
         MonsterEffects_HasBattleImmunity(D_8009B209)) {
       D_8009B209 = -1;
     }
+
+    /* Piercing damage (API 19): damage calculation when attacking a monster in defense position */
+    if (monster_zone(att_rec) && monster_zone(def_rec) && !S.piercing_applied &&
+        ((D_8009B178[1] & 0x800) || (D_801A7AD8[def_rec].flags & DUEL_CARD_FLAG_DEFENSE_POSITION)) &&
+        D_8009B174 >= 4) {
+      if (MonsterEffects_HasPiercingDamage(att_rec, def_rec)) {
+        int diff = 0;
+        if (D_800E9EF0[0] && D_800E9EF0[1]) {
+          diff = func_8001EFD4((DisplayObject *)D_800E9EF0[0], (DisplayObject *)D_800E9EF0[1]);
+        } else {
+          int att_atk = Duel_CalcBattleAttack(&D_801A7AD8[att_rec], &D_801A7AD8[def_rec]);
+          int def_def = (unsigned int)Duel_CalcCardStats(&D_801A7AD8[def_rec]) >> 16;
+          diff = att_atk - def_def;
+        }
+        if (diff > 0) {
+          int opp_side = D_8009B1D5 ^ 1;
+          DuelSideState *opp_state = &D_800E9FF0[opp_side];
+          int life = Mods_DamageLife(opp_side, opp_state->life_points.signed_value, diff, 0);
+          if (life < 0) life = 0;
+          opp_state->life_points.signed_value = (short)life;
+          D_8009B1A4[1] = (short)diff;
+          D_8009B1C8->rank.effective_attacks++;
+        }
+      }
+      S.piercing_applied = 1;
+    }
   }
   /* Only as a hand or field phase begins, before its first step: within
    * one the field is not settled (the hand lifts a field monster for a
@@ -786,6 +816,7 @@ void MonsterEffects_Battle(void) {
     return;
   records[0] = attacker->field_6A;
   records[1] = defender ? defender->field_6A : -1;
+  S.piercing_applied = 0;
   if (monster_zone(records[1])) {
     S.attacked_summon[records[1]]++;
     S.attacked_turn[records[1]]++;
@@ -1275,6 +1306,94 @@ int MonsterEffects_HasBattleImmunity(int record) {
             if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
               continue;
           }
+        }
+      }
+    }
+
+    return 1;
+  }
+  return 0;
+}
+
+int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record) {
+  const MonsterEffect *effects;
+  int n, e;
+  if (!monster_zone(attacker_record) || !S.card[attacker_record] ||
+      !S.face_up[attacker_record])
+    return 0;
+  if (defender_record >= 0 && (!monster_zone(defender_record) || !S.card[defender_record]))
+    return 0;
+  n = Cards_MonsterEffects(S.card[attacker_record], &effects);
+  for (e = 0; e < n; e++) {
+    if (effects[e].when != MONSTER_WHEN_FACE_UP)
+      continue;
+    if (effects[e].action != MONSTER_DO_PIERCING)
+      continue;
+    if (!MonsterEffects_ConditionsMet(attacker_record, &effects[e]))
+      continue;
+
+    /* Check modifier (target criteria for defending monster) */
+    if (effects[e].battle_modifier != MONSTER_PIERCING_MOD_ALWAYS) {
+      int def_card;
+      if (defender_record < 0)
+        continue;
+      def_card = D_801A7AD8[defender_record].card_id;
+      if (!def_card && S.card[defender_record])
+        def_card = S.card[defender_record];
+      if (!def_card)
+        continue;
+
+      if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_TYPE) {
+        int t = Cards_Type(def_card);
+        if (t != effects[e].attacker_type)
+          continue;
+      } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_ATTRIBUTE) {
+        int a = Cards_Attribute(def_card);
+        if (a != effects[e].attacker_attribute)
+          continue;
+      } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_STAT) {
+        int packed, def_val;
+        s_evaluating_stats = 1;
+        packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]);
+        s_evaluating_stats = 0;
+        if (effects[e].attacker_stat == 2)
+          def_val = (unsigned int)packed >> 16; /* DEF */
+        else
+          def_val = packed & 0xFFFF;            /* ATK */
+        if (!compare_op(def_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
+          continue;
+      } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_LEVEL) {
+        int lvl = Cards_Level(def_card);
+        if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
+          continue;
+      } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_MONSTER) {
+        /* Combined criteria: check each criteria if configured */
+        if (effects[e].attacker_type >= 0 && (unsigned char)effects[e].attacker_type != 0xFF) {
+          int t = Cards_Type(def_card);
+          if (t != effects[e].attacker_type)
+            continue;
+        }
+        if (effects[e].attacker_attribute >= 0 && (unsigned char)effects[e].attacker_attribute != 0xFF) {
+          int a = Cards_Attribute(def_card);
+          if (a != effects[e].attacker_attribute)
+            continue;
+        }
+        if (effects[e].attacker_stat > 0 || effects[e].attacker_amount > 0) {
+          int packed, def_val;
+          s_evaluating_stats = 1;
+          packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]);
+          s_evaluating_stats = 0;
+          if (effects[e].attacker_stat == 2)
+            def_val = (unsigned int)packed >> 16; /* DEF */
+          else
+            def_val = packed & 0xFFFF;            /* ATK */
+          if (!compare_op(def_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
+            continue;
+        }
+        if (effects[e].attacker_level > 0) {
+          int lvl = Cards_Level(def_card);
+          if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
+            continue;
         }
       }
     }

@@ -2613,7 +2613,7 @@ class MonsterEffectsGuiTest(GuiCase):
         # Combat offers no magic; face up only boosts.
         self.assertNotIn("Magic card effect", dialog.do_box.cget("values"))
         dialog.vars["when"].set("While face up")
-        self.assertEqual(list(dialog.do_box.cget("values")), ["Boost ATK/DEF", "Cannot be destroyed by battle"])
+        self.assertEqual(list(dialog.do_box.cget("values")), ["Boost ATK/DEF", "Cannot be destroyed by battle", "Piercing damage"])
         self.assertNotIn("The monster it battles", dialog.target_box.cget("values"))
         dialog.vars["type"].set("Dragon")
         dialog.ok()
@@ -2877,6 +2877,67 @@ class MonsterEffectsGuiTest(GuiCase):
             "attacker_attribute": "Light", "attacker_stat": "def",
             "attacker_stat_op": ">", "attacker_amount": 2000,
             "attacker_level_op": ">", "attacker_level": 8
+        })
+
+    def test_effect_dialog_piercing_damage(self):
+        from fm_editor.monster_effects_ui import EffectDialog
+        app = self.app
+
+        # 1. Default Piercing Damage ("Always")
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        self.assertEqual(dialog.vars["do"].get(), "Piercing damage")
+        self.assertEqual(dialog.vars["modifier"].get(), "Always")
+        self.assertTrue(dialog.cond_frame.winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {"when": "face_up", "do": "piercing", "target": "self"})
+
+        # 2. Attacks monster of Type
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        dialog.vars["modifier"].set("If it attacks a monster of Type")
+        dialog.vars["attacker_type"].set("Dragon")
+        self.assertTrue(dialog.rows["attacker_type"][1].winfo_manager())
+        self.assertEqual(dialog.rows["attacker_type"][0].cget("text"), "Defender type")
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "piercing", "target": "self",
+            "modifier": "attacks_type", "defender_type": "Dragon"
+        })
+
+        # 3. Attacks monster with higher / lower ATK or DEF
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        dialog.vars["modifier"].set("If it attacks a monster with higher / lower ATK or DEF")
+        dialog.vars["attacker_stat"].set("DEF")
+        dialog.vars["attacker_stat_op"].set("Lower than (<)")
+        dialog.vars["attacker_amount"].set("1500")
+        self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat_op"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "piercing", "target": "self",
+            "modifier": "attacks_stat", "defender_stat": "def",
+            "defender_stat_op": "<", "defender_amount": 1500
+        })
+
+        # 4. Attacks monster (combined criteria) with conditions
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        dialog.vars["modifier"].set("If it attacks a monster (combined criteria)")
+        dialog.vars["attacker_type"].set("Dragon")
+        dialog.vars["attacker_attribute"].set("LIGHT")
+        dialog.vars["attacker_stat"].set("DEF")
+        dialog.vars["attacker_stat_op"].set("Lower than (<)")
+        dialog.vars["attacker_amount"].set("2000")
+        dialog.vars["attacker_level_op"].set("Lower or equal (<=)")
+        dialog.vars["attacker_level"].set("8")
+        dialog.conditions.append({"type": "field_spell", "field": "umi", "presence": "active"})
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "piercing", "target": "self",
+            "modifier": "attacks_monster", "defender_type": "Dragon",
+            "defender_attribute": "Light", "defender_stat": "def",
+            "defender_stat_op": "<", "defender_amount": 2000,
+            "defender_level_op": "<=", "defender_level": 8,
+            "conditions": [{"type": "field_spell", "field": "umi", "presence": "active"}]
         })
 
     def test_text_menu(self):

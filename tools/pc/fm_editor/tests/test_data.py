@@ -1386,7 +1386,7 @@ class MonsterEffectsTest(unittest.TestCase):
             self.assertIsNone(fx.normalize(effect), effect)
         # The target left out: the card itself, its side when destroyed.
         self.assertEqual(fx.normalize({"when": "destroyed", "do": "boost", "attack": 100})["target"], "own")
-        self.assertEqual(fx.actions("face_up"), ["boost", "battle_immunity"])
+        self.assertEqual(fx.actions("face_up"), ["boost", "battle_immunity", "piercing"])
         self.assertEqual(fx.normalize({"when": "face_up", "do": "battle_immunity"}),
                          {"when": "face_up", "do": "battle_immunity", "target": "self"})
         self.assertEqual(fx.describe({"when": "face_up", "do": "battle_immunity"}),
@@ -1660,6 +1660,87 @@ class MonsterEffectsTest(unittest.TestCase):
 
         # Attacker criteria are not attack count conditions (they don't trigger the 1-attack-condition limit)
         self.assertEqual(fx.problems([eff_type, eff_attr, eff_stat, eff_lvl]), [])
+
+    def test_piercing_damage_modifiers(self):
+        from fm_editor import monster_effects as fx
+        self.assertIn("piercing", fx.actions("face_up"))
+
+        # Default / Always
+        eff_always = fx.normalize({"when": "face_up", "do": "piercing"})
+        self.assertEqual(eff_always, {"when": "face_up", "do": "piercing", "target": "self"})
+        self.assertEqual(fx.describe(eff_always), "Inflicts piercing damage")
+
+        # Alias piercing_damage
+        eff_alias = fx.normalize({"when": "face_up", "do": "piercing_damage"})
+        self.assertEqual(eff_alias, {"when": "face_up", "do": "piercing", "target": "self"})
+
+        # Disallowed when not face_up
+        self.assertIsNone(fx.normalize({"when": "combat", "do": "piercing"}))
+        self.assertIsNone(fx.normalize({"when": "summon", "do": "piercing"}))
+
+        # 1. Attacks type
+        eff_type = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_type", "type": "Dragon"})
+        self.assertEqual(eff_type["modifier"], "attacks_type")
+        self.assertEqual(eff_type["defender_type"], "Dragon")
+        self.assertEqual(fx.describe(eff_type), "Inflicts piercing damage when attacking a Dragon monster")
+
+        # 2. Attacks attribute
+        eff_attr = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_attribute", "attribute": "Dark"})
+        self.assertEqual(eff_attr["modifier"], "attacks_attribute")
+        self.assertEqual(eff_attr["defender_attribute"], "Dark")
+        self.assertEqual(fx.describe(eff_attr), "Inflicts piercing damage when attacking a Dark monster")
+
+        # 3. Attacks stat (higher and lower)
+        eff_stat = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_stat", "stat": "atk", "op": ">", "amount": 2500})
+        self.assertEqual(eff_stat["modifier"], "attacks_stat")
+        self.assertEqual(eff_stat["defender_stat"], "atk")
+        self.assertEqual(eff_stat["defender_stat_op"], ">")
+        self.assertEqual(eff_stat["defender_amount"], 2500)
+        self.assertEqual(fx.describe(eff_stat), "Inflicts piercing damage when attacking a monster with higher ATK than 2500")
+
+        eff_stat_lt = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_stat", "stat": "def", "stat_op": "<", "amount": 1500})
+        self.assertEqual(eff_stat_lt["defender_stat_op"], "<")
+        self.assertEqual(fx.describe(eff_stat_lt), "Inflicts piercing damage when attacking a monster with lower DEF than 1500")
+
+        # 4. Attacks level (higher and lower)
+        eff_lvl = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_level", "level": 7})
+        self.assertEqual(eff_lvl["modifier"], "attacks_level")
+        self.assertEqual(eff_lvl["defender_level_op"], ">")
+        self.assertEqual(eff_lvl["defender_level"], 7)
+        self.assertEqual(fx.describe(eff_lvl), "Inflicts piercing damage when attacking a monster with higher Level than 7")
+
+        eff_lvl_lt = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_level", "level_op": "<", "level": 4})
+        self.assertEqual(eff_lvl_lt["defender_level_op"], "<")
+        self.assertEqual(fx.describe(eff_lvl_lt), "Inflicts piercing damage when attacking a monster with lower Level than 4")
+
+        # 5. Attacks monster (combined criteria)
+        eff_comb = fx.normalize({
+            "when": "face_up", "do": "piercing", "modifier": "attacks_monster",
+            "type": "Dragon", "attribute": "Light", "stat": "def", "stat_op": "<", "amount": 2000,
+            "level_op": "<", "level": 8
+        })
+        self.assertEqual(eff_comb["modifier"], "attacks_monster")
+        self.assertEqual(eff_comb["defender_type"], "Dragon")
+        self.assertEqual(eff_comb["defender_attribute"], "Light")
+        self.assertEqual(eff_comb["defender_stat"], "def")
+        self.assertEqual(eff_comb["defender_stat_op"], "<")
+        self.assertEqual(eff_comb["defender_amount"], 2000)
+        self.assertEqual(eff_comb["defender_level_op"], "<")
+        self.assertEqual(eff_comb["defender_level"], 8)
+        self.assertIn("Light Dragon with lower DEF than 2000 and lower Level than 8", fx.describe(eff_comb))
+
+        # 6. Established while face-up conditions working with piercing damage
+        eff_with_cond = fx.normalize({
+            "when": "face_up", "do": "piercing", "modifier": "attacks_type", "type": "Dragon",
+            "conditions": [{"type": "field_spell", "field": "umi"}]
+        })
+        self.assertEqual(len(eff_with_cond["conditions"]), 1)
+        self.assertEqual(eff_with_cond["conditions"][0]["type"], "field_spell")
+        self.assertEqual(eff_with_cond["conditions"][0]["field"], "umi")
+        self.assertIn("(if Umi (Sea) is active)", fx.describe(eff_with_cond))
+
+        # Piercing modifiers do not count toward the attack count conditions limit
+        self.assertEqual(fx.problems([eff_type, eff_attr, eff_stat, eff_lvl, eff_comb]), [])
 
     def test_equip_made_a_monster_has_no_equips_error(self):
         p = self.project

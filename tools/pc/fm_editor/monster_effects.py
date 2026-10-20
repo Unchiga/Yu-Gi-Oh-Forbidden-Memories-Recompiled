@@ -22,9 +22,9 @@ WHEN_HINTS = (
     "It won a battle that destroyed the other monster, and is still on the field: after the battle.",
     "All the while it is face up on the field: a boost that goes when it does.",
 )
-DO = ("magic", "boost", "heal", "damage", "destroy", "battle_immunity")
+DO = ("magic", "boost", "heal", "damage", "destroy", "battle_immunity", "piercing")
 DO_LABELS = ("Magic card effect", "Boost ATK/DEF", "Heal its owner's LP", "Damage the opponent's LP",
-             "Destroy monsters", "Cannot be destroyed by battle")
+             "Destroy monsters", "Cannot be destroyed by battle", "Piercing damage")
 TARGET = ("self", "own", "others", "opponent", "all", "battle")
 TARGET_LABELS = ("This card", "Its owner's monsters", "Its owner's other monsters", "The opponent's monsters",
                  "Every monster", "The monster it battles")
@@ -149,6 +149,23 @@ ATTACK_COUNT_MODIFIERS = (
     "destroyed_after_3_attacks",
 )
 
+PIERCING_MODIFIERS = (
+    "always",
+    "attacks_type",
+    "attacks_attribute",
+    "attacks_stat",
+    "attacks_level",
+    "attacks_monster",
+)
+PIERCING_MODIFIER_LABELS = (
+    "Always",
+    "If it attacks a monster of Type",
+    "If it attacks a monster of Attribute",
+    "If it attacks a monster with higher / lower ATK or DEF",
+    "If it attacks a monster with higher/lower level",
+    "If it attacks a monster (combined criteria)",
+)
+
 # The disc's magic cards whose effect a monster may use: Magic cards whose
 # effect group does something at play time and asks nothing (no ritual).
 MAGIC = (320, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348,
@@ -161,8 +178,8 @@ MAX_EFFECTS = 8
 def allowed(when: str, do: str, target: str | None = None) -> bool:
     """What the game takes (monster_effects.c MonsterEffect_Allowed)."""
     if when == "face_up":
-        return (do == "boost" and target != "battle") or (do == "battle_immunity" and (target is None or target == "self"))
-    if do == "battle_immunity":
+        return (do == "boost" and target != "battle") or (do in ("battle_immunity", "piercing") and (target is None or target == "self"))
+    if do in ("battle_immunity", "piercing"):
         return False
     if when == "combat":
         return do in ("heal", "damage") or (do == "boost" and target in ("self", "battle"))
@@ -184,7 +201,7 @@ def targets(when: str, do: str = "boost") -> list:
 
 
 def default_target(when: str, do: str = "boost") -> str:
-    if do == "battle_immunity":
+    if do in ("battle_immunity", "piercing"):
         return "self"
     if do == "destroy":
         return "battle" if when == "flip" else "opponent"
@@ -402,7 +419,10 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
     monster types."""
     if not isinstance(effect, dict):
         return None
-    when, do = _name(WHEN, effect.get("when")), _name(DO, effect.get("do"))
+    raw_do = effect.get("do")
+    if raw_do in ("piercing_damage", "piercing"):
+        raw_do = "piercing"
+    when, do = _name(WHEN, effect.get("when")), _name(DO, raw_do)
     target = _name(TARGET, effect.get("target")) if "target" in effect else (default_target(when, do) if when else None)
     if not when or not do or not target or not allowed(when, do, target):
         return None
@@ -543,6 +563,125 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                             out["attacker_level_op"] = "<="
                         elif lop_str in ("=", "equal", "eq"):
                             out["attacker_level_op"] = "=="
+    elif do == "piercing":
+        out["target"] = target
+        mod = effect.get("modifier") or effect.get("piercing_modifier")
+        if mod:
+            if mod in ("attacks_monster_of_type", "attacks_by_type", "if_attacks_type", "attacked_by_type"):
+                mod = "attacks_type"
+            elif mod in ("attacks_monster_of_attribute", "attacks_by_attribute", "if_attacks_attribute", "attacked_by_attribute"):
+                mod = "attacks_attribute"
+            elif mod in ("attacks_monster_with_stat", "attacks_by_stat", "if_attacks_stat", "attacked_by_stat"):
+                mod = "attacks_stat"
+            elif mod in ("attacks_monster_with_level", "attacks_by_level", "if_attacks_level", "attacked_by_level"):
+                mod = "attacks_level"
+            elif mod in ("attacks_by", "attacks_by_monster", "if_attacks_monster", "attacks_combined", "attacked_by_monster"):
+                mod = "attacks_monster"
+            mod_name = _name(PIERCING_MODIFIERS, mod)
+            if mod_name is None:
+                return None
+            if mod_name != "always":
+                out["modifier"] = mod_name
+                if mod_name in ("attacks_type", "attacks_monster"):
+                    t = effect.get("defender_type") or effect.get("target_type") or effect.get("attacker_type") or effect.get("type") or effect.get("card_type")
+                    if t is not None:
+                        names = type_names or TYPE_NAMES
+                        if isinstance(t, str):
+                            found = _letters_index(t, [name or "" for name in names])
+                            t = found if found is not None else _letters_index(t, TYPE_NAMES)
+                        if isinstance(t, int) and not isinstance(t, bool) and is_monster_type(t) and t != 0xFF:
+                            out["defender_type"] = names[t] if t < len(names) and names[t] else TYPE_NAMES[t]
+                        elif mod_name == "attacks_type":
+                            return None
+                    elif mod_name == "attacks_type":
+                        return None
+                if mod_name in ("attacks_attribute", "attacks_monster"):
+                    a = effect.get("defender_attribute") or effect.get("target_attribute") or effect.get("attacker_attribute") or effect.get("attribute")
+                    if a is not None:
+                        a = attribute_resolve(a) if attribute_resolve else (_letters_index(a, ATTRIBUTE_NAMES) if isinstance(a, str) else a)
+                        if isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= 255 and a not in (6, 7):
+                            out["defender_attribute"] = ATTRIBUTE_NAMES[a] if a < len(ATTRIBUTE_NAMES) else a
+                        elif mod_name == "attacks_attribute":
+                            return None
+                    elif mod_name == "attacks_attribute":
+                        return None
+                if mod_name in ("attacks_stat", "attacks_monster"):
+                    st = effect.get("defender_stat") or effect.get("target_stat") or effect.get("attacker_stat") or effect.get("stat")
+                    if st is not None:
+                        s_lower = str(st).lower()
+                        if s_lower in ("def", "defense"):
+                            out["defender_stat"] = "def"
+                        elif s_lower in ("atk", "attack"):
+                            out["defender_stat"] = "atk"
+                        elif mod_name == "attacks_stat":
+                            return None
+                    amt = effect.get("defender_amount") if "defender_amount" in effect else (
+                        effect.get("target_amount") if "target_amount" in effect else (
+                            effect.get("attacker_amount") if "attacker_amount" in effect else (
+                                effect.get("amount") if "amount" in effect else effect.get("value")
+                            )
+                        )
+                    )
+                    if amt is not None:
+                        if isinstance(amt, int) and not isinstance(amt, bool) and 0 <= amt <= AMOUNT_MAX:
+                            out["defender_amount"] = amt
+                            if "defender_stat" not in out:
+                                out["defender_stat"] = "atk"
+                        elif mod_name == "attacks_stat":
+                            return None
+                    elif mod_name == "attacks_stat":
+                        return None
+                    sop = effect.get("defender_stat_op") or effect.get("target_stat_op") or effect.get("attacker_stat_op") or effect.get("stat_op")
+                    if not sop and (mod_name == "attacks_stat" or ("defender_level_op" not in effect and "target_level_op" not in effect and "attacker_level_op" not in effect)):
+                        sop = effect.get("comparison") or effect.get("op")
+                    if sop is None and (mod_name == "attacks_stat" or "defender_stat" in out):
+                        sop = ">"
+                    if sop is not None:
+                        sop_str = str(sop)
+                        if sop_str in OPS:
+                            out["defender_stat_op"] = sop_str
+                        elif sop_str in ("higher", "gt"):
+                            out["defender_stat_op"] = ">"
+                        elif sop_str in ("lower", "lt"):
+                            out["defender_stat_op"] = "<"
+                        elif sop_str in ("higher_equal", "ge"):
+                            out["defender_stat_op"] = ">="
+                        elif sop_str in ("lower_equal", "le"):
+                            out["defender_stat_op"] = "<="
+                        elif sop_str in ("=", "equal", "eq"):
+                            out["defender_stat_op"] = "=="
+                if mod_name in ("attacks_level", "attacks_monster"):
+                    lvl = effect.get("defender_level") if "defender_level" in effect else (
+                        effect.get("target_level") if "target_level" in effect else (
+                            effect.get("attacker_level") if "attacker_level" in effect else effect.get("level")
+                        )
+                    )
+                    if lvl is not None:
+                        if isinstance(lvl, int) and not isinstance(lvl, bool) and 1 <= lvl <= 12:
+                            out["defender_level"] = lvl
+                        elif mod_name == "attacks_level":
+                            return None
+                    elif mod_name == "attacks_level":
+                        return None
+                    lop = effect.get("defender_level_op") or effect.get("target_level_op") or effect.get("attacker_level_op") or effect.get("level_op")
+                    if not lop and (mod_name == "attacks_level" or ("defender_stat_op" not in effect and "target_stat_op" not in effect and "attacker_stat_op" not in effect)):
+                        lop = effect.get("comparison") or effect.get("op")
+                    if lop is None and (mod_name == "attacks_level" or "defender_level" in out):
+                        lop = ">"
+                    if lop is not None:
+                        lop_str = str(lop)
+                        if lop_str in OPS:
+                            out["defender_level_op"] = lop_str
+                        elif lop_str in ("higher", "gt"):
+                            out["defender_level_op"] = ">"
+                        elif lop_str in ("lower", "lt"):
+                            out["defender_level_op"] = "<"
+                        elif lop_str in ("higher_equal", "ge"):
+                            out["defender_level_op"] = ">="
+                        elif lop_str in ("lower_equal", "le"):
+                            out["defender_level_op"] = "<="
+                        elif lop_str in ("=", "equal", "eq"):
+                            out["defender_level_op"] = "=="
     elif do in FILTERED:
         out["target"] = target
         for key in ("attack", "defense") if do == "boost" else ():
@@ -881,6 +1020,92 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
             with_str = f" with {' and '.join(extra)}" if extra else ""
             return f"Cannot be destroyed by battle if attacked by a {crit}{with_str}{conds}"
         return f"Cannot be destroyed by battle{conds}"
+    if do == "piercing":
+        mod = effect.get("modifier", "always")
+        if mod == "attacks_type":
+            t = effect.get("defender_type") or effect.get("target_type") or effect.get("attacker_type", "monster")
+            return f"Inflicts piercing damage when attacking a {t} monster{conds}"
+        elif mod == "attacks_attribute":
+            a = effect.get("defender_attribute") or effect.get("target_attribute") or effect.get("attacker_attribute", "")
+            return f"Inflicts piercing damage when attacking a {a} monster{conds}"
+        elif mod == "attacks_stat":
+            s = str(effect.get("defender_stat") or effect.get("target_stat") or effect.get("attacker_stat", "atk")).upper()
+            amt = effect.get("defender_amount") if "defender_amount" in effect else (
+                effect.get("target_amount") if "target_amount" in effect else effect.get("attacker_amount", 0)
+            )
+            op = effect.get("defender_stat_op") or effect.get("target_stat_op") or effect.get("attacker_stat_op") or effect.get("comparison") or effect.get("op", ">")
+            if op == "<":
+                comp_str = f"lower {s} than {amt}"
+            elif op == "<=":
+                comp_str = f"{s} <= {amt}"
+            elif op == ">=":
+                comp_str = f"{s} >= {amt}"
+            elif op in ("==", "="):
+                comp_str = f"{s} equal to {amt}"
+            else:
+                comp_str = f"higher {s} than {amt}"
+            return f"Inflicts piercing damage when attacking a monster with {comp_str}{conds}"
+        elif mod == "attacks_level":
+            lvl = effect.get("defender_level") if "defender_level" in effect else (
+                effect.get("target_level") if "target_level" in effect else effect.get("attacker_level", 1)
+            )
+            op = effect.get("defender_level_op") or effect.get("target_level_op") or effect.get("attacker_level_op") or effect.get("comparison") or effect.get("op", ">")
+            if op == "<":
+                comp_str = f"lower Level than {lvl}"
+            elif op == "<=":
+                comp_str = f"Level <= {lvl}"
+            elif op == ">=":
+                comp_str = f"Level >= {lvl}"
+            elif op in ("==", "="):
+                comp_str = f"Level equal to {lvl}"
+            else:
+                comp_str = f"higher Level than {lvl}"
+            return f"Inflicts piercing damage when attacking a monster with {comp_str}{conds}"
+        elif mod == "attacks_monster":
+            parts = []
+            a = effect.get("defender_attribute") or effect.get("target_attribute") or effect.get("attacker_attribute")
+            if a:
+                parts.append(str(a))
+            t = effect.get("defender_type") or effect.get("target_type") or effect.get("attacker_type")
+            if t:
+                parts.append(str(t))
+            crit = " ".join(parts) if parts else "monster"
+            extra = []
+            stat = effect.get("defender_stat") or effect.get("target_stat") or effect.get("attacker_stat")
+            amt = effect.get("defender_amount") if "defender_amount" in effect else (
+                effect.get("target_amount") if "target_amount" in effect else effect.get("attacker_amount")
+            )
+            if stat and amt is not None:
+                s = str(stat).upper()
+                op = effect.get("defender_stat_op") or effect.get("target_stat_op") or effect.get("attacker_stat_op") or effect.get("comparison") or effect.get("op", ">")
+                if op == "<":
+                    extra.append(f"lower {s} than {amt}")
+                elif op == "<=":
+                    extra.append(f"{s} <= {amt}")
+                elif op == ">=":
+                    extra.append(f"{s} >= {amt}")
+                elif op in ("==", "="):
+                    extra.append(f"{s} equal to {amt}")
+                else:
+                    extra.append(f"higher {s} than {amt}")
+            lvl = effect.get("defender_level") if "defender_level" in effect else (
+                effect.get("target_level") if "target_level" in effect else effect.get("attacker_level")
+            )
+            if lvl is not None:
+                op = effect.get("defender_level_op") or effect.get("target_level_op") or effect.get("attacker_level_op") or effect.get("comparison") or effect.get("op", ">")
+                if op == "<":
+                    extra.append(f"lower Level than {lvl}")
+                elif op == "<=":
+                    extra.append(f"Level <= {lvl}")
+                elif op == ">=":
+                    extra.append(f"Level >= {lvl}")
+                elif op in ("==", "="):
+                    extra.append(f"Level equal to {lvl}")
+                else:
+                    extra.append(f"higher Level than {lvl}")
+            with_str = f" with {' and '.join(extra)}" if extra else ""
+            return f"Inflicts piercing damage when attacking a {crit}{with_str}{conds}"
+        return f"Inflicts piercing damage{conds}"
     if do == "magic":
         return f"{card_name(effect.get('card'))} (its effect){conds}"
     if do == "heal":

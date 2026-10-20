@@ -18,7 +18,7 @@ const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT] = {
     "summon",           "flip",   "draw", "combat", "destroyed",
     "destroy_opponent", "face_up"};
 const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {
-    "magic", "boost", "heal", "damage", "destroy", "battle_immunity"};
+    "magic", "boost", "heal", "damage", "destroy", "battle_immunity", "piercing"};
 const char *const MonsterEffect_TargetNames[MONSTER_TARGET_COUNT] = {
     "self", "own", "others", "opponent", "all", "battle"};
 const char *const MonsterEffect_EachNames[MONSTER_EACH_COUNT] = {
@@ -81,8 +81,10 @@ int MonsterEffect_Allowed(int when, int action, int target) {
   if (when == MONSTER_WHEN_FACE_UP)
     return (action == MONSTER_DO_BOOST && target != MONSTER_TARGET_BATTLE) ||
            (action == MONSTER_DO_BATTLE_IMMUNITY &&
+            target == MONSTER_TARGET_SELF) ||
+           (action == MONSTER_DO_PIERCING &&
             target == MONSTER_TARGET_SELF);
-  if (action == MONSTER_DO_BATTLE_IMMUNITY)
+  if (action == MONSTER_DO_BATTLE_IMMUNITY || action == MONSTER_DO_PIERCING)
     return 0;
   if (when == MONSTER_WHEN_COMBAT)
     return action == MONSTER_DO_HEAL || action == MONSTER_DO_DAMAGE ||
@@ -105,7 +107,7 @@ int MonsterEffect_EachAllowed(int action) {
 }
 
 int MonsterEffect_DefaultTarget(int when, int action) {
-  if (action == MONSTER_DO_BATTLE_IMMUNITY)
+  if (action == MONSTER_DO_BATTLE_IMMUNITY || action == MONSTER_DO_PIERCING)
     return MONSTER_TARGET_SELF;
   if (action == MONSTER_DO_DESTROY)
     return when == MONSTER_WHEN_FLIP ? MONSTER_TARGET_BATTLE
@@ -750,6 +752,11 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
                              MonsterEffect_WhenNames, MONSTER_WHEN_COUNT);
   action = named(Json_String(Json_Member(entry, "do"), NULL),
                  MonsterEffect_DoNames, MONSTER_DO_COUNT);
+  if (action < 0) {
+    const char *do_str = Json_String(Json_Member(entry, "do"), NULL);
+    if (do_str && (!strcmp(do_str, "piercing_damage") || !strcmp(do_str, "piercing")))
+      action = MONSTER_DO_PIERCING;
+  }
   if (when < 0) {
     Mods_Note(mod,
               "cards[%d]: monster_effects[%d]: \"when\" must be summon, flip, "
@@ -761,7 +768,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
   if (action < 0) {
     Mods_Note(mod,
               "cards[%d]: monster_effects[%d]: \"do\" must be magic, boost, "
-              "heal, damage or destroy",
+              "heal, damage, destroy, battle_immunity or piercing",
               index, n);
     return 0;
   }
@@ -791,7 +798,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
         MonsterEffect_WhenNames[when],
         when == MONSTER_WHEN_COMBAT
             ? " (a boost of self or battle, heal or damage)"
-        : when == MONSTER_WHEN_FACE_UP ? " (boosts and battle immunity only)"
+        : when == MONSTER_WHEN_FACE_UP ? " (boosts, battle immunity and piercing only)"
         : action == MONSTER_DO_DESTROY
             ? " (destroy takes opponent, or battle on flip)"
             : "");
@@ -850,7 +857,8 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
       return 0;
     break;
   }
-  case MONSTER_DO_BATTLE_IMMUNITY: {
+  case MONSTER_DO_BATTLE_IMMUNITY:
+  case MONSTER_DO_PIERCING: {
     const JsonValue *mod_val = Json_Member(entry, "modifier");
     const JsonValue *rst_val = Json_Member(entry, "reset");
     out->battle_modifier = MONSTER_BATTLE_MOD_ALWAYS;
@@ -864,6 +872,8 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
     out->attacker_level_op = MONSTER_OP_GT;
     if (!mod_val)
       mod_val = Json_Member(entry, "battle_modifier");
+    if (!mod_val)
+      mod_val = Json_Member(entry, "piercing_modifier");
     if (mod_val) {
       const char *m_str = Json_String(mod_val, "");
       int m = named(m_str, MonsterEffect_BattleModNames,
@@ -884,25 +894,35 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
                  !strcmp(m_str, "can_only_be_destroyed_after_three_attacks"))
           m = MONSTER_BATTLE_MOD_AFTER_3_ATTACKS;
         else if (!strcmp(m_str, "attacked_type") ||
-                 !strcmp(m_str, "if_attacked_by_type"))
+                 !strcmp(m_str, "if_attacked_by_type") ||
+                 !strcmp(m_str, "attacks_type") ||
+                 !strcmp(m_str, "attacks_monster_of_type"))
           m = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE;
         else if (!strcmp(m_str, "attacked_attribute") ||
-                 !strcmp(m_str, "if_attacked_by_attribute"))
+                 !strcmp(m_str, "if_attacked_by_attribute") ||
+                 !strcmp(m_str, "attacks_attribute") ||
+                 !strcmp(m_str, "attacks_monster_of_attribute"))
           m = MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE;
         else if (!strcmp(m_str, "attacked_stat") ||
-                 !strcmp(m_str, "if_attacked_by_stat"))
+                 !strcmp(m_str, "if_attacked_by_stat") ||
+                 !strcmp(m_str, "attacks_stat") ||
+                 !strcmp(m_str, "attacks_monster_with_stat"))
           m = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT;
         else if (!strcmp(m_str, "attacked_level") ||
-                 !strcmp(m_str, "if_attacked_by_level"))
+                 !strcmp(m_str, "if_attacked_by_level") ||
+                 !strcmp(m_str, "attacks_level") ||
+                 !strcmp(m_str, "attacks_monster_with_level"))
           m = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL;
         else if (!strcmp(m_str, "attacked_by") ||
                  !strcmp(m_str, "attacked_by_monster") ||
-                 !strcmp(m_str, "if_attacked_by_monster"))
+                 !strcmp(m_str, "if_attacked_by_monster") ||
+                 !strcmp(m_str, "attacks_monster") ||
+                 !strcmp(m_str, "attacks_combined"))
           m = MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER;
         else {
           Mods_Note(mod,
-                    "cards[%d]: monster_effects[%d]: unknown battle immunity modifier \"%s\"",
-                    index, n, m_str);
+                    "cards[%d]: monster_effects[%d]: unknown %s modifier \"%s\"",
+                    index, n, action == MONSTER_DO_PIERCING ? "piercing" : "battle immunity", m_str);
           return 0;
         }
       }
@@ -930,8 +950,12 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
       }
     }
 
-    /* Attacker criteria */
+    /* Target / Attacker criteria */
     const JsonValue *t_val = Json_Member(entry, "attacker_type");
+    if (!t_val)
+      t_val = Json_Member(entry, "target_type");
+    if (!t_val)
+      t_val = Json_Member(entry, "defender_type");
     if (!t_val)
       t_val = Json_Member(entry, "type");
     if (!t_val)
@@ -954,6 +978,10 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
 
     const JsonValue *a_val = Json_Member(entry, "attacker_attribute");
     if (!a_val)
+      a_val = Json_Member(entry, "target_attribute");
+    if (!a_val)
+      a_val = Json_Member(entry, "defender_attribute");
+    if (!a_val)
       a_val = Json_Member(entry, "attribute");
     if (a_val) {
       int av = Attributes_Value(a_val);
@@ -969,6 +997,10 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
 
     const JsonValue *s_val = Json_Member(entry, "attacker_stat");
     if (!s_val)
+      s_val = Json_Member(entry, "target_stat");
+    if (!s_val)
+      s_val = Json_Member(entry, "defender_stat");
+    if (!s_val)
       s_val = Json_Member(entry, "stat");
     if (s_val) {
       const char *s = Json_String(s_val, "");
@@ -980,10 +1012,16 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
 
     const JsonValue *sop_val = Json_Member(entry, "attacker_stat_op");
     if (!sop_val)
+      sop_val = Json_Member(entry, "target_stat_op");
+    if (!sop_val)
+      sop_val = Json_Member(entry, "defender_stat_op");
+    if (!sop_val)
       sop_val = Json_Member(entry, "stat_op");
-    if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT || !Json_Member(entry, "attacker_level_op")))
+    if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT ||
+                     (!Json_Member(entry, "attacker_level_op") && !Json_Member(entry, "target_level_op"))))
       sop_val = Json_Member(entry, "comparison");
-    if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT || !Json_Member(entry, "attacker_level_op")))
+    if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT ||
+                     (!Json_Member(entry, "attacker_level_op") && !Json_Member(entry, "target_level_op"))))
       sop_val = Json_Member(entry, "op");
     if (sop_val) {
       const char *op_str = Json_String(sop_val, "");
@@ -1001,6 +1039,10 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
 
     const JsonValue *am_val = Json_Member(entry, "attacker_amount");
     if (!am_val)
+      am_val = Json_Member(entry, "target_amount");
+    if (!am_val)
+      am_val = Json_Member(entry, "defender_amount");
+    if (!am_val)
       am_val = Json_Member(entry, "amount");
     if (!am_val)
       am_val = Json_Member(entry, "value");
@@ -1015,10 +1057,16 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
 
     const JsonValue *lop_val = Json_Member(entry, "attacker_level_op");
     if (!lop_val)
+      lop_val = Json_Member(entry, "target_level_op");
+    if (!lop_val)
+      lop_val = Json_Member(entry, "defender_level_op");
+    if (!lop_val)
       lop_val = Json_Member(entry, "level_op");
-    if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL || !Json_Member(entry, "attacker_stat_op")))
+    if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL ||
+                     (!Json_Member(entry, "attacker_stat_op") && !Json_Member(entry, "target_stat_op"))))
       lop_val = Json_Member(entry, "comparison");
-    if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL || !Json_Member(entry, "attacker_stat_op")))
+    if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL ||
+                     (!Json_Member(entry, "attacker_stat_op") && !Json_Member(entry, "target_stat_op"))))
       lop_val = Json_Member(entry, "op");
     if (lop_val) {
       const char *op_str = Json_String(lop_val, "");
@@ -1035,6 +1083,10 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry,
     }
 
     const JsonValue *l_val = Json_Member(entry, "attacker_level");
+    if (!l_val)
+      l_val = Json_Member(entry, "target_level");
+    if (!l_val)
+      l_val = Json_Member(entry, "defender_level");
     if (!l_val)
       l_val = Json_Member(entry, "level");
     if (l_val && Json_TypeOf(l_val) == JSON_NUMBER) {

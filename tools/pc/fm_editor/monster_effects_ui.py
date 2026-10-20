@@ -498,6 +498,8 @@ class EffectDialog(FormDialog):
                         self.attack_reset = c["reset"]
                     del self.conditions[i]
                     break
+        elif effect and effect.get("do") == "piercing":
+            self.attack_mod = effect.get("modifier", "always")
         super().__init__(master, "Monster effect" if effect is None else "Change the monster effect", self.build,
                          self.read)
 
@@ -639,24 +641,31 @@ class EffectDialog(FormDialog):
         self.vars["each_type"].set((each or {}).get("type", ANY))
         self.vars["each_attribute"].set(self.attribute_label((each or {}).get("attribute", ANY)))
 
-        mod_idx = fx.MODIFIERS.index(self.attack_mod) if self.attack_mod in fx.MODIFIERS else 0
-        self.vars["modifier"].set(fx.MODIFIER_LABELS[mod_idx])
+        if e.get("do") == "piercing":
+            mod_idx = fx.PIERCING_MODIFIERS.index(self.attack_mod) if self.attack_mod in fx.PIERCING_MODIFIERS else 0
+            self.vars["modifier"].set(fx.PIERCING_MODIFIER_LABELS[mod_idx])
+        else:
+            mod_idx = fx.MODIFIERS.index(self.attack_mod) if self.attack_mod in fx.MODIFIERS else 0
+            self.vars["modifier"].set(fx.MODIFIER_LABELS[mod_idx])
         rst = self.attack_reset
         if rst == "summon":
             rst = "copy"
         rst_idx = fx.RESET.index(rst) if rst in fx.RESET else 0
         self.vars["modifier_reset"].set(fx.RESET_LABELS[rst_idx])
 
-        self.vars["attacker_type"].set(e.get("attacker_type", ANY))
-        self.vars["attacker_attribute"].set(self.attribute_label(e.get("attacker_attribute", ANY)))
-        stat_val = e.get("attacker_stat", "")
-        self.vars["attacker_stat"].set(stat_val.upper() if stat_val in ("atk", "def") else ("ATK" if self.attack_mod == "attacked_by_stat" else "None"))
-        stat_op = e.get("attacker_stat_op") or e.get("comparison") or e.get("op", ">")
+        t_init = e.get("defender_type") or e.get("target_type") or e.get("attacker_type", ANY)
+        self.vars["attacker_type"].set(t_init)
+        a_init = e.get("defender_attribute") or e.get("target_attribute") or e.get("attacker_attribute", ANY)
+        self.vars["attacker_attribute"].set(self.attribute_label(a_init))
+        stat_val = e.get("defender_stat") or e.get("target_stat") or e.get("attacker_stat", "")
+        self.vars["attacker_stat"].set(stat_val.upper() if stat_val in ("atk", "def") else ("ATK" if self.attack_mod in ("attacked_by_stat", "attacks_stat") else "None"))
+        stat_op = e.get("defender_stat_op") or e.get("target_stat_op") or e.get("attacker_stat_op") or e.get("comparison") or e.get("op", ">")
         self.vars["attacker_stat_op"].set(fx.OP_LABELS[fx.OPS.index(stat_op)] if stat_op in fx.OPS else fx.OP_LABELS[2])
-        self.vars["attacker_amount"].set(str(e.get("attacker_amount", 1500)))
-        level_op = e.get("attacker_level_op") or (e.get("comparison") if self.attack_mod == "attacked_by_level" else None) or e.get("op", ">")
+        amt_init = e.get("defender_amount") if "defender_amount" in e else (e.get("target_amount") if "target_amount" in e else e.get("attacker_amount", 1500))
+        self.vars["attacker_amount"].set(str(amt_init))
+        level_op = e.get("defender_level_op") or e.get("target_level_op") or e.get("attacker_level_op") or (e.get("comparison") if self.attack_mod in ("attacked_by_level", "attacks_level") else None) or e.get("op", ">")
         self.vars["attacker_level_op"].set(fx.OP_LABELS[fx.OPS.index(level_op)] if level_op in fx.OPS else fx.OP_LABELS[2])
-        lvl_init = e.get("attacker_level", 4 if self.attack_mod == "attacked_by_level" else 0)
+        lvl_init = e.get("defender_level") if "defender_level" in e else (e.get("target_level") if "target_level" in e else e.get("attacker_level", 4 if self.attack_mod in ("attacked_by_level", "attacks_level") else 0))
         self.vars["attacker_level"].set(str(lvl_init))
 
         cond_mode = e.get("condition_mode", "all")
@@ -746,8 +755,14 @@ class EffectDialog(FormDialog):
         shown = {"when", "do"} | {"magic": {"card"}, "boost": {"target", "type", "attribute", "attack", "defense"},
                                   "heal": {"amount"}, "damage": {"amount"},
                                   "destroy": {"target", "type", "attribute"},
-                                  "battle_immunity": set()}[do]
+                                  "battle_immunity": set(),
+                                  "piercing": set()}[do]
         if do == "battle_immunity":
+            self.rows["modifier"][1].configure(values=list(fx.MODIFIER_LABELS))
+            self.rows["attacker_type"][0].configure(text="Attacker type")
+            self.rows["attacker_attribute"][0].configure(text="Attacker attribute")
+            self.rows["attacker_stat"][0].configure(text="Attacker stat")
+            self.rows["attacker_level"][0].configure(text="Attacker level")
             shown.add("modifier")
             mod = self.chosen("modifier", fx.MODIFIERS, fx.MODIFIER_LABELS)
             if mod in fx.ATTACK_COUNT_MODIFIERS:
@@ -761,6 +776,24 @@ class EffectDialog(FormDialog):
             elif mod == "attacked_by_level":
                 shown |= {"attacker_level_op", "attacker_level"}
             elif mod == "attacked_by_monster":
+                shown |= {"attacker_type", "attacker_attribute", "attacker_stat", "attacker_stat_op", "attacker_amount", "attacker_level_op", "attacker_level"}
+        elif do == "piercing":
+            self.rows["modifier"][1].configure(values=list(fx.PIERCING_MODIFIER_LABELS))
+            self.rows["attacker_type"][0].configure(text="Defender type")
+            self.rows["attacker_attribute"][0].configure(text="Defender attribute")
+            self.rows["attacker_stat"][0].configure(text="Defender stat")
+            self.rows["attacker_level"][0].configure(text="Defender level")
+            shown.add("modifier")
+            mod = self.chosen("modifier", fx.PIERCING_MODIFIERS, fx.PIERCING_MODIFIER_LABELS)
+            if mod == "attacks_type":
+                shown.add("attacker_type")
+            elif mod == "attacks_attribute":
+                shown.add("attacker_attribute")
+            elif mod == "attacks_stat":
+                shown |= {"attacker_stat", "attacker_stat_op", "attacker_amount"}
+            elif mod == "attacks_level":
+                shown |= {"attacker_level_op", "attacker_level"}
+            elif mod == "attacks_monster":
                 shown |= {"attacker_type", "attacker_attribute", "attacker_stat", "attacker_stat_op", "attacker_amount", "attacker_level_op", "attacker_level"}
         if do in fx.EACH_DO:
             shown.add("each")
@@ -863,6 +896,81 @@ class EffectDialog(FormDialog):
                 if not any(k in effect for k in ("attacker_type", "attacker_attribute", "attacker_stat", "attacker_level")):
                     return "Specify at least one attacker criteria (Type, Attribute, Stat, or Level)."
             all_conds = [dict(c) for c in self.conditions]
+        elif do == "piercing":
+            effect["target"] = "self"
+            mod = self.chosen("modifier", fx.PIERCING_MODIFIERS, fx.PIERCING_MODIFIER_LABELS) or "always"
+            if mod == "attacks_type":
+                effect["modifier"] = mod
+                t = self.vars["attacker_type"].get()
+                if not t or t == ANY:
+                    return "Choose a monster type."
+                effect["defender_type"] = t
+            elif mod == "attacks_attribute":
+                effect["modifier"] = mod
+                a = self.vars["attacker_attribute"].get()
+                if not a or a == ANY:
+                    return "Choose an attribute."
+                effect["defender_attribute"] = self.attribute_value(a)
+            elif mod == "attacks_stat":
+                effect["modifier"] = mod
+                s = self.vars["attacker_stat"].get().lower()
+                if s not in ("atk", "def"):
+                    s = "atk"
+                effect["defender_stat"] = s
+                sop = self.chosen("attacker_stat_op", fx.OPS, fx.OP_LABELS) or ">"
+                effect["defender_stat_op"] = sop
+                try:
+                    amt = int(self.vars["attacker_amount"].get().strip())
+                except ValueError:
+                    return "Stat threshold must be a whole number."
+                if not 0 <= amt <= fx.AMOUNT_MAX:
+                    return f"Stat threshold must be 0 to {fx.AMOUNT_MAX}."
+                effect["defender_amount"] = amt
+            elif mod == "attacks_level":
+                effect["modifier"] = mod
+                lop = self.chosen("attacker_level_op", fx.OPS, fx.OP_LABELS) or ">"
+                effect["defender_level_op"] = lop
+                try:
+                    lvl = int(self.vars["attacker_level"].get().strip())
+                except ValueError:
+                    return "Level must be a number."
+                if not 1 <= lvl <= 12:
+                    return "Level must be 1 to 12."
+                effect["defender_level"] = lvl
+            elif mod == "attacks_monster":
+                effect["modifier"] = mod
+                t = self.vars["attacker_type"].get()
+                if t and t != ANY:
+                    effect["defender_type"] = t
+                a = self.vars["attacker_attribute"].get()
+                if a and a != ANY:
+                    effect["defender_attribute"] = self.attribute_value(a)
+                s = self.vars["attacker_stat"].get()
+                if s in ("ATK", "DEF"):
+                    effect["defender_stat"] = s.lower()
+                    sop = self.chosen("attacker_stat_op", fx.OPS, fx.OP_LABELS) or ">"
+                    effect["defender_stat_op"] = sop
+                    try:
+                        amt = int(self.vars["attacker_amount"].get().strip())
+                    except ValueError:
+                        return "Stat threshold must be a whole number."
+                    if not 0 <= amt <= fx.AMOUNT_MAX:
+                        return f"Stat threshold must be 0 to {fx.AMOUNT_MAX}."
+                    effect["defender_amount"] = amt
+                lvl_str = self.vars["attacker_level"].get().strip()
+                if lvl_str and lvl_str != "0":
+                    try:
+                        lvl = int(lvl_str)
+                    except ValueError:
+                        return "Level must be a number."
+                    if not 1 <= lvl <= 12:
+                        return "Level must be 1 to 12."
+                    lop = self.chosen("attacker_level_op", fx.OPS, fx.OP_LABELS) or ">"
+                    effect["defender_level_op"] = lop
+                    effect["defender_level"] = lvl
+                if not any(k in effect for k in ("defender_type", "defender_attribute", "defender_stat", "defender_level")):
+                    return "Specify at least one target criteria (Type, Attribute, Stat, or Level)."
+            all_conds = [dict(c) for c in self.conditions]
         elif do == "magic":
             text = self.vars["card"].get()
             effect["card"] = int(text.split(" ", 1)[0]) if text[:1].isdigit() else 0
@@ -899,7 +1007,7 @@ class EffectDialog(FormDialog):
                     effect["for_each"][key] = self.attribute_value(value) if key == "attribute" else value
 
         if when == "face_up":
-            if do != "battle_immunity":
+            if do not in ("battle_immunity", "piercing"):
                 all_conds = [dict(c) for c in self.conditions]
             if all_conds:
                 effect["conditions"] = all_conds

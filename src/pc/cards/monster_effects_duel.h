@@ -82,6 +82,8 @@ typedef struct {
     unsigned char attacked_summon[MONSTER_RECORDS];
     unsigned char attacked_turn[MONSTER_RECORDS];
     unsigned char attacked_duel[MONSTER_RECORDS];
+    /* API 19: piercing damage applied flag for current combat exchange */
+    unsigned char piercing_applied;
 } MonsterEffectsState;
 
 extern MonsterEffectsState gMonsterEffects;
@@ -119,6 +121,8 @@ void MonsterEffects_FilterTargets(unsigned *objects);
 void MonsterEffects_Stats(const void *record, int *attack, int *defense);
 /* Whether this monster has active battle immunity (cannot be destroyed by battle). */
 int MonsterEffects_HasBattleImmunity(int record);
+/* Whether this monster inflicts piercing damage when attacking the defending monster. */
+int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record);
 /* Whether conditions on an effect are currently met for a monster. */
 int MonsterEffects_ConditionsMet(int record, const MonsterEffect *effect);
 
