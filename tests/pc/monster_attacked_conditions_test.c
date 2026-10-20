@@ -982,8 +982,19 @@ static void test_piercing_damage(void) {
   assert(mock_eff_req.field_1A == 1);         /* 1000 / 1000 = tier 1 medium slash effect */
   D_8009B17C = 0;
 
-  /* When battle ends (state 11), piercing state resets */
+  /* Multi-frame battle cleanup (state 11): runs over many frames (fading out sprites).
+   * It must NEVER re-apply damage or prematurely reset during these frames! */
   D_8009B174 = 11;
+  for (int frame = 0; frame < 30; frame++) {
+    s_mock_last_damage_amount = 0;
+    MonsterEffects_Update();
+    assert(s_mock_last_damage_amount == 0); /* MUST NOT deal damage again across 30 frames */
+  }
+  assert(gMonsterEffects.piercing_applied == 1);
+  assert(D_800E9FF0[1].life_points.signed_value == 7000); /* Only 1000 damage total, not 30,000! */
+
+  /* When leaving battle phase (transitioning to field/hand phase), piercing state resets */
+  gDuel_wSceneStateFlags = PHASE_FIELD;
   MonsterEffects_Update();
   assert(gMonsterEffects.piercing_applied == 0);
   assert(gMonsterEffects.piercing_damage == 0);

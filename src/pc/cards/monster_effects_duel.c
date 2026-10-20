@@ -679,11 +679,14 @@ int MonsterEffects_Update(void) {
       D_8009B209 = -1;
     }
 
-    /* Piercing damage (API 19): damage calculation when attacking a monster in defense position */
+    /* Piercing damage (API 19): damage calculation when attacking a monster in defense position.
+     * Calculated exactly once during combat calculation/presentation (steps 4..8).
+     * Must NEVER be re-applied or reset during multi-frame battle states (such as state 11
+     * cleanup which runs over dozens of frames). */
     int battle_step = D_8009B174 & 0xF;
     if (monster_zone(att_rec) && monster_zone(def_rec) && !S.piercing_applied &&
         ((D_8009B178[1] & 0x800) || (D_801A7AD8[def_rec].flags & DUEL_CARD_FLAG_DEFENSE_POSITION)) &&
-        battle_step >= 4) {
+        battle_step >= 4 && battle_step <= 8) {
       if (MonsterEffects_HasPiercingDamage(att_rec, def_rec)) {
         int diff = 0;
         if (D_800E9EF0[0] && D_800E9EF0[1] &&
@@ -729,10 +732,9 @@ int MonsterEffects_Update(void) {
         }
       }
     }
-    if (battle_step >= 11) {
-      S.piercing_applied = 0;
-      S.piercing_damage = 0;
-    }
+  } else {
+    S.piercing_applied = 0;
+    S.piercing_damage = 0;
   }
   /* Only as a hand or field phase begins, before its first step: within
    * one the field is not settled (the hand lifts a field monster for a
