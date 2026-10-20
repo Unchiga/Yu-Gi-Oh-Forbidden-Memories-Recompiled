@@ -1148,7 +1148,10 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
       int card_id;
       if (!slot_has_monster(r))
         continue;
-      if (owner(r) != owner(record))
+      if (cond->whose == MONSTER_EACH_OPPONENT && owner(r) == owner(record))
+        continue;
+      if ((cond->whose == MONSTER_EACH_OWN || cond->whose == MONSTER_EACH_NONE) &&
+          owner(r) != owner(record))
         continue;
       if (cond->scope && r == record)
         continue;
@@ -1169,12 +1172,17 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
     return cond->presence ? satisfied : !satisfied;
   }
   case MONSTER_COND_CONTROL_ATTRIBUTE: {
-    int found = 0;
+    int total_monsters = 0;
+    int attr_monsters = 0;
+    int satisfied = 0;
     for (r = 0; r < MONSTER_RECORDS; r++) {
       int card_id;
       if (!slot_has_monster(r))
         continue;
-      if (owner(r) != owner(record))
+      if (cond->whose == MONSTER_EACH_OPPONENT && owner(r) == owner(record))
+        continue;
+      if ((cond->whose == MONSTER_EACH_OWN || cond->whose == MONSTER_EACH_NONE) &&
+          owner(r) != owner(record))
         continue;
       if (cond->scope && r == record)
         continue;
@@ -1183,12 +1191,15 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
       card_id = D_801A7AD8[r].card_id;
       if (!card_id && S.card[r])
         card_id = S.card[r];
-      if (cond->attribute < 0 || Cards_Attribute(card_id) == cond->attribute) {
-        found = 1;
-        break;
-      }
+      total_monsters++;
+      if (cond->attribute < 0 || Cards_Attribute(card_id) == cond->attribute)
+        attr_monsters++;
     }
-    return cond->presence ? found : !found;
+    if (cond->type_mode == MONSTER_COND_TYPE_ONLY)
+      satisfied = (total_monsters > 0 && attr_monsters == total_monsters);
+    else
+      satisfied = (attr_monsters > 0);
+    return cond->presence ? satisfied : !satisfied;
   }
   case MONSTER_COND_FIELD_SPELL: {
     /* gDuel_bTerrain holds 0 (normal/none), 1 (Forest) .. 6 (Yami) */
@@ -1203,6 +1214,17 @@ static int evaluate_condition(int record, const MonsterCondition *cond) {
     }
     /* presence: 1 = is active (default), 0 = is not active */
     return cond->presence ? is_match : !is_match;
+  }
+  case MONSTER_COND_LOWER_LP:
+  case MONSTER_COND_HIGHER_LP: {
+    int my_side = owner(record);
+    int opp_side = my_side ^ 1;
+    int my_lp = D_800E9FF0[my_side].life_points.signed_value;
+    int opp_lp = D_800E9FF0[opp_side].life_points.signed_value;
+    if (cond->type == MONSTER_COND_LOWER_LP)
+      return my_lp < opp_lp;
+    else
+      return my_lp > opp_lp;
   }
   default:
     return 1;

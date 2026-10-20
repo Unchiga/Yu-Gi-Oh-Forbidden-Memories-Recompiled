@@ -260,13 +260,19 @@ class ConditionDialog(FormDialog):
 
         c_type = c.get("type", "named_card")
 
-        if c_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
+        if c_type in ("lower_lp", "lp_lower", "fewer_lp", "lp_fewer", "lower_life", "lp_less", "player_lp_lower_than_opponent", "player_lp_lower"):
+            c_type = "lower_lp"
+        elif c_type in ("higher_lp", "lp_higher", "more_lp", "lp_more", "higher_life", "lp_greater", "player_lp_higher_than_opponent", "player_lp_higher"):
+            c_type = "higher_lp"
+        elif c_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
             c_type = "control_stat"
         elif c_type in ("control_monster_level", "monster_level", "not_control_level", "not_control_monster_level"):
             c_type = "control_level"
-        elif c_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type"):
+        elif c_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type",
+                        "type_present", "monster_type_present", "not_type_present", "not_monster_type_present"):
             c_type = "control_type"
-        elif c_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute"):
+        elif c_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute",
+                        "attribute_present", "monster_attribute_present", "not_attribute_present", "not_monster_attribute_present"):
             c_type = "control_attribute"
         elif c_type in ("field_spell", "field", "terrain", "field_magic", "not_field_spell", "not_field", "not_terrain"):
             c_type = "field_spell"
@@ -281,8 +287,10 @@ class ConditionDialog(FormDialog):
         else:
             self.card_field.set(1)
 
-        whose = c.get("whose", "all")
-        self.vars["whose"].set(fx.EACH_LABELS[fx.EACH.index(whose)] if whose in fx.EACH else fx.EACH_LABELS[2])
+        whose = c.get("whose") or c.get("field")
+        if not whose:
+            whose = "all" if c_type == "named_card" else "own"
+        self.vars["whose"].set(fx.EACH_LABELS[fx.EACH.index(whose)] if whose in fx.EACH else (fx.EACH_LABELS[2] if c_type == "named_card" else fx.EACH_LABELS[0]))
 
         pres = c.get("presence", "control")
         if str(c.get("type", "")).startswith("not_"):
@@ -359,12 +367,12 @@ class ConditionDialog(FormDialog):
         elif c_type == "control_level":
             shown |= {"presence", "op", "level", "scope"}
         elif c_type == "control_type":
-            shown |= {"presence", "type_mode", "card_type", "scope"}
+            shown |= {"whose", "presence", "type_mode", "card_type", "scope"}
         elif c_type == "control_attribute":
-            shown |= {"presence", "attribute", "scope"}
+            shown |= {"whose", "presence", "attribute", "scope"}
         elif c_type == "field_spell":
             shown |= {"field", "field_status"}
-        elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
+        elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters", "lower_lp", "higher_lp"):
             pass
 
         for key, widgets in self.rows.items():
@@ -431,6 +439,9 @@ class ConditionDialog(FormDialog):
             if sc == "other":
                 out["scope"] = "other"
         elif c_type == "control_type":
+            whose = self.chosen("whose", fx.EACH, fx.EACH_LABELS) or "own"
+            if whose and whose != "own":
+                out["whose"] = whose
             pres = self.chosen("presence", fx.PRESENCE, fx.PRESENCE_LABELS) or "control"
             if pres == "not_control":
                 out["presence"] = "not_control"
@@ -445,6 +456,9 @@ class ConditionDialog(FormDialog):
             if sc == "other":
                 out["scope"] = "other"
         elif c_type == "control_attribute":
+            whose = self.chosen("whose", fx.EACH, fx.EACH_LABELS) or "own"
+            if whose and whose != "own":
+                out["whose"] = whose
             pres = self.chosen("presence", fx.PRESENCE, fx.PRESENCE_LABELS) or "control"
             if pres == "not_control":
                 out["presence"] = "not_control"
@@ -460,7 +474,7 @@ class ConditionDialog(FormDialog):
             out["field"] = fld
             st = self.chosen("field_status", fx.FIELD_STATUS, fx.FIELD_STATUS_LABELS) or "active"
             out["presence"] = st
-        elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
+        elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters", "lower_lp", "higher_lp"):
             pass
         self.result = out
         return None

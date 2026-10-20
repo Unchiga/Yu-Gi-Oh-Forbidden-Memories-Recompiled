@@ -46,6 +46,8 @@ CONDITIONS = (
     "highest_atk",
     "fewer_monsters",
     "more_monsters",
+    "lower_lp",
+    "higher_lp",
     "control_stat",
     "control_level",
     "control_type",
@@ -59,10 +61,12 @@ CONDITION_LABELS = (
     "Has the highest ATK on field",
     "If you control fewer monsters than opponent",
     "If you control more monsters than your opponent",
+    "If player's LP lower than opponent's",
+    "If player's LP higher than opponent's",
     "Control monster with ATK/DEF",
     "Control monster with Level",
-    "Control monster with Type",
-    "Control monster with Attribute",
+    "Monster Type present on field",
+    "Monster Attribute present on field",
     "Field spell active or not active",
 )
 CONDITION_HINTS = (
@@ -72,10 +76,12 @@ CONDITION_HINTS = (
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
     "Active only while you control strictly fewer monsters than your opponent (having 0 monsters counts; ties disqualify).",
     "Active only while you control strictly more monsters than your opponent (opponent having 0 monsters counts; ties disqualify).",
+    "Active only while your Life Points are strictly lower than your opponent's (ties disqualify).",
+    "Active only while your Life Points are strictly higher than your opponent's (ties disqualify).",
     "Control (or do not control) a monster with ATK or DEF compared against a value.",
     "Control (or do not control) a monster with a specific Level, or higher/fewer Level than a number.",
-    "Control (or do not control) a monster of a specific Type (at least one, or only control that type).",
-    "Control (or do not control) a monster of a specific Attribute.",
+    "A monster of a specific Type is present (or not present) on the field (own, opponent's, or both fields).",
+    "A monster of a specific Attribute is present (or not present) on the field (own, opponent's, or both fields).",
     "A field spell is active, or a specific field spell is active or not active (Forest, Wasteland, Mountain, Sogen, Umi, Yami).",
 )
 RESET = ("turn", "copy", "duel")
@@ -233,13 +239,19 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         raw_type = "fewer_monsters"
     elif raw_type in ("more_monsters_than_opponent", "more_monsters_than_opp", "control_more_monsters"):
         raw_type = "more_monsters"
+    elif raw_type in ("lower_lp", "lp_lower", "fewer_lp", "lp_fewer", "lower_life", "lp_less", "player_lp_lower_than_opponent", "player_lp_lower"):
+        raw_type = "lower_lp"
+    elif raw_type in ("higher_lp", "lp_higher", "more_lp", "lp_more", "higher_life", "lp_greater", "player_lp_higher_than_opponent", "player_lp_higher"):
+        raw_type = "higher_lp"
     elif raw_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
         raw_type = "control_stat"
     elif raw_type in ("control_monster_level", "monster_level", "not_control_level", "not_control_monster_level"):
         raw_type = "control_level"
-    elif raw_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type"):
+    elif raw_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type",
+                      "type_present", "monster_type_present", "not_type_present", "not_monster_type_present"):
         raw_type = "control_type"
-    elif raw_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute"):
+    elif raw_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute",
+                      "attribute_present", "monster_attribute_present", "not_attribute_present", "not_monster_attribute_present"):
         raw_type = "control_attribute"
     elif raw_type in ("field_spell", "field", "terrain", "field_magic", "not_field_spell", "not_field", "not_terrain"):
         raw_type = "field_spell"
@@ -248,7 +260,9 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
         return None
     out = {"type": c_type}
     if c_type in ("control_stat", "control_level", "control_type", "control_attribute"):
-        is_not = str(cond.get("type", "")).startswith("not_") or cond.get("presence") in ("not_control", "not", "none", "no", "do_not_control")
+        is_not = str(cond.get("type", "")).startswith("not_") or cond.get("presence") in (
+            "not_control", "not", "none", "no", "do_not_control", "not_present", "is_not_present", "false", False, 0
+        )
         if is_not:
             out["presence"] = "not_control"
         if cond.get("scope") in ("other", "others", "exclude_self"):
@@ -363,15 +377,33 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
             return None
         out["level"] = val
     elif c_type == "control_type":
+        whose = cond.get("whose") or cond.get("field")
+        if whose:
+            w = whose.lower() if isinstance(whose, str) else str(whose)
+            if w in ("opponent", "opp"):
+                out["whose"] = "opponent"
+            elif w in ("all", "both", "whole_field", "field"):
+                out["whose"] = "all"
         mode = cond.get("mode") or cond.get("type_mode")
         if mode in ("only", "only_control"):
             out["mode"] = "only"
         t = cond.get("card_type") or cond.get("monster_type")
-        if not t and cond.get("type") not in ("control_type", "not_control_type", "control_monster_type", "not_control_monster_type"):
+        if not t and cond.get("type") not in ("control_type", "not_control_type", "control_monster_type", "not_control_monster_type",
+                                              "type_present", "not_type_present", "monster_type_present", "not_monster_type_present"):
             t = cond.get("type")
         if t is not None:
             out["card_type"] = str(t)
     elif c_type == "control_attribute":
+        whose = cond.get("whose") or cond.get("field")
+        if whose:
+            w = whose.lower() if isinstance(whose, str) else str(whose)
+            if w in ("opponent", "opp"):
+                out["whose"] = "opponent"
+            elif w in ("all", "both", "whole_field", "field"):
+                out["whose"] = "all"
+        mode = cond.get("mode") or cond.get("type_mode")
+        if mode in ("only", "only_control"):
+            out["mode"] = "only"
         attr = cond.get("attribute")
         if attr is not None:
             out["attribute"] = str(attr)
@@ -407,7 +439,7 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
             out["presence"] = "not_active"
         else:
             out["presence"] = "active"
-    elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters"):
+    elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters", "lower_lp", "higher_lp"):
         pass
     return out
 
@@ -869,6 +901,10 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
         return "you control fewer monsters than opponent"
     if c_type == "more_monsters":
         return "you control more monsters than your opponent"
+    if c_type in ("lower_lp", "lp_lower", "fewer_lp"):
+        return "your LP is lower than opponent's"
+    if c_type in ("higher_lp", "lp_higher", "more_lp"):
+        return "your LP is higher than opponent's"
     if c_type == "control_stat":
         p = "you do not control" if cond.get("presence") == "not_control" else "you control"
         sc = " another" if cond.get("scope") == "other" else " a"
@@ -885,18 +921,39 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
             return f"{p}{sc} Level {val} monster"
         return f"{p}{sc} Level {op} {val} monster"
     if c_type == "control_type":
-        p = cond.get("presence") == "not_control"
+        p = cond.get("presence") in ("not_control", "not_present")
         sc = " other" if cond.get("scope") == "other" else ""
         t_name = str(cond.get("card_type") or cond.get("monster_type") or (cond.get("type") if cond.get("type") not in CONDITIONS else "Dragon"))
-        if cond.get("mode") == "only":
-            return f"you do not only control{sc} {t_name} monsters" if p else f"you only control{sc} {t_name} monsters"
+        whose = cond.get("whose") or cond.get("field") or "own"
+        if whose == "opponent":
+            if cond.get("mode") == "only":
+                return f"the opponent does not only control {t_name} monsters" if p else f"the opponent only controls {t_name} monsters"
+            return f"no {t_name} monster is present on opponent's field" if p else f"a {t_name} monster is present on opponent's field"
+        elif whose in ("all", "both"):
+            if cond.get("mode") == "only":
+                return f"the field does not only contain {t_name} monsters" if p else f"the field only contains {t_name} monsters"
+            return f"no {t_name} monster is present on the field" if p else f"a {t_name} monster is present on the field"
         else:
+            if cond.get("mode") == "only":
+                return f"you do not only control{sc} {t_name} monsters" if p else f"you only control{sc} {t_name} monsters"
             return f"you do not control{sc} a {t_name} monster" if p else f"you control{sc} a {t_name} monster"
     if c_type == "control_attribute":
-        p = "you do not control" if cond.get("presence") == "not_control" else "you control"
-        sc = " another" if cond.get("scope") == "other" else " a"
+        p = cond.get("presence") in ("not_control", "not_present")
+        sc = " other" if cond.get("scope") == "other" else ""
         attr = str(cond.get("attribute", "LIGHT")).upper()
-        return f"{p}{sc} {attr} monster"
+        whose = cond.get("whose") or cond.get("field") or "own"
+        if whose == "opponent":
+            if cond.get("mode") == "only":
+                return f"the opponent does not only control {attr} monsters" if p else f"the opponent only controls {attr} monsters"
+            return f"no {attr} monster is present on opponent's field" if p else f"a {attr} monster is present on opponent's field"
+        elif whose in ("all", "both"):
+            if cond.get("mode") == "only":
+                return f"the field does not only contain {attr} monsters" if p else f"the field only contains {attr} monsters"
+            return f"no {attr} monster is present on the field" if p else f"a {attr} monster is present on the field"
+        else:
+            if cond.get("mode") == "only":
+                return f"you do not only control{sc} {attr} monsters" if p else f"you only control{sc} {attr} monsters"
+            return f"you do not control{sc} a {attr} monster" if p else f"you control{sc} a {attr} monster"
     if c_type == "field_spell":
         fld = cond.get("field", "any")
         is_active = cond.get("presence", "active") != "not_active"

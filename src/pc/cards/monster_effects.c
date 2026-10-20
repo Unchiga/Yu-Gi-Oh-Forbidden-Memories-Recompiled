@@ -35,7 +35,9 @@ const char *const MonsterEffect_CondNames[MONSTER_COND_COUNT] = {
     "control_level",
     "control_type",
     "control_attribute",
-    "field_spell"};
+    "field_spell",
+    "lower_lp",
+    "higher_lp"};
 const char *const MonsterEffect_FieldNames[MONSTER_FIELD_COUNT] = {
     "any", "forest", "wasteland", "mountain", "sogen", "umi", "yami"};
 const char *const MonsterEffect_BattleModNames[MONSTER_BATTLE_MOD_COUNT] = {
@@ -284,8 +286,12 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
                (!strcmp(type_str, "control_type") ||
                 !strcmp(type_str, "control_monster_type") ||
                 !strcmp(type_str, "monster_type") ||
+                !strcmp(type_str, "type_present") ||
+                !strcmp(type_str, "monster_type_present") ||
                 !strcmp(type_str, "not_control_type") ||
-                !strcmp(type_str, "not_control_monster_type"))) {
+                !strcmp(type_str, "not_control_monster_type") ||
+                !strcmp(type_str, "not_type_present") ||
+                !strcmp(type_str, "not_monster_type_present"))) {
       type = MONSTER_COND_CONTROL_TYPE;
       if (!strncmp(type_str, "not_", 4))
         cond->presence = 0;
@@ -293,8 +299,12 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
                (!strcmp(type_str, "control_attribute") ||
                 !strcmp(type_str, "control_monster_attribute") ||
                 !strcmp(type_str, "monster_attribute") ||
+                !strcmp(type_str, "attribute_present") ||
+                !strcmp(type_str, "monster_attribute_present") ||
                 !strcmp(type_str, "not_control_attribute") ||
-                !strcmp(type_str, "not_control_monster_attribute"))) {
+                !strcmp(type_str, "not_control_monster_attribute") ||
+                !strcmp(type_str, "not_attribute_present") ||
+                !strcmp(type_str, "not_monster_attribute_present"))) {
       type = MONSTER_COND_CONTROL_ATTRIBUTE;
       if (!strncmp(type_str, "not_", 4))
         cond->presence = 0;
@@ -309,13 +319,34 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
       type = MONSTER_COND_FIELD_SPELL;
       if (!strncmp(type_str, "not_", 4))
         cond->presence = 0;
+    } else if (type_str &&
+               (!strcmp(type_str, "lower_lp") ||
+                !strcmp(type_str, "lp_lower") ||
+                !strcmp(type_str, "fewer_lp") ||
+                !strcmp(type_str, "lp_fewer") ||
+                !strcmp(type_str, "lower_life") ||
+                !strcmp(type_str, "lp_less") ||
+                !strcmp(type_str, "player_lp_lower_than_opponent") ||
+                !strcmp(type_str, "player_lp_lower"))) {
+      type = MONSTER_COND_LOWER_LP;
+    } else if (type_str &&
+               (!strcmp(type_str, "higher_lp") ||
+                !strcmp(type_str, "lp_higher") ||
+                !strcmp(type_str, "more_lp") ||
+                !strcmp(type_str, "lp_more") ||
+                !strcmp(type_str, "higher_life") ||
+                !strcmp(type_str, "lp_greater") ||
+                !strcmp(type_str, "player_lp_higher_than_opponent") ||
+                !strcmp(type_str, "player_lp_higher"))) {
+      type = MONSTER_COND_HIGHER_LP;
     } else {
       Mods_Note(mod,
                 "cards[%d]: monster_effects[%d]: conditions[%d]: \"type\" must "
                 "be named_card, "
                 "stat_threshold, lowest_atk, highest_atk, "
                 "fewer_monsters, more_monsters, "
-                "control_stat, control_level, control_type, control_attribute or field_spell",
+                "control_stat, control_level, control_type, control_attribute, "
+                "field_spell, lower_lp or higher_lp",
                 index, n, c_idx);
       return 0;
     }
@@ -543,10 +574,26 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
       const char *p_str = Json_String(val, "");
       if (!strcmp(p_str, "not_control") || !strcmp(p_str, "not") ||
           !strcmp(p_str, "none") || !strcmp(p_str, "no") ||
-          !strcmp(p_str, "do_not_control"))
+          !strcmp(p_str, "do_not_control") ||
+          !strcmp(p_str, "not_present") || !strcmp(p_str, "is_not_present"))
         cond->presence = 0;
-      else if (!strcmp(p_str, "control") || !strcmp(p_str, "yes"))
+      else if (!strcmp(p_str, "control") || !strcmp(p_str, "yes") ||
+               !strcmp(p_str, "present") || !strcmp(p_str, "is_present"))
         cond->presence = 1;
+    }
+    cond->whose = MONSTER_EACH_OWN;
+    val = Json_Member(entry, "whose");
+    if (!val)
+      val = Json_Member(entry, "field");
+    if (val) {
+      const char *w_str = Json_String(val, "");
+      if (!strcmp(w_str, "opponent") || !strcmp(w_str, "opp"))
+        cond->whose = MONSTER_EACH_OPPONENT;
+      else if (!strcmp(w_str, "all") || !strcmp(w_str, "both") ||
+               !strcmp(w_str, "field") || !strcmp(w_str, "whole_field"))
+        cond->whose = MONSTER_EACH_ALL;
+      else if (!strcmp(w_str, "own"))
+        cond->whose = MONSTER_EACH_OWN;
     }
     val = Json_Member(entry, "scope");
     if (val) {
@@ -573,7 +620,11 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
           (!strcmp(Json_String(val, ""), "control_type") ||
            !strcmp(Json_String(val, ""), "control_monster_type") ||
            !strcmp(Json_String(val, ""), "not_control_type") ||
-           !strcmp(Json_String(val, ""), "not_control_monster_type")))
+           !strcmp(Json_String(val, ""), "not_control_monster_type") ||
+           !strcmp(Json_String(val, ""), "type_present") ||
+           !strcmp(Json_String(val, ""), "not_type_present") ||
+           !strcmp(Json_String(val, ""), "monster_type_present") ||
+           !strcmp(Json_String(val, ""), "not_monster_type_present")))
         val = NULL;
     }
     if (val) {
@@ -596,10 +647,26 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
       const char *p_str = Json_String(val, "");
       if (!strcmp(p_str, "not_control") || !strcmp(p_str, "not") ||
           !strcmp(p_str, "none") || !strcmp(p_str, "no") ||
-          !strcmp(p_str, "do_not_control"))
+          !strcmp(p_str, "do_not_control") ||
+          !strcmp(p_str, "not_present") || !strcmp(p_str, "is_not_present"))
         cond->presence = 0;
-      else if (!strcmp(p_str, "control") || !strcmp(p_str, "yes"))
+      else if (!strcmp(p_str, "control") || !strcmp(p_str, "yes") ||
+               !strcmp(p_str, "present") || !strcmp(p_str, "is_present"))
         cond->presence = 1;
+    }
+    cond->whose = MONSTER_EACH_OWN;
+    val = Json_Member(entry, "whose");
+    if (!val)
+      val = Json_Member(entry, "field");
+    if (val) {
+      const char *w_str = Json_String(val, "");
+      if (!strcmp(w_str, "opponent") || !strcmp(w_str, "opp"))
+        cond->whose = MONSTER_EACH_OPPONENT;
+      else if (!strcmp(w_str, "all") || !strcmp(w_str, "both") ||
+               !strcmp(w_str, "field") || !strcmp(w_str, "whole_field"))
+        cond->whose = MONSTER_EACH_ALL;
+      else if (!strcmp(w_str, "own"))
+        cond->whose = MONSTER_EACH_OWN;
     }
     val = Json_Member(entry, "scope");
     if (val) {
@@ -607,6 +674,15 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
       if (!strcmp(sc_str, "other") || !strcmp(sc_str, "others") ||
           !strcmp(sc_str, "exclude_self"))
         cond->scope = 1;
+    }
+    val = Json_Member(entry, "mode");
+    if (!val)
+      val = Json_Member(entry, "type_mode");
+    cond->type_mode = MONSTER_COND_TYPE_AT_LEAST_ONE;
+    if (val) {
+      const char *m_str = Json_String(val, "");
+      if (!strcmp(m_str, "only") || !strcmp(m_str, "only_control"))
+        cond->type_mode = MONSTER_COND_TYPE_ONLY;
     }
     val = Json_Member(entry, "attribute");
     if (val) {
@@ -621,6 +697,9 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx,
     }
     break;
   }
+  case MONSTER_COND_LOWER_LP:
+  case MONSTER_COND_HIGHER_LP:
+    break;
   case MONSTER_COND_FIELD_SPELL: {
     val = Json_Member(entry, "presence");
     if (!val)

@@ -1471,6 +1471,45 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(cond_fld_card, {"type": "field_spell", "field": "mountain", "presence": "active"})
         self.assertEqual(fx.condition_words(cond_fld_card), "Mountain is active")
 
+        # Lower / Higher LP conditions
+        cond_lower_lp = fx.normalize_condition({"type": "lower_lp"})
+        self.assertEqual(cond_lower_lp, {"type": "lower_lp"})
+        self.assertEqual(fx.condition_words(cond_lower_lp), "your LP is lower than opponent's")
+        self.assertEqual(fx.normalize_condition({"type": "player_lp_lower_than_opponent"}), {"type": "lower_lp"})
+        self.assertEqual(fx.normalize_condition({"type": "lp_lower"}), {"type": "lower_lp"})
+
+        cond_higher_lp = fx.normalize_condition({"type": "higher_lp"})
+        self.assertEqual(cond_higher_lp, {"type": "higher_lp"})
+        self.assertEqual(fx.condition_words(cond_higher_lp), "your LP is higher than opponent's")
+        self.assertEqual(fx.normalize_condition({"type": "player_lp_higher_than_opponent"}), {"type": "higher_lp"})
+        self.assertEqual(fx.normalize_condition({"type": "lp_higher"}), {"type": "higher_lp"})
+
+        # Type present on opponent's / all fields
+        cond_ctype_opp = fx.normalize_condition({"type": "control_type", "whose": "opponent", "card_type": "Dragon"})
+        self.assertEqual(cond_ctype_opp, {"type": "control_type", "whose": "opponent", "card_type": "Dragon"})
+        self.assertEqual(fx.condition_words(cond_ctype_opp), "a Dragon monster is present on opponent's field")
+
+        cond_nctype_opp = fx.normalize_condition({"type": "not_type_present", "field": "opponent", "card_type": "Spellcaster"})
+        self.assertEqual(cond_nctype_opp, {"type": "control_type", "whose": "opponent", "presence": "not_control", "card_type": "Spellcaster"})
+        self.assertEqual(fx.condition_words(cond_nctype_opp), "no Spellcaster monster is present on opponent's field")
+
+        cond_ctype_all = fx.normalize_condition({"type": "type_present", "whose": "both", "card_type": "Zombie"})
+        self.assertEqual(cond_ctype_all, {"type": "control_type", "whose": "all", "card_type": "Zombie"})
+        self.assertEqual(fx.condition_words(cond_ctype_all), "a Zombie monster is present on the field")
+
+        # Attribute present on opponent's / all fields
+        cond_cattr_opp = fx.normalize_condition({"type": "control_attribute", "whose": "opponent", "attribute": "LIGHT"})
+        self.assertEqual(cond_cattr_opp, {"type": "control_attribute", "whose": "opponent", "attribute": "LIGHT"})
+        self.assertEqual(fx.condition_words(cond_cattr_opp), "a LIGHT monster is present on opponent's field")
+
+        cond_ncattr_opp = fx.normalize_condition({"type": "not_attribute_present", "field": "opponent", "attribute": "DARK"})
+        self.assertEqual(cond_ncattr_opp, {"type": "control_attribute", "whose": "opponent", "presence": "not_control", "attribute": "DARK"})
+        self.assertEqual(fx.condition_words(cond_ncattr_opp), "no DARK monster is present on opponent's field")
+
+        cond_cattr_all = fx.normalize_condition({"type": "attribute_present", "whose": "all", "attribute": "FIRE"})
+        self.assertEqual(cond_cattr_all, {"type": "control_attribute", "whose": "all", "attribute": "FIRE"})
+        self.assertEqual(fx.condition_words(cond_cattr_all), "a FIRE monster is present on the field")
+
         # Attack conditions are NOT conditions (normalize_condition returns None)
         self.assertIsNone(fx.normalize_condition({"type": "first_attacked"}))
         self.assertIsNone(fx.normalize_condition({"type": "destroyed_after_2_attacks"}))

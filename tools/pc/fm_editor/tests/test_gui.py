@@ -2742,6 +2742,35 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.ok()
         self.assertEqual(dialog.result, {"type": "field_spell", "field": "forest", "presence": "not_active"})
 
+        # 11. LP lower than opponent
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("lower_lp")])
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "lower_lp"})
+
+        # 12. LP higher than opponent
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("higher_lp")])
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "higher_lp"})
+
+        # 13. Type present on opponent's field
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_type")])
+        dialog.vars["whose"].set(fx.EACH_LABELS[1])  # On the opponent's field
+        dialog.vars["card_type"].set("Spellcaster")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_type", "whose": "opponent", "card_type": "Spellcaster"})
+
+        # 14. Attribute not present on whole field
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_attribute")])
+        dialog.vars["whose"].set(fx.EACH_LABELS[2])  # On the whole field
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
+        dialog.vars["attribute"].set("DARK")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_attribute", "whose": "all", "presence": "not_control", "attribute": "DARK"})
+
     def test_effect_dialog_modifiers(self):
         from fm_editor.monster_effects_ui import EffectDialog
         from fm_editor import monster_effects as fx

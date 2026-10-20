@@ -593,6 +593,38 @@ static void test_control_type_condition(void) {
   cond->scope = 1;
   assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
 
+  /* Test 5: whose = MONSTER_EACH_OPPONENT vs MONSTER_EACH_ALL */
+  /* Put card 30, Type 3 on opponent's slot 20 */
+  D_801A7AD8[20].card_id = 30;
+  D_801A7AD8[20].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[20] = 30;
+  gMonsterEffects.face_up[20] = 1;
+  s_mock_type[30] = 3;
+
+  /* Check Type 3 with whose = OWN -> false */
+  cond->card_type = 3;
+  cond->presence = 1;
+  cond->scope = 0;
+  cond->whose = MONSTER_EACH_OWN;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
+
+  /* Check Type 3 with whose = OPPONENT -> true */
+  cond->whose = MONSTER_EACH_OPPONENT;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
+  /* Check Type 3 with whose = ALL -> true */
+  cond->whose = MONSTER_EACH_ALL;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
+  /* Check Type 3 is NOT present with whose = OPPONENT -> false */
+  cond->presence = 0;
+  cond->whose = MONSTER_EACH_OPPONENT;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
+
+  /* Check Type 4 (not present anywhere) with whose = OPPONENT -> true */
+  cond->card_type = 4;
+  assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
   puts("test_control_type_condition: PASSED");
 }
 
@@ -644,7 +676,90 @@ static void test_control_attribute_condition(void) {
   cond->attribute = 2;
   assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
 
+  /* Test 5: whose = MONSTER_EACH_OPPONENT vs MONSTER_EACH_ALL */
+  /* Put card 30, Attribute 4 (FIRE) on opponent's slot 20 */
+  D_801A7AD8[20].card_id = 30;
+  D_801A7AD8[20].flags = DUEL_CARD_FLAG_OCCUPIED;
+  gMonsterEffects.card[20] = 30;
+  gMonsterEffects.face_up[20] = 1;
+  s_mock_attr[30] = 4;
+
+  /* Check FIRE with whose = OWN -> false */
+  cond->attribute = 4;
+  cond->presence = 1;
+  cond->scope = 0;
+  cond->whose = MONSTER_EACH_OWN;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  /* Check FIRE with whose = OPPONENT -> true */
+  cond->whose = MONSTER_EACH_OPPONENT;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Check FIRE with whose = ALL -> true */
+  cond->whose = MONSTER_EACH_ALL;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+  /* Check FIRE is NOT present on OPPONENT -> false */
+  cond->presence = 0;
+  cond->whose = MONSTER_EACH_OPPONENT;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+  /* Check WATER (attr 3, not on opponent) is NOT present on OPPONENT -> true */
+  cond->attribute = 3;
+  assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
   puts("test_control_attribute_condition: PASSED");
+}
+
+static void test_lp_comparison_conditions(void) {
+  MonsterEffect eff_lower, eff_higher;
+  MonsterCondition *cond_l, *cond_h;
+
+  memset(&eff_lower, 0, sizeof(eff_lower));
+  eff_lower.cond_count = 1;
+  eff_lower.when = MONSTER_WHEN_FACE_UP;
+  cond_l = &eff_lower.conditions[0];
+  cond_l->type = MONSTER_COND_LOWER_LP;
+
+  memset(&eff_higher, 0, sizeof(eff_higher));
+  eff_higher.cond_count = 1;
+  eff_higher.when = MONSTER_WHEN_FACE_UP;
+  cond_h = &eff_higher.conditions[0];
+  cond_h->type = MONSTER_COND_HIGHER_LP;
+
+  /* Slot 5 = player 0, Slot 20 = player 1 */
+
+  /* Case 1: Player LP 4000, Opponent LP 8000 */
+  D_800E9FF0[0].life_points.signed_value = 4000;
+  D_800E9FF0[1].life_points.signed_value = 8000;
+
+  /* Player card (slot 5): lower_lp is TRUE (4000 < 8000), higher_lp is FALSE */
+  assert(MonsterEffects_ConditionsMet(5, &eff_lower) == 1);
+  assert(MonsterEffects_ConditionsMet(5, &eff_higher) == 0);
+
+  /* Opponent card (slot 20): lower_lp is FALSE (8000 < 4000), higher_lp is TRUE (8000 > 4000) */
+  assert(MonsterEffects_ConditionsMet(20, &eff_lower) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_higher) == 1);
+
+  /* Case 2: Player LP 8000, Opponent LP 2000 */
+  D_800E9FF0[0].life_points.signed_value = 8000;
+  D_800E9FF0[1].life_points.signed_value = 2000;
+
+  assert(MonsterEffects_ConditionsMet(5, &eff_lower) == 0);
+  assert(MonsterEffects_ConditionsMet(5, &eff_higher) == 1);
+  assert(MonsterEffects_ConditionsMet(20, &eff_lower) == 1);
+  assert(MonsterEffects_ConditionsMet(20, &eff_higher) == 0);
+
+  /* Case 3: Ties (Player LP 8000, Opponent LP 8000) -> both FALSE */
+  D_800E9FF0[0].life_points.signed_value = 8000;
+  D_800E9FF0[1].life_points.signed_value = 8000;
+
+  assert(MonsterEffects_ConditionsMet(5, &eff_lower) == 0);
+  assert(MonsterEffects_ConditionsMet(5, &eff_higher) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_lower) == 0);
+  assert(MonsterEffects_ConditionsMet(20, &eff_higher) == 0);
+
+  puts("test_lp_comparison_conditions: PASSED");
 }
 
 static void test_field_spell_condition(void) {
@@ -1199,6 +1314,7 @@ int main(void) {
   test_control_level_condition();
   test_control_type_condition();
   test_control_attribute_condition();
+  test_lp_comparison_conditions();
   test_field_spell_condition();
   test_attacker_criteria_immunity();
   test_piercing_damage();
