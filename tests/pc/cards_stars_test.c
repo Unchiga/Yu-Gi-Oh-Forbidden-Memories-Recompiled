@@ -144,8 +144,12 @@ uint32_t Glyphs_NextCharacter(const char **text) {
 }
 void Library_UpdateCardUsedFlag(int flag) { (void)flag; }
 int Memories_Rand(void) { return 0; }
+#ifdef MEMORIES_LOW_MEMORY
+/* Without the low region these are macros for malloc and free
+ * (pc/guest/low_memory.h): defining them would define malloc itself. */
 void *Memories_LowAlloc(size_t size) { return malloc(size); }
 void Memories_LowFree(void *ptr) { free(ptr); }
+#endif
 void Mods_SetCardNotes(const char *(*which)(int id),
                        int (*tag)(int id, const char *key, char *out,
                                   size_t size)) {
@@ -165,13 +169,6 @@ int Mods_Setting(const char *id, const char *key, int fallback) {
   (void)key;
   return fallback;
 }
-unsigned char gDuelEffect_abGroupByEffectId[256] = {
-    0, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0, 0,  6,  0,  0,  0,  0,  0,  0,  0,  0,  4,  1,  1,  1,  1,  1,
-    1, 4,  7,  2,  2,  2,  2,  2,  3,  3,  3,  3,  3,  10, 9,  8,  0,
-    0, 5,  0,  11, 5,  0,  0,  0,  5,  5,  5,  5,  5,  12, 12, 12, 0,
-    9, 12, 12, 13, 12, 12, 12, 12, 12, 12, 12, 12, 0,  0,  0,  0,  0,
-    0, 0,  0,  0,  0,  12, 12, 12, 12, 12, 12, 12, 12, 12, 0,  0,  0};
 /* The mods' "cards", in load order, as Cards_Build visits them. */
 static const char *const mod_cards[][2] = {
     /* The report: a retail monster replaced with no star keeps none; [none,
@@ -594,7 +591,7 @@ static void monster_effect_conditions_and_battle_immunity(void) {
                  "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
                  "   \"conditions\":["
                  "     {\"type\":\"named_card\",\"card\":1,\"whose\":\"own\"},"
-                 "     {\"type\":\"first_attacked\",\"reset\":\"turn\"},"
+                 "     {\"type\":\"fewer_monsters\"},"
                  "     "
                  "{\"type\":\"stat_threshold\",\"stat\":\"def\",\"comparison\":"
                  "\"<=\",\"value\":2000},"
@@ -625,8 +622,7 @@ static void monster_effect_conditions_and_battle_immunity(void) {
   assert(effects[0].conditions[0].type == MONSTER_COND_NAMED_CARD);
   assert(effects[0].conditions[0].card == 1);
   assert(effects[0].conditions[0].whose == MONSTER_EACH_OWN);
-  assert(effects[0].conditions[1].type == MONSTER_COND_FIRST_ATTACKED);
-  assert(effects[0].conditions[1].reset == MONSTER_RESET_TURN);
+  assert(effects[0].conditions[1].type == MONSTER_COND_FEWER_MONSTERS);
   assert(effects[0].conditions[2].type == MONSTER_COND_STAT_THRESHOLD);
   assert(effects[0].conditions[2].stat == MONSTER_STAT_DEF);
   assert(effects[0].conditions[2].op == MONSTER_OP_LE);
@@ -646,27 +642,33 @@ static void monster_effect_conditions_and_battle_immunity(void) {
    * note */
   assert(effect_notes > before);
 
-  /* Test destroyed_after_2_attacks and destroyed_after_3_attacks conditions */
+  /* Attack counts are battle immunity modifiers, not conditions. */
   JsonDocument *doc2 = Json_Parse(
       "[{\"replace\":27,\"monster_effects\":["
       "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
-      "   \"conditions\":["
-      "     {\"type\":\"destroyed_after_2_attacks\",\"reset\":\"copy\"},"
-      "     {\"type\":\"destroyed_after_3_attacks\",\"reset\":\"turn\"}]}]}]",
-
+      "   \"modifier\":\"destroyed_after_2_attacks\",\"reset\":\"summon\"},"
+      "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+      "   \"modifier\":\"destroyed_after_3_attacks\",\"reset\":\"turn\"},"
+      "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+      "   \"modifier\":\"first_attacked\",\"reset\":\"duel\"},"
+      "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+      "   \"conditions\":[{\"type\":\"first_attacked\"}]}]}]",
       error, sizeof(error));
   assert(doc2);
+  before = effect_notes;
   for (i = 0, entry = Json_At(Json_Root(doc2), 0); entry;
        i++, entry = Json_Next(entry))
     add_entry("f", ".", i, entry, &context);
-  assert(Cards_MonsterEffects(27, &effects) == 1);
-  assert(effects[0].cond_count == 2);
-  assert(effects[0].conditions[0].type ==
-         MONSTER_COND_DESTROYED_AFTER_2_ATTACKS);
-  assert(effects[0].conditions[0].reset == MONSTER_RESET_COPY);
-  assert(effects[0].conditions[1].type ==
-         MONSTER_COND_DESTROYED_AFTER_3_ATTACKS);
-  assert(effects[0].conditions[1].reset == MONSTER_RESET_TURN);
+  assert(Cards_MonsterEffects(27, &effects) == 3);
+  assert(effects[0].cond_count == 0);
+  assert(effects[0].battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS);
+  assert(effects[0].battle_reset == MONSTER_RESET_SUMMON);
+  assert(effects[1].battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS);
+  assert(effects[1].battle_reset == MONSTER_RESET_TURN);
+  assert(effects[2].battle_modifier == MONSTER_BATTLE_MOD_FIRST_ATTACKED);
+  assert(effects[2].battle_reset == MONSTER_RESET_DUEL);
+  /* the old condition spelling is noted and left out */
+  assert(effect_notes > before);
   /* Test fewer_monsters and more_monsters conditions */
   JsonDocument *doc3 = Json_Parse(
       "[{\"replace\":29,\"monster_effects\":["
