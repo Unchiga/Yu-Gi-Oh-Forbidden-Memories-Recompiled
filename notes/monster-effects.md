@@ -76,11 +76,11 @@ Configured under continuous static field state:
 ```
 
 ### Lifecycle & Destruction Interception
-- **Defender Scope**: Battle immunity evaluates when this card is the **defender** receiving an attack (`record == S.trap_battle_record[1]`). When initiating an attack against a stronger opponent, standard battle destruction applies.
+- **Scope**: With the default `"always"` modifier the card is not destroyed by battle whether it attacks or is attacked. Every other modifier (attack counts and attacker criteria) applies only while this card is the **defender** receiving an attack (`record == S.trap_battle_record[1]`); attacking a stronger monster, it is destroyed as usual.
 - **Standard Battle Damage**: Life Point calculation proceeds normally: if the defender's ATK/DEF is lower than the attacking monster's ATK, the difference is deducted from the player's LP as regular combat damage.
 - **Destruction Interception**: When battle destruction would be finalized:
   - 2D duel view: internal register `D_8009B1B0` is transitioned from `-1` (destroy) to `1` (struck, stays on field).
-  - 3D battle arena: destruction registers `D_8009B208` / `D_8009B209` are cleared to `-1`.
+  - 3D battle: the losers in `D_8009B208` / `D_8009B209` are cleared to `-1` before the resume phase (11) removes them on the way back.
 - **Non-Battle Removal**: Spells (e.g. *Raigeki*), traps, and monster destruction effects remove the card normally.
 
 ### Battle Immunity Modifiers
@@ -90,9 +90,9 @@ Modifiers define specific combat conditions under which battle immunity applies.
 | Modifier ID | Name / Description | Extra Parameters |
 | ----------- | ------------------ | ---------------- |
 | `"always"` | Always (Default) | _(none)_ |
-| `"first_attacked"` | The first time it is attacked | `reset` (`"turn"`, `"card"`, `"duel"`) |
-| `"after_2_attacks"` | Can only be destroyed after two attacks | `reset` (`"turn"`, `"card"`, `"duel"`) |
-| `"after_3_attacks"` | Can only be destroyed after three attacks | `reset` (`"turn"`, `"card"`, `"duel"`) |
+| `"first_attacked"` | The first time it is attacked | `reset` (`"turn"`, `"copy"`, `"duel"`) |
+| `"destroyed_after_2_attacks"` | Can only be destroyed after two attacks | `reset` (`"turn"`, `"copy"`, `"duel"`) |
+| `"destroyed_after_3_attacks"` | Can only be destroyed after three attacks | `reset` (`"turn"`, `"copy"`, `"duel"`) |
 | `"attacked_by_type"` | If attacked by monster of Type | `attacker_type` (Type name/ID) |
 | `"attacked_by_attribute"` | If attacked by monster of Attribute | `attacker_attribute` (Attribute name/ID) |
 | `"attacked_by_stat"` | If attacked by monster with ATK/DEF threshold | `attacker_stat`, `attacker_stat_op`, `attacker_amount` |
@@ -104,7 +104,7 @@ Modifiers define specific combat conditions under which battle immunity applies.
 Attacker criteria dynamically inspect the attacking monster during damage calculation via `Duel_CalcCardStats()` and `Cards_Level()`:
 - **`attacker_stat`**: `"atk"` or `"def"`
 - **`attacker_stat_op`**: `"<"`, `"<="`, `">"`, `">="`, `"=="` (default `">"`)
-- **`attacker_amount`**: Stat value threshold (0–65535)
+- **`attacker_amount`**: Stat value threshold (0–9999)
 - **`attacker_level_op`**: `"<"`, `"<="`, `">"`, `">="`, `"=="` (default `">"`)
 - **`attacker_level`**: Level threshold (1–12)
 
@@ -126,7 +126,7 @@ Example:
 
 > [!IMPORTANT]
 > **Single Attack Modifier Rule**:
-> A card may possess at most **one** battle immunity effect containing an attack-count modifier (`first_attacked`, `after_2_attacks`, `after_3_attacks`). Attacker criteria modifiers do not count toward this limit. Both runtime validation and FM Editor dialogs strictly enforce this invariant.
+> A card may possess at most **one** battle immunity effect containing an attack-count modifier (`first_attacked`, `destroyed_after_2_attacks`, `destroyed_after_3_attacks`). Attacker criteria modifiers do not count toward this limit. The FM Editor enforces this (its dialog and `problems()`); the game itself does not check it, and with two such effects the card is protected while either holds.
 
 ---
 
