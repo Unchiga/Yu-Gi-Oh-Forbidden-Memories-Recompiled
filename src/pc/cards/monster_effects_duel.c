@@ -59,6 +59,7 @@ s32 Duel_CalcBattleAttack(DuelCardRecord *card, DuelCardRecord *opponent);
 #define PHASE_HAND 4
 #define PHASE_FIELD 5
 #define PHASE_BATTLE 9
+#define PHASE_RESUME 11 /* back from the 3D battle: removes D_8009B208/9 */
 #define PAUSE_FRAMES 24
 #define CHAIN_MAX 200   /* a guard: no field settles after this many in a row */
 #define SE_HEAL 0x14    /* the LP recovery cards' sound */
@@ -656,6 +657,17 @@ int MonsterEffects_Update(void) {
             S.battle_life_count * sizeof(S.battle_life[0]));
     memmove(S.battle_life_side, S.battle_life_side + 1, S.battle_life_count);
     return life_effect(side, amount);
+  }
+  /* The 3D battle's losers (D_8009B208/9, set as it starts) are removed by
+   * the resume phase on the way back (DuelScene_UpdateResume), not by the
+   * battle phase: spare an immune one there too. */
+  if (now == PHASE_RESUME) {
+    if (monster_zone(D_8009B208) &&
+        MonsterEffects_HasBattleImmunity(D_8009B208))
+      D_8009B208 = -1;
+    if (monster_zone(D_8009B209) &&
+        MonsterEffects_HasBattleImmunity(D_8009B209))
+      D_8009B209 = -1;
   }
   /* Battle immunity (API 19): prevent battle destruction during battle or
    * return */
@@ -1276,7 +1288,7 @@ int MonsterEffects_HasBattleImmunity(int record) {
 
       /* Must be in combat and the monster must be the defender being attacked.
        * If the monster attacks, it does not get battle immunity. */
-      in_battle = (now == PHASE_BATTLE || now == 12);
+      in_battle = (now == PHASE_BATTLE || now == PHASE_RESUME || now == 12);
       if (!in_battle)
         continue;
 
