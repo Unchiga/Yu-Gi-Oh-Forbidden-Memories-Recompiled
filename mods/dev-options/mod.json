@@ -1,0 +1,34 @@
+{
+  "id": "dev-options",
+  "name": "Dev Options",
+  "version": "1.0.0",
+  "author": "DecompRecomp",
+  "description": "Developer options: unlimited Life Points (restores to 8000 if below 6000) and the option to end your turn directly from hand without playing a card.",
+  "min_api": 4,
+  "game": "slus_01411",
+  "library": "dev_options",
+  "enabled": true,
+  "settings": [
+    {
+      "key": "unlimited_life_points",
+      "label": "Unlimited Life Points",
+      "type": "bool",
+      "default": 1,
+      "description": "Increases player Life Points to 8000 whenever it drops below 6000."
+    },
+    {
+      "key": "end_turn_without_playing",
+      "label": "End turn without playing",
+      "type": "bool",
+      "default": 1,
+      "description": "Press Select or R1 during hand phase to end your turn without playing any card."
+    },
+    {
+      "key": "field_without_playing",
+      "label": "Enter field without playing",
+      "type": "bool",
+      "default": 1,
+      "description": "Press L1 during hand phase to proceed to field phase without playing a card."
+    }
+  ]
+}

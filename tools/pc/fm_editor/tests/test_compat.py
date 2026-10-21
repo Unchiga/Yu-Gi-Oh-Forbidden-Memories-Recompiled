@@ -228,6 +228,16 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual((api, len(reasons)), (18, 2))
         self.assertIn("newer than v0.3.0", compat.release_text(18))
 
+    def test_api_19(self):
+        """Battle immunity, piercing and conditions: a game of API 18 notes the
+        unknown "do" and drops the effect, and plays conditions as if absent."""
+        effect = lambda **keys: {"cards": [{"replace": 1, "monster_effects": [{"when": "face_up", **keys}]}]}  # noqa: E731
+        for value in (effect(do="battle_immunity"), effect(do="piercing"),
+                      effect(do="boost", attack=100, conditions=[{"type": "lower_lp"}])):
+            with self.subTest(value=value):
+                self.assertEqual(self.needs(value), 19)
+        self.assertEqual(self.needs(effect(do="boost", attack=100)), 10)
+
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})
         self.assertEqual(api, 11)

@@ -1,6 +1,9 @@
 #ifndef MEMORIES_MOD_TYPES_H
 #define MEMORIES_MOD_TYPES_H
-#define MEMORIES_MOD_API 18
+#define MEMORIES_MOD_API 19
+/* API 19 expands monster effects (originally API 10): adds battle immunity
+ * ("battle_immunity") and reusable field conditions ("conditions") for while
+ * face-up effects. */
 /* API 15: card_types names the existing type ids and declares monster ids
  * 24-255, with optional per-custom-type icons. It has no host entry: cards
  * and gameplay tables resolve its names. */

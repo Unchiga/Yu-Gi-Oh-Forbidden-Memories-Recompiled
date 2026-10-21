@@ -78,6 +78,13 @@ typedef struct {
      * have: new fields go at the end only. */
     unsigned char battle_abort; /* bit mask: an attack trap removed battle participant(s) */
     short trap_battle_record[2]; /* attacker and defender while a trap resolves */
+    /* API 19: attack counts for conditions */
+    unsigned char attacked_summon[MONSTER_RECORDS];
+    unsigned char attacked_turn[MONSTER_RECORDS];
+    unsigned char attacked_duel[MONSTER_RECORDS];
+    /* API 19: piercing damage applied flag and damage value for current combat exchange */
+    unsigned char piercing_applied;
+    short piercing_damage;
 } MonsterEffectsState;
 
 extern MonsterEffectsState gMonsterEffects;
@@ -113,5 +120,11 @@ int MonsterEffects_RemovalTakes(int record);
 void MonsterEffects_FilterTargets(unsigned *objects);
 /* What face-up monsters and the battle add to a card's ATK and DEF. */
 void MonsterEffects_Stats(const void *record, int *attack, int *defense);
+/* Whether this monster has active battle immunity (cannot be destroyed by battle). */
+int MonsterEffects_HasBattleImmunity(int record);
+/* Whether this monster inflicts piercing damage when attacking the defending monster. */
+int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record);
+/* Whether conditions on an effect are currently met for a monster. */
+int MonsterEffects_ConditionsMet(int record, const MonsterEffect *effect);
 
 #endif
