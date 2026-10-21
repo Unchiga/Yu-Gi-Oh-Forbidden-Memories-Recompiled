@@ -239,6 +239,8 @@ def features(manifest: dict, project=None) -> list:
         for effect in _entries(entry.get("monster_effects")):
             if effect.get("do") == "battle_immunity":
                 add(19, "a monster effect's \"battle_immunity\"")
+            if effect.get("do") in ("piercing", "piercing_damage"):
+                add(19, "a monster effect's \"piercing\"")
             if "conditions" in effect or "condition" in effect:
                 add(19, "a monster effect's \"conditions\"")
     return out
