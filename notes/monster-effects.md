@@ -25,9 +25,7 @@ This document provides complete technical documentation for the extended monster
   - [Action Pickers & Dynamic Modifiers Block](#action-pickers--dynamic-modifiers-block)
   - [Condition Dialog & Advanced Field Pickers](#condition-dialog--advanced-field-pickers)
   - [Validation & Diagnostic Rules](#validation--diagnostic-rules)
-  - [Responsive Layout & Bidirectional Scrolling](#responsive-layout--bidirectional-scrolling)
-- [Reference Code Mod: `mods/dev-options`](#reference-code-mod-modsdev-options)
-- [Automated Verification & Tests](#automated-verification--tests)
+  - [Automated Verification & Tests](#automated-verification--tests)
 
 ---
 
@@ -247,24 +245,9 @@ The FM Editor (`tools/pc/fm_editor`) provides complete graphical configuration f
 - **Bidirectional Treeview**: Horizontal and vertical scrollbars prevent truncation of descriptive effect phrases.
 - **Expanded Windows**: Default widths expanded (`EffectDialog` at 680px minsize, `ConditionDialog` at 620px minsize) with horizontal window resizing enabled.
 
----
-
-## Reference Code Mod: `mods/dev-options`
-
-The included `mods/dev-options` module demonstrates runtime gameplay manipulation without modifying core engine binary files:
-- **LP Hold**: Sustains Life Points at 8000 when taking non-lethal damage, safely honoring game-over state transitions when LP drops to 0.
-- **End Turn Without Playing**: Allows ending the turn directly from the hand phase via **Select** or **R1**, cleanly releasing hand cursor objects and advancing to turn switch.
-- **Enter Field Without Playing**: Allows entering the field directly from the hand phase via **L1** without placing a card.
-
----
-
-## Automated Verification & Tests
-
-The changes are validated across comprehensive automated test suites:
 - **C Engine Tests**:
   - `tests/pc/cards_stars_test.c`: Validates effect parsing, serialization, and battle immunity stat comparisons.
   - `tests/pc/monster_attacked_conditions_test.c`: Exhaustive test matrix for all attacker/defender modifiers, modular conditions, and tier comparisons.
-  - `tests/pc/dev_options_test.c`: Verifies dev options hook lifecycles and button interception.
 - **FM Editor Python Tests**:
   - `tools/pc/fm_editor/tests/test_data.py`: Tests manifest serialization, deserialization, and validator problem rules.
   - `tools/pc/fm_editor/tests/test_gui.py`: Tests effect dialog widgets, condition dialog parameters, and single attack modifier enforcement.
