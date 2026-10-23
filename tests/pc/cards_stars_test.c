@@ -521,6 +521,40 @@ static void monster_effect_conditions_and_battle_immunity(void)
     assert(effects_ex[0].conditions[1].type == MONSTER_COND_MORE_MONSTERS);
     assert(effects_ex[0].conditions[2].type == MONSTER_COND_FEWER_MONSTERS);
     assert(effects_ex[0].conditions[3].type == MONSTER_COND_MORE_MONSTERS);
+
+    /* Test field_spell condition: valid fields vs typo emitting note */
+    JsonDocument *doc_field = Json_Parse("[{\"replace\":30,\"monster_effects\":["
+                                         "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                         "   \"conditions\":["
+                                         "     {\"type\":\"field_spell\",\"field\":\"mountain\"},"
+                                         "     {\"type\":\"field_spell\",\"field\":\"mountian\"}]}]}]",
+                                         error, sizeof(error));
+    assert(doc_field);
+    before = effect_notes;
+    for (i = 0, entry = Json_At(Json_Root(doc_field), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    /* The effect containing typo "mountian" was rejected, so card 30 has 0 effects */
+    assert(Cards_MonsterEffects(30, &effects) == 0);
+    /* A note was emitted for "mountian" */
+    assert(effect_notes > before);
+
+    /* Valid field spell parses into MONSTER_FIELD_MOUNTAIN */
+    JsonDocument *doc_field_ok = Json_Parse("[{\"replace\":30,\"monster_effects\":["
+                                            "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                            "   \"conditions\":["
+                                            "     {\"type\":\"field_spell\",\"field\":\"mountain\"},"
+                                            "     {\"type\":\"field_spell\",\"field\":\"any\"}]}]}]",
+                                            error, sizeof(error));
+    assert(doc_field_ok);
+    for (i = 0, entry = Json_At(Json_Root(doc_field_ok), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(30, &effects) == 1);
+    assert(Cards_MonsterEffectsEx(30, &effects_ex) == 1);
+    assert(effects_ex[0].cond_count == 2);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_FIELD_SPELL);
+    assert(effects_ex[0].conditions[0].field_spell == MONSTER_FIELD_MOUNTAIN);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_FIELD_SPELL);
+    assert(effects_ex[0].conditions[1].field_spell == MONSTER_FIELD_ANY);
 }
 
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's

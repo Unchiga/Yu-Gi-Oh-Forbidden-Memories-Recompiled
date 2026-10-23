@@ -601,11 +601,18 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx, cons
                     cond->field_spell = (unsigned char)(num - 329); /* 330->1 (Forest) .. 335->6 (Yami) */
                 else if (num >= 1 && num <= 6)
                     cond->field_spell = (unsigned char)num;
-                else
+                else if (num == 0)
                     cond->field_spell = MONSTER_FIELD_ANY;
+                else {
+                    Mods_Note(mod, "cards[%d]: monster_effects[%d]: conditions[%d]: \"%s\": no field spell %d",
+                              index, n, c_idx, Json_Name(val), num);
+                    return 0;
+                }
             } else if (Json_TypeOf(val) == JSON_STRING) {
                 const char *s = Json_String(val, "any");
-                if (!strcmp(s, "forest") || !strcmp(s, "Forest") || !strcmp(s, "330"))
+                if (!strcmp(s, "any") || !strcmp(s, "Any") || !strcmp(s, "") || !strcmp(s, "0"))
+                    cond->field_spell = MONSTER_FIELD_ANY;
+                else if (!strcmp(s, "forest") || !strcmp(s, "Forest") || !strcmp(s, "330"))
                     cond->field_spell = MONSTER_FIELD_FOREST;
                 else if (!strcmp(s, "wasteland") || !strcmp(s, "Wasteland") ||
                          !strcmp(s, "desert") || !strcmp(s, "Desert") || !strcmp(s, "331"))
@@ -624,8 +631,15 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx, cons
                          !strcmp(s, "dark") || !strcmp(s, "Dark") ||
                          !strcmp(s, "darkness") || !strcmp(s, "335"))
                     cond->field_spell = MONSTER_FIELD_YAMI;
-                else
-                    cond->field_spell = MONSTER_FIELD_ANY;
+                else {
+                    Mods_Note(mod, "cards[%d]: monster_effects[%d]: conditions[%d]: \"%s\": no field spell \"%s\"",
+                              index, n, c_idx, Json_Name(val), s);
+                    return 0;
+                }
+            } else {
+                Mods_Note(mod, "cards[%d]: monster_effects[%d]: conditions[%d]: \"%s\": field spell must be a name or number",
+                          index, n, c_idx, Json_Name(val));
+                return 0;
             }
         }
         break;

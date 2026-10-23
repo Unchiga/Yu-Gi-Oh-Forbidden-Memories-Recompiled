@@ -462,6 +462,15 @@ static void test_fewer_and_more_monsters_condition(void)
     assert(MonsterEffects_ConditionsMet(20, &eff_fewer) == 0);
     assert(MonsterEffects_ConditionsMet(20, &eff_more) == 0);
 
+    /* Case 8: Stale S.card in empty slot 6 must NOT count as a monster */
+    gMonsterEffects.card[6] = 50; /* stale card ID */
+    D_801A7AD8[6].flags = 0;      /* empty slot */
+    D_801A7AD8[6].card_id = 0;
+    /* Still own=1, opp=1 */
+    assert(MonsterEffects_ConditionsMet(5, &eff_fewer) == 0);
+    assert(MonsterEffects_ConditionsMet(5, &eff_more) == 0);
+    gMonsterEffects.card[6] = 0;
+
     puts("test_fewer_and_more_monsters_condition: PASSED (fewer/more monsters with 0 monsters and ties evaluated "
          "correctly)");
 }
@@ -890,6 +899,75 @@ static void test_field_spell_condition(void)
     }
 
     puts("test_field_spell_condition: PASSED");
+}
+
+static void test_named_card_condition(void)
+{
+    MonsterEffectEx eff;
+    MonsterCondition *cond;
+
+    memset(&eff, 0, sizeof(eff));
+    eff.cond_count = 1;
+    cond = &eff.conditions[0];
+    cond->type = MONSTER_COND_NAMED_CARD;
+    cond->card = 18; /* Kuriboh */
+    cond->whose = MONSTER_EACH_OWN;
+
+    reset_test_duel();
+    /* Slot 5: card 18, face up */
+    assert(MonsterEffects_ConditionsMet(5, &eff) == 1);
+
+    /* If slot 5 is face down, named_card is false */
+    gMonsterEffects.face_up[5] = 0;
+    assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+    gMonsterEffects.face_up[5] = 1;
+
+    /* Stale S.card test: slot 6 has stale S.card = 18, but D_801A7AD8 has flags = 0 and card_id = 0 */
+    D_801A7AD8[5].flags = 0;
+    D_801A7AD8[5].card_id = 0;
+    gMonsterEffects.card[5] = 0;
+    gMonsterEffects.card[6] = 18; /* stale */
+    D_801A7AD8[6].flags = 0;      /* empty */
+    D_801A7AD8[6].card_id = 0;
+    gMonsterEffects.face_up[6] = 1;
+    assert(MonsterEffects_ConditionsMet(5, &eff) == 0);
+
+    puts("test_named_card_condition: PASSED");
+}
+
+static void test_lowest_and_highest_atk_condition(void)
+{
+    MonsterEffectEx eff_low, eff_high;
+    memset(&eff_low, 0, sizeof(eff_low));
+    eff_low.cond_count = 1;
+    eff_low.conditions[0].type = MONSTER_COND_LOWEST_ATK;
+
+    memset(&eff_high, 0, sizeof(eff_high));
+    eff_high.cond_count = 1;
+    eff_high.conditions[0].type = MONSTER_COND_HIGHEST_ATK;
+
+    reset_test_duel();
+    /* Slot 5: 1000 ATK; Slot 20: 3000 ATK */
+    gDuel_adwCardStats[5] = 1000;
+    gDuel_adwCardStats[20] = 3000;
+
+    /* Slot 5 has strictly lowest ATK */
+    assert(MonsterEffects_ConditionsMet(5, &eff_low) == 1);
+    assert(MonsterEffects_ConditionsMet(5, &eff_high) == 0);
+
+    /* Slot 20 has strictly highest ATK */
+    assert(MonsterEffects_ConditionsMet(20, &eff_low) == 0);
+    assert(MonsterEffects_ConditionsMet(20, &eff_high) == 1);
+
+    /* Stale S.card in slot 6 with 0 ATK must not disqualify slot 5 as lowest */
+    gMonsterEffects.card[6] = 99; /* stale */
+    D_801A7AD8[6].flags = 0;      /* empty */
+    D_801A7AD8[6].card_id = 0;
+    gMonsterEffects.face_up[6] = 1;
+    gDuel_adwCardStats[6] = 0;
+    assert(MonsterEffects_ConditionsMet(5, &eff_low) == 1);
+
+    puts("test_lowest_and_highest_atk_condition: PASSED");
 }
 
 static void test_attacker_criteria_immunity(void)
@@ -1390,6 +1468,8 @@ int main(void)
     test_control_attribute_condition();
     test_lp_comparison_conditions();
     test_field_spell_condition();
+    test_named_card_condition();
+    test_lowest_and_highest_atk_condition();
     test_attacker_criteria_immunity();
     test_piercing_damage();
     puts("\nAll monster attacked condition tests PASSED successfully!");
