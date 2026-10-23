@@ -51,7 +51,18 @@ int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod
     if (name) *name = model_names[i];
     if (base) *base = model_bases[i] ? Json_At(Json_Root(model_bases[i]), 0) : NULL;
     if (mod) *mod = 0;
-    return 621 + i;
+    return 0;
+}
+/* Model i's record as mods.c places it for host->disc_read, and the
+ * window a battle slot reads it through. */
+int Mods_ModelSector(int i) { return i >= 0 && i < model_count_here ? 0x1000000 + i * 0x114 : -1; }
+static int window_slot = -1, window_model = -1;
+int Mods_ModelWindow(int slot, int i)
+{
+    if (i < 0 || i >= model_count_here) return -1;
+    window_slot = slot;
+    window_model = i;
+    return 300000 + slot * 0x114;
 }
 
 void Mods_Note(const char *id, const char *format, ...)
@@ -449,11 +460,8 @@ static void monster_effect_type_overflow(void)
     assert(effect_notes == before + 1);
 }
 
-/* Cards_Reference reads Json_Number's long before Cards_Valid's int: a
- * reference far past int range must not wrap into a valid card id (card 1,
- * from 2^32 + 1 narrowed to 1 on a typical 64-bit build). */
 /* "model" naming a mod's model (API 21): a replace's and a copy's, its
- * record, its base's stats for the game and its stars for a monster made
+ * sector and window, its base's stats for the game and its stars for a monster made
  * from a magic card; an unknown name is refused, a disc monster still taken. */
 static void mod_models(void)
 {
@@ -470,11 +478,13 @@ static void mod_models(void)
     model_names[1] = "bulbasaur";
     model_bases[1] = NULL;
     model_count_here = 2;
-    assert(Cards_ModelRecord(CARDS_MODEL_MOD_FIRST + 621) == 621);
-    assert(Cards_ModelRecord(CARDS_MODEL_MOD_FIRST + 623) == -1);
-    assert(Cards_ModelRecord(0) == -1 && Cards_ModelRecord(CARD_COUNT) == -1);
-    assert(Cards_ModelStatsIndex(CARDS_MODEL_MOD_FIRST + 621) == 39);
-    assert(Cards_ModelStatsIndex(CARDS_MODEL_MOD_FIRST + 622) == 0);  /* no base */
+    assert(Cards_ModelSector(CARDS_MODEL_MOD_FIRST + 1) == 0x1000000 + 0x114);
+    assert(Cards_ModelSector(CARDS_MODEL_MOD_FIRST + 2) == -1);
+    assert(Cards_ModelSector(0) == -1 && Cards_ModelSector(CARD_COUNT) == -1);
+    assert(Cards_ModelWindow(1, CARDS_MODEL_MOD_FIRST) == 300000 + 0x114 && window_slot == 1 && window_model == 0);
+    assert(Cards_ModelWindow(0, CARDS_MODEL_MOD_FIRST + 2) == -1 && Cards_ModelWindow(0, 40) == -1);
+    assert(Cards_ModelStatsIndex(CARDS_MODEL_MOD_FIRST) == 39);
+    assert(Cards_ModelStatsIndex(CARDS_MODEL_MOD_FIRST + 1) == 0);  /* no base */
     assert(Cards_ModelStatsIndex(5) == 5);
     doc = Json_Parse("[{\"replace\":20,\"model\":\"pikachu\"},"
                      "{\"replace\":350,\"type\":\"Dragon\",\"model\":\"pikachu\"},"
@@ -485,10 +495,10 @@ static void mod_models(void)
     copy = gCard_nCount + 1;
     for (i = 0, entry = Json_At(Json_Root(doc), 0); entry; i++, entry = Json_Next(entry))
         add_entry("m", ".", i, entry, &context);
-    assert(Cards_ModelId(20) == CARDS_MODEL_MOD_FIRST + 621 + 1 && Cards_HasModel(20));
-    assert(Cards_ModelId(350) == CARDS_MODEL_MOD_FIRST + 621 + 1 && Cards_HasModel(350));
+    assert(Cards_ModelId(20) == CARDS_MODEL_MOD_FIRST + 1 && Cards_HasModel(20));
+    assert(Cards_ModelId(350) == CARDS_MODEL_MOD_FIRST + 1 && Cards_HasModel(350));
     expect(350, MARS, SUN);                    /* the base's stars */
-    assert(Cards_ModelId(copy) == CARDS_MODEL_MOD_FIRST + 622 + 1 && Cards_HasModel(copy));
+    assert(Cards_ModelId(copy) == CARDS_MODEL_MOD_FIRST + 1 + 1 && Cards_HasModel(copy));
     assert(Cards_ModelId(22) == 22);           /* "charmander": no such model, its own kept */
     assert(Cards_ModelId(23) == 40);
     model_count_here = 0;
@@ -496,6 +506,9 @@ static void mod_models(void)
     Json_Free(model_bases[0]);
 }
 
+/* Cards_Reference reads Json_Number's long before Cards_Valid's int: a
+ * reference far past int range must not wrap into a valid card id (card 1,
+ * from 2^32 + 1 narrowed to 1 on a typical 64-bit build). */
 static void reference_overflow(void)
 {
     char error[128];

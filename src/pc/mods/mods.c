@@ -41,6 +41,7 @@
 #include "pc/sdk/disc.h"
 #include <ctype.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -61,12 +62,16 @@
 #define PATH_MAX_ 1024
 #define STATUS_MAX 512
 #define SECTOR 2048
-#define MODELS_MAX 1024      /* battle models mods add, one region each */
-#define REGIONS_MAX (64 + MODELS_MAX)
+#define REGIONS_MAX 64
 #define PATCHES_MAX 1024
 /* One MODEL.MRG record (Model_LoadMonsterMerge, src/game/model.h). */
 #define MODEL_RECORD_SECTORS 0x114
-#define MODEL_FILE "\\DATA\\MODEL.MRG;1"
+/* Where a native extra reads a mod's model's record (host_disc_read): model
+ * i from MODEL_SECTORS + i records on, past every position the drive can
+ * address, so no file of the disc moves for them. */
+#define MODEL_SECTORS 0x1000000
+#define MODELS_MAX 0x7FFF        /* model ids 0x8000 up, kept plus one in a u16 (pc/cards/cards.h) */
+#define MODEL_WINDOWS 2          /* the battle's two model slots */
 
 #define OBJECT_MAX (64u << 20)   /* object_loader.c's own limit */
 
@@ -96,7 +101,7 @@ typedef struct {
     JsonDocument *manifest;
     const JsonValue *data;       /* the "data" array, applied when enabled */
     const JsonValue *cards;      /* the "cards" array: cards the mod adds (src/pc/cards) */
-    const JsonValue *models;     /* the "models" array: battle models appended to MODEL.MRG */
+    const JsonValue *models;     /* the "models" array: battle models the mod adds */
     char textures[PATH_MAX_];    /* a texture pack directory inside the mod, or empty */
     const JsonValue *assets;     /* named image replacements from mod.json, or NULL */
     char asset_dir[PATH_MAX_];   /* "assets": a directory whose PNGs are named by their path */
@@ -110,7 +115,6 @@ typedef struct {
  * `overrides_live` is set. */
 typedef struct {
     int mod, lba, sectors, file;
-    int start;               /* a named file's part from this sector on, or -1: all of it */
     unsigned char *image;    /* the replacement file, mapped read-only */
     size_t image_size, mapped;
     unsigned hash;
@@ -139,15 +143,29 @@ static int shut_down;   /* Mods_Shutdown has run: no mod code is called again */
 
 static Region regions[REGIONS_MAX];
 static int region_count;
-/* The models mods add: each one's record follows the disc's in MODEL.MRG
- * (and the ones added before it), and cards name it (src/pc/cards/cards.c). */
+/* The models mods add ("models"): only their files' names, sizes and hashes
+ * are kept. A record is read when it is wanted, into the window of the
+ * battle slot that loads it (Mods_ModelWindow) or for a native extra
+ * (host_disc_read, at Mods_ModelSector). */
 typedef struct {
-    int mod, record;
+    int mod;
     const char *name;
     const JsonValue *base;
+    char *path;
+    unsigned size, hash;
+    int stale;   /* its file was found gone or changed: not read again until the next launch */
 } ModModel;
-static ModModel models[MODELS_MAX];
-static int model_count, model_records;
+static ModModel *models;
+static int model_count, model_capacity;
+/* The battle slots' windows: MODEL_RECORD_SECTORS sectors each from
+ * window_lba, past the disc and the files it relocates, where the drive
+ * reads the record the slot's last load asked for. Mods_DiscSector reads
+ * them from interrupt context: the buffers are allocated once, with the
+ * first model, and only written while no transfer runs. */
+static unsigned char *window_data[MODEL_WINDOWS];
+static int window_model[MODEL_WINDOWS] = {-1, -1};
+static int window_lba = -1;
+static int read_model(int model, int first, int count, unsigned char *out);
 static Patch patches[PATCHES_MAX];
 static int patch_count;
 static int published_regions, published_patches;
@@ -335,7 +353,18 @@ static int host_disc_file_start(const MemoriesModHost *host, const char *iso_pat
 static int host_disc_read(const MemoriesModHost *host, int lba, int sectors, void *out)
 {
     (void)host;
-    return out && sectors > 0 ? Memories_DiscReadSectors(lba, sectors, out) : 0;
+    if (!out || sectors <= 0) return 0;
+    if (lba >= MODEL_SECTORS) return Mods_ModelRead(lba, sectors, out);
+    return Memories_DiscReadSectors(lba, sectors, out);
+}
+
+int Mods_ModelRead(int lba, int sectors, void *out)
+{
+    int first;
+    if (!out || sectors <= 0 || lba < MODEL_SECTORS) return 0;
+    first = (lba - MODEL_SECTORS) % MODEL_RECORD_SECTORS;
+    if (sectors > MODEL_RECORD_SECTORS - first) sectors = MODEL_RECORD_SECTORS - first;
+    return read_model((lba - MODEL_SECTORS) / MODEL_RECORD_SECTORS, first, sectors, out);
 }
 
 unsigned short (*Mods_PadSource)(int port);
@@ -620,19 +649,13 @@ static int layout_disc_files(void)
     int order[REGIONS_MAX], next = -1;
     for (int i = 0; i < disc_file_count; i++) {
         DiscFile *file = &disc_files[i];
-        int maximum = file->retail_sectors, sectors, end = 0;
+        int maximum = file->retail_sectors, sectors;
         unsigned size = file->retail_size; /* readers never see a partial value */
         for (int j = 0; j < region_count; j++) if (regions[j].file == i) {
-            if (regions[j].start >= 0) {   /* a part: the file reaches at least its end */
-                if (regions[j].start + regions[j].sectors > end) end = regions[j].start + regions[j].sectors;
-                continue;
-            }
             sectors = (int)((regions[j].image_size + SECTOR - 1) / SECTOR);
             if (sectors > maximum) maximum = sectors;
             size = (unsigned)regions[j].image_size;
         }
-        if (end > maximum) maximum = end;
-        if ((size_t)end * SECTOR > size) size = (unsigned)((size_t)end * SECTOR);
         sectors = (int)(((size_t)size + SECTOR - 1) / SECTOR);
         file->size = size;
         file->sectors = sectors < file->retail_sectors ? file->retail_sectors : sectors;
@@ -656,17 +679,127 @@ static int layout_disc_files(void)
         file->lba = next;
         next += file->reserved + 1;
     }
+    /* The battle slots' model windows follow the relocated files. */
+    window_lba = -1;
+    if (model_count) {
+        if (next < 0) next = Memories_DiscSectorCount();
+        if (next < 0 || next >= MEMORIES_DISC_MAX_LBA ||
+            MODEL_WINDOWS * MODEL_RECORD_SECTORS > MEMORIES_DISC_MAX_LBA - next - 1) return 0;
+        window_lba = next;
+    }
     return 1;
+}
+
+/* Model `model`'s whole record, from its file, into `out` (a record's
+ * bytes); a file shorter than the record reads as zeros past its end. 0
+ * when the file cannot be read or is no longer what it was at startup, its
+ * size or its bytes (a mod updated in place is used from the next launch,
+ * as its other files are): a parser is never handed a record that changed
+ * under it. */
+static int read_record(int model, unsigned char *out)
+{
+    size_t size, got = 0;
+    struct stat info;
+    int file;
+    if (model < 0 || model >= model_count || !models[model].path || models[model].stale) return 0;
+#ifdef _WIN32
+    file = open(models[model].path, O_RDONLY | O_BINARY);
+#else
+    file = open(models[model].path, O_RDONLY);
+#endif
+    /* Gone, another size or other bytes: stale. Not opened or not read
+     * whole (a scanner holding the file): tried again next time. */
+    if (file < 0) {
+        if (errno == ENOENT) models[model].stale = 1;
+        return 0;
+    }
+    if (fstat(file, &info) || (uint64_t)info.st_size != models[model].size) {
+        if (!fstat(file, &info) && (uint64_t)info.st_size != models[model].size) models[model].stale = 1;
+        close(file);
+        return 0;
+    }
+    size = models[model].size;
+    while (got < size) {
+#ifdef _WIN32
+        int chunk = _read(file, out + got, (unsigned)(size - got));
+#else
+        ssize_t chunk = read(file, out + got, size - got);
+#endif
+        if (chunk <= 0) break;
+        got += (size_t)chunk;
+    }
+    close(file);
+    if (got < size) return 0;
+    if (hash_bytes(2166136261u, out, size) != models[model].hash) {
+        models[model].stale = 1;
+        return 0;
+    }
+    memset(out + size, 0, (size_t)MODEL_RECORD_SECTORS * SECTOR - size);
+    return 1;
+}
+
+/* Sectors first to first + count of model `model`'s record, as read_record
+ * reads it; 0 when it cannot. */
+static int read_model(int model, int first, int count, unsigned char *out)
+{
+    unsigned char *record;
+    int ok;
+    if (first < 0 || count <= 0 || count > MODEL_RECORD_SECTORS - first) return 0;
+    if (first == 0 && count == MODEL_RECORD_SECTORS) return read_record(model, out) ? count : 0;
+    if (!(record = malloc((size_t)MODEL_RECORD_SECTORS * SECTOR))) return 0;
+    ok = read_record(model, record);
+    if (ok) memcpy(out, record + (size_t)first * SECTOR, (size_t)count * SECTOR);
+    free(record);
+    return ok ? count : 0;
 }
 
 int Mods_ModelCount(void) { return model_count; }
 int Mods_Model(int i, const char **name, const JsonValue **base, int *mod)
 {
-    if (i < 0 || i >= model_count) return -1;
+    if (i < 0 || i >= model_count || !models[i].path) return -1;
     if (name) *name = models[i].name;
     if (base) *base = models[i].base;
     if (mod) *mod = models[i].mod;
-    return models[i].record;
+    return 0;
+}
+
+int Mods_ModelSector(int i)
+{
+    return i >= 0 && i < model_count && models[i].path && !models[i].stale ? MODEL_SECTORS + i * MODEL_RECORD_SECTORS : -1;
+}
+
+int Mods_ModelWindow(int slot, int i)
+{
+    if (slot < 0 || slot >= MODEL_WINDOWS || window_lba < 0 || !window_data[slot]) return -1;
+    window_model[slot] = -1;
+    /* The record as it was at startup, or nothing: the caller then loads
+     * another, and a transfer a save state resumes reads zeros. */
+    if (!read_record(i, window_data[slot])) {
+        memset(window_data[slot], 0, (size_t)MODEL_RECORD_SECTORS * SECTOR);
+        say("model %d: %s cannot be read as it was at startup", i,
+            i >= 0 && i < model_count && models[i].path ? models[i].path : "(none)");
+        return -1;
+    }
+    window_model[slot] = i;
+    return window_lba + slot * MODEL_RECORD_SECTORS;
+}
+
+int *Mods_ModelWindows(unsigned *size)
+{
+    *size = sizeof(window_model);
+    return window_model;
+}
+
+void Mods_ModelRebind(void)
+{
+    for (int slot = 0; slot < MODEL_WINDOWS; slot++)
+        if (window_model[slot] >= 0) Mods_ModelWindow(slot, window_model[slot]);
+}
+
+static int model_window(int lba)
+{
+    if (window_lba < 0 || lba < window_lba || lba - window_lba >= MODEL_WINDOWS * MODEL_RECORD_SECTORS) return -1;
+    return (lba - window_lba) / MODEL_RECORD_SECTORS;
 }
 
 int Mods_DiscFileInfo(int retail_lba, int *lba, unsigned *size)
@@ -693,6 +826,10 @@ static int virtual_file(int lba)
 int Mods_DiscSource(int lba, int *source)
 {
     int i = virtual_file(lba);
+    if (overrides_live && model_window(lba) >= 0) {
+        *source = -1;
+        return 1;
+    }
     if (i < 0) return 0;
     *source = lba - disc_files[i].lba < disc_files[i].retail_sectors
         ? disc_files[i].retail_lba + lba - disc_files[i].lba : -1;
@@ -715,7 +852,14 @@ unsigned Mods_DiscSignature(void)
     unsigned hash = 2166136261u;
     int relocated = 0;
     for (int i = 0; i < disc_file_count; i++) relocated |= disc_files[i].reserved != 0;
-    if (!region_count && !patch_count && !relocated) return 0;
+    if (!region_count && !patch_count && !relocated && !model_count) return 0;
+    if (model_count) {   /* without models the signature is the one it always was */
+        for (int i = 0; i < model_count; i++) {
+            hash = hash_bytes(hash, &models[i].hash, sizeof(models[i].hash));
+            hash = hash_bytes(hash, &models[i].size, sizeof(models[i].size));
+        }
+        hash = hash_bytes(hash, &window_lba, sizeof(window_lba));
+    }
     for (int i = 0; i < disc_file_count; i++) {
         const DiscFile *file = &disc_files[i];
         hash = hash_bytes(hash, &file->retail_lba, sizeof(file->retail_lba));
@@ -726,7 +870,6 @@ unsigned Mods_DiscSignature(void)
         hash = hash_bytes(hash, &regions[i].hash, sizeof(regions[i].hash));
         hash = hash_bytes(hash, &regions[i].lba, sizeof(regions[i].lba));
         hash = hash_bytes(hash, &regions[i].sectors, sizeof(regions[i].sectors));
-        hash = hash_bytes(hash, &regions[i].start, sizeof(regions[i].start));
     }
     for (int i = 0; i < patch_count; i++) {
         hash = hash_bytes(hash, &patches[i].lba, sizeof(patches[i].lba));
@@ -759,6 +902,11 @@ static void publish_overrides(void)
         if (disc_files[i].lba < low) low = disc_files[i].lba;
         if (disc_files[i].lba + disc_files[i].sectors - 1 > high)
             high = disc_files[i].lba + disc_files[i].sectors - 1;
+    }
+    if (window_lba >= 0) {
+        if (window_lba < low) low = window_lba;
+        if (window_lba + MODEL_WINDOWS * MODEL_RECORD_SECTORS - 1 > high)
+            high = window_lba + MODEL_WINDOWS * MODEL_RECORD_SECTORS - 1;
     }
     published_regions = region_count;
     published_patches = patch_count;
@@ -808,6 +956,7 @@ static void drop_overrides(int mod)
      * them would briefly hide every relocated file from the drive. */
     for (i = 0; i < region_count; i++) owned |= regions[i].mod == mod;
     for (i = 0; i < patch_count; i++) owned |= patches[i].mod == mod;
+    for (i = 0; i < model_count; i++) owned |= models[i].mod == mod;
     if (!owned) return;
     overrides_live = 0;   /* the drive model stops looking before anything goes */
     __asm__ volatile("" ::: "memory");
@@ -816,13 +965,22 @@ static void drop_overrides(int mod)
         if (regions[i].image) unmap_file(regions[i].image, regions[i].mapped);
     }
     region_count = kept;
-    for (i = 0, kept = 0; i < model_count; i++) if (models[i].mod != mod) models[kept++] = models[i];
-    model_count = kept;
     for (i = 0, kept = 0; i < patch_count; i++) {
         if (patches[i].mod != mod) { patches[kept++] = patches[i]; continue; }
         free(patches[i].bytes);
     }
     patch_count = kept;
+    /* Once the disc's layout is frozen the cards have taken the models'
+     * places (Cards_ModelId): a dropped mod's models stay in the list, with
+     * no file, so that no other mod's moves; they load as their bases. */
+    for (i = 0, kept = 0; i < model_count; i++) {
+        if (models[i].mod != mod) { models[kept++] = models[i]; continue; }
+        for (int slot = 0; slot < MODEL_WINDOWS; slot++) if (window_model[slot] == i) window_model[slot] = -1;
+        free(models[i].path);
+        models[i].path = NULL;
+        if (disc_layout_frozen) kept++;
+    }
+    model_count = kept;
     publish_overrides();
 }
 
@@ -915,7 +1073,7 @@ static int add_patch(Mod *mod, int index, int file, int lba, int offset, const u
     return 1;
 }
 
-static int add_region(Mod *mod, int index, int named, int lba, int sectors, int start, const char *replacement)
+static int add_region(Mod *mod, int index, int named, int lba, int sectors, const char *replacement)
 {
     char path[PATH_MAX_];
     struct stat info;
@@ -941,10 +1099,10 @@ static int add_region(Mod *mod, int index, int named, int lba, int sectors, int 
         return 0;
     }
     if ((uint64_t)info.st_size > (uint64_t)MEMORIES_DISC_MAX_LBA * SECTOR ||
-        ((named < 0 || start >= 0) && (uint64_t)info.st_size > (uint64_t)sectors * SECTOR)) {
+        (named < 0 && (uint64_t)info.st_size > (uint64_t)sectors * SECTOR)) {
         close(file);
         note(mod, "%s exceeds %s capacity; replacement rejected", replacement,
-             start >= 0 ? "a model record's" : named < 0 ? "the raw sector region" : "the virtual disc address");
+             named < 0 ? "the raw sector region" : "the virtual disc address");
         return 0;
     }
     image = map_file(file, (size_t)info.st_size);
@@ -957,14 +1115,13 @@ static int add_region(Mod *mod, int index, int named, int lba, int sectors, int 
     regions[region_count].file = named;
     regions[region_count].lba = lba;
     regions[region_count].sectors = sectors;
-    regions[region_count].start = start;
     regions[region_count].image = image;
     regions[region_count].image_size = (size_t)info.st_size;
     regions[region_count].mapped = (size_t)info.st_size;
     regions[region_count].hash = hash_bytes(2166136261u, image, (size_t)info.st_size);
     for (int i = 0; i < region_count; i++) {
         const Region *other = &regions[i];
-        if (named >= 0 ? other->file == named && other->start == start
+        if (named >= 0 ? other->file == named
                        : other->file < 0 && other->mod != index && other->lba < lba + sectors &&
                              lba < other->lba + other->sectors) {
             warn(mod, 0, "%s replaces the same %s as %s; later replacement wins", replacement,
@@ -976,6 +1133,85 @@ static int add_region(Mod *mod, int index, int named, int lba, int sectors, int 
     if (!layout_disc_files()) {
         note(mod, "virtual disc address space exhausted by %s; replacement rejected", replacement);
         return 0; /* apply_overrides rolls back every contribution of this mod */
+    }
+    return 1;
+}
+
+/* One of a mod's "models": a MODEL.MRG record of its own, read from the
+ * mod's file whenever the game or a native extra wants it. */
+static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
+{
+    const char *name = Json_String(Json_Member(entry, "name"), NULL);
+    const char *file = Json_String(Json_Member(entry, "file"), NULL);
+    char path[PATH_MAX_];
+    struct stat info;
+    unsigned char *image;
+    int handle;
+    if (!name || !*name || !file) {
+        note(mod, "models[%d] needs a \"name\" and a \"file\"", at);
+        return 0;
+    }
+    if (model_count >= MODELS_MAX) {
+        note(mod, "more than %d models", MODELS_MAX);
+        return 0;
+    }
+    if (!Paths_Contained(file)) {
+        note(mod, "models[%d]: %s is outside the mod", at, file);
+        return 0;
+    }
+    if (snprintf(path, sizeof(path), "%s/%s", mod->directory, file) >= (int)sizeof(path)) return 0;
+#ifdef _WIN32
+    handle = open(path, O_RDONLY | O_BINARY);
+#else
+    handle = open(path, O_RDONLY);
+#endif
+    if (handle < 0 || fstat(handle, &info) || info.st_size <= 0) {
+        if (handle >= 0) close(handle);
+        note(mod, "cannot read %s", file);
+        return 0;
+    }
+    if ((uint64_t)info.st_size > (uint64_t)MODEL_RECORD_SECTORS * SECTOR) {
+        close(handle);
+        note(mod, "%s is larger than a model record (%d sectors); model rejected", file, MODEL_RECORD_SECTORS);
+        return 0;
+    }
+    /* Read once, for its hash (the mod set's signature, which save states check). */
+    image = map_file(handle, (size_t)info.st_size);
+    close(handle);
+    if (!image) {
+        note(mod, "cannot read %s", file);
+        return 0;
+    }
+    if (model_count == model_capacity) {
+        int capacity = model_capacity ? model_capacity * 2 : 16;
+        ModModel *grown = realloc(models, (size_t)capacity * sizeof(*models));
+        if (!grown) { unmap_file(image, (size_t)info.st_size); return 0; }
+        models = grown;
+        model_capacity = capacity;
+    }
+    for (int slot = 0; slot < MODEL_WINDOWS; slot++)
+        if (!window_data[slot] && !(window_data[slot] = calloc(MODEL_RECORD_SECTORS, SECTOR))) {
+            unmap_file(image, (size_t)info.st_size);
+            return 0;
+        }
+    for (int i = 0; i < model_count; i++)
+        if (!strcmp(models[i].name, name)) {
+            if (models[i].mod == index) warn(mod, 0, "two models are named %s; the later one wins", name);
+            else warn(mod, 0, "model %s is also %s's; the later one wins", name, mods[models[i].mod].id);
+            break;
+        }
+    models[model_count].mod = index;
+    models[model_count].name = name;
+    models[model_count].base = Json_Member(entry, "base");
+    models[model_count].size = (unsigned)info.st_size;
+    models[model_count].hash = hash_bytes(2166136261u, image, (size_t)info.st_size);
+    models[model_count].stale = 0;
+    unmap_file(image, (size_t)info.st_size);
+    if (!(models[model_count].path = strdup(path))) return 0;
+    model_count++;
+    if (!layout_disc_files()) {
+        note(mod, "virtual disc address space exhausted by the model windows");
+        return 0;   /* apply_overrides rolls back every contribution of this mod */
     }
     return 1;
 }
@@ -1020,7 +1256,7 @@ static int apply_overrides(Mod *mod, int index)
                 goto failed;
             } else if (!file && (stream = streamed_file(NULL, lba, sectors)) != NULL) {
                 goto streamed;
-            } else if (!add_region(mod, index, named, lba, sectors, -1, Json_String(replace, NULL))) {
+            } else if (!add_region(mod, index, named, lba, sectors, Json_String(replace, NULL))) {
                 goto failed;
             }
         }
@@ -1065,36 +1301,16 @@ static int apply_overrides(Mod *mod, int index)
             }
         }
     }
-    /* "models": each file is one more MODEL.MRG record, after the disc's
-     * and the ones added before it; the drive serves it from the mod. */
-    for (i = 0; i < Json_Count(mod->models); i++) {
-        const JsonValue *entry = Json_At(mod->models, i);
-        const char *name = Json_String(Json_Member(entry, "name"), NULL);
-        const char *path = Json_String(Json_Member(entry, "file"), NULL);
-        int lba = -1, named, record;
-        unsigned size = 0;
-        if (!name || !*name || !path) {
-            note(mod, "models[%d] needs a \"name\" and a \"file\"", i);
-            goto failed;
-        }
-        if (model_count == MODELS_MAX) {
-            note(mod, "more than %d models", MODELS_MAX);
-            goto failed;
-        }
-        if (Memories_DiscOriginalFileInfo(MODEL_FILE, &lba, &size) || lba < 0 || (named = disc_file(lba, size)) < 0) {
-            note(mod, "models[%d]: MODEL.MRG is not on the disc", i);
-            goto failed;
-        }
-        record = (int)(size / (MODEL_RECORD_SECTORS * SECTOR)) + model_records;
-        if (!add_region(mod, index, named, lba, MODEL_RECORD_SECTORS, record * MODEL_RECORD_SECTORS, path))
-            goto failed;
-        model_records++;
-        models[model_count++] = (ModModel){index, record, name, Json_Member(entry, "base")};
-    }
+    for (i = 0; i < Json_Count(mod->models); i++)
+        if (!add_model(mod, index, Json_At(mod->models, i), i)) goto failed;
     publish_overrides();
     if (region_count || patch_count) {
         say("%s: %d replaced regions, %d patched runs, sectors %d to %d",
             mod->id, region_count, patch_count, override_low, override_high);
+    }
+    if (Json_Count(mod->models)) {
+        say("%s: %d models (%d in all), the battle's windows at sector %d",
+            mod->id, Json_Count(mod->models), model_count, window_lba);
     }
     return 1;
 streamed:
@@ -1133,23 +1349,20 @@ int Mods_DiscSector(int lba, void *user_data)
     if (!overrides_live) return 0;
     __asm__ volatile("" ::: "memory");
     if (lba < override_low || lba > override_high) return 0;
+    if ((i = model_window(lba)) >= 0) {   /* a battle slot's model (Mods_ModelWindow) */
+        memcpy(out, window_data[i] + (size_t)((lba - window_lba) % MODEL_RECORD_SECTORS) * SECTOR, SECTOR);
+        return 1;
+    }
     named = virtual_file(lba);
     if (named >= 0) {
         relative = lba - disc_files[named].lba;
         physical = relative < disc_files[named].retail_sectors ? disc_files[named].retail_lba + relative : -1;
     }
-    /* Whole replacements first, then the parts a mod adds to a file (its
-     * "models"), which a whole replacement in any order leaves in place. */
-    for (int pass = 0; pass < 2; pass++) for (i = 0; i < published_regions; i++) {
+    for (i = 0; i < published_regions; i++) {
         const Region *region = &regions[i];
         size_t at, have;
-        if ((region->start >= 0) != pass) continue;
-        if (named >= 0 && region->file == named) {
-            if (region->start >= 0 && (relative < region->start || relative - region->start >= region->sectors))
-                continue;
-            at = (size_t)(relative - (region->start >= 0 ? region->start : 0)) * SECTOR;
-        } else {
-            if (region->start >= 0) continue;   /* a part is only ever its file's */
+        if (named >= 0 && region->file == named) at = (size_t)relative * SECTOR;
+        else {
             if (physical < region->lba || physical - region->lba >= region->sectors) continue;
             at = (size_t)(physical - region->lba) * SECTOR;
         }

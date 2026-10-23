@@ -244,6 +244,16 @@ void Memories_StateSubsystems(MemoriesState *state)
         seed.size = size;
         Memories_StateChunk(state, "mod-rng", &seed, 1);
     }
+    if (Mods_ModelCount()) {
+        /* The models the battle slots' windows hold (mods.c), read in again
+         * before the drive's own state, so a transfer saved mid-record goes
+         * on reading the same record. */
+        unsigned size;
+        MemoriesStateField windows;
+        windows.data = Mods_ModelWindows(&size);
+        windows.size = size;
+        if (Memories_StateChunk(state, "mod-models", &windows, 1)) Mods_ModelRebind();
+    }
 #if defined(_WIN32) && defined(__x86_64__) && !defined(MEMORIES_TRANSLATED)
     Memories_StateJumps(state);
 #endif

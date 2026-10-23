@@ -48,12 +48,17 @@ int Cards_ModelId(int id);
 /* Battle models go by model id, a card id less one on the disc (one
  * MODEL.MRG record per monster, src/game/model_load_monster_merge.c). A
  * model a mod adds ("models", notes/modding.md) is CARDS_MODEL_MOD_FIRST plus
- * its record, above every card id, so a table indexed by card id is never
- * indexed by one. Cards_ModelRecord gives a mod model's record (-1 for any
- * other id), and Cards_ModelStatsIndex the gDuel_adwCardStats index the game
- * reads for a model: its own card's, or a mod model's "base" (0 without). */
+ * its place among them, above every card id, so a table indexed by card id
+ * is never indexed by one. Its record is read from the mod's file:
+ * Cards_ModelWindow puts it in battle slot `slot`'s window and gives the
+ * window's first sector, which the drive reads (Model_LoadMonsterMerge),
+ * and Cards_ModelSector gives the sector a native extra reads it at
+ * (host->disc_read); both -1 for any other id. Cards_ModelStatsIndex is the
+ * gDuel_adwCardStats index the game reads for a model: its own card's, or a
+ * mod model's "base" (0 without). */
 #define CARDS_MODEL_MOD_FIRST 0x8000
-int Cards_ModelRecord(int model);
+int Cards_ModelWindow(int slot, int model);
+int Cards_ModelSector(int model);
 int Cards_ModelStatsIndex(int model);
 int Cards_EffectId(int id);
 /* Data-defined effects for a Magic or Trap card.  "card_effects" either

@@ -69,19 +69,21 @@ s32 Model_LoadMonsterMerge(s32 slot, s32 model, s32 p2, s32 p3, s32 p4,
             return 0;
         }
 #ifdef MEMORIES_PC
-        /* A mod's model: its record follows the disc's in MODEL.MRG
-           (src/pc/mods/mods.c serves it from the mod). */
+        /* A mod's model: its record is read from the mod into this slot's
+           window, past the disc (src/pc/mods/mods.c), and the drive reads
+           it there as it would MODEL.MRG's, from where MODEL.MRG starts.
+           One that cannot be read (its file gone or changed since startup)
+           loads as its base, a monster of the disc. */
         if (model >= CARDS_MODEL_MOD_FIRST) {
-            if (Cards_ModelRecord(model) < 0) {
-                result++;
-                goto done;
+            s32 window = Cards_ModelWindow(slot, model);
+            if (window >= gFile_anLba[2]) {
+                transfer = File_TryRequestAsyncTransfer(
+                    2, gFile_szModelMrgPath, window - gFile_anLba[2],
+                    MODEL_MRG_SECTOR_COUNT, func_80056D7C, 0, 0
+                );
+                goto requested;
             }
-            transfer = File_TryRequestAsyncTransfer(
-                2, gFile_szModelMrgPath,
-                Cards_ModelRecord(model) * MODEL_MRG_SECTOR_COUNT,
-                MODEL_MRG_SECTOR_COUNT, func_80056D7C, 0, 0
-            );
-            goto requested;
+            model = Cards_ModelStatsIndex(model);
         }
 #endif
         if (model < 0 || model >= MODEL_MRG_ID_END

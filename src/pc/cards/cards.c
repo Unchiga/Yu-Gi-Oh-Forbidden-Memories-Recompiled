@@ -159,23 +159,23 @@ static int retail_monster(int id);
  * its place in Mods_Model's list, or -1. A later mod's name wins. */
 static int mod_model(int model)
 {
-    int i;
-    if (model < CARDS_MODEL_MOD_FIRST) return -1;
-    for (i = 0; i < Mods_ModelCount(); i++)
-        if (Mods_Model(i, NULL, NULL, NULL) == model - CARDS_MODEL_MOD_FIRST) return i;
-    return -1;
+    return model >= CARDS_MODEL_MOD_FIRST && model - CARDS_MODEL_MOD_FIRST < Mods_ModelCount()
+        ? model - CARDS_MODEL_MOD_FIRST : -1;
 }
 static int mod_model_named(const JsonValue *value)
 {
     const char *text = Json_String(value, NULL), *name;
     int i, found = -1;
-    for (i = 0; text && i < Mods_ModelCount(); i++) {
-        int record = Mods_Model(i, &name, NULL, NULL);
-        if (name && !strcmp(name, text)) found = CARDS_MODEL_MOD_FIRST + record;
-    }
+    for (i = 0; text && i < Mods_ModelCount(); i++)
+        if (!Mods_Model(i, &name, NULL, NULL) && name && !strcmp(name, text)) found = CARDS_MODEL_MOD_FIRST + i;
     return found;
 }
-int Cards_ModelRecord(int model) { return mod_model(model) >= 0 ? model - CARDS_MODEL_MOD_FIRST : -1; }
+int Cards_ModelSector(int model) { return Mods_ModelSector(mod_model(model)); }
+int Cards_ModelWindow(int slot, int model)
+{
+    int i = mod_model(model);
+    return i >= 0 ? Mods_ModelWindow(slot, i) : -1;
+}
 /* A mod model's "base": a monster of the disc, or 0. */
 static int model_base(int model)
 {

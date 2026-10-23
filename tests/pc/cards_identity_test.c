@@ -28,6 +28,8 @@ int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod
     (void)i; (void)name; (void)base; (void)mod;
     return -1;
 }
+int Mods_ModelSector(int i) { (void)i; return -1; }
+int Mods_ModelWindow(int slot, int i) { (void)slot; (void)i; return -1; }
 
 void Mods_Note(const char *id, const char *format, ...)
 {

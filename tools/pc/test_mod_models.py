@@ -9,13 +9,17 @@ playing Blue-eyes face up and attacking with it:
     mod     Blue-eyes takes the mod's model ("model": "test-model")
     disc    Blue-eyes takes Dark Magician's own ("model": "Dark Magician")
     none    Blue-eyes as it is
+    changed as mod, but the model's file changes once the game is up: the
+            battle does not hang, and loads the model's base (Dark Magician);
+            3D Monsters does not load it (a changed record crashed its parse)
 
-The mod's record is read from past the disc's, through the override layer,
-so in mod and disc 3D Monsters must stand the same model on the field (the
-same picture once it has landed), and after the attack the battle's model
-slot must hold the same model data; none must differ from both. (The
-battle's frames themselves are not compared: the record's virtual sectors
-lie further on the simulated drive, so it arrives a few frames later.)
+The mod's record is read from its file: by 3D Monsters directly, and by the
+battle through the slot's window past the disc. So in mod and disc 3D
+Monsters must stand the same model on the field (the same picture once it
+has landed), and after the attack the battle's model slot must hold the same
+model data and the fight look the same, frame for frame from when the
+record is in (the window lies further on the simulated drive than the disc's
+record, so it arrives a few frames later); none must differ from both.
 
     python tools/pc/test_mod_models.py --binary tmp/pc/win64/memories-pc.exe --disc game/disc.bin
 """
@@ -33,7 +37,7 @@ from yfm_control import Game
 ROOT = Path(__file__).resolve().parents[2]
 RECORD_SECTORS = 0x114
 DARK_MAGICIAN = 35                  # card 35: record 34, below the first gap
-MOD_MODEL_CARD = 0x8000 + 621 + 1   # the first mod model, as Cards_ModelId gives it
+MOD_MODEL_CARD = 0x8000 + 1         # the first mod model, as Cards_ModelId gives it
 SLOTS = "D_800F2C40"                # the two battle model slots (src/game/model.h)
 SLOT_SIZE, SLOT_MODEL = 0xE20, 0xDF8
 SLOT_DATA = (0x80100000, 0x80140000)   # where a record's 96 model sectors go
@@ -84,7 +88,7 @@ def write_mod(mods: Path, kind: str, record: bytes) -> None:
     folder = mods / "test-models"
     folder.mkdir(parents=True)
     manifest = {"id": "test-models", "name": "Test models", "enabled": True, "min_api": 21}
-    if kind == "mod":
+    if kind in ("mod", "changed"):
         (folder / "models").mkdir()
         (folder / "models" / "test.mrg").write_bytes(record)
         manifest["models"] = [{"name": "test-model", "file": "models/test.mrg", "base": "Dark Magician"}]
@@ -107,6 +111,10 @@ def run(binary: Path, disc: Path, out: Path, kind: str, record: bytes) -> dict:
                         "mod.yamyi-mods": 0, "mod.drop-missing-cards": 0, "mod.test-models": 1},
               env={"MEMORIES_DISC": str(disc), "MEMORIES_TRACE": "mods", "MEMORIES_SPEED": "-1"}) as game:
         game.wait_until(lambda g: g.resident("main_menu"), 3000)
+        if kind == "changed":   # one byte, as a mod updated in place would
+            changed = bytearray(record)
+            changed[1000] ^= 0xFF
+            (mods / "test-models" / "models" / "test.mrg").write_bytes(changed)
         game.goto("duel", opponent=1, deck="1")
         game.duel_ready()
         game.play_card(0, face_up=True)
@@ -120,7 +128,7 @@ def run(binary: Path, disc: Path, out: Path, kind: str, record: bytes) -> dict:
         # The 3D battle (Square on a monster target, tests/pc/replays/full-duel's
         # attack_3d): the slot that takes Blue-eyes' model, once its record
         # has had a second to load.
-        wanted = {"mod": MOD_MODEL_CARD - 1, "disc": DARK_MAGICIAN - 1}.get(kind)
+        wanted = {"mod": MOD_MODEL_CARD - 1, "changed": MOD_MODEL_CARD - 1, "disc": DARK_MAGICIAN - 1}.get(kind)
         settle = SESSION.settle
 
         def watch(game, timeout=8000):
@@ -131,8 +139,9 @@ def run(binary: Path, disc: Path, out: Path, kind: str, record: bytes) -> dict:
                             game.u16(SLOTS, slot * SLOT_SIZE + SLOT_MODEL) == wanted:
                         game.step(60)
                         result["slot"], result["data"] = slot, game.peek(SLOT_DATA[slot], MODEL_DATA)
-                        game.step(60)
-                        game.shot("battle.png")
+                        for shot in range(14):   # the fight, a second apart: the monster is in by the twelfth
+                            game.step(60)
+                            result.setdefault("battle", []).append(game.shot(f"battle-{shot + 1}.png").read_bytes())
             settle(game, timeout)
         for _ in range(4):   # a turn with a monster of the opponent's to attack
             game.play_card(0, face_up=True)
@@ -161,9 +170,9 @@ def main():
     disc = args.disc.resolve()
     record = disc_record(disc, DARK_MAGICIAN)
     runs = {kind: run(args.binary.resolve(), disc, args.output / kind, kind, record)
-            for kind in ("mod", "disc", "none")}
-    mod, same, none = runs["mod"], runs["disc"], runs["none"]
-    assert "test-models: 1 replaced regions" in mod["log"], "the test mod's model was not added"
+            for kind in ("mod", "disc", "none", "changed")}
+    mod, same, none, changed = runs["mod"], runs["disc"], runs["none"], runs["changed"]
+    assert "test-models: 1 models" in mod["log"], "the test mod's model was not added"
     mine, theirs = mod["loaded"].get(MOD_MODEL_CARD), same["loaded"].get(DARK_MAGICIAN)
     assert mine and mine[0] > 0 and mine == theirs, f"3D Monsters: the mod's model {mine}, the disc's {theirs}"
     assert mod["field"] == same["field"], "the mod's model stands differently from the disc's"
@@ -171,8 +180,13 @@ def main():
     assert "slot" in mod, "no battle slot took the mod's model"
     assert same.get("slot") == mod["slot"], "the disc's model went to another battle slot"
     assert mod["data"] == same["data"], "the battle loaded other model data than the disc's"
+    assert mod["battle"] == same["battle"], "the mod's model fights differently from the disc's"
+    assert "cannot be read as it was at startup" in changed["log"], "the changed model file was read"
+    assert changed.get("data") == same["data"], "a model that cannot be read did not fight as its base"
+    assert f"card {MOD_MODEL_CARD} stance" not in changed["log"], "3D Monsters loaded the changed model file"
     slot = mod["slot"]
-    print(f"mod models: the mod's record stands on the field and fights in battle slot {slot} as the disc's; "
+    print(f"mod models: the mod's record stands on the field and fights in battle slot {slot} as the disc's, "
+          f"and a changed file fights as its base and is not drawn; "
           f"{args.output}")
 
 

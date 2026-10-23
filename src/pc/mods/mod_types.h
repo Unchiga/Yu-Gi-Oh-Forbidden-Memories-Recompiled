@@ -18,7 +18,8 @@
  * and own parts, atk_label/dfd_label/type_label, a part's hide or color, and
  * a card's frame_style). API 20 adds the named field registry ("fields")
  * and its optional field pictures. API 21 adds battle models a mod brings
- * ("models", appended to MODEL.MRG) and a card's "model" naming one. */
+ * ("models", read from the mod's own files) and a card's "model" naming
+ * one. */
 /* API 3: before hooks may alter arguments/result, or set handled to replace
  * the operation (including cancellation). Highest priority runs first;
  * equal priorities follow registration/load order. After hooks observe the

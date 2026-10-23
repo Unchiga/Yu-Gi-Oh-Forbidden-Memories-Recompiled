@@ -130,12 +130,27 @@ int Mods_DiscFileInfo(int retail_lba, int *lba, unsigned *size);
 int Mods_DiscSource(int lba, int *physical_lba);
 int Mods_DiscOrigin(int lba);
 unsigned Mods_DiscSignature(void);
-/* The battle models mods add ("models"), in load order: model i's
- * MODEL.MRG record (after the disc's), or -1 past the last; its name, its
- * "base" (a monster of the disc it stands in for where the game looks a
- * model up as a card, or NULL) and its mod. src/pc/cards/cards.c names them. */
+/* The battle models mods add ("models"), in load order. Mods_Model gives
+ * model i's name, its "base" (a monster of the disc it stands in for where
+ * the game looks a model up as a card, or NULL) and its mod: 0, or -1 past
+ * the last. src/pc/cards/cards.c names them.
+ * Mods_ModelSector: the first sector of its record as a native extra reads
+ * it (host->disc_read), or -1. Once its file is found gone or changed it
+ * is -1 until the next launch. Mods_ModelRead serves host->disc_read:
+ * `sectors` from `lba` on, within one record, or 0 when its file cannot be
+ * read as it was at startup.
+ * Mods_ModelWindow: reads it into battle slot
+ * `slot`'s window (0 or 1), where the drive finds it, and gives the window's
+ * first sector, or -1; only while no transfer runs (Model_LoadMonsterMerge
+ * waits for them first). Mods_ModelWindows: the windows' models, which save
+ * states carry, and Mods_ModelRebind reads them in again after a load. */
 int Mods_ModelCount(void);
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod);
+int Mods_ModelSector(int i);
+int Mods_ModelRead(int lba, int sectors, void *out);
+int Mods_ModelWindow(int slot, int i);
+int *Mods_ModelWindows(unsigned *size);
+void Mods_ModelRebind(void);
 
 /* Manager metadata and configuration. Borrowed strings live until exit. */
 const struct JsonValue *Mods_Manifest(int mod);

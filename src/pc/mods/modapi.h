@@ -60,7 +60,9 @@
  *  20  "fields" and the "change_field" monster effect (manifest only); no
  *      host layout or event change
  *  21  "models": battle models a mod adds, and a card's "model" naming one
- *      (manifest only); no host layout or event change
+ *      (manifest); no host layout or event change. host->disc_read also
+ *      reads a mod's model at Cards_ModelSector, and
+ *      AnimatedBattleModelProperties's model_id is unsigned (0x8000 up)
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 
