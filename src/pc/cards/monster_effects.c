@@ -634,19 +634,20 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx, cons
     return 1;
 }
 
-static int read_conditions(const char *mod, int index, int n, const JsonValue *entry, MonsterEffect *out)
+static int read_conditions(const char *mod, int index, int n, const JsonValue *entry, MonsterEffectEx *out_ex)
 {
     const JsonValue *conds = Json_Member(entry, "conditions");
     const JsonValue *single = Json_Member(entry, "condition");
     const JsonValue *mode = Json_Member(entry, "condition_mode");
-    out->cond_mode = MONSTER_COND_MODE_ALL;
+    if (!out_ex) return 1;
+    out_ex->cond_mode = MONSTER_COND_MODE_ALL;
     if (mode) {
         int m = named(Json_String(mode, NULL), MonsterEffect_CondModeNames, MONSTER_COND_MODE_COUNT);
         if (m < 0) {
             Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"condition_mode\" must be all or any", index, n);
             return 0;
         }
-        out->cond_mode = (unsigned char)m;
+        out_ex->cond_mode = (unsigned char)m;
     }
     if (conds) {
         const JsonValue *item;
@@ -656,27 +657,35 @@ static int read_conditions(const char *mod, int index, int n, const JsonValue *e
             return 0;
         }
         for (item = Json_At(conds, 0); item; item = Json_Next(item), c_idx++) {
-            if (out->cond_count >= MONSTER_CONDITIONS_MAX) {
+            if (out_ex->cond_count >= MONSTER_CONDITIONS_MAX) {
                 Mods_Note(mod, "cards[%d]: monster_effects[%d]: at most %d conditions allowed", index, n,
                           MONSTER_CONDITIONS_MAX);
                 break;
             }
-            if (!read_one_condition(mod, index, n, c_idx, item, &out->conditions[out->cond_count])) return 0;
-            out->cond_count++;
+            if (!read_one_condition(mod, index, n, c_idx, item, &out_ex->conditions[out_ex->cond_count])) return 0;
+            out_ex->cond_count++;
         }
     } else if (single) {
-        if (!read_one_condition(mod, index, n, 0, single, &out->conditions[0])) return 0;
-        out->cond_count = 1;
+        if (!read_one_condition(mod, index, n, 0, single, &out_ex->conditions[0])) return 0;
+        out_ex->cond_count = 1;
     }
     return 1;
 }
 
-static int read_one(const char *mod, int index, int n, const JsonValue *entry, MonsterEffect *out, int card_effect)
+static int read_one(const char *mod, int index, int n, const JsonValue *entry, MonsterEffect *out,
+                    MonsterEffectEx *out_ex, int card_effect)
 {
     const JsonValue *value;
     int when, action, target, v;
     memset(out, 0, sizeof(*out));
     out->type = out->attribute = out->each_type = out->each_attribute = -1;
+    if (out_ex) {
+        memset(out_ex, 0, sizeof(*out_ex));
+        out_ex->attacker_type = -1;
+        out_ex->attacker_attribute = -1;
+        out_ex->attacker_stat_op = MONSTER_OP_GT;
+        out_ex->attacker_level_op = MONSTER_OP_GT;
+    }
     if (Json_TypeOf(entry) != JSON_OBJECT) {
         Mods_Note(mod, "cards[%d]: monster_effects[%d] is not an object", index, n);
         return 0;
@@ -765,15 +774,15 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
     case MONSTER_DO_PIERCING: {
         const JsonValue *mod_val = Json_Member(entry, "modifier");
         const JsonValue *rst_val = Json_Member(entry, "reset");
-        out->battle_modifier = MONSTER_BATTLE_MOD_ALWAYS;
-        out->battle_reset = MONSTER_RESET_TURN;
-        out->attacker_type = -1;
-        out->attacker_attribute = -1;
-        out->attacker_stat = 0;
-        out->attacker_stat_op = MONSTER_OP_GT;
-        out->attacker_amount = 0;
-        out->attacker_level = 0;
-        out->attacker_level_op = MONSTER_OP_GT;
+        int battle_modifier = MONSTER_BATTLE_MOD_ALWAYS;
+        int battle_reset = MONSTER_RESET_TURN;
+        int attacker_type = -1;
+        int attacker_attribute = -1;
+        int attacker_stat = 0;
+        int attacker_stat_op = MONSTER_OP_GT;
+        int attacker_amount = 0;
+        int attacker_level = 0;
+        int attacker_level_op = MONSTER_OP_GT;
         if (!mod_val) mod_val = Json_Member(entry, "battle_modifier");
         if (!mod_val) mod_val = Json_Member(entry, "piercing_modifier");
         if (mod_val) {
@@ -813,7 +822,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
                     return 0;
                 }
             }
-            out->battle_modifier = (unsigned char)m;
+            battle_modifier = m;
         }
         if (!rst_val) rst_val = Json_Member(entry, "modifier_reset");
         if (!rst_val) rst_val = Json_Member(entry, "battle_reset");
@@ -821,7 +830,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
             const char *r_str = Json_String(rst_val, "");
             if (!strcmp(r_str, "copy") || !strcmp(r_str, "summon") ||
                 !strcmp(r_str, "this_copy") || !strcmp(r_str, "this_card_copy")) {
-                out->battle_reset = MONSTER_RESET_COPY;
+                battle_reset = MONSTER_RESET_COPY;
             } else {
                 int r = named(r_str, MonsterEffect_ResetNames, MONSTER_RESET_COUNT);
                 if (r < 0) {
@@ -829,7 +838,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
                               index, n);
                     return 0;
                 }
-                out->battle_reset = (unsigned char)r;
+                battle_reset = r;
             }
         }
 
@@ -844,7 +853,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
             long raw = Json_TypeOf(t_val) == JSON_NUMBER ? (long)Json_Number(t_val, -1)
                                                          : Cards_TypeNamed(Json_String(t_val, ""));
             if (raw >= 0 && raw <= 255 && Cards_IsMonsterType((int)raw)) {
-                out->attacker_type = (signed char)raw;
+                attacker_type = (int)raw;
             } else {
                 Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"attacker_type\" must be a monster type", index, n);
                 return 0;
@@ -858,7 +867,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         if (a_val) {
             int av = Attributes_Value(a_val);
             if (av >= 0) {
-                out->attacker_attribute = (signed short)av;
+                attacker_attribute = av;
             } else {
                 Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"attacker_attribute\" must be an attribute",
                           index, n);
@@ -873,33 +882,33 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         if (s_val) {
             const char *s = Json_String(s_val, "");
             if (!strcmp(s, "def") || !strcmp(s, "defense") || !strcmp(s, "DEF"))
-                out->attacker_stat = 2; /* DEF */
+                attacker_stat = 2; /* DEF */
             else if (!strcmp(s, "atk") || !strcmp(s, "attack") || !strcmp(s, "ATK"))
-                out->attacker_stat = 1; /* ATK */
+                attacker_stat = 1; /* ATK */
         }
 
         const JsonValue *sop_val = Json_Member(entry, "attacker_stat_op");
         if (!sop_val) sop_val = Json_Member(entry, "target_stat_op");
         if (!sop_val) sop_val = Json_Member(entry, "defender_stat_op");
         if (!sop_val) sop_val = Json_Member(entry, "stat_op");
-        if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT ||
+        if (!sop_val && (battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT ||
                          (!Json_Member(entry, "attacker_level_op") && !Json_Member(entry, "target_level_op"))))
             sop_val = Json_Member(entry, "comparison");
-        if (!sop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT ||
+        if (!sop_val && (battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT ||
                          (!Json_Member(entry, "attacker_level_op") && !Json_Member(entry, "target_level_op"))))
             sop_val = Json_Member(entry, "op");
         if (sop_val) {
             const char *op_str = Json_String(sop_val, "");
             if (!strcmp(op_str, "<") || !strcmp(op_str, "lower") || !strcmp(op_str, "lt"))
-                out->attacker_stat_op = MONSTER_OP_LT;
+                attacker_stat_op = MONSTER_OP_LT;
             else if (!strcmp(op_str, "<=") || !strcmp(op_str, "lower_equal") || !strcmp(op_str, "le"))
-                out->attacker_stat_op = MONSTER_OP_LE;
+                attacker_stat_op = MONSTER_OP_LE;
             else if (!strcmp(op_str, ">") || !strcmp(op_str, "higher") || !strcmp(op_str, "gt"))
-                out->attacker_stat_op = MONSTER_OP_GT;
+                attacker_stat_op = MONSTER_OP_GT;
             else if (!strcmp(op_str, ">=") || !strcmp(op_str, "higher_equal") || !strcmp(op_str, "ge"))
-                out->attacker_stat_op = MONSTER_OP_GE;
+                attacker_stat_op = MONSTER_OP_GE;
             else if (!strcmp(op_str, "==") || !strcmp(op_str, "=") || !strcmp(op_str, "equal") || !strcmp(op_str, "eq"))
-                out->attacker_stat_op = MONSTER_OP_EQ;
+                attacker_stat_op = MONSTER_OP_EQ;
         }
 
         const JsonValue *am_val = Json_Member(entry, "attacker_amount");
@@ -910,8 +919,8 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         if (am_val && Json_TypeOf(am_val) == JSON_NUMBER) {
             int amt = (int)Json_Number(am_val, 0);
             if (amt >= 0 && amt <= AMOUNT_MAX) {
-                out->attacker_amount = (short)amt;
-                if (out->attacker_stat == 0) out->attacker_stat = 1; /* default to ATK */
+                attacker_amount = (short)amt;
+                if (attacker_stat == 0) attacker_stat = 1; /* default to ATK */
             }
         }
 
@@ -919,24 +928,24 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         if (!lop_val) lop_val = Json_Member(entry, "target_level_op");
         if (!lop_val) lop_val = Json_Member(entry, "defender_level_op");
         if (!lop_val) lop_val = Json_Member(entry, "level_op");
-        if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL ||
+        if (!lop_val && (battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL ||
                          (!Json_Member(entry, "attacker_stat_op") && !Json_Member(entry, "target_stat_op"))))
             lop_val = Json_Member(entry, "comparison");
-        if (!lop_val && (out->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL ||
+        if (!lop_val && (battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL ||
                          (!Json_Member(entry, "attacker_stat_op") && !Json_Member(entry, "target_stat_op"))))
             lop_val = Json_Member(entry, "op");
         if (lop_val) {
             const char *op_str = Json_String(lop_val, "");
             if (!strcmp(op_str, "<") || !strcmp(op_str, "lower") || !strcmp(op_str, "lt"))
-                out->attacker_level_op = MONSTER_OP_LT;
+                attacker_level_op = MONSTER_OP_LT;
             else if (!strcmp(op_str, "<=") || !strcmp(op_str, "lower_equal") || !strcmp(op_str, "le"))
-                out->attacker_level_op = MONSTER_OP_LE;
+                attacker_level_op = MONSTER_OP_LE;
             else if (!strcmp(op_str, ">") || !strcmp(op_str, "higher") || !strcmp(op_str, "gt"))
-                out->attacker_level_op = MONSTER_OP_GT;
+                attacker_level_op = MONSTER_OP_GT;
             else if (!strcmp(op_str, ">=") || !strcmp(op_str, "higher_equal") || !strcmp(op_str, "ge"))
-                out->attacker_level_op = MONSTER_OP_GE;
+                attacker_level_op = MONSTER_OP_GE;
             else if (!strcmp(op_str, "==") || !strcmp(op_str, "=") || !strcmp(op_str, "equal") || !strcmp(op_str, "eq"))
-                out->attacker_level_op = MONSTER_OP_EQ;
+                attacker_level_op = MONSTER_OP_EQ;
         }
 
         const JsonValue *l_val = Json_Member(entry, "attacker_level");
@@ -946,11 +955,22 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         if (l_val && Json_TypeOf(l_val) == JSON_NUMBER) {
             int lvl = (int)Json_Number(l_val, 0);
             if (lvl >= 1 && lvl <= 12) {
-                out->attacker_level = (unsigned char)lvl;
+                attacker_level = lvl;
             } else {
                 Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"attacker_level\" must be 1 to 12", index, n);
                 return 0;
             }
+        }
+        if (out_ex) {
+            out_ex->battle_modifier = (unsigned char)battle_modifier;
+            out_ex->battle_reset = (unsigned char)battle_reset;
+            out_ex->attacker_type = (signed char)attacker_type;
+            out_ex->attacker_attribute = (signed short)attacker_attribute;
+            out_ex->attacker_stat = (unsigned char)attacker_stat;
+            out_ex->attacker_stat_op = (unsigned char)attacker_stat_op;
+            out_ex->attacker_amount = (short)attacker_amount;
+            out_ex->attacker_level = (unsigned char)attacker_level;
+            out_ex->attacker_level_op = (unsigned char)attacker_level_op;
         }
         break;
     }
@@ -966,11 +986,12 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
     }
     value = Json_Member(entry, "for_each");
     if (value && !read_each(mod, index, n, value, action, out)) return 0;
-    if (!read_conditions(mod, index, n, entry, out)) return 0;
+    if (!read_conditions(mod, index, n, entry, out_ex)) return 0;
     return 1;
 }
 
-int MonsterEffects_Read(const char *mod, int index, const JsonValue *list, MonsterEffect *out)
+int MonsterEffects_ReadEx(const char *mod, int index, const JsonValue *list, MonsterEffect *out,
+                          MonsterEffectEx *out_ex)
 {
     const JsonValue *entry;
     int n, count = 0;
@@ -985,12 +1006,18 @@ int MonsterEffects_Read(const char *mod, int index, const JsonValue *list, Monst
             Mods_Note(mod, "cards[%d]: at most %d monster_effects; the rest are left out", index, MONSTER_EFFECTS_MAX);
             break;
         }
-        count += read_one(mod, index, n, entry, out + count, 0);
+        count += read_one(mod, index, n, entry, out + count, out_ex ? out_ex + count : NULL, 0);
     }
     return count;
 }
 
-int CardEffects_Read(const char *mod, int index, const JsonValue *list, MonsterEffect *out)
+int MonsterEffects_Read(const char *mod, int index, const JsonValue *list, MonsterEffect *out)
+{
+    return MonsterEffects_ReadEx(mod, index, list, out, NULL);
+}
+
+int CardEffects_ReadEx(const char *mod, int index, const JsonValue *list, MonsterEffect *out,
+                       MonsterEffectEx *out_ex)
 {
     const JsonValue *entry;
     int n, count = 0;
@@ -1005,7 +1032,12 @@ int CardEffects_Read(const char *mod, int index, const JsonValue *list, MonsterE
             Mods_Note(mod, "cards[%d]: at most %d card_effects; the rest are left out", index, MONSTER_EFFECTS_MAX);
             break;
         }
-        count += read_one(mod, index, n, entry, out + count, 1);
+        count += read_one(mod, index, n, entry, out + count, out_ex ? out_ex + count : NULL, 1);
     }
     return count;
+}
+
+int CardEffects_Read(const char *mod, int index, const JsonValue *list, MonsterEffect *out)
+{
+    return CardEffects_ReadEx(mod, index, list, out, NULL);
 }

@@ -64,6 +64,13 @@ int Cards_CardEffects(int card, const MonsterEffect **effects)
     (void)effects;
     return 0;
 }
+int Cards_CardEffectsEx(int card, const MonsterEffectEx **effects_ex)
+{
+    (void)card;
+    if (effects_ex)
+        *effects_ex = NULL;
+    return 0;
+}
 int announce(int card, int record, int when, int phase)
 {
     (void)card;
@@ -147,6 +154,7 @@ DuelEffectRequest *DuelEffect_CreateRequest(s32 id)
 int Tables_StatCapEither(int val, int diff) { return val + diff; }
 
 static MonsterEffect s_test_effects[8];
+static MonsterEffectEx s_test_effects_ex[8];
 static int s_test_effect_count = 0;
 
 int Cards_MonsterEffects(int card, const MonsterEffect **effects)
@@ -154,6 +162,14 @@ int Cards_MonsterEffects(int card, const MonsterEffect **effects)
     (void)card;
     if (effects)
         *effects = s_test_effects;
+    return s_test_effect_count;
+}
+
+int Cards_MonsterEffectsEx(int card, const MonsterEffectEx **effects_ex)
+{
+    (void)card;
+    if (effects_ex)
+        *effects_ex = s_test_effects_ex;
     return s_test_effect_count;
 }
 
@@ -196,14 +212,17 @@ static void reset_test_duel(void)
 static void test_attacker_vs_defender(void)
 {
     MonsterEffect effect;
+    MonsterEffectEx effect_ex;
     memset(&effect, 0, sizeof(effect));
+    memset(&effect_ex, 0, sizeof(effect_ex));
     effect.when = MONSTER_WHEN_FACE_UP;
     effect.action = MONSTER_DO_BATTLE_IMMUNITY;
     effect.target = MONSTER_TARGET_SELF;
-    effect.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
-    effect.battle_reset = MONSTER_RESET_TURN;
+    effect_ex.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
+    effect_ex.battle_reset = MONSTER_RESET_TURN;
 
     s_test_effects[0] = effect;
+    s_test_effects_ex[0] = effect_ex;
     s_test_effect_count = 1;
 
     reset_test_duel();
@@ -237,35 +256,40 @@ static void test_attacker_vs_defender(void)
 static void test_first_second_third_attacked_sequence(void)
 {
     MonsterEffect eff_first, eff_second, eff_third, eff_boost;
+    MonsterEffectEx ex_first, ex_second, ex_third, ex_boost;
 
     memset(&eff_first, 0, sizeof(eff_first));
+    memset(&ex_first, 0, sizeof(ex_first));
     eff_first.when = MONSTER_WHEN_FACE_UP;
     eff_first.action = MONSTER_DO_BATTLE_IMMUNITY;
     eff_first.target = MONSTER_TARGET_SELF;
-    eff_first.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
-    eff_first.battle_reset = MONSTER_RESET_TURN;
+    ex_first.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
+    ex_first.battle_reset = MONSTER_RESET_TURN;
 
     memset(&eff_second, 0, sizeof(eff_second));
+    memset(&ex_second, 0, sizeof(ex_second));
     eff_second.when = MONSTER_WHEN_FACE_UP;
     eff_second.action = MONSTER_DO_BATTLE_IMMUNITY;
     eff_second.target = MONSTER_TARGET_SELF;
-    eff_second.battle_modifier = MONSTER_BATTLE_MOD_AFTER_2_ATTACKS;
-    eff_second.battle_reset = MONSTER_RESET_TURN;
+    ex_second.battle_modifier = MONSTER_BATTLE_MOD_AFTER_2_ATTACKS;
+    ex_second.battle_reset = MONSTER_RESET_TURN;
 
     memset(&eff_third, 0, sizeof(eff_third));
+    memset(&ex_third, 0, sizeof(ex_third));
     eff_third.when = MONSTER_WHEN_FACE_UP;
     eff_third.action = MONSTER_DO_BATTLE_IMMUNITY;
     eff_third.target = MONSTER_TARGET_SELF;
-    eff_third.battle_modifier = MONSTER_BATTLE_MOD_AFTER_3_ATTACKS;
-    eff_third.battle_reset = MONSTER_RESET_TURN;
+    ex_third.battle_modifier = MONSTER_BATTLE_MOD_AFTER_3_ATTACKS;
+    ex_third.battle_reset = MONSTER_RESET_TURN;
 
     /* Verify boosts are never affected by battle modifiers */
     memset(&eff_boost, 0, sizeof(eff_boost));
+    memset(&ex_boost, 0, sizeof(ex_boost));
     eff_boost.when = MONSTER_WHEN_FACE_UP;
     eff_boost.action = MONSTER_DO_BOOST;
     eff_boost.target = MONSTER_TARGET_SELF;
     eff_boost.attack = 500;
-    eff_boost.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
+    ex_boost.battle_modifier = MONSTER_BATTLE_MOD_FIRST_ATTACKED;
 
     reset_test_duel();
     gDuel_wSceneStateFlags = PHASE_BATTLE;
@@ -275,31 +299,40 @@ static void test_first_second_third_attacked_sequence(void)
     /* --- Attack 1 --- */
     gMonsterEffects.attacked_turn[5] = 1;
     s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_first;
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
     s_test_effects[0] = eff_second;
+    s_test_effects_ex[0] = ex_second;
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
     s_test_effects[0] = eff_third;
+    s_test_effects_ex[0] = ex_third;
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
 
     /* Boost is not affected by battle modifier, conditions met is true */
-    assert(MonsterEffects_ConditionsMet(5, &eff_boost) == 1);
+    assert(MonsterEffects_ConditionsMet(5, &ex_boost) == 1);
 
     /* --- Attack 2 --- */
     gMonsterEffects.attacked_turn[5] = 2;
     s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_first;
     assert(MonsterEffects_HasBattleImmunity(5) == 0); /* Immune only 1st attack */
     s_test_effects[0] = eff_second;
+    s_test_effects_ex[0] = ex_second;
     assert(MonsterEffects_HasBattleImmunity(5) == 1); /* Still protected */
     s_test_effects[0] = eff_third;
+    s_test_effects_ex[0] = ex_third;
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
 
     /* --- Attack 4 --- */
     gMonsterEffects.attacked_turn[5] = 4;
     s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_first;
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
     s_test_effects[0] = eff_second;
+    s_test_effects_ex[0] = ex_second;
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
     s_test_effects[0] = eff_third;
+    s_test_effects_ex[0] = ex_third;
     assert(MonsterEffects_HasBattleImmunity(5) == 0); /* Destroyed after 3 attacks */
 
     puts("test_first_second_third_attacked_sequence: PASSED (1st, 2-attack, and "
@@ -308,7 +341,7 @@ static void test_first_second_third_attacked_sequence(void)
 
 static void test_fewer_and_more_monsters_condition(void)
 {
-    MonsterEffect eff_fewer, eff_more;
+    MonsterEffectEx eff_fewer, eff_more;
 
     memset(&eff_fewer, 0, sizeof(eff_fewer));
     eff_fewer.cond_count = 1;
@@ -435,12 +468,11 @@ static void test_fewer_and_more_monsters_condition(void)
 
 static void test_control_stat_condition(void)
 {
-    MonsterEffect eff;
+    MonsterEffectEx eff;
     MonsterCondition *cond;
 
     memset(&eff, 0, sizeof(eff));
     eff.cond_count = 1;
-    eff.when = MONSTER_WHEN_FACE_UP;
     cond = &eff.conditions[0];
 
     /* Setup player monsters:
@@ -510,12 +542,11 @@ static void test_control_stat_condition(void)
 
 static void test_control_level_condition(void)
 {
-    MonsterEffect eff;
+    MonsterEffectEx eff;
     MonsterCondition *cond;
 
     memset(&eff, 0, sizeof(eff));
     eff.cond_count = 1;
-    eff.when = MONSTER_WHEN_FACE_UP;
     cond = &eff.conditions[0];
 
     memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
@@ -565,12 +596,11 @@ static void test_control_level_condition(void)
 
 static void test_control_type_condition(void)
 {
-    MonsterEffect eff;
+    MonsterEffectEx eff;
     MonsterCondition *cond;
 
     memset(&eff, 0, sizeof(eff));
     eff.cond_count = 1;
-    eff.when = MONSTER_WHEN_FACE_UP;
     cond = &eff.conditions[0];
 
     memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
@@ -655,12 +685,11 @@ static void test_control_type_condition(void)
 
 static void test_control_attribute_condition(void)
 {
-    MonsterEffect eff;
+    MonsterEffectEx eff;
     MonsterCondition *cond;
 
     memset(&eff, 0, sizeof(eff));
     eff.cond_count = 1;
-    eff.when = MONSTER_WHEN_FACE_UP;
     cond = &eff.conditions[0];
 
     memset(D_801A7AD8, 0, sizeof(D_801A7AD8));
@@ -739,18 +768,16 @@ static void test_control_attribute_condition(void)
 
 static void test_lp_comparison_conditions(void)
 {
-    MonsterEffect eff_lower, eff_higher;
+    MonsterEffectEx eff_lower, eff_higher;
     MonsterCondition *cond_l, *cond_h;
 
     memset(&eff_lower, 0, sizeof(eff_lower));
     eff_lower.cond_count = 1;
-    eff_lower.when = MONSTER_WHEN_FACE_UP;
     cond_l = &eff_lower.conditions[0];
     cond_l->type = MONSTER_COND_LOWER_LP;
 
     memset(&eff_higher, 0, sizeof(eff_higher));
     eff_higher.cond_count = 1;
-    eff_higher.when = MONSTER_WHEN_FACE_UP;
     cond_h = &eff_higher.conditions[0];
     cond_h->type = MONSTER_COND_HIGHER_LP;
 
@@ -791,12 +818,11 @@ static void test_lp_comparison_conditions(void)
 
 static void test_field_spell_condition(void)
 {
-    MonsterEffect eff;
+    MonsterEffectEx eff;
     MonsterCondition *cond;
 
     memset(&eff, 0, sizeof(eff));
     eff.cond_count = 1;
-    eff.when = MONSTER_WHEN_FACE_UP;
     cond = &eff.conditions[0];
     cond->type = MONSTER_COND_FIELD_SPELL;
 
@@ -869,6 +895,7 @@ static void test_field_spell_condition(void)
 static void test_attacker_criteria_immunity(void)
 {
     MonsterEffect eff;
+    MonsterEffectEx eff_ex;
     reset_test_duel();
 
     /* Zone 5 is defender (card 18), Zone 20 is attacker (card 1) */
@@ -878,14 +905,17 @@ static void test_attacker_criteria_immunity(void)
 
     s_test_effect_count = 1;
 
-    /* --- Test 1: MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE --- */
     memset(&eff, 0, sizeof(eff));
     eff.when = MONSTER_WHEN_FACE_UP;
     eff.action = MONSTER_DO_BATTLE_IMMUNITY;
     eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE;
-    eff.attacker_type = 1; /* Dragon */
+
+    /* --- Test 1: MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE --- */
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE;
+    eff_ex.attacker_type = 1; /* Dragon */
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     s_mock_type[1] = 1; /* Attacker is Dragon */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -903,13 +933,11 @@ static void test_attacker_criteria_immunity(void)
     gMonsterEffects.trap_battle_record[1] = 5;
 
     /* --- Test 2: MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE --- */
-    memset(&eff, 0, sizeof(eff));
-    eff.when = MONSTER_WHEN_FACE_UP;
-    eff.action = MONSTER_DO_BATTLE_IMMUNITY;
-    eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE;
-    eff.attacker_attribute = 1; /* LIGHT */
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE;
+    eff_ex.attacker_attribute = 1; /* LIGHT */
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     s_mock_attr[1] = 1; /* Attacker is LIGHT */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -919,15 +947,13 @@ static void test_attacker_criteria_immunity(void)
 
     /* --- Test 3: MONSTER_BATTLE_MOD_ATTACKED_BY_STAT --- */
     /* Check higher ATK (default / MONSTER_OP_GT) */
-    memset(&eff, 0, sizeof(eff));
-    eff.when = MONSTER_WHEN_FACE_UP;
-    eff.action = MONSTER_DO_BATTLE_IMMUNITY;
-    eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT;
-    eff.attacker_stat = 1; /* ATK */
-    eff.attacker_stat_op = MONSTER_OP_GT;
-    eff.attacker_amount = 2500;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT;
+    eff_ex.attacker_stat = 1; /* ATK */
+    eff_ex.attacker_stat_op = MONSTER_OP_GT;
+    eff_ex.attacker_amount = 2500;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     gDuel_adwCardStats[20] = 3000 | (2500 << 16); /* 3000 ATK, 2500 DEF */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -939,9 +965,10 @@ static void test_attacker_criteria_immunity(void)
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
     /* Check lower ATK (MONSTER_OP_LT) */
-    eff.attacker_stat_op = MONSTER_OP_LT;
-    eff.attacker_amount = 2500;
+    eff_ex.attacker_stat_op = MONSTER_OP_LT;
+    eff_ex.attacker_amount = 2500;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     gDuel_adwCardStats[20] = 2000 | (2500 << 16); /* 2000 < 2500 -> immune */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -953,10 +980,11 @@ static void test_attacker_criteria_immunity(void)
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
     /* Check higher DEF */
-    eff.attacker_stat = 2; /* DEF */
-    eff.attacker_stat_op = MONSTER_OP_GT;
-    eff.attacker_amount = 2000;
+    eff_ex.attacker_stat = 2; /* DEF */
+    eff_ex.attacker_stat_op = MONSTER_OP_GT;
+    eff_ex.attacker_amount = 2000;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     gDuel_adwCardStats[20] = 1000 | (2500 << 16); /* 2500 DEF > 2000 */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -965,9 +993,10 @@ static void test_attacker_criteria_immunity(void)
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
     /* Check lower DEF */
-    eff.attacker_stat_op = MONSTER_OP_LT;
-    eff.attacker_amount = 2000;
+    eff_ex.attacker_stat_op = MONSTER_OP_LT;
+    eff_ex.attacker_amount = 2000;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     gDuel_adwCardStats[20] = 1000 | (1500 << 16); /* 1500 DEF < 2000 */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -977,14 +1006,12 @@ static void test_attacker_criteria_immunity(void)
 
     /* --- Test 4: MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL --- */
     /* Higher level (MONSTER_OP_GT) */
-    memset(&eff, 0, sizeof(eff));
-    eff.when = MONSTER_WHEN_FACE_UP;
-    eff.action = MONSTER_DO_BATTLE_IMMUNITY;
-    eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL;
-    eff.attacker_level = 7;
-    eff.attacker_level_op = MONSTER_OP_GT;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL;
+    eff_ex.attacker_level = 7;
+    eff_ex.attacker_level_op = MONSTER_OP_GT;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     s_mock_level[1] = 8; /* Level 8 > 7 */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -996,9 +1023,10 @@ static void test_attacker_criteria_immunity(void)
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
     /* Lower level (MONSTER_OP_LT) */
-    eff.attacker_level_op = MONSTER_OP_LT;
-    eff.attacker_level = 5;
+    eff_ex.attacker_level_op = MONSTER_OP_LT;
+    eff_ex.attacker_level = 5;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     s_mock_level[1] = 4; /* Level 4 < 5 -> immune */
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
@@ -1010,19 +1038,17 @@ static void test_attacker_criteria_immunity(void)
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
     /* --- Test 5: MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER (combined criteria) --- */
-    memset(&eff, 0, sizeof(eff));
-    eff.when = MONSTER_WHEN_FACE_UP;
-    eff.action = MONSTER_DO_BATTLE_IMMUNITY;
-    eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER;
-    eff.attacker_type = 1;      /* Dragon */
-    eff.attacker_attribute = 1; /* LIGHT */
-    eff.attacker_stat = 1;      /* ATK */
-    eff.attacker_stat_op = MONSTER_OP_GT;
-    eff.attacker_amount = 2500; /* ATK > 2500 */
-    eff.attacker_level = 7;     /* Level > 7 */
-    eff.attacker_level_op = MONSTER_OP_GT;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER;
+    eff_ex.attacker_type = 1;      /* Dragon */
+    eff_ex.attacker_attribute = 1; /* LIGHT */
+    eff_ex.attacker_stat = 1;      /* ATK */
+    eff_ex.attacker_stat_op = MONSTER_OP_GT;
+    eff_ex.attacker_amount = 2500; /* ATK > 2500 */
+    eff_ex.attacker_level = 7;     /* Level > 7 */
+    eff_ex.attacker_level_op = MONSTER_OP_GT;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     /* Satisfy all: Dragon, LIGHT, ATK 3000, Level 8 */
     s_mock_type[1] = 1;
@@ -1032,11 +1058,12 @@ static void test_attacker_criteria_immunity(void)
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
 
     /* Test with lower stat / lower level in combined */
-    eff.attacker_stat_op = MONSTER_OP_LT;
-    eff.attacker_amount = 3500; /* ATK < 3500 */
-    eff.attacker_level_op = MONSTER_OP_LE;
-    eff.attacker_level = 8; /* Level <= 8 */
+    eff_ex.attacker_stat_op = MONSTER_OP_LT;
+    eff_ex.attacker_amount = 3500; /* ATK < 3500 */
+    eff_ex.attacker_level_op = MONSTER_OP_LE;
+    eff_ex.attacker_level = 8; /* Level <= 8 */
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
 
     /* Fail type */
@@ -1064,6 +1091,7 @@ static void test_attacker_criteria_immunity(void)
 static void test_piercing_damage(void)
 {
     MonsterEffect eff;
+    MonsterEffectEx eff_ex;
     reset_test_duel();
 
     /* --- Test 1: MONSTER_PIERCING_MOD_ALWAYS --- */
@@ -1071,9 +1099,11 @@ static void test_piercing_damage(void)
     eff.when = MONSTER_WHEN_FACE_UP;
     eff.action = MONSTER_DO_PIERCING;
     eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
 
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     s_test_effect_count = 1;
 
     /* Check HasPiercingDamage */
@@ -1145,9 +1175,11 @@ static void test_piercing_damage(void)
     assert(gMonsterEffects.piercing_damage == 0);
 
     /* --- Test 2: MONSTER_PIERCING_MOD_TYPE --- */
-    eff.battle_modifier = MONSTER_PIERCING_MOD_TYPE;
-    eff.attacker_type = 1; /* Dragon */
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_TYPE;
+    eff_ex.attacker_type = 1; /* Dragon */
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     s_mock_type[1] = 1; /* Opponent card 1 is Dragon */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
@@ -1156,9 +1188,11 @@ static void test_piercing_damage(void)
     s_mock_type[1] = 1;
 
     /* --- Test 3: MONSTER_PIERCING_MOD_ATTRIBUTE --- */
-    eff.battle_modifier = MONSTER_PIERCING_MOD_ATTRIBUTE;
-    eff.attacker_attribute = 1; /* LIGHT */
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_ATTRIBUTE;
+    eff_ex.attacker_attribute = 1; /* LIGHT */
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     s_mock_attr[1] = 1; /* LIGHT */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
@@ -1167,13 +1201,15 @@ static void test_piercing_damage(void)
     s_mock_attr[1] = 1;
 
     /* --- Test 4: MONSTER_PIERCING_MOD_STAT (higher / lower ATK & DEF) --- */
-    eff.battle_modifier = MONSTER_PIERCING_MOD_STAT;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_STAT;
 
     /* 4a. DEF < 2000 */
-    eff.attacker_stat = 2; /* DEF */
-    eff.attacker_stat_op = MONSTER_OP_LT;
-    eff.attacker_amount = 2000;
+    eff_ex.attacker_stat = 2; /* DEF */
+    eff_ex.attacker_stat_op = MONSTER_OP_LT;
+    eff_ex.attacker_amount = 2000;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     gDuel_adwCardStats[20] = 1200 | (1500 << 16); /* DEF 1500 < 2000 -> true */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
@@ -1181,91 +1217,99 @@ static void test_piercing_damage(void)
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* 4b. DEF > 2000 */
-    eff.attacker_stat_op = MONSTER_OP_GT;
+    eff_ex.attacker_stat_op = MONSTER_OP_GT;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1); /* DEF 2500 > 2000 */
     gDuel_adwCardStats[20] = 1200 | (1500 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* 4c. DEF <= 1500 */
-    eff.attacker_stat_op = MONSTER_OP_LE;
-    eff.attacker_amount = 1500;
+    eff_ex.attacker_stat_op = MONSTER_OP_LE;
+    eff_ex.attacker_amount = 1500;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1); /* 1500 <= 1500 */
     gDuel_adwCardStats[20] = 1200 | (1501 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* 4d. DEF >= 1500 */
-    eff.attacker_stat_op = MONSTER_OP_GE;
-    eff.attacker_amount = 1500;
+    eff_ex.attacker_stat_op = MONSTER_OP_GE;
+    eff_ex.attacker_amount = 1500;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     gDuel_adwCardStats[20] = 1200 | (1500 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     gDuel_adwCardStats[20] = 1200 | (1499 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* 4e. DEF == 1500 */
-    eff.attacker_stat_op = MONSTER_OP_EQ;
-    eff.attacker_amount = 1500;
+    eff_ex.attacker_stat_op = MONSTER_OP_EQ;
+    eff_ex.attacker_amount = 1500;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     gDuel_adwCardStats[20] = 1200 | (1500 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     gDuel_adwCardStats[20] = 1200 | (1501 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* 4f. ATK > 1500 and ATK < 1500 */
-    eff.attacker_stat = 1; /* ATK */
-    eff.attacker_stat_op = MONSTER_OP_GT;
-    eff.attacker_amount = 1500;
+    eff_ex.attacker_stat = 1; /* ATK */
+    eff_ex.attacker_stat_op = MONSTER_OP_GT;
+    eff_ex.attacker_amount = 1500;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     gDuel_adwCardStats[20] = 2000 | (1500 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     gDuel_adwCardStats[20] = 1000 | (1500 << 16);
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
-    eff.attacker_stat_op = MONSTER_OP_LT;
+    eff_ex.attacker_stat_op = MONSTER_OP_LT;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1); /* 1000 < 1500 */
 
     /* --- Test 5: MONSTER_PIERCING_MOD_LEVEL (higher / lower level) --- */
-    eff.battle_modifier = MONSTER_PIERCING_MOD_LEVEL;
-    eff.attacker_level = 6;
-    eff.attacker_level_op = MONSTER_OP_GT;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_LEVEL;
+    eff_ex.attacker_level = 6;
+    eff_ex.attacker_level_op = MONSTER_OP_GT;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     s_mock_level[1] = 8; /* Level 8 > 6 */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     s_mock_level[1] = 6; /* Level 6 > 6 is false */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
-    eff.attacker_level_op = MONSTER_OP_LT;
+    eff_ex.attacker_level_op = MONSTER_OP_LT;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     s_mock_level[1] = 4; /* Level 4 < 6 */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     s_mock_level[1] = 6; /* Level 6 < 6 is false */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
-    eff.attacker_level_op = MONSTER_OP_LE;
+    eff_ex.attacker_level_op = MONSTER_OP_LE;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
     s_mock_level[1] = 6; /* Level 6 <= 6 */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     s_mock_level[1] = 7; /* Level 7 <= 6 is false */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* --- Test 6: MONSTER_PIERCING_MOD_MONSTER (combined criteria) --- */
-    memset(&eff, 0, sizeof(eff));
-    eff.when = MONSTER_WHEN_FACE_UP;
-    eff.action = MONSTER_DO_PIERCING;
-    eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_PIERCING_MOD_MONSTER;
-    eff.attacker_type = 1;      /* Dragon */
-    eff.attacker_attribute = 1; /* LIGHT */
-    eff.attacker_stat = 2;      /* DEF */
-    eff.attacker_stat_op = MONSTER_OP_LT;
-    eff.attacker_amount = 2000; /* DEF < 2000 */
-    eff.attacker_level = 8;     /* Level <= 8 */
-    eff.attacker_level_op = MONSTER_OP_LE;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_MONSTER;
+    eff_ex.attacker_type = 1;      /* Dragon */
+    eff_ex.attacker_attribute = 1; /* LIGHT */
+    eff_ex.attacker_stat = 2;      /* DEF */
+    eff_ex.attacker_stat_op = MONSTER_OP_LT;
+    eff_ex.attacker_amount = 2000; /* DEF < 2000 */
+    eff_ex.attacker_level = 8;     /* Level <= 8 */
+    eff_ex.attacker_level_op = MONSTER_OP_LE;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     /* Defender satisfies all: Dragon, LIGHT, DEF 1500, Level 8 */
     s_mock_type[1] = 1;
@@ -1295,18 +1339,16 @@ static void test_piercing_damage(void)
     s_mock_level[1] = 8;
 
     /* --- Test 7: While Face-Up Conditions working with Piercing Damage --- */
-    memset(&eff, 0, sizeof(eff));
-    eff.when = MONSTER_WHEN_FACE_UP;
-    eff.action = MONSTER_DO_PIERCING;
-    eff.target = MONSTER_TARGET_SELF;
-    eff.battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
 
     /* Add condition: field_spell active (Umi = 5) */
-    eff.cond_count = 1;
-    eff.conditions[0].type = MONSTER_COND_FIELD_SPELL;
-    eff.conditions[0].field_spell = 5; /* Umi */
-    eff.conditions[0].presence = 1;    /* is active */
+    eff_ex.cond_count = 1;
+    eff_ex.conditions[0].type = MONSTER_COND_FIELD_SPELL;
+    eff_ex.conditions[0].field_spell = 5; /* Umi */
+    eff_ex.conditions[0].presence = 1;    /* is active */
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     gDuel_bTerrain = 5; /* Umi */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
@@ -1315,12 +1357,13 @@ static void test_piercing_damage(void)
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* Add second condition: named card (card 18 Kuriboh) on whole field */
-    eff.cond_count = 2;
-    eff.cond_mode = MONSTER_COND_MODE_ALL;
-    eff.conditions[1].type = MONSTER_COND_NAMED_CARD;
-    eff.conditions[1].card = 18;
-    eff.conditions[1].whose = MONSTER_EACH_ALL;
+    eff_ex.cond_count = 2;
+    eff_ex.cond_mode = MONSTER_COND_MODE_ALL;
+    eff_ex.conditions[1].type = MONSTER_COND_NAMED_CARD;
+    eff_ex.conditions[1].card = 18;
+    eff_ex.conditions[1].whose = MONSTER_EACH_ALL;
     s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
 
     /* Both conditions met: Umi active, card 18 face up in zone 5 */
     gDuel_bTerrain = 5;

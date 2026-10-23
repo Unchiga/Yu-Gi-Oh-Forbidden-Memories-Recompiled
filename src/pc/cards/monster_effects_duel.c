@@ -95,10 +95,12 @@ static void trace(const char *what, int card, int record, const MonsterEffect *e
 static void queue(int card, int record, int when)
 {
     const MonsterEffect *effects;
+    const MonsterEffectEx *effects_ex;
     int n = Cards_MonsterEffects(card, &effects), i;
+    Cards_MonsterEffectsEx(card, &effects_ex);
     for (i = 0; i < n; i++) {
         if (effects[i].when != when) continue;
-        if (effects[i].cond_count && !MonsterEffects_ConditionsMet(record, &effects[i])) continue;
+        if (effects_ex && effects_ex[i].cond_count && !MonsterEffects_ConditionsMet(record, &effects_ex[i])) continue;
         if (S.count == MONSTER_QUEUE_MAX) {
             LOG(LOG_DUEL_EFFECTS, "monster effects: queue full: card %d's %s effect dropped", card,
                 MonsterEffect_WhenNames[when]);
@@ -396,13 +398,17 @@ static int resolve(void)
 {
     MonsterTrigger trigger = S.queue[0];
     const MonsterEffect *effects, *effect;
+    const MonsterEffectEx *effects_ex = NULL, *effect_ex = NULL;
     int card_effect = trigger.effect & MONSTER_TRIGGER_CARD_EFFECT, index = trigger.effect & ~MONSTER_TRIGGER_CARD_EFFECT;
     int n = card_effect ? Cards_CardEffects(trigger.card, &effects) : Cards_MonsterEffects(trigger.card, &effects);
     int side = owner(trigger.record), record, hit = 0, count;
+    if (card_effect) Cards_CardEffectsEx(trigger.card, &effects_ex);
+    else Cards_MonsterEffectsEx(trigger.card, &effects_ex);
     memmove(S.queue, S.queue + 1, (size_t)(--S.count) * sizeof(S.queue[0]));
     if (index >= n) return 0;
     effect = &effects[index];
-    if (effect->cond_count && !MonsterEffects_ConditionsMet(trigger.record, effect)) return 0;
+    if (effects_ex) effect_ex = &effects_ex[index];
+    if (effect_ex && effect_ex->cond_count && !MonsterEffects_ConditionsMet(trigger.record, effect_ex)) return 0;
     trace(card_effect ? "resolving card" : "resolving", trigger.card, trigger.record, effect);
     S.chain++;
     count = times(effect, trigger.record);
@@ -788,14 +794,17 @@ void MonsterEffects_Battle(void)
             S.face_up[records[i]] = 1;
     for (i = 0; i < 2; i++) {
         const MonsterEffect *effects;
+        const MonsterEffectEx *effects_ex = NULL;
         int record = records[i], other = records[i ^ 1], card, n, e, count;
         if (!monster_zone(record)) continue;
         card = D_801A7AD8[record].card_id;
         n = announce(card, record, MONSTER_WHEN_COMBAT, MEMORIES_BEFORE) ? 0 : Cards_MonsterEffects(card, &effects);
+        Cards_MonsterEffectsEx(card, &effects_ex);
         for (e = 0; e < n; e++) {
             const MonsterEffect *effect = &effects[e];
+            const MonsterEffectEx *effect_ex = effects_ex ? &effects_ex[e] : NULL;
             if (effect->when != MONSTER_WHEN_COMBAT) continue;
-            if (effect->cond_count && !MonsterEffects_ConditionsMet(record, effect)) continue;
+            if (effect_ex && effect_ex->cond_count && !MonsterEffects_ConditionsMet(record, effect_ex)) continue;
             trace("battle", card, record, effect);
             count = times(effect, record);
             if (!count) continue;
@@ -1065,19 +1074,19 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
     }
 }
 
-int MonsterEffects_ConditionsMet(int record, const MonsterEffect *effect)
+int MonsterEffects_ConditionsMet(int record, const MonsterEffectEx *effect_ex)
 {
     int i;
-    if (!effect->cond_count) return 1;
-    if (effect->cond_mode == MONSTER_COND_MODE_ANY) {
-        for (i = 0; i < effect->cond_count; i++) {
-            if (evaluate_condition(record, &effect->conditions[i]))
+    if (!effect_ex || !effect_ex->cond_count) return 1;
+    if (effect_ex->cond_mode == MONSTER_COND_MODE_ANY) {
+        for (i = 0; i < effect_ex->cond_count; i++) {
+            if (evaluate_condition(record, &effect_ex->conditions[i]))
                 return 1;
         }
         return 0;
     }
-    for (i = 0; i < effect->cond_count; i++) {
-        if (!evaluate_condition(record, &effect->conditions[i]))
+    for (i = 0; i < effect_ex->cond_count; i++) {
+        if (!evaluate_condition(record, &effect_ex->conditions[i]))
             return 0;
     }
     return 1;
@@ -1086,23 +1095,26 @@ int MonsterEffects_ConditionsMet(int record, const MonsterEffect *effect)
 int MonsterEffects_HasBattleImmunity(int record)
 {
     const MonsterEffect *effects;
+    const MonsterEffectEx *effects_ex = NULL;
     int n, e;
     if (!monster_zone(record) || !S.card[record] || !S.face_up[record]) return 0;
     n = Cards_MonsterEffects(S.card[record], &effects);
+    Cards_MonsterEffectsEx(S.card[record], &effects_ex);
     for (e = 0; e < n; e++) {
+        const MonsterEffectEx *ex = effects_ex ? &effects_ex[e] : NULL;
         if (effects[e].when != MONSTER_WHEN_FACE_UP) continue;
         if (effects[e].action != MONSTER_DO_BATTLE_IMMUNITY) continue;
-        if (!MonsterEffects_ConditionsMet(record, &effects[e])) continue;
+        if (!MonsterEffects_ConditionsMet(record, ex)) continue;
 
         /* Battle immunity modifiers (API 19) */
-        if (effects[e].battle_modifier != MONSTER_BATTLE_MOD_ALWAYS) {
+        if (ex && ex->battle_modifier != MONSTER_BATTLE_MOD_ALWAYS) {
             int now = phase(), in_battle;
             int target_count = 1;
             int count = 0;
 
-            if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS)
+            if (ex->battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS)
                 target_count = 2;
-            else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS)
+            else if (ex->battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS)
                 target_count = 3;
 
             /* Must be in combat and the monster must be the defender being attacked.
@@ -1112,12 +1124,12 @@ int MonsterEffects_HasBattleImmunity(int record)
 
             if (record != S.trap_battle_record[1]) continue;
 
-            if (effects[e].battle_modifier <= MONSTER_BATTLE_MOD_AFTER_3_ATTACKS) {
-                if (effects[e].battle_reset == MONSTER_RESET_SUMMON)
+            if (ex->battle_modifier <= MONSTER_BATTLE_MOD_AFTER_3_ATTACKS) {
+                if (ex->battle_reset == MONSTER_RESET_SUMMON)
                     count = S.attacked_summon[record];
-                else if (effects[e].battle_reset == MONSTER_RESET_TURN)
+                else if (ex->battle_reset == MONSTER_RESET_TURN)
                     count = S.attacked_turn[record];
-                else if (effects[e].battle_reset == MONSTER_RESET_DUEL)
+                else if (ex->battle_reset == MONSTER_RESET_DUEL)
                     count = S.attacked_duel[record];
 
                 if (count <= 0 || count > target_count) continue;
@@ -1135,52 +1147,52 @@ int MonsterEffects_HasBattleImmunity(int record)
                 if (!att_card && S.card[att_rec]) att_card = S.card[att_rec];
                 if (!att_card) continue;
 
-                if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE) {
+                if (ex->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE) {
                     int t = Cards_Type(att_card);
-                    if (t != effects[e].attacker_type) continue;
-                } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE) {
+                    if (t != ex->attacker_type) continue;
+                } else if (ex->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE) {
                     int a = Cards_Attribute(att_card);
-                    if (a != effects[e].attacker_attribute) continue;
-                } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT) {
+                    if (a != ex->attacker_attribute) continue;
+                } else if (ex->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT) {
                     int packed, att_val;
                     s_evaluating_stats = 1;
                     packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]);
                     s_evaluating_stats = 0;
-                    if (effects[e].attacker_stat == 2)
+                    if (ex->attacker_stat == 2)
                         att_val = (unsigned int)packed >> 16; /* DEF */
                     else
                         att_val = packed & 0xFFFF;            /* ATK */
-                    if (!compare_op(att_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
+                    if (!compare_op(att_val, ex->attacker_stat_op, ex->attacker_amount))
                         continue;
-                } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL) {
+                } else if (ex->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL) {
                     int lvl = Cards_Level(att_card);
-                    if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
+                    if (!compare_op(lvl, ex->attacker_level_op, ex->attacker_level))
                         continue;
-                } else if (effects[e].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER) {
+                } else if (ex->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER) {
                     /* Combined criteria: check each criteria if configured */
-                    if (effects[e].attacker_type >= 0 && (unsigned char)effects[e].attacker_type != 0xFF) {
+                    if (ex->attacker_type >= 0 && (unsigned char)ex->attacker_type != 0xFF) {
                         int t = Cards_Type(att_card);
-                        if (t != effects[e].attacker_type) continue;
+                        if (t != ex->attacker_type) continue;
                     }
-                    if (effects[e].attacker_attribute >= 0 && (unsigned char)effects[e].attacker_attribute != 0xFF) {
+                    if (ex->attacker_attribute >= 0 && (unsigned char)ex->attacker_attribute != 0xFF) {
                         int a = Cards_Attribute(att_card);
-                        if (a != effects[e].attacker_attribute) continue;
+                        if (a != ex->attacker_attribute) continue;
                     }
-                    if (effects[e].attacker_stat > 0 || effects[e].attacker_amount > 0) {
+                    if (ex->attacker_stat > 0 || ex->attacker_amount > 0) {
                         int packed, att_val;
                         s_evaluating_stats = 1;
                         packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]);
                         s_evaluating_stats = 0;
-                        if (effects[e].attacker_stat == 2)
+                        if (ex->attacker_stat == 2)
                             att_val = (unsigned int)packed >> 16; /* DEF */
                         else
                             att_val = packed & 0xFFFF;            /* ATK */
-                        if (!compare_op(att_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
+                        if (!compare_op(att_val, ex->attacker_stat_op, ex->attacker_amount))
                             continue;
                     }
-                    if (effects[e].attacker_level > 0) {
+                    if (ex->attacker_level > 0) {
                         int lvl = Cards_Level(att_card);
-                        if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
+                        if (!compare_op(lvl, ex->attacker_level_op, ex->attacker_level))
                             continue;
                     }
                 }
@@ -1195,6 +1207,7 @@ int MonsterEffects_HasBattleImmunity(int record)
 int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
 {
     const MonsterEffect *effects;
+    const MonsterEffectEx *effects_ex = NULL;
     int n, e;
     if (!monster_zone(attacker_record) || !S.card[attacker_record] ||
         !S.face_up[attacker_record])
@@ -1202,65 +1215,67 @@ int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
     if (defender_record >= 0 && (!monster_zone(defender_record) || !S.card[defender_record]))
         return 0;
     n = Cards_MonsterEffects(S.card[attacker_record], &effects);
+    Cards_MonsterEffectsEx(S.card[attacker_record], &effects_ex);
     for (e = 0; e < n; e++) {
+        const MonsterEffectEx *ex = effects_ex ? &effects_ex[e] : NULL;
         if (effects[e].when != MONSTER_WHEN_FACE_UP) continue;
         if (effects[e].action != MONSTER_DO_PIERCING) continue;
-        if (!MonsterEffects_ConditionsMet(attacker_record, &effects[e])) continue;
+        if (!MonsterEffects_ConditionsMet(attacker_record, ex)) continue;
 
         /* Check modifier (target criteria for defending monster) */
-        if (effects[e].battle_modifier != MONSTER_PIERCING_MOD_ALWAYS) {
+        if (ex && ex->battle_modifier != MONSTER_PIERCING_MOD_ALWAYS) {
             int def_card;
             if (defender_record < 0) continue;
             def_card = D_801A7AD8[defender_record].card_id;
             if (!def_card && S.card[defender_record]) def_card = S.card[defender_record];
             if (!def_card) continue;
 
-            if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_TYPE) {
+            if (ex->battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_TYPE) {
                 int t = Cards_Type(def_card);
-                if (t != effects[e].attacker_type) continue;
-            } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_ATTRIBUTE) {
+                if (t != ex->attacker_type) continue;
+            } else if (ex->battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_ATTRIBUTE) {
                 int a = Cards_Attribute(def_card);
-                if (a != effects[e].attacker_attribute) continue;
-            } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_STAT) {
+                if (a != ex->attacker_attribute) continue;
+            } else if (ex->battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_STAT) {
                 int packed, def_val;
                 s_evaluating_stats = 1;
                 packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]);
                 s_evaluating_stats = 0;
-                if (effects[e].attacker_stat == 2)
+                if (ex->attacker_stat == 2)
                     def_val = (unsigned int)packed >> 16; /* DEF */
                 else
                     def_val = packed & 0xFFFF;            /* ATK */
-                if (!compare_op(def_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
+                if (!compare_op(def_val, ex->attacker_stat_op, ex->attacker_amount))
                     continue;
-            } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_LEVEL) {
+            } else if (ex->battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_LEVEL) {
                 int lvl = Cards_Level(def_card);
-                if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
+                if (!compare_op(lvl, ex->attacker_level_op, ex->attacker_level))
                     continue;
-            } else if (effects[e].battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_MONSTER) {
+            } else if (ex->battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_MONSTER) {
                 /* Combined criteria: check each criteria if configured */
-                if (effects[e].attacker_type >= 0 && (unsigned char)effects[e].attacker_type != 0xFF) {
+                if (ex->attacker_type >= 0 && (unsigned char)ex->attacker_type != 0xFF) {
                     int t = Cards_Type(def_card);
-                    if (t != effects[e].attacker_type) continue;
+                    if (t != ex->attacker_type) continue;
                 }
-                if (effects[e].attacker_attribute >= 0 && (unsigned char)effects[e].attacker_attribute != 0xFF) {
+                if (ex->attacker_attribute >= 0 && (unsigned char)ex->attacker_attribute != 0xFF) {
                     int a = Cards_Attribute(def_card);
-                    if (a != effects[e].attacker_attribute) continue;
+                    if (a != ex->attacker_attribute) continue;
                 }
-                if (effects[e].attacker_stat > 0 || effects[e].attacker_amount > 0) {
+                if (ex->attacker_stat > 0 || ex->attacker_amount > 0) {
                     int packed, def_val;
                     s_evaluating_stats = 1;
                     packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]);
                     s_evaluating_stats = 0;
-                    if (effects[e].attacker_stat == 2)
+                    if (ex->attacker_stat == 2)
                         def_val = (unsigned int)packed >> 16; /* DEF */
                     else
                         def_val = packed & 0xFFFF;            /* ATK */
-                    if (!compare_op(def_val, effects[e].attacker_stat_op, effects[e].attacker_amount))
+                    if (!compare_op(def_val, ex->attacker_stat_op, ex->attacker_amount))
                         continue;
                 }
-                if (effects[e].attacker_level > 0) {
+                if (ex->attacker_level > 0) {
                     int lvl = Cards_Level(def_card);
-                    if (!compare_op(lvl, effects[e].attacker_level_op, effects[e].attacker_level))
+                    if (!compare_op(lvl, ex->attacker_level_op, ex->attacker_level))
                         continue;
                 }
             }
@@ -1283,14 +1298,16 @@ void MonsterEffects_Stats(const void *pointer, int *attack, int *defense)
     }
     for (source = 0; source < MONSTER_RECORDS; source++) {
         const MonsterEffect *effects;
+        const MonsterEffectEx *effects_ex = NULL;
         int n, e;
         if (!S.card[source] || !S.face_up[source]) continue;
         n = Cards_MonsterEffects(S.card[source], &effects);
+        Cards_MonsterEffectsEx(S.card[source], &effects_ex);
         for (e = 0; e < n; e++) {
             int count;
             if (effects[e].when != MONSTER_WHEN_FACE_UP || !reaches(&effects[e], source, target, card->card_id))
                 continue;
-            if (!MonsterEffects_ConditionsMet(source, &effects[e])) continue;
+            if (effects_ex && !MonsterEffects_ConditionsMet(source, &effects_ex[e])) continue;
             /* Counted as it is asked: the boost follows the field. */
             count = times(&effects[e], source);
             *attack += effects[e].attack * count;

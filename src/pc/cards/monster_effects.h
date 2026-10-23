@@ -184,7 +184,12 @@ typedef struct MonsterEffect {
     unsigned char each;              /* MONSTER_EACH_*: a boost, heal or damage made once per monster counted */
     signed char each_type;
     signed short each_attribute;     /* what is counted: -1 any */
-    /* API 19: battle immunity & piercing modifiers (when action == MONSTER_DO_BATTLE_IMMUNITY or MONSTER_DO_PIERCING) */
+} MonsterEffect;
+
+/* Extended effect data (API 19): stored in a parallel table indexed the
+ * same way as MonsterEffect, with its own accessor Cards_MonsterEffectsEx. */
+typedef struct MonsterEffectEx {
+    /* Battle immunity & piercing modifiers (when action == MONSTER_DO_BATTLE_IMMUNITY or MONSTER_DO_PIERCING) */
     unsigned char battle_modifier;   /* MONSTER_BATTLE_MOD_* or MONSTER_PIERCING_MOD_* */
     unsigned char battle_reset;      /* MONSTER_RESET_* */
     signed char attacker_type;       /* -1 = any */
@@ -194,11 +199,11 @@ typedef struct MonsterEffect {
     short attacker_amount;           /* threshold for ATK/DEF */
     unsigned char attacker_level;    /* 0 = none, 1..12 = level */
     unsigned char attacker_level_op; /* MONSTER_OP_*: comparison (<, <=, >, >=, ==) */
-    /* API 19: conditions */
+    /* Conditions */
     unsigned char cond_count;
     unsigned char cond_mode;         /* MONSTER_COND_MODE_ALL or MONSTER_COND_MODE_ANY */
     MonsterCondition conditions[MONSTER_CONDITIONS_MAX];
-} MonsterEffect;
+} MonsterEffectEx;
 
 extern const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT];
 extern const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT];
@@ -228,13 +233,18 @@ int MonsterEffect_DefaultTarget(int when, int action);
  * MONSTER_EFFECTS_MAX), its length returned; -1 when the entry has none.
  * What is wrong is noted for the mod and left out. */
 int MonsterEffects_Read(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out);
+int MonsterEffects_ReadEx(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out,
+                          MonsterEffectEx *out_ex);
 
 /* The actions available to a spell or trap card's "card_effects" are the
  * same as a monster effect's actions, but they happen when the card is
  * played (or springs), rather than at one of a monster's field events. */
 int CardEffects_Read(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out);
+int CardEffects_ReadEx(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out,
+                       MonsterEffectEx *out_ex);
 
 /* A card's effects (cards.c): the list and its length, 0 for none. */
 int Cards_MonsterEffects(int id, const MonsterEffect **effects);
+int Cards_MonsterEffectsEx(int id, const MonsterEffectEx **effects_ex);
 
 #endif

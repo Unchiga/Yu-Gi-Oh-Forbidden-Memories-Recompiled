@@ -121,3 +121,8 @@ accept v0.3.0 record MonsterEffect widened attribute and each_attribute into the
 # ControlProtocol_Parse for the channel MEMORIES_CONTROL opens (src/pc/debug);
 # no mod parses control lines or receives one.
 accept v0.3.0 record ControlCommand grew by symbol and offset at its end
+
+# API 19 (Monster effects system): MonsterEffect_DoNames array grew by two
+# entries at its end ("battle_immunity" and "piercing").
+accept v0.3.0 variable MonsterEffect_DoNames grew from 5 to 7 to add battle_immunity and piercing at its end
+

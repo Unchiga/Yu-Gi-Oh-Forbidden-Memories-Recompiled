@@ -83,7 +83,7 @@ Configured under continuous static field state:
 
 ### Battle Immunity Modifiers
 
-Modifiers define specific combat conditions under which battle immunity applies. They are stored directly on `MonsterEffect` and excluded from `conditions`:
+Modifiers define specific combat conditions under which battle immunity applies. To preserve the 20-byte `MonsterEffect` binary ABI from v0.3.0, modifiers and conditions are stored in a parallel table `MonsterEffectEx` (queried via `Cards_MonsterEffectsEx()` / `Cards_CardEffectsEx()`):
 
 | Modifier ID | Name / Description | Extra Parameters |
 | ----------- | ------------------ | ---------------- |

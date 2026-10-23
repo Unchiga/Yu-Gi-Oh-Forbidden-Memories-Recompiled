@@ -427,6 +427,7 @@ static void monster_effect_conditions_and_battle_immunity(void)
     char error[128];
     const JsonValue *entry;
     const MonsterEffect *effects;
+    const MonsterEffectEx *effects_ex;
     int i, before = effect_notes;
     JsonDocument *doc = Json_Parse("[{\"replace\":26,\"monster_effects\":["
                                    "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
@@ -446,31 +447,32 @@ static void monster_effect_conditions_and_battle_immunity(void)
     for (i = 0, entry = Json_At(Json_Root(doc), 0); entry; i++, entry = Json_Next(entry))
         add_entry("f", ".", i, entry, &context);
     assert(Cards_MonsterEffects(26, &effects) == 2);
+    assert(Cards_MonsterEffectsEx(26, &effects_ex) == 2);
     /* Effect 0: battle immunity with 4 conditions (max MONSTER_CONDITIONS_MAX is 4, 5th is truncated) */
     assert(effects[0].when == MONSTER_WHEN_FACE_UP);
     assert(effects[0].action == MONSTER_DO_BATTLE_IMMUNITY);
     assert(effects[0].target == MONSTER_TARGET_SELF);
-    assert(effects[0].cond_mode == MONSTER_COND_MODE_ANY);
-    assert(effects[0].cond_count == 4);
-    assert(effects[0].conditions[0].type == MONSTER_COND_NAMED_CARD);
-    assert(effects[0].conditions[0].card == 1);
-    assert(effects[0].conditions[0].whose == MONSTER_EACH_OWN);
-    assert(effects[0].conditions[1].type == MONSTER_COND_FEWER_MONSTERS);
-    assert(effects[0].conditions[2].type == MONSTER_COND_STAT_THRESHOLD);
-    assert(effects[0].conditions[2].stat == MONSTER_STAT_DEF);
-    assert(effects[0].conditions[2].op == MONSTER_OP_LE);
-    assert(effects[0].conditions[2].value == 2000);
-    assert(effects[0].conditions[3].type == MONSTER_COND_LOWEST_ATK);
+    assert(effects_ex[0].cond_mode == MONSTER_COND_MODE_ANY);
+    assert(effects_ex[0].cond_count == 4);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_NAMED_CARD);
+    assert(effects_ex[0].conditions[0].card == 1);
+    assert(effects_ex[0].conditions[0].whose == MONSTER_EACH_OWN);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_FEWER_MONSTERS);
+    assert(effects_ex[0].conditions[2].type == MONSTER_COND_STAT_THRESHOLD);
+    assert(effects_ex[0].conditions[2].stat == MONSTER_STAT_DEF);
+    assert(effects_ex[0].conditions[2].op == MONSTER_OP_LE);
+    assert(effects_ex[0].conditions[2].value == 2000);
+    assert(effects_ex[0].conditions[3].type == MONSTER_COND_LOWEST_ATK);
     /* Effect 1: boost with single condition */
     assert(effects[1].when == MONSTER_WHEN_FACE_UP);
     assert(effects[1].action == MONSTER_DO_BOOST);
     assert(effects[1].attack == 500);
-    assert(effects[1].cond_mode == MONSTER_COND_MODE_ALL);
-    assert(effects[1].cond_count == 1);
-    assert(effects[1].conditions[0].type == MONSTER_COND_STAT_THRESHOLD);
-    assert(effects[1].conditions[0].stat == MONSTER_STAT_ATK);
-    assert(effects[1].conditions[0].op == MONSTER_OP_GT);
-    assert(effects[1].conditions[0].value == 1500);
+    assert(effects_ex[1].cond_mode == MONSTER_COND_MODE_ALL);
+    assert(effects_ex[1].cond_count == 1);
+    assert(effects_ex[1].conditions[0].type == MONSTER_COND_STAT_THRESHOLD);
+    assert(effects_ex[1].conditions[0].stat == MONSTER_STAT_ATK);
+    assert(effects_ex[1].conditions[0].op == MONSTER_OP_GT);
+    assert(effects_ex[1].conditions[0].value == 1500);
     /* combat battle_immunity rejected, unknown condition rejected, max conditions note */
     assert(effect_notes > before);
 
@@ -490,13 +492,14 @@ static void monster_effect_conditions_and_battle_immunity(void)
     for (i = 0, entry = Json_At(Json_Root(doc2), 0); entry; i++, entry = Json_Next(entry))
         add_entry("f", ".", i, entry, &context);
     assert(Cards_MonsterEffects(27, &effects) == 3);
-    assert(effects[0].cond_count == 0);
-    assert(effects[0].battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS);
-    assert(effects[0].battle_reset == MONSTER_RESET_SUMMON);
-    assert(effects[1].battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS);
-    assert(effects[1].battle_reset == MONSTER_RESET_TURN);
-    assert(effects[2].battle_modifier == MONSTER_BATTLE_MOD_FIRST_ATTACKED);
-    assert(effects[2].battle_reset == MONSTER_RESET_DUEL);
+    assert(Cards_MonsterEffectsEx(27, &effects_ex) == 3);
+    assert(effects_ex[0].cond_count == 0);
+    assert(effects_ex[0].battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS);
+    assert(effects_ex[0].battle_reset == MONSTER_RESET_SUMMON);
+    assert(effects_ex[1].battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS);
+    assert(effects_ex[1].battle_reset == MONSTER_RESET_TURN);
+    assert(effects_ex[2].battle_modifier == MONSTER_BATTLE_MOD_FIRST_ATTACKED);
+    assert(effects_ex[2].battle_reset == MONSTER_RESET_DUEL);
     /* the old condition spelling is noted and left out */
     assert(effect_notes > before);
     /* Test fewer_monsters and more_monsters conditions */
@@ -512,11 +515,12 @@ static void monster_effect_conditions_and_battle_immunity(void)
     for (i = 0, entry = Json_At(Json_Root(doc3), 0); entry; i++, entry = Json_Next(entry))
         add_entry("f", ".", i, entry, &context);
     assert(Cards_MonsterEffects(29, &effects) == 1);
-    assert(effects[0].cond_count == 4);
-    assert(effects[0].conditions[0].type == MONSTER_COND_FEWER_MONSTERS);
-    assert(effects[0].conditions[1].type == MONSTER_COND_MORE_MONSTERS);
-    assert(effects[0].conditions[2].type == MONSTER_COND_FEWER_MONSTERS);
-    assert(effects[0].conditions[3].type == MONSTER_COND_MORE_MONSTERS);
+    assert(Cards_MonsterEffectsEx(29, &effects_ex) == 1);
+    assert(effects_ex[0].cond_count == 4);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_FEWER_MONSTERS);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_MORE_MONSTERS);
+    assert(effects_ex[0].conditions[2].type == MONSTER_COND_FEWER_MONSTERS);
+    assert(effects_ex[0].conditions[3].type == MONSTER_COND_MORE_MONSTERS);
 }
 
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's

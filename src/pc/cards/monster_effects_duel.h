@@ -125,6 +125,7 @@ int MonsterEffects_HasBattleImmunity(int record);
 /* Whether this monster inflicts piercing damage when attacking the defending monster. */
 int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record);
 /* Whether conditions on an effect are currently met for a monster. */
-int MonsterEffects_ConditionsMet(int record, const MonsterEffect *effect);
+int MonsterEffects_ConditionsMet(int record, const MonsterEffectEx *effect_ex);
 
 #endif
+
