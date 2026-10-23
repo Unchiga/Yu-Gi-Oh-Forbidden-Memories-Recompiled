@@ -1397,8 +1397,8 @@ class MonsterEffectsTest(unittest.TestCase):
         # Conditions normalization and description
         cond_card = fx.normalize_condition({"type": "named_card", "card": 1, "whose": "own"})
         self.assertEqual(cond_card, {"type": "named_card", "card": 1, "whose": "own"})
-        cond_atk = fx.normalize_condition({"type": "stat_threshold", "stat": "atk", "comparison": "<", "value": 1500})
-        self.assertEqual(cond_atk, {"type": "stat_threshold", "stat": "atk", "comparison": "<", "value": 1500})
+        cond_atk = fx.normalize_condition({"type": "stat_threshold", "stat": "atk", "op": "<", "value": 1500})
+        self.assertEqual(cond_atk, {"type": "stat_threshold", "stat": "atk", "op": "<", "value": 1500})
         self.assertIsNone(fx.normalize_condition({"type": "stat_threshold", "stat": "level", "value": 7}))
         eff_cond = fx.normalize({"when": "face_up", "do": "battle_immunity",
                                  "modifier": "first_attacked", "reset": "turn",
@@ -1414,39 +1414,43 @@ class MonsterEffectsTest(unittest.TestCase):
         cond_more = fx.normalize_condition({"type": "more_monsters"})
         self.assertEqual(cond_more, {"type": "more_monsters"})
         self.assertEqual(fx.condition_words(cond_more), "you control more monsters than your opponent")
-        self.assertEqual(fx.normalize_condition({"type": "fewer_monsters_than_opponent"})["type"], "fewer_monsters")
-        self.assertEqual(fx.normalize_condition({"type": "more_monsters_than_opponent"})["type"], "more_monsters")
+        self.assertIsNone(fx.normalize_condition({"type": "fewer_monsters_than_opponent"}))
+        self.assertIsNone(fx.normalize_condition({"type": "more_monsters_than_opponent"}))
         eff_fewer = fx.normalize({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "fewer_monsters"}]})
         self.assertEqual(fx.describe(eff_fewer), "Cannot be destroyed by battle (if you control fewer monsters than opponent)")
         eff_more = fx.normalize({"when": "face_up", "do": "battle_immunity", "conditions": [{"type": "more_monsters"}]})
         self.assertEqual(fx.describe(eff_more), "Cannot be destroyed by battle (if you control more monsters than your opponent)")
 
         # Control stat / level / type / attribute conditions
-        cond_cstat = fx.normalize_condition({"type": "control_stat", "presence": "control", "scope": "any", "stat": "atk", "comparison": ">", "value": 2000})
-        self.assertEqual(cond_cstat, {"type": "control_stat", "stat": "atk", "comparison": ">", "value": 2000})
+        cond_cstat = fx.normalize_condition({"type": "control_stat", "presence": "control", "scope": "own", "stat": "atk", "op": ">", "value": 2000})
+        self.assertEqual(cond_cstat, {"type": "control_stat", "stat": "atk", "op": ">", "value": 2000})
         self.assertEqual(fx.condition_words(cond_cstat), "you control a monster with ATK > 2000")
-        cond_ncstat = fx.normalize_condition({"type": "not_control_stat", "scope": "other", "stat": "def", "comparison": "<=", "value": 1500})
-        self.assertEqual(cond_ncstat, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "comparison": "<=", "value": 1500})
+        self.assertIsNone(fx.normalize_condition({"type": "not_control_stat", "scope": "other", "stat": "def", "op": "<=", "value": 1500}))
+        cond_ncstat = fx.normalize_condition({"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "op": "<=", "value": 1500})
+        self.assertEqual(cond_ncstat, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "op": "<=", "value": 1500})
         self.assertEqual(fx.condition_words(cond_ncstat), "you do not control another monster with DEF <= 1500")
 
-        cond_clevel = fx.normalize_condition({"type": "control_level", "presence": "control", "scope": "other", "comparison": ">=", "level": 7})
-        self.assertEqual(cond_clevel, {"type": "control_level", "scope": "other", "comparison": ">=", "level": 7})
+        cond_clevel = fx.normalize_condition({"type": "control_level", "presence": "control", "scope": "other", "op": ">=", "level": 7})
+        self.assertEqual(cond_clevel, {"type": "control_level", "scope": "other", "op": ">=", "level": 7})
         self.assertEqual(fx.condition_words(cond_clevel), "you control another Level >= 7 monster")
-        cond_nclevel = fx.normalize_condition({"type": "not_control_level", "comparison": "==", "level": 5})
-        self.assertEqual(cond_nclevel, {"type": "control_level", "presence": "not_control", "comparison": "==", "level": 5})
+        self.assertIsNone(fx.normalize_condition({"type": "not_control_level", "op": "==", "level": 5}))
+        cond_nclevel = fx.normalize_condition({"type": "control_level", "presence": "not_control", "op": "==", "level": 5})
+        self.assertEqual(cond_nclevel, {"type": "control_level", "presence": "not_control", "op": "==", "level": 5})
         self.assertEqual(fx.condition_words(cond_nclevel), "you do not control a Level 5 monster")
 
         cond_ctype_only = fx.normalize_condition({"type": "control_type", "presence": "control", "card_type": "Dragon", "mode": "only"})
         self.assertEqual(cond_ctype_only, {"type": "control_type", "card_type": "Dragon", "mode": "only"})
         self.assertEqual(fx.condition_words(cond_ctype_only), "you only control Dragon monsters")
-        cond_ctype_one = fx.normalize_condition({"type": "not_control_type", "card_type": "Spellcaster", "mode": "at_least_one"})
+        self.assertIsNone(fx.normalize_condition({"type": "not_control_type", "card_type": "Spellcaster", "mode": "at_least_one"}))
+        cond_ctype_one = fx.normalize_condition({"type": "control_type", "presence": "not_control", "card_type": "Spellcaster"})
         self.assertEqual(cond_ctype_one, {"type": "control_type", "presence": "not_control", "card_type": "Spellcaster"})
         self.assertEqual(fx.condition_words(cond_ctype_one), "you do not control a Spellcaster monster")
 
-        cond_cattr = fx.normalize_condition({"type": "control_attribute", "presence": "control", "attribute": "LIGHT", "scope": "any"})
+        cond_cattr = fx.normalize_condition({"type": "control_attribute", "presence": "control", "attribute": "LIGHT", "scope": "own"})
         self.assertEqual(cond_cattr, {"type": "control_attribute", "attribute": "LIGHT"})
         self.assertEqual(fx.condition_words(cond_cattr), "you control a LIGHT monster")
-        cond_ncattr = fx.normalize_condition({"type": "not_control_attribute", "attribute": "DARK", "scope": "other"})
+        self.assertIsNone(fx.normalize_condition({"type": "not_control_attribute", "attribute": "DARK", "scope": "other"}))
+        cond_ncattr = fx.normalize_condition({"type": "control_attribute", "presence": "not_control", "scope": "other", "attribute": "DARK"})
         self.assertEqual(cond_ncattr, {"type": "control_attribute", "presence": "not_control", "scope": "other", "attribute": "DARK"})
         self.assertEqual(fx.condition_words(cond_ncattr), "you do not control another DARK monster")
 
@@ -1455,7 +1459,8 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(cond_fld_any, {"type": "field_spell", "field": "any", "presence": "active"})
         self.assertEqual(fx.condition_words(cond_fld_any), "a field spell is active")
 
-        cond_fld_no = fx.normalize_condition({"type": "not_field_spell", "field": "any"})
+        self.assertIsNone(fx.normalize_condition({"type": "not_field_spell", "field": "any"}))
+        cond_fld_no = fx.normalize_condition({"type": "field_spell", "field": "any", "presence": "not_active"})
         self.assertEqual(cond_fld_no, {"type": "field_spell", "field": "any", "presence": "not_active"})
         self.assertEqual(fx.condition_words(cond_fld_no), "no field spell is active")
 
@@ -1463,11 +1468,13 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(cond_fld_forest, {"type": "field_spell", "field": "forest", "presence": "active"})
         self.assertEqual(fx.condition_words(cond_fld_forest), "Forest is active")
 
-        cond_fld_umi_not = fx.normalize_condition({"type": "terrain", "field": "umi", "status": "not_active"})
+        self.assertIsNone(fx.normalize_condition({"type": "terrain", "field": "umi", "status": "not_active"}))
+        cond_fld_umi_not = fx.normalize_condition({"type": "field_spell", "field": "umi", "presence": "not_active"})
         self.assertEqual(cond_fld_umi_not, {"type": "field_spell", "field": "umi", "presence": "not_active"})
         self.assertEqual(fx.condition_words(cond_fld_umi_not), "Umi (Sea) is not active")
 
-        cond_fld_card = fx.normalize_condition({"type": "field_magic", "card": 332, "status": "active"})
+        self.assertIsNone(fx.normalize_condition({"type": "field_magic", "card": 332, "status": "active"}))
+        cond_fld_card = fx.normalize_condition({"type": "field_spell", "field": "mountain", "presence": "active"})
         self.assertEqual(cond_fld_card, {"type": "field_spell", "field": "mountain", "presence": "active"})
         self.assertEqual(fx.condition_words(cond_fld_card), "Mountain is active")
 
@@ -1475,25 +1482,27 @@ class MonsterEffectsTest(unittest.TestCase):
         cond_lower_lp = fx.normalize_condition({"type": "lower_lp"})
         self.assertEqual(cond_lower_lp, {"type": "lower_lp"})
         self.assertEqual(fx.condition_words(cond_lower_lp), "your LP is lower than opponent's")
-        self.assertEqual(fx.normalize_condition({"type": "player_lp_lower_than_opponent"}), {"type": "lower_lp"})
-        self.assertEqual(fx.normalize_condition({"type": "lp_lower"}), {"type": "lower_lp"})
+        self.assertIsNone(fx.normalize_condition({"type": "player_lp_lower_than_opponent"}))
+        self.assertIsNone(fx.normalize_condition({"type": "lp_lower"}))
 
         cond_higher_lp = fx.normalize_condition({"type": "higher_lp"})
         self.assertEqual(cond_higher_lp, {"type": "higher_lp"})
         self.assertEqual(fx.condition_words(cond_higher_lp), "your LP is higher than opponent's")
-        self.assertEqual(fx.normalize_condition({"type": "player_lp_higher_than_opponent"}), {"type": "higher_lp"})
-        self.assertEqual(fx.normalize_condition({"type": "lp_higher"}), {"type": "higher_lp"})
+        self.assertIsNone(fx.normalize_condition({"type": "player_lp_higher_than_opponent"}))
+        self.assertIsNone(fx.normalize_condition({"type": "lp_higher"}))
 
         # Type present on opponent's / all fields
         cond_ctype_opp = fx.normalize_condition({"type": "control_type", "whose": "opponent", "card_type": "Dragon"})
         self.assertEqual(cond_ctype_opp, {"type": "control_type", "whose": "opponent", "card_type": "Dragon"})
         self.assertEqual(fx.condition_words(cond_ctype_opp), "a Dragon monster is present on opponent's field")
 
-        cond_nctype_opp = fx.normalize_condition({"type": "not_type_present", "field": "opponent", "card_type": "Spellcaster"})
+        self.assertIsNone(fx.normalize_condition({"type": "not_type_present", "field": "opponent", "card_type": "Spellcaster"}))
+        cond_nctype_opp = fx.normalize_condition({"type": "control_type", "whose": "opponent", "presence": "not_control", "card_type": "Spellcaster"})
         self.assertEqual(cond_nctype_opp, {"type": "control_type", "whose": "opponent", "presence": "not_control", "card_type": "Spellcaster"})
         self.assertEqual(fx.condition_words(cond_nctype_opp), "no Spellcaster monster is present on opponent's field")
 
-        cond_ctype_all = fx.normalize_condition({"type": "type_present", "whose": "both", "card_type": "Zombie"})
+        self.assertIsNone(fx.normalize_condition({"type": "type_present", "whose": "both", "card_type": "Zombie"}))
+        cond_ctype_all = fx.normalize_condition({"type": "control_type", "whose": "all", "card_type": "Zombie"})
         self.assertEqual(cond_ctype_all, {"type": "control_type", "whose": "all", "card_type": "Zombie"})
         self.assertEqual(fx.condition_words(cond_ctype_all), "a Zombie monster is present on the field")
 
@@ -1502,11 +1511,13 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(cond_cattr_opp, {"type": "control_attribute", "whose": "opponent", "attribute": "LIGHT"})
         self.assertEqual(fx.condition_words(cond_cattr_opp), "a LIGHT monster is present on opponent's field")
 
-        cond_ncattr_opp = fx.normalize_condition({"type": "not_attribute_present", "field": "opponent", "attribute": "DARK"})
+        self.assertIsNone(fx.normalize_condition({"type": "not_attribute_present", "field": "opponent", "attribute": "DARK"}))
+        cond_ncattr_opp = fx.normalize_condition({"type": "control_attribute", "whose": "opponent", "presence": "not_control", "attribute": "DARK"})
         self.assertEqual(cond_ncattr_opp, {"type": "control_attribute", "whose": "opponent", "presence": "not_control", "attribute": "DARK"})
         self.assertEqual(fx.condition_words(cond_ncattr_opp), "no DARK monster is present on opponent's field")
 
-        cond_cattr_all = fx.normalize_condition({"type": "attribute_present", "whose": "all", "attribute": "FIRE"})
+        self.assertIsNone(fx.normalize_condition({"type": "attribute_present", "whose": "all", "attribute": "FIRE"}))
+        cond_cattr_all = fx.normalize_condition({"type": "control_attribute", "whose": "all", "attribute": "FIRE"})
         self.assertEqual(cond_cattr_all, {"type": "control_attribute", "whose": "all", "attribute": "FIRE"})
         self.assertEqual(fx.condition_words(cond_cattr_all), "a FIRE monster is present on the field")
 
@@ -1527,8 +1538,8 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(fx.describe(eff_third),
                          "Cannot be destroyed by battle after three attacks (this card copy)")
 
-        # Aliases in modifier
-        self.assertEqual(fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "second_attacked"})["modifier"], "destroyed_after_2_attacks")
+        # Undocumented modifier aliases are rejected
+        self.assertIsNone(fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "second_attacked"}))
         self.assertEqual(fx.describe(fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "first_attacked"})),
                          "Cannot be destroyed by battle the first time attacked (this turn)")
         self.assertEqual(fx.describe(fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "first_attacked", "reset": "copy"})),
@@ -1643,49 +1654,49 @@ class MonsterEffectsTest(unittest.TestCase):
     def test_battle_immunity_attacker_modifiers(self):
         from fm_editor import monster_effects as fx
         # 1. Attacked by type
-        eff_type = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_type", "type": "Dragon"})
+        eff_type = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_type", "attacker_type": "Dragon"})
         self.assertEqual(eff_type["modifier"], "attacked_by_type")
         self.assertEqual(eff_type["attacker_type"], "Dragon")
         self.assertEqual(fx.describe(eff_type), "Cannot be destroyed by battle if attacked by a Dragon monster")
 
         # 2. Attacked by attribute
-        eff_attr = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_attribute", "attribute": "Dark"})
+        eff_attr = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_attribute", "attacker_attribute": "Dark"})
         self.assertEqual(eff_attr["modifier"], "attacked_by_attribute")
         self.assertEqual(eff_attr["attacker_attribute"], "Dark")
         self.assertEqual(fx.describe(eff_attr), "Cannot be destroyed by battle if attacked by a Dark monster")
 
         # 3. Attacked by stat (higher and lower)
-        eff_stat = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "stat": "atk", "op": ">", "amount": 2500})
+        eff_stat = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "attacker_stat": "atk", "attacker_stat_op": ">", "attacker_amount": 2500})
         self.assertEqual(eff_stat["modifier"], "attacked_by_stat")
         self.assertEqual(eff_stat["attacker_stat"], "atk")
         self.assertEqual(eff_stat["attacker_stat_op"], ">")
         self.assertEqual(eff_stat["attacker_amount"], 2500)
         self.assertEqual(fx.describe(eff_stat), "Cannot be destroyed by battle if attacked by a monster with higher ATK than 2500")
 
-        eff_stat_lt = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "stat": "def", "attacker_stat_op": "<", "amount": 1500})
+        eff_stat_lt = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "attacker_stat": "def", "attacker_stat_op": "<", "attacker_amount": 1500})
         self.assertEqual(eff_stat_lt["attacker_stat_op"], "<")
         self.assertEqual(fx.describe(eff_stat_lt), "Cannot be destroyed by battle if attacked by a monster with lower DEF than 1500")
 
-        eff_stat_le = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "stat": "def", "attacker_stat_op": "<=", "amount": 1500})
+        eff_stat_le = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_stat", "attacker_stat": "def", "attacker_stat_op": "<=", "attacker_amount": 1500})
         self.assertEqual(eff_stat_le["attacker_stat_op"], "<=")
         self.assertEqual(fx.describe(eff_stat_le), "Cannot be destroyed by battle if attacked by a monster with DEF <= 1500")
 
         # 4. Attacked by level (higher and lower)
-        eff_lvl = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_level", "level": 7})
+        eff_lvl = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_level", "attacker_level": 7})
         self.assertEqual(eff_lvl["modifier"], "attacked_by_level")
         self.assertEqual(eff_lvl["attacker_level_op"], ">")
         self.assertEqual(eff_lvl["attacker_level"], 7)
         self.assertEqual(fx.describe(eff_lvl), "Cannot be destroyed by battle if attacked by a monster with higher Level than 7")
 
-        eff_lvl_lt = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_level", "level_op": "<", "level": 4})
+        eff_lvl_lt = fx.normalize({"when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_level", "attacker_level_op": "<", "attacker_level": 4})
         self.assertEqual(eff_lvl_lt["attacker_level_op"], "<")
         self.assertEqual(fx.describe(eff_lvl_lt), "Cannot be destroyed by battle if attacked by a monster with lower Level than 4")
 
         # 5. Attacked by monster (combined)
         eff_comb = fx.normalize({
             "when": "face_up", "do": "battle_immunity", "modifier": "attacked_by_monster",
-            "type": "Dragon", "attribute": "Light", "stat": "def", "attacker_stat_op": "<", "amount": 2000,
-            "attacker_level_op": "<", "level": 8
+            "attacker_type": "Dragon", "attacker_attribute": "Light", "attacker_stat": "def", "attacker_stat_op": "<", "attacker_amount": 2000,
+            "attacker_level_op": "<", "attacker_level": 8
         })
         self.assertEqual(eff_comb["modifier"], "attacked_by_monster")
         self.assertEqual(eff_comb["attacker_type"], "Dragon")
@@ -1709,54 +1720,53 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(eff_always, {"when": "face_up", "do": "piercing", "target": "self"})
         self.assertEqual(fx.describe(eff_always), "Inflicts piercing damage")
 
-        # Alias piercing_damage
-        eff_alias = fx.normalize({"when": "face_up", "do": "piercing_damage"})
-        self.assertEqual(eff_alias, {"when": "face_up", "do": "piercing", "target": "self"})
+        # Pruned alias piercing_damage is rejected
+        self.assertIsNone(fx.normalize({"when": "face_up", "do": "piercing_damage"}))
 
         # Disallowed when not face_up
         self.assertIsNone(fx.normalize({"when": "combat", "do": "piercing"}))
         self.assertIsNone(fx.normalize({"when": "summon", "do": "piercing"}))
 
         # 1. Attacks type
-        eff_type = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_type", "type": "Dragon"})
+        eff_type = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_type", "defender_type": "Dragon"})
         self.assertEqual(eff_type["modifier"], "attacks_type")
         self.assertEqual(eff_type["defender_type"], "Dragon")
         self.assertEqual(fx.describe(eff_type), "Inflicts piercing damage when attacking a Dragon monster")
 
         # 2. Attacks attribute
-        eff_attr = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_attribute", "attribute": "Dark"})
+        eff_attr = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_attribute", "defender_attribute": "Dark"})
         self.assertEqual(eff_attr["modifier"], "attacks_attribute")
         self.assertEqual(eff_attr["defender_attribute"], "Dark")
         self.assertEqual(fx.describe(eff_attr), "Inflicts piercing damage when attacking a Dark monster")
 
         # 3. Attacks stat (higher and lower)
-        eff_stat = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_stat", "stat": "atk", "op": ">", "amount": 2500})
+        eff_stat = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_stat", "defender_stat": "atk", "defender_stat_op": ">", "defender_amount": 2500})
         self.assertEqual(eff_stat["modifier"], "attacks_stat")
         self.assertEqual(eff_stat["defender_stat"], "atk")
         self.assertEqual(eff_stat["defender_stat_op"], ">")
         self.assertEqual(eff_stat["defender_amount"], 2500)
         self.assertEqual(fx.describe(eff_stat), "Inflicts piercing damage when attacking a monster with higher ATK than 2500")
 
-        eff_stat_lt = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_stat", "stat": "def", "stat_op": "<", "amount": 1500})
+        eff_stat_lt = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_stat", "defender_stat": "def", "defender_stat_op": "<", "defender_amount": 1500})
         self.assertEqual(eff_stat_lt["defender_stat_op"], "<")
         self.assertEqual(fx.describe(eff_stat_lt), "Inflicts piercing damage when attacking a monster with lower DEF than 1500")
 
         # 4. Attacks level (higher and lower)
-        eff_lvl = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_level", "level": 7})
+        eff_lvl = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_level", "defender_level": 7})
         self.assertEqual(eff_lvl["modifier"], "attacks_level")
         self.assertEqual(eff_lvl["defender_level_op"], ">")
         self.assertEqual(eff_lvl["defender_level"], 7)
         self.assertEqual(fx.describe(eff_lvl), "Inflicts piercing damage when attacking a monster with higher Level than 7")
 
-        eff_lvl_lt = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_level", "level_op": "<", "level": 4})
+        eff_lvl_lt = fx.normalize({"when": "face_up", "do": "piercing", "modifier": "attacks_level", "defender_level_op": "<", "defender_level": 4})
         self.assertEqual(eff_lvl_lt["defender_level_op"], "<")
         self.assertEqual(fx.describe(eff_lvl_lt), "Inflicts piercing damage when attacking a monster with lower Level than 4")
 
         # 5. Attacks monster (combined criteria)
         eff_comb = fx.normalize({
             "when": "face_up", "do": "piercing", "modifier": "attacks_monster",
-            "type": "Dragon", "attribute": "Light", "stat": "def", "stat_op": "<", "amount": 2000,
-            "level_op": "<", "level": 8
+            "defender_type": "Dragon", "defender_attribute": "Light", "defender_stat": "def", "defender_stat_op": "<", "defender_amount": 2000,
+            "defender_level_op": "<", "defender_level": 8
         })
         self.assertEqual(eff_comb["modifier"], "attacks_monster")
         self.assertEqual(eff_comb["defender_type"], "Dragon")
@@ -1770,7 +1780,7 @@ class MonsterEffectsTest(unittest.TestCase):
 
         # 6. Established while face-up conditions working with piercing damage
         eff_with_cond = fx.normalize({
-            "when": "face_up", "do": "piercing", "modifier": "attacks_type", "type": "Dragon",
+            "when": "face_up", "do": "piercing", "modifier": "attacks_type", "defender_type": "Dragon",
             "conditions": [{"type": "field_spell", "field": "umi"}]
         })
         self.assertEqual(len(eff_with_cond["conditions"]), 1)

@@ -53,7 +53,7 @@ def build_test_mod(mods_dir: Path) -> str:
     # 3. Mushroom Man: battle immunity if ATK <= 1000
     project.set_monster_effects(MUSHROOM_MAN, [
         {"when": "face_up", "do": "battle_immunity",
-         "conditions": [{"type": "stat_threshold", "stat": "atk", "comparison": "<=", "value": 1000}]}
+         "conditions": [{"type": "stat_threshold", "stat": "atk", "op": "<=", "value": 1000}]}
     ])
 
     # Simon's deck: Blue-Eyes and Red Medicine

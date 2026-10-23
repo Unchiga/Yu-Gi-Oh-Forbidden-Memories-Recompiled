@@ -234,39 +234,23 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
     """A condition entry with its names in game spelling, or None if invalid."""
     if not isinstance(cond, dict):
         return None
-    raw_type = cond.get("type")
-    if raw_type in ("fewer_monsters_than_opponent", "fewer_monsters_than_opp", "control_fewer_monsters"):
-        raw_type = "fewer_monsters"
-    elif raw_type in ("more_monsters_than_opponent", "more_monsters_than_opp", "control_more_monsters"):
-        raw_type = "more_monsters"
-    elif raw_type in ("lower_lp", "lp_lower", "fewer_lp", "lp_fewer", "lower_life", "lp_less", "player_lp_lower_than_opponent", "player_lp_lower"):
-        raw_type = "lower_lp"
-    elif raw_type in ("higher_lp", "lp_higher", "more_lp", "lp_more", "higher_life", "lp_greater", "player_lp_higher_than_opponent", "player_lp_higher"):
-        raw_type = "higher_lp"
-    elif raw_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
-        raw_type = "control_stat"
-    elif raw_type in ("control_monster_level", "monster_level", "not_control_level", "not_control_monster_level"):
-        raw_type = "control_level"
-    elif raw_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type",
-                      "type_present", "monster_type_present", "not_type_present", "not_monster_type_present"):
-        raw_type = "control_type"
-    elif raw_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute",
-                      "attribute_present", "monster_attribute_present", "not_attribute_present", "not_monster_attribute_present"):
-        raw_type = "control_attribute"
-    elif raw_type in ("field_spell", "field", "terrain", "field_magic", "not_field_spell", "not_field", "not_terrain"):
-        raw_type = "field_spell"
-    c_type = _name(CONDITIONS, raw_type)
+    c_type = _name(CONDITIONS, cond.get("type"))
     if not c_type:
         return None
     out = {"type": c_type}
     if c_type in ("control_stat", "control_level", "control_type", "control_attribute"):
-        is_not = str(cond.get("type", "")).startswith("not_") or cond.get("presence") in (
-            "not_control", "not", "none", "no", "do_not_control", "not_present", "is_not_present", "false", False, 0
-        )
-        if is_not:
-            out["presence"] = "not_control"
-        if cond.get("scope") in ("other", "others", "exclude_self"):
-            out["scope"] = "other"
+        if "presence" in cond:
+            pres = _name(PRESENCE, cond["presence"])
+            if pres is None:
+                return None
+            if pres == "not_control":
+                out["presence"] = "not_control"
+        if "scope" in cond:
+            sc = _name(SCOPE, cond["scope"])
+            if sc is None:
+                return None
+            if sc == "other":
+                out["scope"] = "other"
     if c_type == "named_card":
         card = cond.get("card")
         card = resolve(card) if resolve and card is not None else card
@@ -279,136 +263,74 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
                 return None
             out["whose"] = whose
     elif c_type == "stat_threshold":
-        stat = cond.get("stat", "atk")
-        if isinstance(stat, str):
-            s = stat.lower()
-            if s in ("def", "defense"):
-                stat = "def"
-            elif s in ("atk", "attack"):
-                stat = "atk"
-            else:
-                return None
-        else:
+        stat = _name(STATS, cond.get("stat", "atk"))
+        if stat is None:
             return None
         out["stat"] = stat
-
-        op = cond.get("comparison") or cond.get("op") or ">="
-        if isinstance(op, str):
-            op = op.lower()
-            if op in ("<", "lower", "lt"):
-                op = "<"
-            elif op in ("<=", "lower_equal", "le"):
-                op = "<="
-            elif op in (">", "higher", "gt"):
-                op = ">"
-            elif op in (">=", "higher_equal", "ge"):
-                op = ">="
-            elif op in ("==", "=", "equal", "eq"):
-                op = "=="
-            else:
-                return None
-        else:
+        op = cond.get("op", ">=")
+        if op not in OPS:
             return None
-        out["comparison"] = op
-
+        out["op"] = op
         val = cond.get("value", 0)
         if not isinstance(val, int) or isinstance(val, bool) or not (0 <= val <= AMOUNT_MAX):
             return None
         out["value"] = val
     elif c_type == "control_stat":
-        stat = cond.get("stat", "atk")
-        if isinstance(stat, str):
-            s = stat.lower()
-            if s in ("def", "defense"):
-                stat = "def"
-            elif s in ("atk", "attack"):
-                stat = "atk"
-            else:
-                return None
-        else:
+        stat = _name(STATS, cond.get("stat", "atk"))
+        if stat is None:
             return None
         out["stat"] = stat
-
-        op = cond.get("comparison") or cond.get("op") or ">="
-        if isinstance(op, str):
-            op = op.lower()
-            if op in ("<", "lower", "lt"):
-                op = "<"
-            elif op in ("<=", "lower_equal", "le"):
-                op = "<="
-            elif op in (">", "higher", "gt"):
-                op = ">"
-            elif op in (">=", "higher_equal", "ge"):
-                op = ">="
-            elif op in ("==", "=", "equal", "eq"):
-                op = "=="
-            else:
-                return None
-        else:
+        op = cond.get("op", ">=")
+        if op not in OPS:
             return None
-        out["comparison"] = op
-
+        out["op"] = op
         val = cond.get("value", 0)
         if not isinstance(val, int) or isinstance(val, bool) or not (0 <= val <= AMOUNT_MAX):
             return None
         out["value"] = val
     elif c_type == "control_level":
-        op = cond.get("comparison") or cond.get("op") or "=="
-        if isinstance(op, str):
-            op = op.lower()
-            if op in ("==", "=", "equal", "eq"):
-                op = "=="
-            elif op in ("<", "lower", "lt", "fewer"):
-                op = "<"
-            elif op in ("<=", "lower_equal", "le", "fewer_equal"):
-                op = "<="
-            elif op in (">", "higher", "gt"):
-                op = ">"
-            elif op in (">=", "higher_equal", "ge"):
-                op = ">="
-            else:
-                return None
-        else:
+        op = cond.get("op", "==")
+        if op not in OPS:
             return None
-        out["comparison"] = op
-
-        val = cond.get("level") if "level" in cond else cond.get("value", 1)
+        out["op"] = op
+        val = cond.get("level")
         if not isinstance(val, int) or isinstance(val, bool) or not (1 <= val <= 12):
             return None
         out["level"] = val
     elif c_type == "control_type":
-        whose = cond.get("whose") or cond.get("field")
-        if whose:
-            w = whose.lower() if isinstance(whose, str) else str(whose)
-            if w in ("opponent", "opp"):
-                out["whose"] = "opponent"
-            elif w in ("all", "both", "whole_field", "field"):
-                out["whose"] = "all"
-        mode = cond.get("mode") or cond.get("type_mode")
-        if mode in ("only", "only_control"):
-            out["mode"] = "only"
-        t = cond.get("card_type") or cond.get("monster_type")
-        if not t and cond.get("type") not in ("control_type", "not_control_type", "control_monster_type", "not_control_monster_type",
-                                              "type_present", "not_type_present", "monster_type_present", "not_monster_type_present"):
-            t = cond.get("type")
+        if "whose" in cond:
+            whose = _name(EACH, cond["whose"])
+            if whose is None:
+                return None
+            if whose != "own":
+                out["whose"] = whose
+        if "mode" in cond:
+            mode = _name(TYPE_MODES, cond["mode"])
+            if mode is None:
+                return None
+            if mode == "only":
+                out["mode"] = "only"
+        t = cond.get("card_type")
         if t is not None:
             out["card_type"] = str(t)
     elif c_type == "control_attribute":
-        whose = cond.get("whose") or cond.get("field")
-        if whose:
-            w = whose.lower() if isinstance(whose, str) else str(whose)
-            if w in ("opponent", "opp"):
-                out["whose"] = "opponent"
-            elif w in ("all", "both", "whole_field", "field"):
-                out["whose"] = "all"
-        mode = cond.get("mode") or cond.get("type_mode")
-        if mode in ("only", "only_control"):
-            out["mode"] = "only"
+        if "whose" in cond:
+            whose = _name(EACH, cond["whose"])
+            if whose is None:
+                return None
+            if whose != "own":
+                out["whose"] = whose
+        if "mode" in cond:
+            mode = _name(TYPE_MODES, cond["mode"])
+            if mode is None:
+                return None
+            if mode == "only":
+                out["mode"] = "only"
         attr = cond.get("attribute")
         if attr is not None:
             out["attribute"] = str(attr)
     elif c_type == "field_spell":
-        fld = cond.get("field") or cond.get("field_spell") or cond.get("terrain") or cond.get("card") or "any"
+        fld = cond.get("field", "any")
         if isinstance(fld, int) and not isinstance(fld, bool):
             if 330 <= fld <= 335:
                 fld = FIELD_SPELLS[fld - 330 + 1]
@@ -417,26 +339,19 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
             else:
                 return None
         elif isinstance(fld, str):
-            fld_lower = fld.lower()
-            if fld_lower in ("sea", "ocean"):
-                fld = "umi"
-            elif fld_lower in ("meadow", "grassland"):
-                fld = "sogen"
-            elif fld_lower in ("dark", "darkness"):
-                fld = "yami"
-            else:
-                fld_val = _name(FIELD_SPELLS, fld_lower)
-                if fld_val is None:
-                    return None
-                fld = fld_val
+            fld_val = _name(FIELD_SPELLS, fld)
+            if fld_val is None:
+                return None
+            fld = fld_val
         else:
             return None
         out["field"] = fld
 
-        status = cond.get("presence") or cond.get("status") or cond.get("state")
-        is_not = str(cond.get("type", "")).startswith("not_") or status in ("not_active", "inactive", "not", "none", "no", "not_control", "false", False)
-        if is_not:
-            out["presence"] = "not_active"
+        if "presence" in cond:
+            status = _name(FIELD_STATUS, cond["presence"])
+            if status is None:
+                return None
+            out["presence"] = status
         else:
             out["presence"] = "active"
     elif c_type in ("lowest_atk", "highest_atk", "fewer_monsters", "more_monsters", "lower_lp", "higher_lp"):
@@ -451,10 +366,7 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
     monster types."""
     if not isinstance(effect, dict):
         return None
-    raw_do = effect.get("do")
-    if raw_do in ("piercing_damage", "piercing"):
-        raw_do = "piercing"
-    when, do = _name(WHEN, effect.get("when")), _name(DO, raw_do)
+    when, do = _name(WHEN, effect.get("when")), _name(DO, effect.get("do"))
     target = _name(TARGET, effect.get("target")) if "target" in effect else (default_target(when, do) if when else None)
     if not when or not do or not target or not allowed(when, do, target):
         return None
@@ -467,46 +379,19 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
         out["card"] = card
     elif do == "battle_immunity":
         out["target"] = target
-        mod = effect.get("modifier") or effect.get("battle_modifier")
-        if mod:
-            if mod in ("first_time_attacked", "after_one_attack", "destroyed_after_1_attack"):
-                mod = "first_attacked"
-            elif mod in ("second_attacked", "destroyed_after_two_attacks", "after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
-                mod = "destroyed_after_2_attacks"
-            elif mod in ("third_attacked", "destroyed_after_three_attacks", "after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
-                mod = "destroyed_after_3_attacks"
-            mod_name = _name(MODIFIERS, mod)
+        if "modifier" in effect:
+            mod_name = _name(MODIFIERS, effect["modifier"])
             if mod_name is None:
-                if mod in ("first_time_attacked", "after_one_attack", "destroyed_after_1_attack"):
-                    mod_name = "first_attacked"
-                elif mod in ("second_attacked", "destroyed_after_two_attacks", "after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
-                    mod_name = "destroyed_after_2_attacks"
-                elif mod in ("third_attacked", "destroyed_after_three_attacks", "after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
-                    mod_name = "destroyed_after_3_attacks"
-                elif mod in ("attacked_type", "if_attacked_by_type"):
-                    mod_name = "attacked_by_type"
-                elif mod in ("attacked_attribute", "if_attacked_by_attribute"):
-                    mod_name = "attacked_by_attribute"
-                elif mod in ("attacked_stat", "if_attacked_by_stat"):
-                    mod_name = "attacked_by_stat"
-                elif mod in ("attacked_level", "if_attacked_by_level"):
-                    mod_name = "attacked_by_level"
-                elif mod in ("attacked_by", "attacked_by_monster", "if_attacked_by_monster"):
-                    mod_name = "attacked_by_monster"
-                else:
-                    return None
+                return None
             if mod_name != "always":
                 out["modifier"] = mod_name
                 if mod_name in ATTACK_COUNT_MODIFIERS:
-                    rst = effect.get("reset") or effect.get("modifier_reset") or effect.get("battle_reset") or "turn"
-                    if rst in ("summon", "this_copy", "this_card_copy"):
-                        rst = "copy"
-                    rst_name = _name(RESET, rst)
-                    if rst_name is None:
+                    rst = _name(RESET, effect.get("reset", "turn"))
+                    if rst is None:
                         return None
-                    out["reset"] = rst_name
+                    out["reset"] = rst
                 if mod_name in ("attacked_by_type", "attacked_by_monster"):
-                    t = effect.get("attacker_type") or effect.get("type") or effect.get("card_type")
+                    t = effect.get("attacker_type")
                     if t is not None:
                         names = type_names or TYPE_NAMES
                         if isinstance(t, str):
@@ -519,7 +404,7 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                     elif mod_name == "attacked_by_type":
                         return None
                 if mod_name in ("attacked_by_attribute", "attacked_by_monster"):
-                    a = effect.get("attacker_attribute") or effect.get("attribute")
+                    a = effect.get("attacker_attribute")
                     if a is not None:
                         a = attribute_resolve(a) if attribute_resolve else (_letters_index(a, ATTRIBUTE_NAMES) if isinstance(a, str) else a)
                         if isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= 255 and a not in (6, 7):
@@ -529,16 +414,10 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                     elif mod_name == "attacked_by_attribute":
                         return None
                 if mod_name in ("attacked_by_stat", "attacked_by_monster"):
-                    st = effect.get("attacker_stat") or effect.get("stat")
+                    st = _name(STATS, effect.get("attacker_stat"))
                     if st is not None:
-                        s_lower = str(st).lower()
-                        if s_lower in ("def", "defense"):
-                            out["attacker_stat"] = "def"
-                        elif s_lower in ("atk", "attack"):
-                            out["attacker_stat"] = "atk"
-                        elif mod_name == "attacked_by_stat":
-                            return None
-                    amt = effect.get("attacker_amount") if "attacker_amount" in effect else effect.get("amount") if "amount" in effect else effect.get("value")
+                        out["attacker_stat"] = st
+                    amt = effect.get("attacker_amount")
                     if amt is not None:
                         if isinstance(amt, int) and not isinstance(amt, bool) and 0 <= amt <= AMOUNT_MAX:
                             out["attacker_amount"] = amt
@@ -548,27 +427,15 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                             return None
                     elif mod_name == "attacked_by_stat":
                         return None
-                    sop = effect.get("attacker_stat_op") or effect.get("stat_op")
-                    if not sop and (mod_name == "attacked_by_stat" or "attacker_level_op" not in effect):
-                        sop = effect.get("comparison") or effect.get("op")
+                    sop = effect.get("attacker_stat_op")
                     if sop is None and (mod_name == "attacked_by_stat" or "attacker_stat" in out):
                         sop = ">"
                     if sop is not None:
-                        sop_str = str(sop)
-                        if sop_str in OPS:
-                            out["attacker_stat_op"] = sop_str
-                        elif sop_str in ("higher", "gt"):
-                            out["attacker_stat_op"] = ">"
-                        elif sop_str in ("lower", "lt"):
-                            out["attacker_stat_op"] = "<"
-                        elif sop_str in ("higher_equal", "ge"):
-                            out["attacker_stat_op"] = ">="
-                        elif sop_str in ("lower_equal", "le"):
-                            out["attacker_stat_op"] = "<="
-                        elif sop_str in ("=", "equal", "eq"):
-                            out["attacker_stat_op"] = "=="
+                        if sop not in OPS:
+                            return None
+                        out["attacker_stat_op"] = sop
                 if mod_name in ("attacked_by_level", "attacked_by_monster"):
-                    lvl = effect.get("attacker_level") if "attacker_level" in effect else effect.get("level")
+                    lvl = effect.get("attacker_level")
                     if lvl is not None:
                         if isinstance(lvl, int) and not isinstance(lvl, bool) and 1 <= lvl <= 12:
                             out["attacker_level"] = lvl
@@ -576,46 +443,23 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                             return None
                     elif mod_name == "attacked_by_level":
                         return None
-                    lop = effect.get("attacker_level_op") or effect.get("level_op")
-                    if not lop and (mod_name == "attacked_by_level" or "attacker_stat_op" not in effect):
-                        lop = effect.get("comparison") or effect.get("op")
+                    lop = effect.get("attacker_level_op")
                     if lop is None and (mod_name == "attacked_by_level" or "attacker_level" in out):
                         lop = ">"
                     if lop is not None:
-                        lop_str = str(lop)
-                        if lop_str in OPS:
-                            out["attacker_level_op"] = lop_str
-                        elif lop_str in ("higher", "gt"):
-                            out["attacker_level_op"] = ">"
-                        elif lop_str in ("lower", "lt"):
-                            out["attacker_level_op"] = "<"
-                        elif lop_str in ("higher_equal", "ge"):
-                            out["attacker_level_op"] = ">="
-                        elif lop_str in ("lower_equal", "le"):
-                            out["attacker_level_op"] = "<="
-                        elif lop_str in ("=", "equal", "eq"):
-                            out["attacker_level_op"] = "=="
+                        if lop not in OPS:
+                            return None
+                        out["attacker_level_op"] = lop
     elif do == "piercing":
         out["target"] = target
-        mod = effect.get("modifier") or effect.get("piercing_modifier")
-        if mod:
-            if mod in ("attacks_monster_of_type", "attacks_by_type", "if_attacks_type", "attacked_by_type"):
-                mod = "attacks_type"
-            elif mod in ("attacks_monster_of_attribute", "attacks_by_attribute", "if_attacks_attribute", "attacked_by_attribute"):
-                mod = "attacks_attribute"
-            elif mod in ("attacks_monster_with_stat", "attacks_by_stat", "if_attacks_stat", "attacked_by_stat"):
-                mod = "attacks_stat"
-            elif mod in ("attacks_monster_with_level", "attacks_by_level", "if_attacks_level", "attacked_by_level"):
-                mod = "attacks_level"
-            elif mod in ("attacks_by", "attacks_by_monster", "if_attacks_monster", "attacks_combined", "attacked_by_monster"):
-                mod = "attacks_monster"
-            mod_name = _name(PIERCING_MODIFIERS, mod)
+        if "modifier" in effect:
+            mod_name = _name(PIERCING_MODIFIERS, effect["modifier"])
             if mod_name is None:
                 return None
             if mod_name != "always":
                 out["modifier"] = mod_name
                 if mod_name in ("attacks_type", "attacks_monster"):
-                    t = effect.get("defender_type") or effect.get("target_type") or effect.get("attacker_type") or effect.get("type") or effect.get("card_type")
+                    t = effect.get("defender_type")
                     if t is not None:
                         names = type_names or TYPE_NAMES
                         if isinstance(t, str):
@@ -628,7 +472,7 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                     elif mod_name == "attacks_type":
                         return None
                 if mod_name in ("attacks_attribute", "attacks_monster"):
-                    a = effect.get("defender_attribute") or effect.get("target_attribute") or effect.get("attacker_attribute") or effect.get("attribute")
+                    a = effect.get("defender_attribute")
                     if a is not None:
                         a = attribute_resolve(a) if attribute_resolve else (_letters_index(a, ATTRIBUTE_NAMES) if isinstance(a, str) else a)
                         if isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= 255 and a not in (6, 7):
@@ -638,22 +482,10 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                     elif mod_name == "attacks_attribute":
                         return None
                 if mod_name in ("attacks_stat", "attacks_monster"):
-                    st = effect.get("defender_stat") or effect.get("target_stat") or effect.get("attacker_stat") or effect.get("stat")
+                    st = _name(STATS, effect.get("defender_stat"))
                     if st is not None:
-                        s_lower = str(st).lower()
-                        if s_lower in ("def", "defense"):
-                            out["defender_stat"] = "def"
-                        elif s_lower in ("atk", "attack"):
-                            out["defender_stat"] = "atk"
-                        elif mod_name == "attacks_stat":
-                            return None
-                    amt = effect.get("defender_amount") if "defender_amount" in effect else (
-                        effect.get("target_amount") if "target_amount" in effect else (
-                            effect.get("attacker_amount") if "attacker_amount" in effect else (
-                                effect.get("amount") if "amount" in effect else effect.get("value")
-                            )
-                        )
-                    )
+                        out["defender_stat"] = st
+                    amt = effect.get("defender_amount")
                     if amt is not None:
                         if isinstance(amt, int) and not isinstance(amt, bool) and 0 <= amt <= AMOUNT_MAX:
                             out["defender_amount"] = amt
@@ -663,31 +495,15 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                             return None
                     elif mod_name == "attacks_stat":
                         return None
-                    sop = effect.get("defender_stat_op") or effect.get("target_stat_op") or effect.get("attacker_stat_op") or effect.get("stat_op")
-                    if not sop and (mod_name == "attacks_stat" or ("defender_level_op" not in effect and "target_level_op" not in effect and "attacker_level_op" not in effect)):
-                        sop = effect.get("comparison") or effect.get("op")
+                    sop = effect.get("defender_stat_op")
                     if sop is None and (mod_name == "attacks_stat" or "defender_stat" in out):
                         sop = ">"
                     if sop is not None:
-                        sop_str = str(sop)
-                        if sop_str in OPS:
-                            out["defender_stat_op"] = sop_str
-                        elif sop_str in ("higher", "gt"):
-                            out["defender_stat_op"] = ">"
-                        elif sop_str in ("lower", "lt"):
-                            out["defender_stat_op"] = "<"
-                        elif sop_str in ("higher_equal", "ge"):
-                            out["defender_stat_op"] = ">="
-                        elif sop_str in ("lower_equal", "le"):
-                            out["defender_stat_op"] = "<="
-                        elif sop_str in ("=", "equal", "eq"):
-                            out["defender_stat_op"] = "=="
+                        if sop not in OPS:
+                            return None
+                        out["defender_stat_op"] = sop
                 if mod_name in ("attacks_level", "attacks_monster"):
-                    lvl = effect.get("defender_level") if "defender_level" in effect else (
-                        effect.get("target_level") if "target_level" in effect else (
-                            effect.get("attacker_level") if "attacker_level" in effect else effect.get("level")
-                        )
-                    )
+                    lvl = effect.get("defender_level")
                     if lvl is not None:
                         if isinstance(lvl, int) and not isinstance(lvl, bool) and 1 <= lvl <= 12:
                             out["defender_level"] = lvl
@@ -695,25 +511,13 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                             return None
                     elif mod_name == "attacks_level":
                         return None
-                    lop = effect.get("defender_level_op") or effect.get("target_level_op") or effect.get("attacker_level_op") or effect.get("level_op")
-                    if not lop and (mod_name == "attacks_level" or ("defender_stat_op" not in effect and "target_stat_op" not in effect and "attacker_stat_op" not in effect)):
-                        lop = effect.get("comparison") or effect.get("op")
+                    lop = effect.get("defender_level_op")
                     if lop is None and (mod_name == "attacks_level" or "defender_level" in out):
                         lop = ">"
                     if lop is not None:
-                        lop_str = str(lop)
-                        if lop_str in OPS:
-                            out["defender_level_op"] = lop_str
-                        elif lop_str in ("higher", "gt"):
-                            out["defender_level_op"] = ">"
-                        elif lop_str in ("lower", "lt"):
-                            out["defender_level_op"] = "<"
-                        elif lop_str in ("higher_equal", "ge"):
-                            out["defender_level_op"] = ">="
-                        elif lop_str in ("lower_equal", "le"):
-                            out["defender_level_op"] = "<="
-                        elif lop_str in ("=", "equal", "eq"):
-                            out["defender_level_op"] = "=="
+                        if lop not in OPS:
+                            return None
+                        out["defender_level_op"] = lop
     elif do in FILTERED:
         out["target"] = target
         for key in ("attack", "defense") if do == "boost" else ():

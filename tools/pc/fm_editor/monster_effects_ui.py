@@ -260,23 +260,6 @@ class ConditionDialog(FormDialog):
 
         c_type = c.get("type", "named_card")
 
-        if c_type in ("lower_lp", "lp_lower", "fewer_lp", "lp_fewer", "lower_life", "lp_less", "player_lp_lower_than_opponent", "player_lp_lower"):
-            c_type = "lower_lp"
-        elif c_type in ("higher_lp", "lp_higher", "more_lp", "lp_more", "higher_life", "lp_greater", "player_lp_higher_than_opponent", "player_lp_higher"):
-            c_type = "higher_lp"
-        elif c_type in ("control_monster_stat", "monster_stat", "not_control_stat", "not_control_monster_stat"):
-            c_type = "control_stat"
-        elif c_type in ("control_monster_level", "monster_level", "not_control_level", "not_control_monster_level"):
-            c_type = "control_level"
-        elif c_type in ("control_monster_type", "monster_type", "not_control_type", "not_control_monster_type",
-                        "type_present", "monster_type_present", "not_type_present", "not_monster_type_present"):
-            c_type = "control_type"
-        elif c_type in ("control_monster_attribute", "monster_attribute", "not_control_attribute", "not_control_monster_attribute",
-                        "attribute_present", "monster_attribute_present", "not_attribute_present", "not_monster_attribute_present"):
-            c_type = "control_attribute"
-        elif c_type in ("field_spell", "field", "terrain", "field_magic", "not_field_spell", "not_field", "not_terrain"):
-            c_type = "field_spell"
-
         if c_type in self.cond_types:
             self.vars["type"].set(self.cond_labels[self.cond_types.index(c_type)])
         else:
@@ -287,14 +270,12 @@ class ConditionDialog(FormDialog):
         else:
             self.card_field.set(1)
 
-        whose = c.get("whose") or c.get("field")
+        whose = c.get("whose")
         if not whose:
             whose = "all" if c_type == "named_card" else "own"
         self.vars["whose"].set(fx.EACH_LABELS[fx.EACH.index(whose)] if whose in fx.EACH else (fx.EACH_LABELS[2] if c_type == "named_card" else fx.EACH_LABELS[0]))
 
         pres = c.get("presence", "control")
-        if str(c.get("type", "")).startswith("not_"):
-            pres = "not_control"
         self.vars["presence"].set(fx.PRESENCE_LABELS[fx.PRESENCE.index(pres)] if pres in fx.PRESENCE else fx.PRESENCE_LABELS[0])
 
         sc = c.get("scope", "own")
@@ -303,42 +284,34 @@ class ConditionDialog(FormDialog):
         t_mode = c.get("mode", "at_least_one")
         self.vars["type_mode"].set(fx.TYPE_MODE_LABELS[fx.TYPE_MODES.index(t_mode)] if t_mode in fx.TYPE_MODES else fx.TYPE_MODE_LABELS[0])
 
-        t_name = c.get("type") or c.get("card_type", type_choices[0])
+        t_name = c.get("card_type", type_choices[0])
         self.vars["card_type"].set(t_name if t_name in type_choices else type_choices[0])
 
         a_name = c.get("attribute", attr_choices[0])
         self.vars["attribute"].set(a_name if a_name in attr_choices else attr_choices[0])
 
-        self.vars["level"].set(str(c.get("level") if "level" in c else c.get("value", 7)))
+        self.vars["level"].set(str(c.get("level", 7)))
 
         stat = c.get("stat", "atk")
         self.vars["stat"].set("DEF" if stat == "def" else "ATK")
 
-        op = c.get("comparison") or c.get("op", ">=" if c_type != "control_level" else "==")
+        op = c.get("op", ">=" if c_type != "control_level" else "==")
         if op == "=":
             op = "=="
         self.vars["op"].set(fx.OP_LABELS[fx.OPS.index(op)] if op in fx.OPS else fx.OP_LABELS[3])
 
         self.vars["value"].set(str(c.get("value", 1500)))
 
-        fld = c.get("field") or c.get("field_spell") or c.get("terrain") or "any"
+        fld = c.get("field", "any")
         if isinstance(fld, int) and 330 <= fld <= 335:
             fld = fx.FIELD_SPELLS[fld - 330 + 1]
         elif isinstance(fld, int) and 0 <= fld < len(fx.FIELD_SPELLS):
             fld = fx.FIELD_SPELLS[fld]
-        elif isinstance(fld, str):
-            fld_lower = fld.lower()
-            if fld_lower in ("sea", "ocean"):
-                fld = "umi"
-            elif fld_lower in ("meadow", "grassland"):
-                fld = "sogen"
-            elif fld_lower in ("dark", "darkness"):
-                fld = "yami"
         fld_idx = fx.FIELD_SPELLS.index(fld) if fld in fx.FIELD_SPELLS else 0
         self.vars["field"].set(fx.FIELD_SPELL_LABELS[fld_idx])
 
-        f_status = c.get("presence") or c.get("status") or ("not_active" if str(c.get("type", "")).startswith("not_") else "active")
-        if f_status in ("not_active", "inactive", "not_control", "not", "0", False):
+        f_status = c.get("presence", "active")
+        if f_status == "not_active":
             self.vars["field_status"].set(fx.FIELD_STATUS_LABELS[1])
         else:
             self.vars["field_status"].set(fx.FIELD_STATUS_LABELS[0])
@@ -403,7 +376,7 @@ class ConditionDialog(FormDialog):
             stat = self.chosen("stat", fx.STATS, fx.STAT_LABELS) or "atk"
             out["stat"] = stat
             op = self.chosen("op", fx.OPS, fx.OP_LABELS) or ">="
-            out["comparison"] = op
+            out["op"] = op
             try:
                 val = int(self.vars["value"].get().strip())
             except ValueError:
@@ -418,7 +391,7 @@ class ConditionDialog(FormDialog):
             stat = self.chosen("stat", fx.STATS, fx.STAT_LABELS) or "atk"
             out["stat"] = stat
             op = self.chosen("op", fx.OPS, fx.OP_LABELS) or ">="
-            out["comparison"] = op
+            out["op"] = op
             try:
                 val = int(self.vars["value"].get().strip())
             except ValueError:
@@ -434,7 +407,7 @@ class ConditionDialog(FormDialog):
             if pres == "not_control":
                 out["presence"] = "not_control"
             op = self.chosen("op", fx.OPS, fx.OP_LABELS) or "=="
-            out["comparison"] = op
+            out["op"] = op
             try:
                 lvl = int(self.vars["level"].get().strip())
             except ValueError:
@@ -674,19 +647,19 @@ class EffectDialog(FormDialog):
         rst_idx = fx.RESET.index(rst) if rst in fx.RESET else 0
         self.vars["modifier_reset"].set(fx.RESET_LABELS[rst_idx])
 
-        t_init = e.get("defender_type") or e.get("target_type") or e.get("attacker_type", ANY)
+        t_init = e.get("defender_type") or e.get("attacker_type", ANY)
         self.vars["attacker_type"].set(t_init)
-        a_init = e.get("defender_attribute") or e.get("target_attribute") or e.get("attacker_attribute", ANY)
+        a_init = e.get("defender_attribute") or e.get("attacker_attribute", ANY)
         self.vars["attacker_attribute"].set(self.attribute_label(a_init))
-        stat_val = e.get("defender_stat") or e.get("target_stat") or e.get("attacker_stat", "")
+        stat_val = e.get("defender_stat") or e.get("attacker_stat", "")
         self.vars["attacker_stat"].set(stat_val.upper() if stat_val in ("atk", "def") else ("ATK" if self.attack_mod in ("attacked_by_stat", "attacks_stat") else "None"))
-        stat_op = e.get("defender_stat_op") or e.get("target_stat_op") or e.get("attacker_stat_op") or e.get("comparison") or e.get("op", ">")
+        stat_op = e.get("defender_stat_op") or e.get("attacker_stat_op") or e.get("op", ">")
         self.vars["attacker_stat_op"].set(fx.OP_LABELS[fx.OPS.index(stat_op)] if stat_op in fx.OPS else fx.OP_LABELS[2])
-        amt_init = e.get("defender_amount") if "defender_amount" in e else (e.get("target_amount") if "target_amount" in e else e.get("attacker_amount", 1500))
+        amt_init = e.get("defender_amount") if "defender_amount" in e else e.get("attacker_amount", 1500)
         self.vars["attacker_amount"].set(str(amt_init))
-        level_op = e.get("defender_level_op") or e.get("target_level_op") or e.get("attacker_level_op") or (e.get("comparison") if self.attack_mod in ("attacked_by_level", "attacks_level") else None) or e.get("op", ">")
+        level_op = e.get("defender_level_op") or e.get("attacker_level_op") or e.get("op", ">")
         self.vars["attacker_level_op"].set(fx.OP_LABELS[fx.OPS.index(level_op)] if level_op in fx.OPS else fx.OP_LABELS[2])
-        lvl_init = e.get("defender_level") if "defender_level" in e else (e.get("target_level") if "target_level" in e else e.get("attacker_level", 4 if self.attack_mod in ("attacked_by_level", "attacks_level") else 0))
+        lvl_init = e.get("defender_level") if "defender_level" in e else e.get("attacker_level", 4 if self.attack_mod in ("attacked_by_level", "attacks_level") else 0)
         self.vars["attacker_level"].set(str(lvl_init))
 
         cond_mode = e.get("condition_mode", "all")

@@ -2660,18 +2660,18 @@ class MonsterEffectsGuiTest(GuiCase):
         from fm_editor import monster_effects as fx
         app = self.app
         # 1. Open with stat_threshold atk
-        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "comparison": ">=", "value": 1500}, str)
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "op": ">=", "value": 1500}, str)
         self.assertEqual(dialog.vars["stat"].get(), "ATK")
         self.assertEqual(dialog.vars["value"].get(), "1500")
         dialog.ok()
-        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "atk", "comparison": ">=", "value": 1500})
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "atk", "op": ">=", "value": 1500})
 
         # 2. Switch to DEF
-        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "comparison": "<=", "value": 1500}, str)
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "op": "<=", "value": 1500}, str)
         dialog.vars["stat"].set("DEF")
         dialog.vars["value"].set("2000")
         dialog.ok()
-        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "def", "comparison": "<=", "value": 2000})
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "def", "op": "<=", "value": 2000})
 
         # 3. Invalid value validation
         dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "value": 1500}, str)
@@ -2704,7 +2704,7 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.vars["op"].set(fx.OP_LABELS[fx.OPS.index("<=")])
         dialog.vars["value"].set("1500")
         dialog.ok()
-        self.assertEqual(dialog.result, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "comparison": "<=", "value": 1500})
+        self.assertEqual(dialog.result, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "op": "<=", "value": 1500})
 
         # 7. Control level condition
         dialog = ConditionDialog(app, app.project, None, str)
@@ -2714,7 +2714,7 @@ class MonsterEffectsGuiTest(GuiCase):
         dialog.vars["op"].set(fx.OP_LABELS[fx.OPS.index(">=")])
         dialog.vars["level"].set("7")
         dialog.ok()
-        self.assertEqual(dialog.result, {"type": "control_level", "comparison": ">=", "level": 7})
+        self.assertEqual(dialog.result, {"type": "control_level", "op": ">=", "level": 7})
 
         # 8. Control type condition
         dialog = ConditionDialog(app, app.project, None, str)
