@@ -160,7 +160,7 @@ static HmCard snapshot(int index, int effective, int secret)
     if (index >= 1 && index <= 5) record = side * 15 + 5 + index - 1;
     else if (index >= 56 && index <= 60) record = (side ^ 1) * 15 + 5 + index - 56;
     if (record >= 0 && record < MONSTER_RECORDS && D_801A7AD8[record].card_id == a.card_id)
-        c.attacks_used = gMonsterEffects.attacks[record];
+        c.attacks_used = MonsterEffects_AttacksUsed(record);
     c.flags = a.flags;
     if (effective) { c.attack = a.attack; c.defense = a.defense; }
     c.star = a.guardian_star;

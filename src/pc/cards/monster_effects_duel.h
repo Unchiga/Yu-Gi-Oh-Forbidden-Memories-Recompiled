@@ -78,9 +78,6 @@ typedef struct {
      * have: new fields go at the end only. */
     unsigned char battle_abort; /* bit mask: an attack trap removed battle participant(s) */
     short trap_battle_record[2]; /* attacker and defender while a trap resolves */
-    signed char battle_survivor[2]; /* -1 destroy, +1 keep, 0 retail result */
-    unsigned char battle_effects[2]; /* combat event was not handled by a code mod */
-    unsigned char attacks[MONSTER_RECORDS]; /* attacks each field record made this turn */
 } MonsterEffectsState;
 
 extern MonsterEffectsState gMonsterEffects;
@@ -120,6 +117,8 @@ int MonsterEffects_RestoreBattleCard(int side, int retail_survives);
 /* Battle-rule queries and restoration hooks for piercing and repeat attacks. */
 int MonsterEffects_HasPiercing(int record);
 void MonsterEffects_RestoreAttack(int record);
+/* Attacks already made by this field record in the current turn. */
+int MonsterEffects_AttacksUsed(int record);
 /* The CPU puts this monster down face up (its effects want it seen). */
 int MonsterEffects_PlayFaceUp(int card);
 /* Crush Card's removal (DuelEffect_ApplyMonsterRemoval) as a
