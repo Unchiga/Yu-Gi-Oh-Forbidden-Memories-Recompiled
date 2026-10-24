@@ -75,6 +75,9 @@ static const SettingInfo info[SET_COUNT] = {
      * phone whether auto-rotate is on or not, 1 it follows the system's
      * auto-rotate (android.c, Android_ApplyScreenRotation). */
     [SET_SCREEN_ROTATION] = {"screen_rotation", NULL, "MEMORIES_SCREEN_ROTATION", NULL, 0, 0, 1},
+    /* View > Touch controls > Opacity: how much of a touch control a button
+     * let go covers, in percent; held, it is twice that (touch_pad_art.c). */
+    [SET_TOUCH_OPACITY] = {"touch_opacity", NULL, "MEMORIES_TOUCH_OPACITY", NULL, 25, 10, 100},
     [SET_MASTER_VOLUME] = {"master_volume", "volume", "MEMORIES_MASTER_VOLUME", "MEMORIES_VOLUME", 100, 0, 100},
     [SET_MUSIC_VOLUME] = {"music_volume", NULL, "MEMORIES_MUSIC_VOLUME", NULL, 100, 0, 100},
     [SET_SFX_VOLUME] = {"sfx_volume", NULL, "MEMORIES_SFX_VOLUME", NULL, 100, 0, 100},

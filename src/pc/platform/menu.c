@@ -302,7 +302,10 @@ static Menu submenus[SUB_COUNT] = {
     /* The on-screen controller for touch screens (touch_pad.h). */
     {"Touch controls", {{"Automatic (after a touch)", 0, ITEM_RADIO, 0, SET_TOUCH_PAD, 0},
                         {"Show", 0, ITEM_RADIO, 0, SET_TOUCH_PAD, 1},
-                        {"Hide", 0, ITEM_RADIO, 0, SET_TOUCH_PAD, 2}}, 3},
+                        {"Hide", 0, ITEM_RADIO, 0, SET_TOUCH_PAD, 2},
+                        {"Opacity 25%", 0, ITEM_RADIO, 0, SET_TOUCH_OPACITY, 25, ITEM_GROUP_BREAK},
+                        {"Opacity 50%", 0, ITEM_RADIO, 0, SET_TOUCH_OPACITY, 50},
+                        {"Opacity 75%", 0, ITEM_RADIO, 0, SET_TOUCH_OPACITY, 75}}, 6},
     /* Android (android.c, Android_ApplyScreenRotation): turned over with the
      * phone by its sensor, or only as the system's auto-rotate allows. */
     {"Screen rotation", {{"Turn with the phone", 0, ITEM_RADIO, 0, SET_SCREEN_ROTATION, 0},
@@ -1036,13 +1039,17 @@ int Menu_TouchTarget(void) { return touch_row; }
 
 static void close_menu(void);
 
-void Menu_Open(void)
+_Static_assert(MENU_BAR_FILE == MENU_FILE && MENU_BAR_GAME == MENU_GAME, "menu.h's bar indices");
+
+void Menu_OpenAt(int which)
 {
-    if (!ready || notice.shown) return;
+    if (!ready || notice.shown || which < 0 || which >= MENU_COUNT) return;
     close_menu();
-    open_menu = 0;
+    open_menu = which;
     changed = 1;
 }
+
+void Menu_Open(void) { Menu_OpenAt(MENU_BAR_FILE); }
 
 void Menu_SetOverlayArea(int left, int right, int top)
 {

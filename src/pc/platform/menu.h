@@ -145,9 +145,12 @@ static inline void Menu_TextTrim(char *text)
 }
 void Menu_SetVisible(int visible);
 int Menu_IsOpen(void);
-/* Opens the bar's first menu with no row lit: a touch screen's MENU button
- * (touch_pad.h). Nothing while a notice is up. */
+/* Opens the bar's first menu, or the one at `which` (MENU_BAR_*), with no
+ * row lit: a touch screen's MENU and STATES buttons (touch_pad.h). Nothing
+ * while a notice is up. */
+enum { MENU_BAR_FILE = 0, MENU_BAR_GAME = 3 };
 void Menu_Open(void);
+void Menu_OpenAt(int which);
 /* On a touch screen, the smallest height a finger hits in window pixels
  * (48 dp): the bar, the rows and a notice's buttons are at least that tall.
  * 0, the default, keeps the mouse's sizes. */

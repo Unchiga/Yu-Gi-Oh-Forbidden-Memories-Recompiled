@@ -80,19 +80,42 @@ int main(void)
     assert(TouchPad_SetMode(TOUCH_PAD_HIDE) && !TouchPad_Shown());
     assert(!TouchPad_Finger(TOUCH_FINGER_DOWN, 8, 100, 600) && !TouchPad_Shown() && TouchPad_Update() == 0);
 
-    /* MENU: tapped once, it presses no pad button; it sits clear of the
-     * D-pad (a touch on it is not an arrow) and is a button tall. */
+    /* The top row: each tapped once presses no pad button, and only its own
+     * Take sees it; the row sits in the middle of the top edge, between the
+     * columns and above the rings, and is a button tall to tap. */
     assert(TouchPad_SetMode(TOUCH_PAD_SHOW) && TouchPad_Shown());
-    centre(TOUCH_MENU, &x, &y);
-    assert(TouchPad_Covers(x, y) && !TouchPad_TakeMenu());
-    assert(TouchPad_Finger(TOUCH_FINGER_DOWN, 9, x, y) && TouchPad_Held(TOUCH_MENU));
-    assert(TouchPad_Update() == 0 && TouchPad_TakeMenu() && !TouchPad_TakeMenu());
     {
-        int mx, my, mw, mh, ax, ay, aw, ah;
-        TouchPad_Rect(TOUCH_MENU, &mx, &my, &mw, &mh);
-        TouchPad_Rect(TOUCH_UP, &ax, &ay, &aw, &ah);
-        assert(my + mh <= ay);
-        assert(TouchPad_Covers(x, my - (1080 * 13 / 100 - mh) / 2 + 2)); /* the taller hit box */
+        static const TouchButton row[] = {TOUCH_MENU, TOUCH_STATES, TOUCH_SPEED};
+        int k, mx, my, mw, mh, lx, ly, lw, lh, rx, ry, rw, rh, cx, cy;
+        for (k = 0; k < 3; k++) {
+            centre(row[k], &x, &y);
+            assert(TouchPad_Covers(x, y) && !TouchPad_TakeMenu() && !TouchPad_TakeStates() && !TouchPad_TakeSpeed());
+            assert(TouchPad_Finger(TOUCH_FINGER_DOWN, 9, x, y) && TouchPad_Held(row[k]));
+            assert(TouchPad_Update() == 0);
+            assert(TouchPad_TakeMenu() == (k == 0) && TouchPad_TakeStates() == (k == 1) &&
+                   TouchPad_TakeSpeed() == (k == 2));
+            assert(!TouchPad_TakeMenu() && !TouchPad_TakeStates() && !TouchPad_TakeSpeed());
+            TouchPad_Finger(TOUCH_FINGER_UP, 9, x, y);
+            assert(!TouchPad_Held(row[k]));
+            TouchPad_Rect(row[k], &mx, &my, &mw, &mh);
+            TouchPad_Rect(TOUCH_L2, &lx, &ly, &lw, &lh);
+            TouchPad_Rect(TOUCH_R2, &rx, &ry, &rw, &rh);
+            TouchPad_Centre(0, &cx, &cy);
+            assert(mx > lx + lw && mx + mw < rx && my + mh < cy - 2 * (1080 * 13 / 100));
+            assert(TouchPad_Covers(x, my + mh + 2)); /* the taller hit box */
+            assert(TouchPad_TopRowBottom() > my + mh);
+        }
+        /* The columns: L2, L1 and SELECT down the left, clear of the D-pad's
+         * ring; a touch between two takes the nearer. */
+        TouchPad_Rect(TOUCH_L1, &mx, &my, &mw, &mh);
+        TouchPad_Rect(TOUCH_SELECT, &rx, &ry, &rw, &rh);
+        assert(lx == mx && mx == rx && ly + lh < my && my + mh < ry && ry + rh < cy - (1080 * 13 / 100) * 8 / 5);
+        TouchPad_Finger(TOUCH_FINGER_DOWN, 9, lx + lw / 2, ly + lh + (my - ly - lh) / 2 + 3);
+        assert(TouchPad_Update() == TouchPad_Bit(TOUCH_L1));
+        TouchPad_Finger(TOUCH_FINGER_UP, 9, lx + lw / 2, my - 3);
+        TouchPad_Update();
+        centre(TOUCH_MENU, &x, &y);
+        TouchPad_Finger(TOUCH_FINGER_DOWN, 9, x, y);
     }
 
     /* Blocked (a menu is up): nothing drawn, no touch taken, held let go. */
@@ -119,8 +142,17 @@ int main(void)
         TouchPad_Layout(1280, 720, 0);
         TouchPad_Rect(TOUCH_CROSS, &dx, &dy, &ux, &uy);
         assert(ux == 96);
+        /* So short a window that 48 dp would put the columns into the ring:
+         * the buttons get smaller instead. */
+        TouchPad_Layout(1280, 400, 0);
+        assert(TouchPad_SetDensity(3.0f));
+        TouchPad_Rect(TOUCH_SELECT, &dx, &dy, &ux, &uy);
+        TouchPad_Centre(0, &x, &y);
+        assert(TouchPad_Unit() < 64 && dy + uy < y - TouchPad_Unit() * 8 / 5);
         assert(!TouchPad_SetMode(TOUCH_PAD_HIDE) || !TouchPad_FreeSpan(&left, &right));
+        assert(!TouchPad_TopRowBottom());
     }
-    puts("touch pad: showing, D-pad angles, face buttons, taps, fingers, hiding, MENU, blocking, density passed");
+    puts("touch pad: showing, D-pad angles, face buttons, taps, fingers, hiding, top row, columns, blocking, "
+         "density passed");
     return 0;
 }

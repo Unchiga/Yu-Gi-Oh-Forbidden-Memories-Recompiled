@@ -69,6 +69,7 @@ typedef enum {
     SET_TOUCH_PAD,
     SET_CRASH_REPORT_OFFER,
     SET_SCREEN_ROTATION,
+    SET_TOUCH_OPACITY,
     SET_COUNT
 } SettingId;
 
