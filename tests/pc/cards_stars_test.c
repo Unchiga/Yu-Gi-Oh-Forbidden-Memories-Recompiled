@@ -50,7 +50,7 @@ void Mods_Note(const char *id, const char *format, ...)
     fprintf(stderr, "note: %s: %s\n", id, note);
     if (id[0] >= 'a' && id[0] <= 'h' && !id[1] && (id[0] != 'h' || !strstr(note, "is replaced by")))
         notes[id[0] - 'a']++;
-    if (strstr(note, "monster_effects")) effect_notes++;
+    if (strstr(note, "monster_effects") || strstr(note, "card_effects")) effect_notes++;
 }
 
 /* What cards.c and stars.c reach that these checks never get to. */
@@ -570,6 +570,31 @@ static void monster_effect_conditions_and_battle_immunity(void)
     assert(effects_ex[0].conditions[0].field_spell == MONSTER_FIELD_MOUNTAIN);
     assert(effects_ex[0].conditions[1].type == MONSTER_COND_FIELD_SPELL);
     assert(effects_ex[0].conditions[1].field_spell == MONSTER_FIELD_ANY);
+
+    /* Test conditions rejected on card_effects and non-face-up monster_effects */
+    before = effect_notes;
+    JsonDocument *doc_non_faceup = Json_Parse(
+        "[{\"replace\":31,\"monster_effects\":["
+        "  {\"when\":\"summon\",\"do\":\"boost\",\"target\":\"self\",\"attack\":100,"
+        "   \"conditions\":[{\"type\":\"lowest_atk\"}]}]},"
+        " {\"replace\":32,\"monster_effects\":["
+        "  {\"when\":\"combat\",\"do\":\"boost\",\"target\":\"self\",\"attack\":100,"
+        "   \"condition_mode\":\"all\"}]},"
+        " {\"replace\":607,\"card_effects\":["
+        "  {\"do\":\"damage\",\"amount\":500,\"target\":\"opponent\","
+        "   \"conditions\":[{\"type\":\"lowest_atk\"}]}]},"
+        " {\"replace\":608,\"card_effects\":["
+        "  {\"do\":\"heal\",\"amount\":500,\"target\":\"own\","
+        "   \"condition_mode\":\"any\"}]}]",
+        error, sizeof(error));
+    assert(doc_non_faceup);
+    for (i = 0, entry = Json_At(Json_Root(doc_non_faceup), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(31, &effects) == 0);
+    assert(Cards_MonsterEffects(32, &effects) == 0);
+    assert(Cards_CardEffects(607, &effects) == 0);
+    assert(Cards_CardEffects(608, &effects) == 0);
+    assert(effect_notes >= before + 4);
 }
 
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's

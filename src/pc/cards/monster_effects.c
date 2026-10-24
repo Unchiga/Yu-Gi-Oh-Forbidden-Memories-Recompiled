@@ -544,7 +544,11 @@ static int read_conditions(const char *mod, int index, int n, const JsonValue *e
 {
     const JsonValue *conds = Json_Member(entry, "conditions");
     const JsonValue *mode = Json_Member(entry, "condition_mode");
-    if (!out_ex) return 1;
+    MonsterEffectEx dummy;
+    if (!out_ex) {
+        memset(&dummy, 0, sizeof(dummy));
+        out_ex = &dummy;
+    }
     out_ex->cond_mode = MONSTER_COND_MODE_ALL;
     if (mode) {
         int m = named(Json_String(mode, NULL), MonsterEffect_CondModeNames, MONSTER_COND_MODE_COUNT);
@@ -820,7 +824,19 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
     }
     value = Json_Member(entry, "for_each");
     if (value && !read_each(mod, index, n, value, action, out)) return 0;
-    if (!read_conditions(mod, index, n, entry, out_ex)) return 0;
+    if (card_effect) {
+        if (Json_Member(entry, "conditions") || Json_Member(entry, "condition_mode")) {
+            Mods_Note(mod, "cards[%d]: card_effects[%d]: a spell or trap cannot have conditions", index, n);
+            return 0;
+        }
+    } else if (when != MONSTER_WHEN_FACE_UP) {
+        if (Json_Member(entry, "conditions") || Json_Member(entry, "condition_mode")) {
+            Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"conditions\" goes only with \"face_up\"", index, n);
+            return 0;
+        }
+    } else {
+        if (!read_conditions(mod, index, n, entry, out_ex)) return 0;
+    }
     return 1;
 }
 

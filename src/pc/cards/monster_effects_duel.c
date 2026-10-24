@@ -95,12 +95,9 @@ static void trace(const char *what, int card, int record, const MonsterEffect *e
 static void queue(int card, int record, int when)
 {
     const MonsterEffect *effects;
-    const MonsterEffectEx *effects_ex;
     int n = Cards_MonsterEffects(card, &effects), i;
-    Cards_MonsterEffectsEx(card, &effects_ex);
     for (i = 0; i < n; i++) {
         if (effects[i].when != when) continue;
-        if (effects_ex && effects_ex[i].cond_count && !MonsterEffects_ConditionsMet(record, &effects_ex[i])) continue;
         if (S.count == MONSTER_QUEUE_MAX) {
             LOG(LOG_DUEL_EFFECTS, "monster effects: queue full: card %d's %s effect dropped", card,
                 MonsterEffect_WhenNames[when]);
@@ -398,17 +395,12 @@ static int resolve(void)
 {
     MonsterTrigger trigger = S.queue[0];
     const MonsterEffect *effects, *effect;
-    const MonsterEffectEx *effects_ex = NULL, *effect_ex = NULL;
     int card_effect = trigger.effect & MONSTER_TRIGGER_CARD_EFFECT, index = trigger.effect & ~MONSTER_TRIGGER_CARD_EFFECT;
     int n = card_effect ? Cards_CardEffects(trigger.card, &effects) : Cards_MonsterEffects(trigger.card, &effects);
     int side = owner(trigger.record), record, hit = 0, count;
-    if (card_effect) Cards_CardEffectsEx(trigger.card, &effects_ex);
-    else Cards_MonsterEffectsEx(trigger.card, &effects_ex);
     memmove(S.queue, S.queue + 1, (size_t)(--S.count) * sizeof(S.queue[0]));
     if (index >= n) return 0;
     effect = &effects[index];
-    if (effects_ex) effect_ex = &effects_ex[index];
-    if (effect_ex && effect_ex->cond_count && !MonsterEffects_ConditionsMet(trigger.record, effect_ex)) return 0;
     trace(card_effect ? "resolving card" : "resolving", trigger.card, trigger.record, effect);
     S.chain++;
     count = times(effect, trigger.record);
@@ -794,17 +786,13 @@ void MonsterEffects_Battle(void)
             S.face_up[records[i]] = 1;
     for (i = 0; i < 2; i++) {
         const MonsterEffect *effects;
-        const MonsterEffectEx *effects_ex = NULL;
         int record = records[i], other = records[i ^ 1], card, n, e, count;
         if (!monster_zone(record)) continue;
         card = D_801A7AD8[record].card_id;
         n = announce(card, record, MONSTER_WHEN_COMBAT, MEMORIES_BEFORE) ? 0 : Cards_MonsterEffects(card, &effects);
-        Cards_MonsterEffectsEx(card, &effects_ex);
         for (e = 0; e < n; e++) {
             const MonsterEffect *effect = &effects[e];
-            const MonsterEffectEx *effect_ex = effects_ex ? &effects_ex[e] : NULL;
             if (effect->when != MONSTER_WHEN_COMBAT) continue;
-            if (effect_ex && effect_ex->cond_count && !MonsterEffects_ConditionsMet(record, effect_ex)) continue;
             trace("battle", card, record, effect);
             count = times(effect, record);
             if (!count) continue;

@@ -869,6 +869,10 @@ Continuous effects under `when: "face_up"` (`do: "boost"`, `do: "battle_immunity
 }
 ```
 
+- **Strict Face-Up Scope (`when: "face_up"`)**: Conditions (`"conditions"`) and condition combinator mode (`"condition_mode"`) are strictly exclusive to continuous face-up monster effects (`when: "face_up"` on monsters):
+  - Spells and traps (`card_effects`) cannot have conditions; specifying `"conditions"` or `"condition_mode"` on a spell/trap emits a diagnostic note (`cards[%d]: card_effects[%d]: a spell or trap cannot have conditions`) and rejects the entry.
+  - Non-face-up monster effects (`summon`, `flip`, `draw`, `combat`, `destroyed`, `destroy_opponent`) cannot have conditions; specifying `"conditions"` or `"condition_mode"` emits a diagnostic note (`cards[%d]: monster_effects[%d]: "conditions" goes only with "face_up"`) and rejects the entry.
+  - In the FM Editor, the effect normalizer enforces this constraint and rejects any effect definition outside `when: "face_up"` that contains conditions or condition_mode.
 - **`condition_mode`**: Logical combinator when multiple conditions are present.
   - `"all"` (default): Logical AND — every condition in the list must be true.
   - `"any"`: Logical OR — at least one condition in the list must be true.

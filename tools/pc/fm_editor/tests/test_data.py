@@ -1408,6 +1408,13 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(eff_cond["reset"], "turn")
         self.assertEqual(fx.describe(eff_cond),
                          "Cannot be destroyed by battle the first time attacked (this turn) (if lowest ATK on field)")
+        # Conditions and condition_mode are only allowed on face-up effects
+        self.assertIsNone(fx.normalize({"when": "summon", "do": "boost", "target": "self", "attack": 100, "conditions": [{"type": "lowest_atk"}]}))
+        self.assertIsNone(fx.normalize({"when": "combat", "do": "boost", "target": "self", "attack": 100, "condition_mode": "all"}))
+        self.assertIsNone(fx.normalize({"when": "flip", "do": "destroy", "conditions": [{"type": "fewer_monsters"}]}))
+        self.assertIsNone(fx.normalize({"when": "draw", "do": "heal", "amount": 100, "conditions": [{"type": "lowest_atk"}]}))
+        self.assertIsNone(fx.normalize({"when": "destroyed", "do": "damage", "amount": 100, "conditions": [{"type": "lowest_atk"}]}))
+        self.assertIsNone(fx.normalize({"when": "destroy_opponent", "do": "heal", "amount": 100, "conditions": [{"type": "lowest_atk"}]}))
         cond_fewer = fx.normalize_condition({"type": "fewer_monsters"})
         self.assertEqual(cond_fewer, {"type": "fewer_monsters"})
         self.assertEqual(fx.condition_words(cond_fewer), "you control fewer monsters than opponent")

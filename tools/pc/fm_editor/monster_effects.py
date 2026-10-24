@@ -547,12 +547,16 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
             return None
 
     if "condition_mode" in effect:
+        if when != "face_up":
+            return None
         m = _name(COND_MODES, effect["condition_mode"])
         if m is None:
             return None
         out["condition_mode"] = m
 
     if "conditions" in effect:
+        if when != "face_up":
+            return None
         raw_conds = effect["conditions"]
         if not isinstance(raw_conds, list):
             return None
@@ -565,6 +569,8 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
         if norm_conds:
             out["conditions"] = norm_conds
     elif "condition" in effect:
+        if when != "face_up":
+            return None
         nc = normalize_condition(effect["condition"], resolve)
         if nc is None:
             return None
