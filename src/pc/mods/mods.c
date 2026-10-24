@@ -80,6 +80,11 @@
 #define MODEL_STAGE0_SECTORS 96
 #define MODEL_TAIL_SECTORS (MODEL_RECORD_SECTORS - MODEL_STAGE0_SECTORS)
 #define MODEL_GEOMETRY_MAX 512
+/* A model's own texture pages ("texture_pages"), after the record's other
+ * stages: 64x256 halfwords of VRAM each, 16 sectors, the slot drawing from
+ * a texture bank of its own (src/pc/cards/battle_models.h). */
+#define MODEL_PAGE_SECTORS 16
+#define MODEL_PAGES_MAX 8
 #ifndef MODEL_ARENA_BASE        /* a test's own (tests/pc/disc_test.c) */
 #define MODEL_ARENA_BASE 0x90A00000u
 #endif
@@ -168,6 +173,7 @@ typedef struct {
     unsigned size, hash;
     int stale;      /* its file was found gone or changed: not read again until the next launch */
     int geometry;   /* sectors of model data of a model bigger than a record; 0 for a record */
+    int pages;      /* its own texture pages, after the record's other stages */
 } ModModel;
 static ModModel *models;
 static int model_count, model_capacity;
@@ -175,6 +181,9 @@ static unsigned char *arenas[MODEL_ARENAS];
 /* The battle slots whose window holds a bigger model that has not been
  * parsed yet (Mods_ModelPending). */
 static int pending[MODEL_WINDOWS];
+/* The texture pages of the model in each battle slot's window. */
+static unsigned char *window_pages[MODEL_WINDOWS];
+static int window_page_count[MODEL_WINDOWS];
 /* The battle slots' windows: MODEL_RECORD_SECTORS sectors each from
  * window_lba, past the disc and the files it relocates, where the drive
  * reads the record the slot's last load asked for. Mods_DiscSector reads
@@ -805,6 +814,7 @@ static int fill_window(int slot, int i, int data)
     int ok;
     window_model[slot] = -1;
     pending[slot] = 0;
+    window_page_count[slot] = 0;
     if (i >= 0 && i < model_count && models[i].geometry) {
         size_t front = (size_t)models[i].geometry * SECTOR, stage0 = (size_t)MODEL_STAGE0_SECTORS * SECTOR;
         ok = arenas[slot] && (file = malloc(models[i].size)) != NULL && read_file(i, file);
@@ -813,7 +823,14 @@ static int fill_window(int slot, int i, int data)
              * (Mods_ModelPending): the window holds the rest. */
             memset(window_data[slot], 0, stage0);
             memcpy(window_data[slot] + stage0, file + front, (size_t)MODEL_TAIL_SECTORS * SECTOR);
-            if (data) {
+            if (models[i].pages) {
+                size_t bytes = (size_t)models[i].pages * MODEL_PAGE_SECTORS * SECTOR;
+                if (!window_pages[slot]) window_pages[slot] = malloc((size_t)MODEL_PAGES_MAX * MODEL_PAGE_SECTORS * SECTOR);
+                ok = window_pages[slot] != NULL;
+                if (ok) memcpy(window_pages[slot], file + front + (size_t)MODEL_TAIL_SECTORS * SECTOR, bytes);
+                if (ok) window_page_count[slot] = models[i].pages;
+            }
+            if (ok && data) {
                 memcpy(arenas[slot], file, front);
                 memset(arenas[slot] + front, 0, MODEL_ARENA_SIZE - front);
                 pending[slot] = 1;
@@ -846,10 +863,17 @@ void Mods_ModelForget(int slot)
     if (slot < 0 || slot >= MODEL_WINDOWS || !window_data[slot]) return;
     window_model[slot] = -1;
     pending[slot] = 0;
+    window_page_count[slot] = 0;
     memset(window_data[slot], 0, (size_t)MODEL_RECORD_SECTORS * SECTOR);
 }
 
 int Mods_ModelPending(int slot) { return slot >= 0 && slot < MODEL_WINDOWS && pending[slot]; }
+const unsigned char *Mods_ModelPages(int slot, int *count)
+{
+    int pages = slot >= 0 && slot < MODEL_WINDOWS ? window_page_count[slot] : 0;
+    if (count) *count = pages;
+    return pages ? window_pages[slot] : NULL;
+}
 int *Mods_ModelPendings(unsigned *size)
 {
     *size = sizeof(pending);
@@ -943,6 +967,8 @@ unsigned Mods_DiscSignature(void)
         for (int i = 0; i < model_count; i++) {
             hash = hash_bytes(hash, &models[i].hash, sizeof(models[i].hash));
             hash = hash_bytes(hash, &models[i].size, sizeof(models[i].size));
+            /* the pages move where the model data ends: a model with none hashes as before */
+            if (models[i].pages) hash = hash_bytes(hash, &models[i].pages, sizeof(models[i].pages));
         }
         hash = hash_bytes(hash, &window_lba, sizeof(window_lba));
     }
@@ -1247,6 +1273,8 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
     char path[PATH_MAX_];
     struct stat info;
     unsigned char *image;
+    const JsonValue *pages_value = Json_Member(entry, "texture_pages");
+    long pages = Json_Number(pages_value, 0);
     int handle, geometry = 0;
     if (!name || !*name || !file) {
         note(mod, "models[%d] needs a \"name\" and a \"file\"", at);
@@ -1254,6 +1282,10 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
     }
     if (model_count >= MODELS_MAX) {
         note(mod, "more than %d models", MODELS_MAX);
+        return 0;
+    }
+    if (pages_value && (pages < 0 || pages > MODEL_PAGES_MAX || Json_TypeOf(pages_value) != JSON_NUMBER)) {
+        note(mod, "models[%d]: \"texture_pages\" is a count from 0 to %d", at, MODEL_PAGES_MAX);
         return 0;
     }
     if (!Paths_Contained(file)) {
@@ -1271,15 +1303,25 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
         note(mod, "cannot read %s", file);
         return 0;
     }
+    if (pages && (uint64_t)info.st_size <= (uint64_t)MODEL_RECORD_SECTORS * SECTOR) {
+        close(handle);
+        note(mod, "%s: its %ld texture pages would follow the record's other stages, and it is no larger than a "
+                  "record; model rejected", file, pages);
+        return 0;
+    }
     if ((uint64_t)info.st_size > (uint64_t)MODEL_RECORD_SECTORS * SECTOR) {
-        /* A bigger model: whole sectors, model data then the record's other
-         * stages (notes/modding.md, "Bigger models"). */
-        uint64_t sectors = (uint64_t)info.st_size / SECTOR;
-        if (info.st_size % SECTOR || sectors - MODEL_TAIL_SECTORS > MODEL_GEOMETRY_MAX) {
+        /* A bigger model: whole sectors, model data, the record's other
+         * stages, then its texture pages (notes/modding.md, "Bigger models"). */
+        uint64_t sectors = (uint64_t)info.st_size / SECTOR, after = MODEL_TAIL_SECTORS + (uint64_t)pages * MODEL_PAGE_SECTORS;
+        if (info.st_size % SECTOR || sectors <= after || sectors - after > MODEL_GEOMETRY_MAX ||
+            (pages && sectors - after < MODEL_STAGE0_SECTORS)) {
             close(handle);
             note(mod, "%s is larger than a model record (%d sectors) and is not a bigger model (whole sectors, "
-                      "%d of model data at most, then the record's other %d); model rejected",
-                 file, MODEL_RECORD_SECTORS, MODEL_GEOMETRY_MAX, MODEL_TAIL_SECTORS);
+                      "%d of model data at most, %d at least with pages, then the record's other %d, then %ld "
+                      "texture pages of %d); "
+                      "model rejected",
+                 file, MODEL_RECORD_SECTORS, MODEL_GEOMETRY_MAX, MODEL_STAGE0_SECTORS, MODEL_TAIL_SECTORS, pages,
+                 MODEL_PAGE_SECTORS);
             return 0;
         }
         if (!map_arenas()) {
@@ -1287,7 +1329,7 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
             note(mod, "%s: no room for a bigger model's data at 0x%X; model rejected", file, MODEL_ARENA_BASE);
             return 0;
         }
-        geometry = (int)(sectors - MODEL_TAIL_SECTORS);
+        geometry = (int)(sectors - after);
     }
     /* Read once, for its hash (the mod set's signature, which save states check). */
     image = map_file(handle, (size_t)info.st_size);
@@ -1321,6 +1363,7 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
     models[model_count].hash = hash_bytes(2166136261u, image, (size_t)info.st_size);
     models[model_count].stale = 0;
     models[model_count].geometry = geometry;
+    models[model_count].pages = (int)pages;
     unmap_file(image, (size_t)info.st_size);
     if (!(models[model_count].path = strdup(path))) return 0;
     model_count++;

@@ -16,6 +16,13 @@
  * work area in the arena. Model_LoadMonsterMerge loads the base otherwise.
  * BattleModels_Parsed: func_8004CB0C's counts, which the slot keeps as u16.
  * BattleModels_TooManyParts: GsLinkAnim would pass MODEL_SLOT_PART_COUNT.
+ * BattleModels_Page: func_8004D134 relocates a polygon's page word, as the
+ * model authored it; the check refuses a page that is neither the record's
+ * nor one of the model's own texture pages (Mods_ModelPages), which its slot
+ * then samples from a texture bank of its own.
+ * BattleModels_Image: Model_ProcessType2Unit uploads a picture or palette a
+ * model carries, relocated: whether it is inside slot `slot`'s VRAM block
+ * (the rest is not uploaded, and the check refuses the model).
  * BattleModels_BeginFrame: Graphics_BeginFrame set the frame's work base;
  * the slots' halves start over too.
  * BattleModels_BeginSort / EndSort: around func_800540B4; 0 for a slot of
@@ -28,6 +35,8 @@ struct MemoriesState;
 int BattleModels_Check(int slot);
 void BattleModels_Parsed(const void *hmd, int packet_bytes, int normals);
 void BattleModels_TooManyParts(void);
+void BattleModels_Page(unsigned authored);
+int BattleModels_Image(int clut, int slot, int x, int y, int w, int h);
 void BattleModels_BeginFrame(void);
 int BattleModels_BeginSort(int index, s32 *saved);
 void BattleModels_EndSort(int begun, s32 saved);

@@ -120,9 +120,12 @@ static void unload_pack(void) {}
  * or has more model data than an arena takes, is refused. */
 static int bigger_models_case(void)
 {
-    enum { DATA = 136, TAIL = 180 };
+    enum { DATA = 136, TAIL = 180, PAGE = 16 };
     static unsigned char big[(DATA + TAIL) * 2048], odd[RECORD + 100], huge[(512 + 1 + TAIL) * 2048], got[2048];
+    static unsigned char paged[(96 + TAIL + 2 * PAGE) * 2048], record[RECORD], thin[(80 + TAIL + 2 * PAGE) * 2048];
     unsigned char *arena;
+    const unsigned char *pages;
+    int count;
     char path[1024];
     int window, *windows;
     unsigned size;
@@ -133,6 +136,16 @@ static int bigger_models_case(void)
     write_file("mods/c-odd/odd.bin", odd, sizeof(odd));
     manifest("d-huge", "{\"enabled\":true,\"models\":[{\"name\":\"huge\",\"file\":\"huge.bin\"}]}");
     write_file("mods/d-huge/huge.bin", huge, sizeof(huge));
+    /* "texture_pages": after the record's other stages, 16 sectors each. */
+    for (size_t i = 0; i < sizeof(paged); i++) paged[i] = (unsigned char)(i / 2048 + 1);
+    manifest("e-paged", "{\"enabled\":true,\"models\":[{\"name\":\"paged\",\"file\":\"p.bin\",\"texture_pages\":2}]}");
+    write_file("mods/e-paged/p.bin", paged, sizeof(paged));
+    manifest("f-short", "{\"enabled\":true,\"models\":[{\"name\":\"short\",\"file\":\"r.bin\",\"texture_pages\":1}]}");
+    write_file("mods/f-short/r.bin", record, sizeof(record));
+    manifest("g-many", "{\"enabled\":true,\"models\":[{\"name\":\"many\",\"file\":\"p.bin\",\"texture_pages\":9}]}");
+    write_file("mods/g-many/p.bin", paged, sizeof(paged));
+    manifest("h-thin", "{\"enabled\":true,\"models\":[{\"name\":\"thin\",\"file\":\"t.bin\",\"texture_pages\":2}]}");
+    write_file("mods/h-thin/t.bin", thin, sizeof(thin));   /* 80 sectors of model data: fewer than 96 */
     snprintf(path, sizeof(path), "%s/mods", root); assert(!setenv("MEMORIES_MODS_DIR", path, 1));
     assert(!setenv("MEMORIES_USER_DIR", root, 1));
     snprintf(path, sizeof(path), "%s/settings", root); assert(!setenv("MEMORIES_SETTINGS", path, 1));
@@ -140,7 +153,24 @@ static int bigger_models_case(void)
     assert(Mods_Active(find("b-big")));
     assert(!Mods_Active(find("c-odd")) && strstr(Mods_Status(find("c-odd")), "not a bigger model"));
     assert(!Mods_Active(find("d-huge")) && strstr(Mods_Status(find("d-huge")), "not a bigger model"));
-    assert(Mods_ModelCount() == 1 && Mods_ModelGeometry(0) == DATA * 2048);
+    assert(Mods_Active(find("e-paged")));
+    assert(!Mods_Active(find("f-short")) && strstr(Mods_Status(find("f-short")), "no larger than a record"));
+    assert(!Mods_Active(find("g-many")) && strstr(Mods_Status(find("g-many")), "\"texture_pages\" is a count"));
+    assert(!Mods_Active(find("h-thin")) && strstr(Mods_Status(find("h-thin")), "not a bigger model"));
+    assert(Mods_ModelCount() == 2 && Mods_ModelGeometry(0) == DATA * 2048 && Mods_ModelGeometry(1) == 96 * 2048);
+    /* Its window holds the record's other stages, the slot its pages. */
+    assert(!Mods_ModelPages(0, &count) && count == 0);
+    window = Mods_ModelWindow(0, 1);
+    assert(window >= 0 && Mods_ModelPending(0));
+    assert(Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == 97);
+    assert(Memories_DiscReadSectors(window + 275, 1, got) == 1 && got[0] == (unsigned char)(96 + TAIL));
+    pages = Mods_ModelPages(0, &count);
+    assert(pages && count == 2 && pages[0] == (unsigned char)(96 + TAIL + 1));
+    assert(pages[(2 * PAGE - 1) * 2048] == (unsigned char)(96 + TAIL + 2 * PAGE));
+    Mods_ModelRebind();   /* a save state's load: the pages again */
+    assert(Mods_ModelPages(0, &count) && count == 2);
+    Mods_ModelForget(0);
+    assert(!Mods_ModelPages(0, &count) && count == 0);
     /* No sector: a native extra reads its base instead (3D Monsters). */
     assert(Mods_ModelSector(0) == -1 && Mods_ModelRead(0x1000000, 1, got) == 0);
     arena = Mods_ModelArena(0, &size);

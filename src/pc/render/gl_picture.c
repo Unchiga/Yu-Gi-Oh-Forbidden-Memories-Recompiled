@@ -255,8 +255,10 @@ static GLint u_tex_xbr;
 /* The texture banks (soft_gpu.h) a primitive can sample instead of VRAM:
  * layers 0..14 of an array texture for banks 1..15, each uploaded again when
  * a replay finds it changed since the copy kept here (a mod writes a bank
- * directly, so nothing announces the change). */
+ * directly, so nothing announces the change). The texture has 15 layers until
+ * a bank past 15 is sampled, then all 31 (a megabyte each). */
 static GLuint banks_texture;
+static int bank_layers;
 static uint16_t *bank_copy[SOFT_GPU_BANKS];
 static int bank_used[SOFT_GPU_BANKS];
 /* The texture pack (texture_pack.h): its maps as integer textures,
@@ -1247,10 +1249,11 @@ static void set_position(Vertex *vertex, uint32_t word)
     vertex->y = (((int32_t)(word << 5)) >> 21) + state.offset_y;
 }
 
-static void set_page(uint32_t value)
+static void set_page(uint32_t value, int polygon)
 {
-    /* Bits 11-14 name a texture bank (soft_gpu.h); one never made is VRAM. */
-    int bank = (int)((value >> 11) & (SOFT_GPU_BANKS - 1));
+    /* Bits 11-14 name a texture bank, and a polygon's bit 10 banks 16-31
+     * (soft_gpu.h); one never made is VRAM. */
+    int bank = (int)((value >> 11) & 15) | (polygon ? (int)((value >> 10) & 1) << 4 : 0);
     state.bank = bank && SoftGpu_BankPixels(bank) ? bank : 0;
     if (state.bank) bank_used[state.bank] = 1;
     state.page_x = (value & 0xf) * 64;
@@ -1295,7 +1298,7 @@ static size_t polygon(const uint32_t *words, size_t count)
                 state.clut_x = ((word >> 16) & 0x3f) * 16;
                 state.clut_y = (word >> 22) & 0x1ff;
             } else if (i == 1) {
-                set_page(word >> 16);
+                set_page(word >> 16, 1);
             } else if (i == 2) {
                 state.fade = (int)(word >> 16);
             }
@@ -1818,7 +1821,7 @@ static void gp0(const uint32_t *words, size_t count)
         } else if (command >= 0xc0 && command < 0xe0) {
             used = count - at >= 3 ? 3 : 0;
         } else if (command == 0xe1) {
-            set_page(word);
+            set_page(word, 0);
         } else if (command == 0xe2) {
             state.window_mask_x = word & 0x1f;
             state.window_mask_y = (word >> 5) & 0x1f;
@@ -1863,25 +1866,40 @@ static void bind_attributes(void)
 /* The banks this flush samples, uploaded where they changed. */
 static void sync_banks(void)
 {
-    int bank;
+    int bank, top = 0;
+    for (bank = 1; bank < SOFT_GPU_BANKS; bank++) {
+        if (bank_used[bank] && SoftGpu_BankPixels(bank)) top = bank;
+    }
+    if (banks_texture && top > bank_layers) {
+        /* Made again with every layer; the banks go up again as they are sampled. */
+        glDeleteTextures(1, &banks_texture);
+        banks_texture = 0;
+        for (bank = 0; bank < SOFT_GPU_BANKS; bank++) {
+            free(bank_copy[bank]);
+            bank_copy[bank] = NULL;
+        }
+    }
     for (bank = 1; bank < SOFT_GPU_BANKS; bank++) {
         const uint16_t *pixels;
+        int fresh;
         if (!bank_used[bank]) continue;
         bank_used[bank] = 0;
         pixels = SoftGpu_BankPixels(bank);
         if (!pixels) continue;
         if (!banks_texture) {
+            bank_layers = top > 15 ? SOFT_GPU_BANKS - 1 : 15;
             glGenTextures(1, &banks_texture);
             gl_ActiveTexture(GL_TEXTURE2);
             glBindTexture(GL_TEXTURE_2D_ARRAY, banks_texture);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            gl_TexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R16UI, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT, SOFT_GPU_BANKS - 1, 0,
+            gl_TexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R16UI, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT, bank_layers, 0,
                           GL_RED_INTEGER, GL_UNSIGNED_SHORT, NULL);
             gl_ActiveTexture(GL_TEXTURE0);
         }
-        if (!bank_copy[bank]) bank_copy[bank] = malloc(sizeof(uint16_t) * SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT);
-        if (bank_copy[bank] && !memcmp(bank_copy[bank], pixels, sizeof(uint16_t) * SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT)) {
+        fresh = !bank_copy[bank];   /* a layer never uploaded goes up whatever the copy's bytes */
+        if (fresh) bank_copy[bank] = malloc(sizeof(uint16_t) * SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT);
+        if (!fresh && bank_copy[bank] && !memcmp(bank_copy[bank], pixels, sizeof(uint16_t) * SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT)) {
             continue;
         }
         if (bank_copy[bank]) memcpy(bank_copy[bank], pixels, sizeof(uint16_t) * SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT);

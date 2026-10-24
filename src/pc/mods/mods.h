@@ -152,7 +152,9 @@ unsigned Mods_DiscSignature(void);
  * before a bigger model is added), where the slot parses it:
  * Mods_ModelPending until Mods_ModelParsed. A save state brings the arenas
  * and Mods_ModelPendings itself (src/pc/cards/battle_models.c), after the
- * windows. */
+ * windows. Mods_ModelPages: the texture pages ("texture_pages") of the
+ * model in slot `slot`'s window, 64x256 halfwords each, and how many; NULL
+ * and 0 for none. */
 int Mods_ModelCount(void);
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod);
 int Mods_ModelSector(int i);
@@ -164,6 +166,7 @@ void Mods_ModelForget(int slot);
 int Mods_ModelGeometry(int i);
 unsigned char *Mods_ModelArena(int arena, unsigned *size);
 int Mods_ModelPending(int slot);
+const unsigned char *Mods_ModelPages(int slot, int *count);
 int *Mods_ModelPendings(unsigned *size);
 void Mods_ModelParsed(int slot);
 

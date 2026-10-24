@@ -116,6 +116,13 @@ s32 func_8004D134(s32 mode, u16 *kind, u8 *ctx, s32 *best, s32 *total)
             if (mode < 2) {
                 p = rec + off1;
                 v = MODEL_CHANNEL_HALFWORD(p);
+#ifdef MEMORIES_PC
+                {
+                    /* the page a mod's model's polygon names (src/pc/cards/battle_models.h) */
+                    extern void BattleModels_Page(unsigned authored);
+                    BattleModels_Page(v);
+                }
+#endif
                 adjusted = v + add1;
                 MODEL_CHANNEL_HALFWORD(p) = adjusted;
                 f = (v >> 7) & 3;

@@ -22,12 +22,17 @@ const uint16_t *SoftGpu_Vram(void);
 
 /* Texture banks: alternate VRAM that a primitive can sample instead, chosen
  * by bits 11-14 of its texture-page word, which the hardware leaves unused
- * and retail always writes as zero (bank 0 is VRAM itself). They let several
+ * and retail always writes as zero (bank 0 is VRAM itself), and for banks
+ * 16-31 bit 10 too: a polygon's page word only (SOFT_GPU_BANK_TPAGE), as the
+ * hardware ignores that bit there but an E1 command's is the drawing to the
+ * shown area, so an E1 names banks 0-15 alone. They let several
  * monsters keep their 256x256 texture block at once, which the console's one
  * megabyte could never do; src/pc/mods uses them. A bank is VRAM-shaped, so
  * a primitive's page, window and palette coordinates mean the same in it.
  * Returns NULL if the bank cannot be allocated. */
-#define SOFT_GPU_BANKS 16
+#define SOFT_GPU_BANKS 32
+/* A polygon's page word's bank bits for `bank` (0-31). */
+#define SOFT_GPU_BANK_TPAGE(bank) ((((unsigned)(bank) & 15u) << 11) | (((unsigned)(bank) >> 4 & 1u) << 10))
 uint16_t *SoftGpu_Bank(int bank);
 /* The bank's pixels if it has been made, NULL otherwise (a primitive naming
  * a bank that was never made samples VRAM). */

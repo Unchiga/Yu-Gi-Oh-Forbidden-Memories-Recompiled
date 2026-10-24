@@ -21,6 +21,16 @@ playing Blue-eyes face up and attacking with it, and one of a save state:
             state saved mid-fight is loaded there, and in
     bigload a game just started (its arenas empty), which must fight on
             from it frame for frame as the big run did
+    pages   as big, with the polygons on the record's first texture page
+            moved to page 14, and the record's first two pages given as the
+            model's own 14 and 15 ("texture_pages": 2; an 8-bit polygon
+            reads its page and the next): the slot samples a texture bank of
+            its own and must fight as the disc's frame for frame
+    pagesblank  the same, its pages all zeros: it must not
+    pagesload  pages' state saved mid-fight, in a game just started: its bank
+            is made again from VRAM and the file, frame for frame as pages
+    pagesmissing  the same polygons with no page given: the check refuses
+            the model, which fights as its base (Dark Magician's record)
 
 The mod's record is read from its file: by 3D Monsters directly, and by the
 battle through the slot's window past the disc. So in mod and disc 3D
@@ -52,6 +62,7 @@ SLOT_SIZE, SLOT_MODEL = 0xE20, 0xDF8
 SLOT_DATA = (0x80100000, 0x80140000)   # where a record's 96 model sectors go
 MODEL_DATA = 96 * 2048
 BIG_PADDING = 40                    # sectors: a 316-sector file, bigger than a record
+PAGE = 16 * 2048                    # a texture page, 64x256 halfwords
 SAVED_FROM = 6                      # the big run saves a state before its seventh shot
 SESSION_PATH = ROOT / "tests/pc/replays/full-duel/session.py"
 _spec = importlib.util.spec_from_file_location("full_duel_session", SESSION_PATH)
@@ -95,16 +106,45 @@ def disc_record(disc: Path, card: int) -> bytes:
     return b"".join(sectors)
 
 
-def write_mod(mods: Path, kind: str, record: bytes) -> None:
+def page_words(record: bytes, parsed: bytes) -> list[int]:
+    """Where the record's model data holds the page word of a polygon on its
+    first texture page (authored column 10 of the lower row, 8 or 4 bits): a
+    halfword that func_8004D134 lowered by 10 in the battle's parsed copy."""
+    found = []
+    for at in range(0, MODEL_DATA, 2):
+        authored, = struct.unpack_from("<H", record, at)
+        if authored & 0x1F == 0x1A and (authored >> 7) & 3 < 2 and \
+                struct.unpack_from("<H", parsed, at)[0] == (authored - 10) & 0xFFFF:
+            found.append(at)
+    return found
+
+
+def paged(record: bytes, words: list[int], page: bytes | None) -> bytes:
+    """The record with those polygons on page 14 instead, followed by `page`;
+    with none, a bigger model all the same, as big's (zeros after its data)."""
+    data = bytearray(record[:MODEL_DATA])
+    for at in words:
+        struct.pack_into("<H", data, at, struct.unpack_from("<H", data, at)[0] + 4)
+    if page is None:
+        return bytes(data) + bytes(BIG_PADDING * 2048) + record[MODEL_DATA:]
+    return bytes(data) + record[MODEL_DATA:] + page
+
+
+def write_mod(mods: Path, kind: str, record: bytes, words: list[int] | None = None) -> None:
     folder = mods / "test-models"
     folder.mkdir(parents=True)
     manifest = {"id": "test-models", "name": "Test models", "enabled": True, "min_api": 21}
-    if kind in ("mod", "changed", "big", "bigload"):
+    if kind in ("mod", "changed", "big", "bigload", "pages", "pagesblank", "pagesmissing", "pagesload"):
         (folder / "models").mkdir()
         if kind in ("big", "bigload"):
             record = record[:MODEL_DATA] + bytes(BIG_PADDING * 2048) + record[MODEL_DATA:]
+        elif kind.startswith("pages"):   # the record's first two pages (stage 1's first 32 sectors) as its own
+            first = record[MODEL_DATA:MODEL_DATA + 2 * PAGE]
+            record = paged(record, words, {"pages": first, "pagesload": first, "pagesblank": bytes(2 * PAGE)}.get(kind))
         (folder / "models" / "test.mrg").write_bytes(record)
         manifest["models"] = [{"name": "test-model", "file": "models/test.mrg", "base": "Dark Magician"}]
+        if kind in ("pages", "pagesblank", "pagesload"):
+            manifest["models"][0]["texture_pages"] = 2
         manifest["cards"] = [{"replace": 1, "model": "test-model"}]
     else:
         manifest["cards"] = [{"replace": 1, "model": "Dark Magician"}]
@@ -121,20 +161,21 @@ def replay(game, result: dict) -> None:
         result.setdefault("again", []).append(game.shot(f"again-{shot + 1}.png").read_bytes())
 
 
-def run(binary: Path, disc: Path, out: Path, kind: str, record: bytes, state: Path | None = None) -> dict:
+def run(binary: Path, disc: Path, out: Path, kind: str, record: bytes, state: Path | None = None,
+        words: list[int] | None = None) -> dict:
     mods = out / "mods"
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(binary.parent / "mods", mods)   # the shipped mods, 3D Monsters among them
     if kind != "none":
-        write_mod(mods, kind, record)
+        write_mod(mods, kind, record, words)
     result = {}
     with Game(binary, out=out, mods_dir=mods,
               settings={"mod.3d-monsters": 1, "mod.hand-camera": 0, "mod.ai-hard-mode": 0,
                         "mod.yamyi-mods": 0, "mod.drop-missing-cards": 0, "mod.test-models": 1},
               env={"MEMORIES_DISC": str(disc), "MEMORIES_TRACE": "mods", "MEMORIES_SPEED": "-1"}) as game:
         game.wait_until(lambda g: g.resident("main_menu"), 3000)
-        if kind == "bigload":   # the big run's state, in a game just started
+        if kind in ("bigload", "pagesload"):   # the big (pages) run's state, in a game just started
             game.load(state)
             replay(game, result)
             result["log"] = ""
@@ -157,6 +198,7 @@ def run(binary: Path, disc: Path, out: Path, kind: str, record: bytes, state: Pa
         # attack_3d): the slot that takes Blue-eyes' model, once its record
         # has had a second to load.
         wanted = {"mod": MOD_MODEL_CARD - 1, "changed": MOD_MODEL_CARD - 1, "big": MOD_MODEL_CARD - 1,
+                  "pages": MOD_MODEL_CARD - 1, "pagesblank": MOD_MODEL_CARD - 1, "pagesmissing": MOD_MODEL_CARD - 1,
                   "disc": DARK_MAGICIAN - 1}.get(kind)
         settle = SESSION.settle
 
@@ -169,11 +211,13 @@ def run(binary: Path, disc: Path, out: Path, kind: str, record: bytes, state: Pa
                         game.step(60)
                         result["slot"], result["data"] = slot, game.peek(SLOT_DATA[slot], MODEL_DATA)
                         for shot in range(14):   # the fight, a second apart: the monster is in by the twelfth
-                            if kind == "big" and shot == SAVED_FROM:
+                            if kind in ("big", "pages") and shot == SAVED_FROM:
                                 game.save("battle.state")
                             game.step(60)
                             result.setdefault("battle", []).append(game.shot(f"battle-{shot + 1}.png").read_bytes())
-                        if kind == "big":   # the fight again from the save state
+                        if kind == "disc":   # parsed by now (page_words)
+                            result["parsed"] = game.peek(SLOT_DATA[slot], MODEL_DATA)
+                        if kind in ("big", "pages"):   # the fight again from the save state
                             game.load("battle.state")
                             replay(game, result)
             settle(game, timeout)
@@ -207,6 +251,12 @@ def main():
             for kind in ("mod", "disc", "none", "changed", "big")}
     runs["bigload"] = run(args.binary.resolve(), disc, args.output / "bigload", "bigload", record,
                           (args.output / "big" / "battle.state").resolve())
+    words = page_words(record, runs["disc"]["parsed"])
+    assert len(words) > 100, f"only {len(words)} polygons on the record's first page were found"
+    for kind in ("pages", "pagesblank", "pagesmissing"):
+        runs[kind] = run(args.binary.resolve(), disc, args.output / kind, kind, record, words=words)
+    runs["pagesload"] = run(args.binary.resolve(), disc, args.output / "pagesload", "pagesload", record,
+                            (args.output / "pages" / "battle.state").resolve(), words)
     mod, same, none, changed, big = runs["mod"], runs["disc"], runs["none"], runs["changed"], runs["big"]
     assert "test-models: 1 models" in mod["log"], "the test mod's model was not added"
     mine, theirs = mod["loaded"].get(MOD_MODEL_CARD), same["loaded"].get(DARK_MAGICIAN)
@@ -232,10 +282,19 @@ def main():
     # frame, a disc model's alike, so a load is held to a load).
     assert runs["bigload"]["again"] == big["again"], "a save state did not bring the bigger model's arena"
     assert big["loaded"].get(MOD_MODEL_CARD) == theirs and big["field"] == same["field"],         "3D Monsters did not stand the bigger model's base"
+    pages, blank, missing = runs["pages"], runs["pagesblank"], runs["pagesmissing"]
+    assert "2 texture pages of its own, in texture bank 17" in pages["log"], "the model's page was not banked"
+    assert pages.get("slot") == mod["slot"], "the model with a page went to another battle slot"
+    assert pages["battle"] == same["battle"], "the model drawn from its own page fights differently from the disc's"
+    assert blank["battle"] != same["battle"], "the model's own page is not what its polygons sample"
+    assert runs["pagesload"]["again"] == pages["again"], "a save state's load did not make the model's bank again"
+    assert "use texture page 14 of row 1" in missing["log"], "a polygon on a page not given was not refused"
+    assert missing.get("data") == same["data"], "the model refused for its pages did not fight as its base"
     slot = mod["slot"]
     print(f"mod models: the mod's record stands on the field and fights in battle slot {slot} as the disc's, "
           f"a changed file fights and stands as its base, and the same model bigger than a record fights "
-          f"as the disc's from its arena; {args.output}")
+          f"as the disc's from its arena, and with {len(words)} polygons moved to a page of its own from "
+          f"its own texture bank; {args.output}")
 
 
 if __name__ == "__main__":

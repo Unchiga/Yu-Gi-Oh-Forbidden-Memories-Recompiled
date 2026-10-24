@@ -124,7 +124,7 @@ checked as well, when it starts.
 | 17 | the release after v0.3.0 | a duelist's `bust` or `replace_bust`; a tower story's `"expression"` by name ([More duelists](more-duelists.md#bust--the-large-character)) |
 | 18 | the release after v0.3.0 | the card frames' keys ([Frame styles](#frame-styles-and-the-rules-that-pick-them)): a card's `frame_style`; `card_layout`'s `default_styles`, `atk_label`, `dfd_label` and `type_label`; in a `frame_styles` entry `hand`, `hand_image`, `field_image`, `field_back_image`, `back_image`, `library_icon`, `full_bleed`, `atk_label`, `dfd_label`, `type_label`, `digits`, or a part of its own (`title`, `stars`, `attribute`, `spell`, `art`, `atk`, `def`); a `hide`, `hidden`, `show` or `color` on a card part; `digits`' own `atk` and `def` |
 | 20 | the release after v0.3.0 | `fields`: renamed retail fields, new fields and their pictures; a monster effect's `"do": "change_field"` |
-| 21 | the release after v0.3.0 | `models`: battle models the mod adds ([Battle models](#battle-models-monsters-the-disc-does-not-have)), and a card's `model` naming one |
+| 21 | the release after v0.3.0 | `models`: battle models the mod adds ([Battle models](#battle-models-monsters-the-disc-does-not-have)), a model entry's `texture_pages`, and a card's `model` naming one |
 
 The FM Editor writes `min_api` on save as the lowest one of these that has
 everything the mod uses, never lowering one written higher, and its Mod
@@ -732,8 +732,40 @@ polygons, some 1.7 times the biggest disc model's and 3.7 times most. Its limits
 are the game's own besides: 58 animated parts, 60 units, 65,535 normals.
 Before it first loads the game checks it against all of them; one that does
 not fit fights as its `base`, and the log (`MEMORIES_TRACE=mods`) says which
-limit it passed. The texture column and the palettes are a record's (bigger
-textures are the next step).
+limit it passed. The palettes are a record's.
+
+#### Texture pages of its own
+
+A bigger model may also bring more texture than a record's: `"texture_pages":
+N` (0 to 8) in its `models` entry, and N pages after the record's other 180
+sectors, 16 sectors each (a page is 64 by 256 halfwords of VRAM, the rows
+one after another). A model with pages has 96 sectors of model data at
+least, so a record-sized model with pages is a bigger model with 96.
+
+```text
+with pages:   [ model data ][ the other stages, 180 ][ page, 16 ] ... N pages
+```
+
+A polygon names its texture page as the model authors it, and the game moves
+it to the slot's place: a record's polygons use pages 10 to 13 of the lower
+row (the record's 48 + 16 texture sectors). A model's own pages are, in
+order, 14 and 15 of the lower row, then 10 to 15 of the upper row: with all 8,
+12 pages against a record's 4, three times the texture. A polygon on a page
+reads that page and, at 8 bits, the next one too (an 8-bit page is 128
+halfwords across), at 16 bits the next three; a page below 10 cannot be
+moved, so a polygon there, or on a page the model does not bring, or whose
+page word has any of bits 10-14 set (the texture bank, which the game puts
+there itself), is refused by the check and the model fights as its `base`. The upper row's last 16
+lines hold the slot's palettes, which the game tints as it draws: leave
+them unused in an upper page. A picture or palette the model data carries
+(a type-2 unit) must lie in the slot's own block (x 0 to 255 after the move,
+y 256 to 511; palettes y 248 to 255) or it is not uploaded, and refused.
+
+The slot then draws from a texture bank of its own (17 for slot 0, 18 for
+slot 1; `src/pc/render/soft_gpu.h`): the record's block and palettes as the
+game leaves them in VRAM, copied in each frame the slot draws, and the
+pages. The OpenGL picture then uploads that bank again on a frame whose
+palettes changed (a megabyte).
 
 3D Monsters stands a bigger model's `base` on the field: the field's ten
 monsters share the frame's packets, and a bigger model there is a follow-up.
