@@ -21,6 +21,16 @@
 
 #define STARTER_DECK_SIZE DECK_SIZE
 
+/* How often one draw may be taken again because the card it found is already
+ * held to the copy limit. The disc retries for ever, which a pool of three
+ * cards or fewer would never leave; the last draw stands instead. The disc's
+ * own pools are read with the same bound (name_entry_main.c). */
+#define STARTER_POOL_RETRIES 64
+
+/* The disc's table of pools ends with a null pointer; a table that does not
+ * end is walked this many times at most. */
+#define STARTER_DECK_MAX_POOLS 64
+
 /* Read every applied mod's "starter"; once, from Cards_Build. */
 void Starter_Build(void);
 

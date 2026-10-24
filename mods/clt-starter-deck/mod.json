@@ -1,0 +1,41 @@
+{
+  "id": "clt-starter-deck",
+  "name": "CLT Chronicle Memories starter deck",
+  "version": "1.0",
+  "author": "DecompRecomp",
+  "description": "The deck a new game starts with on the 'CLT Chronicle Memories' image. That image replaced the disc's starter deck pools with its own data, in a layout the game reads differently: the port cannot draw from them, so a new game would start with no cards. This writes the deck down instead, drawn from the image's own pools (the seven groups of 16, 16, 4, 1, 1, 1 and 1 cards they hold). Off by default: the cards are numbered as the image numbers them, so with another disc this would deal the wrong ones.",
+  "min_api": 10,
+  "enabled": false,
+  "starter": [
+    {
+      "name": "Chronicle Memories",
+      "9": 3,
+      "24": 2,
+      "56": 1,
+      "115": 3,
+      "116": 1,
+      "128": 1,
+      "139": 1,
+      "148": 1,
+      "180": 2,
+      "202": 1,
+      "219": 2,
+      "220": 1,
+      "243": 1,
+      "279": 1,
+      "308": 1,
+      "311": 1,
+      "331": 2,
+      "333": 1,
+      "335": 1,
+      "336": 3,
+      "359": 1,
+      "460": 1,
+      "499": 1,
+      "527": 4,
+      "544": 1,
+      "553": 1,
+      "584": 1
+    }
+  ]
+}

@@ -106,3 +106,28 @@ Confirmed from matching source and both retail table copies:
 The ATK+DEF/category labels come from comparing every nonzero weight with the
 verified card catalogue. They describe the retail rows, not validation rules:
 the generator itself never tests card type, ATK, DEF, or row membership.
+
+## A disc's own pools may be a mod's
+
+The pools are the disc's data, and a community image may replace them with
+its own. The "CLT Chronicle Memories" image does: its table of pools points
+two bytes into each record, so the count of draws reads as zero, and the
+weights are the mod's own.
+
+A count of zero would draw for ever: the loop counts down past it and never
+reaches it again, and a new game never ends. The port reads the disc's pools
+with bounds, so that no image can hang a new game
+(`NameEntry_BuildStarterDeck`, `src/overlays/password/name_entry_main.c`):
+
+- a pool that draws nothing is skipped;
+- a card already held three times is drawn again at most
+  `STARTER_POOL_RETRIES` times, and the last draw stands, as the port's own
+  pools do;
+- the deck stops at forty cards, the save's size;
+- the table of pools is walked at most `STARTER_DECK_MAX_POOLS` times.
+
+The disc's own pools, the retail ones, are read as they always were: the
+same cards, and the same random numbers spent. An image whose pools are its
+own draws no cards at all, and the log says so; a mod can write the deck down
+instead ([starter deck](starter-deck.md)), which is what
+`mods/clt-starter-deck` does for the CLT image.

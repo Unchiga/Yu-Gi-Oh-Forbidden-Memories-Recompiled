@@ -14,6 +14,7 @@
 #include "pc/cards/starter.h"
 #include "pc/platform/title_jump.h"
 #include "pc/cards/tables.h"
+#include "pc/debug/log.h"
 
 /* The game's own generator, handed to Starter_DealPools so the numbers a new
  * game spends stay the ones the game spends. */
@@ -66,11 +67,18 @@ void NameEntry_BuildStarterDeck(void)
     s32 acc;
     s32 threshold;
     s32 i;
+#ifdef MEMORIES_PC
+    s32 tries;   /* the times one card was drawn again, at the copy limit */
+    s32 drawn;   /* the cards dealt so far */
+    s32 pools;   /* the pools walked, to stop at a table that never ends */
+#endif
 
 #ifdef MEMORIES_PC
     if (NameEntry_DealModStarterDeck()) {
         return;
     }
+    drawn = 0;
+    pools = 0;
 #endif
     for (i = CARD_COUNT - 1; i >= 0; i--) {
         counts[i] = 0;
@@ -79,9 +87,21 @@ void NameEntry_BuildStarterDeck(void)
     table = gNameEntry_apStarterDeckPools;
     entry = (u16 *)*table;
     while (entry != 0) {
+#ifdef MEMORIES_PC
+        if (++pools > STARTER_DECK_MAX_POOLS) break;
+#endif
         remaining = *entry;
         entry++;
+#ifdef MEMORIES_PC
+        tries = 0;
+#endif
         do {
+#ifdef MEMORIES_PC
+            /* A pool that draws nothing is skipped. The count is the disc's
+             * own, and a count of zero would draw for ever: the loop counts
+             * down past it and never reaches it again. */
+            if (remaining == 0) break;
+#endif
             threshold = (rand() & 0x7FF) + 1;
             acc = 0;
             i = 0;
@@ -91,12 +111,33 @@ void NameEntry_BuildStarterDeck(void)
                 acc += *p;
                 if (acc >= threshold) {
                     if (counts[i] >= 3) {
+#ifdef MEMORIES_PC
+                        /* The card is already held three times: the disc
+                         * draws again, and a pool whose weights all land on
+                         * cards held to the limit would draw for ever. The
+                         * last draw stands, as the port's own pools do. */
+                        if (tries < STARTER_POOL_RETRIES) {
+                            tries++;
+                            remaining++;
+                        } else {
+                            *out = i + 1;
+                            Library_UpdateCardUsedFlag(i + 289);
+                            out++;
+                            drawn++;
+                            tries = 0;
+                        }
+#else
                         remaining++;
+#endif
                     } else {
                         counts[i] = counts[i] + 1;
                         *out = i + 1;
                         Library_UpdateCardUsedFlag(i + 289);
                         out++;
+#ifdef MEMORIES_PC
+                        drawn++;
+                        tries = 0;
+#endif
                     }
                     break;
                 }
@@ -104,10 +145,24 @@ void NameEntry_BuildStarterDeck(void)
                 p++;
             } while (i < STARTER_DECK_WEIGHT_SCAN_COUNT);
             remaining--;
+#ifdef MEMORIES_PC
+            /* The save holds forty cards, and the count is the disc's. */
+            if (drawn >= STARTER_DECK_SIZE) break;
+#endif
         } while (remaining != 0);
         table++;
         entry = (u16 *)*table;
+#ifdef MEMORIES_PC
+        if (drawn >= STARTER_DECK_SIZE) break;
+#endif
     }
+#ifdef MEMORIES_PC
+    if (drawn == 0) {
+        /* The disc's pools drew nothing: a mod's own data, in the disc's own
+         * format. The deck is left as the save holds it. */
+        LOG(LOG_MODS, "starter: the disc's pools drew no card; the deck is empty");
+    }
+#endif
 }
 
 void NameEntry_Main(void)

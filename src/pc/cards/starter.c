@@ -199,10 +199,6 @@ static int pool_count, pool_room;
 
 /* The most one weight may be, as a pool's total must stay countable. */
 #define STARTER_POOL_WEIGHT_LIMIT 65535
-/* How often one draw may be taken again because the card it found is already
- * held to the copy limit. The disc retries for ever, which a pool of three
- * cards or fewer would never leave. */
-#define STARTER_POOL_RETRIES 64
 
 static int pool_control_key(const char *name)
 {
