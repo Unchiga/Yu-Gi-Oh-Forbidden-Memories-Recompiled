@@ -23,6 +23,34 @@ const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {
 };
 const char *const MonsterEffect_TargetNames[MONSTER_TARGET_COUNT] = {"self", "own", "others", "opponent", "all",
                                                                      "battle"};
+
+unsigned MonsterEffects_CombatFlags(int card)
+{
+    const MonsterEffect *effects;
+    unsigned flags = 0;
+    int i, n = Cards_MonsterEffects(card, &effects);
+    for (i = 0; i < n; i++) if (effects[i].when == MONSTER_WHEN_COMBAT) {
+        switch (effects[i].action) {
+        case MONSTER_DO_BATTLE_SURVIVE: flags |= MONSTER_COMBAT_BATTLE_IMMUNE; break;
+        case MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT: flags |= MONSTER_COMBAT_DESTROY_NON_IMMUNE; break;
+        case MONSTER_DO_BATTLE_DESTROY_BOTH: flags |= MONSTER_COMBAT_DESTROY_BOTH; break;
+        case MONSTER_DO_PIERCING: flags |= MONSTER_COMBAT_PIERCING; break;
+        default: break;
+        }
+    }
+    return flags;
+}
+
+int MonsterEffects_CombatAttackLimit(int card)
+{
+    const MonsterEffect *effects;
+    int i, amount = 1, n = Cards_MonsterEffects(card, &effects);
+    for (i = 0; i < n; i++)
+        if (effects[i].when == MONSTER_WHEN_COMBAT && effects[i].action == MONSTER_DO_MULTIPLE_ATTACKS &&
+            effects[i].amount > amount)
+            amount = effects[i].amount;
+    return amount;
+}
 const char *const MonsterEffect_EachNames[MONSTER_EACH_COUNT] = {"", "own", "opponent", "all"};
 #define AMOUNT_MAX 9999
 #define BOOST_MAX 9999

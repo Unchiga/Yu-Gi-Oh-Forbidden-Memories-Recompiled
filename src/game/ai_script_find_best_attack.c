@@ -8,6 +8,7 @@
 #ifdef MEMORIES_PC
 #include "ai_opponent_data.h"   /* gDuel_bOpponentID */
 #include "pc/free_duel/duelists.h"
+#include "pc/cards/monster_effects.h"
 #endif
 #include "ai_script_read_byte.h"
 void AiScript_FindBestAttack(void) {
@@ -52,7 +53,13 @@ void AiScript_FindBestAttack(void) {
             if ((f & DUEL_CARD_FLAG_USED_THIS_TURN) != 0) {
                 continue;
             }
+            /* Piercing attackers deliberately consider defenders too. */
+#ifdef MEMORIES_PC
+            if ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) != 0 &&
+                !(MonsterEffects_CombatFlags(r->card_id) & MONSTER_COMBAT_PIERCING)) {
+#else
             if ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) != 0) {
+#endif
                 continue;
             }
             if (want != 0) {
@@ -60,8 +67,21 @@ void AiScript_FindBestAttack(void) {
                     continue;
                 }
             }
-            v = r->attack - e->attack;
+            v = r->attack - ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) ? e->defense : e->attack);
             v += Duel_CalcGuardianStarMatchup(r->guardian_star, e->guardian_star);
+#ifdef MEMORIES_PC
+            {
+                unsigned attacker_effects = MonsterEffects_CombatFlags(r->card_id);
+                unsigned defender_effects = MonsterEffects_CombatFlags(e->card_id);
+                int forced = attacker_effects & (MONSTER_COMBAT_DESTROY_BOTH | MONSTER_COMBAT_DESTROY_NON_IMMUNE);
+                if ((defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) &&
+                    !(attacker_effects & MONSTER_COMBAT_DESTROY_BOTH))
+                    continue;
+                /* A forced destruction can deliberately trade a weaker
+                 * monster for a stronger one; make it selectable. */
+                if (forced && !(defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) && v <= 0) v = 1;
+            }
+#endif
             if (gAiScript_State.attack_best_stat < v) {
                 gAiScript_State.attack_best_stat = v;
                 gAiScript_State.attack_best_slot = i;

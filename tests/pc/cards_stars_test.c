@@ -456,6 +456,9 @@ static void monster_effect_battle_outcomes(void)
     assert(effects[2].action == MONSTER_DO_BATTLE_DESTROY_BOTH);
     assert(effects[3].action == MONSTER_DO_PIERCING);
     assert(effects[4].action == MONSTER_DO_MULTIPLE_ATTACKS && effects[4].amount == 3);
+    assert(MonsterEffects_CombatFlags(25) == (MONSTER_COMBAT_BATTLE_IMMUNE |
+           MONSTER_COMBAT_DESTROY_NON_IMMUNE | MONSTER_COMBAT_DESTROY_BOTH | MONSTER_COMBAT_PIERCING));
+    assert(MonsterEffects_CombatAttackLimit(25) == 3);
     assert(effect_notes == before + 2);
 }
 

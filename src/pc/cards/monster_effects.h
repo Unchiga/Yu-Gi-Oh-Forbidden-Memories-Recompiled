@@ -77,6 +77,18 @@ typedef struct MonsterEffect {
     signed short each_attribute;     /* what is counted: -1 any */
 } MonsterEffect;
 
+/* A compact view for decision makers which need to predict a combat without
+ * owning the effect list.  The amount returned below is the total attacks a
+ * monster may make in its owner's turn (one when it has no such effect). */
+enum {
+    MONSTER_COMBAT_BATTLE_IMMUNE = 1 << 0,
+    MONSTER_COMBAT_DESTROY_NON_IMMUNE = 1 << 1,
+    MONSTER_COMBAT_DESTROY_BOTH = 1 << 2,
+    MONSTER_COMBAT_PIERCING = 1 << 3
+};
+unsigned MonsterEffects_CombatFlags(int card);
+int MonsterEffects_CombatAttackLimit(int card);
+
 extern const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT];
 extern const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT];
 extern const char *const MonsterEffect_TargetNames[MONSTER_TARGET_COUNT];

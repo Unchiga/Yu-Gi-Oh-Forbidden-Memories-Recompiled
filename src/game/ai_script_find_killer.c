@@ -9,6 +9,7 @@
 #include "ai_script_read_byte.h"
 #ifdef MEMORIES_PC
 #include "pc/cards/tables.h"
+#include "pc/cards/monster_effects.h"
 #endif
 
 /* -fno-strength-reduce, fourth user. The record walk reads card_id, attack,
@@ -62,6 +63,20 @@ void AiScript_FindKiller(void) {
             d = c->attack - ref->defense;
         }
         d = d + Duel_CalcGuardianStarMatchup(c->guardian_star, ref->guardian_star);
+#ifdef MEMORIES_PC
+        {
+            unsigned attacker_effects = MonsterEffects_CombatFlags(c->card_id);
+            unsigned defender_effects = MonsterEffects_CombatFlags(ref->card_id);
+            int forced = attacker_effects & (MONSTER_COMBAT_DESTROY_BOTH | MONSTER_COMBAT_DESTROY_NON_IMMUNE);
+            /* A normal winning comparison cannot kill a battle-immune card.
+             * Only destroy_both ignores that immunity; the conditional
+             * destroy rule deliberately does not. */
+            if ((defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) &&
+                !(attacker_effects & MONSTER_COMBAT_DESTROY_BOTH))
+                continue;
+            if (forced && !(defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE)) d = 1;
+        }
+#endif
         if (d > 0) {
             t = c->attack;
             if (t < best) {

@@ -22,6 +22,7 @@
 #include "game/func_80018004.h"
 #include "game/display_object_core.h"
 #include "pc/cards/cards.h"
+#include "pc/cards/monster_effects.h"
 #include "pc/cards/tables.h"
 #include "pc/mods/modapi.h"
 #include <string.h>
@@ -126,6 +127,8 @@ static HmCard card_info(int id)
     c.defense = ((stats >> CARD_STAT_DEFENSE_SHIFT) & CARD_STAT_VALUE_MASK) * CARD_STAT_SCALE;
     c.star = (stats >> CARD_STAT_GUARDIAN_STAR_1_SHIFT) & 15;
     c.star2 = (stats >> CARD_STAT_GUARDIAN_STAR_2_SHIFT) & 15;
+    c.combat = MonsterEffects_CombatFlags(id);
+    c.attack_limit = MonsterEffects_CombatAttackLimit(id);
     return c;
 }
 static int terrain(int type, int field)
