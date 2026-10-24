@@ -673,9 +673,13 @@ void DuelScene_UpdateBattle(void)
 #ifdef MEMORIES_PC
             /* A Square-button battle returns through DuelScene_UpdateResume,
              * which removes the records in this two-slot replay list instead
-             * of going through the 2D battle state's destruction steps. */
-            survives[0] = result > 0 || result == 0 || (result < 0 && (right->flags & 0x800));
-            survives[1] = result < 0 || result == 0;
+             * of going through the 2D battle state's destruction steps.
+             * Derive the retail result from that finished list rather than
+             * reimplementing func_8001EFD4's defense and -1 rules. */
+            survives[0] = D_8009B208 != pair[0]->field_6A &&
+                          D_8009B209 != pair[0]->field_6A;
+            survives[1] = D_8009B208 != pair[1]->field_6A &&
+                          D_8009B209 != pair[1]->field_6A;
             if (MonsterEffects_BattleSurvivorOverride(0) || MonsterEffects_BattleSurvivorOverride(1)) {
                 survives[0] = MonsterEffects_RestoreBattleCard(0, survives[0]);
                 survives[1] = MonsterEffects_RestoreBattleCard(1, survives[1]);
