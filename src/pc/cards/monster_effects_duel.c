@@ -147,6 +147,9 @@ void MonsterEffects_TrapPresented(int card, int side)
 
 void MonsterEffects_TrackBattleParticipants(int attacker, int defender)
 {
+    /* This happens before an attack trap can suppress MonsterEffects_Battle;
+     * never let a preceding battle's aftermath override leak into it. */
+    S.battle_survivor[0] = S.battle_survivor[1] = 0;
     S.trap_battle_record[0] = (short)attacker;
     S.trap_battle_record[1] = (short)defender;
 }
@@ -539,6 +542,7 @@ static void look(void)
     if (side != S.turn_side || turns != S.turn_count) {
         S.turn_side = (unsigned char)side;
         S.turn_count = (unsigned char)turns;
+        memset(S.attacks + side * 15, 0, 15);
         for (record = 15 * side + 5; record < 15 * side + 10; record++) {
             if (S.card[record] && S.face_up[record]) occur(S.card[record], record, MONSTER_WHEN_DRAW);
         }
@@ -700,8 +704,10 @@ void MonsterEffects_Battle(void)
     const DisplayObject *defender = (const DisplayObject *)D_800E9EF0[1];
     int records[2], i, played = 0;
     if (!S.ready || D_8009B22A || S.trap_pending || !attacker) return;
+    S.battle_survivor[0] = S.battle_survivor[1] = 0;
     records[0] = attacker->field_6A;
     records[1] = defender ? defender->field_6A : -1;
+    if (monster_zone(records[0]) && S.attacks[records[0]] < 255) S.attacks[records[0]]++;
     /* A face-down defender is flipped by the battle: as Yu-Gi-Oh! has it,
      * its flip resolves after the damage is worked out (with the card as
      * it is), at the next look, before what the battle destroyed. */
@@ -761,6 +767,99 @@ void MonsterEffects_Battle(void)
         announce(card, record, MONSTER_WHEN_COMBAT, MEMORIES_AFTER);
     }
     if (played) SD_SEPlayFull(SE_BOOST);
+}
+
+void MonsterEffects_ApplyBattleOutcome(int attacker, int defender)
+{
+    int records[2] = {attacker, defender}, card[2], immune[2] = {0, 0}, i, e, destroy_all = 0, destroy_except = 0;
+    const MonsterEffect *effects;
+
+    /* The calculator has already applied normal battle damage.  This is the
+     * narrow aftermath hook the TEA patch changes, so LP and animations stay
+     * retail-accurate while only destruction changes. */
+    if (!S.ready) return;
+    for (i = 0; i < 2; i++) {
+        if (!monster_zone(records[i]) || !(D_801A7AD8[records[i]].flags & DUEL_CARD_FLAG_OCCUPIED)) return;
+        card[i] = D_801A7AD8[records[i]].card_id;
+    }
+    for (i = 0; i < 2; i++) {
+        int n = Cards_MonsterEffects(card[i], &effects);
+        for (e = 0; e < n; e++) {
+            const MonsterEffect *effect = &effects[e];
+            if (effect->when != MONSTER_WHEN_COMBAT) continue;
+            if (effect->action == MONSTER_DO_BATTLE_SURVIVE) immune[i] = 1;
+        }
+    }
+    for (i = 0; i < 2; i++) {
+        int n = Cards_MonsterEffects(card[i], &effects);
+        for (e = 0; e < n; e++) {
+            const MonsterEffect *effect = &effects[e];
+            if (effect->when != MONSTER_WHEN_COMBAT) continue;
+            switch (effect->action) {
+            case MONSTER_DO_BATTLE_SURVIVE:
+                break;
+            case MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT:
+                destroy_except = 1;
+                break;
+            case MONSTER_DO_BATTLE_DESTROY_BOTH:
+                destroy_all = 1;
+                break;
+            }
+        }
+    }
+    /* Battle immunity always keeps its card.  The conditional destroy then
+     * removes every combatant that did not establish that immunity. */
+    for (i = 0; i < 2; i++) S.battle_survivor[i] = immune[i] ? 1 : 0;
+    if (destroy_except)
+        for (i = 0; i < 2; i++) if (!immune[i]) S.battle_survivor[i] = -1;
+    /* This outcome overrides battle immunity, independent of list order. */
+    if (destroy_all) S.battle_survivor[0] = S.battle_survivor[1] = -1;
+}
+
+void MonsterEffects_ApplyBattleSurvivors(void)
+{
+    int i;
+    for (i = 0; i < 2; i++) {
+        if (S.battle_survivor[i] < 0) D_800E9EF0[i + 2] = 0;
+        /* The aftermath only asks whether this gate is non-null; its field
+         * object is D_800E9EF0[i].  A non-null sentinel safely restores a
+         * card retail had removed after its battle presentation. */
+        else if (S.battle_survivor[i] > 0 && D_800E9EF0[i + 2] == 0)
+            D_800E9EF0[i + 2] = (DisplayObject *)(uintptr_t)1;
+    }
+}
+
+static int combat_action(int record, int action)
+{
+    const MonsterEffect *effects;
+    int card, n, i;
+    if (!monster_zone(record)) return 0;
+    card = D_801A7AD8[record].card_id;
+    n = Cards_MonsterEffects(card, &effects);
+    for (i = 0; i < n; i++)
+        if (effects[i].when == MONSTER_WHEN_COMBAT && effects[i].action == action) return effects[i].amount;
+    return 0;
+}
+
+int MonsterEffects_HasPiercing(int record)
+{
+    const MonsterEffect *effects;
+    int card, n, i;
+    if (!monster_zone(record)) return 0;
+    card = D_801A7AD8[record].card_id;
+    n = Cards_MonsterEffects(card, &effects);
+    for (i = 0; i < n; i++)
+        if (effects[i].when == MONSTER_WHEN_COMBAT && effects[i].action == MONSTER_DO_PIERCING) return 1;
+    return 0;
+}
+
+void MonsterEffects_RestoreAttack(int record)
+{
+    int limit = combat_action(record, MONSTER_DO_MULTIPLE_ATTACKS);
+    if (limit > 1 && S.attacks[record] < limit) {
+        D_801A7AD8[record].flags &= ~DUEL_CARD_FLAG_USED_THIS_TURN;
+        Duel_ApplyCardObjectFlags((DuelCardDisplayObject *)D_801A7AD8[record].object);
+    }
 }
 
 void MonsterEffects_Stats(const void *pointer, int *attack, int *defense)

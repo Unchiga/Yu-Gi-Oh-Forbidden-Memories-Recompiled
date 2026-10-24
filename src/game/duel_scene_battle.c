@@ -386,9 +386,21 @@ void DuelScene_UpdateBattle(void)
                 D_8009B1A4[1] = 0;
                 if (result != 0) {
                     if (D_800E9EF0[1] != 0 && (D_8009B178[1] & 0x800)) {
+#ifdef MEMORIES_PC
+                        if (MonsterEffects_HasPiercing(D_800E9EF0[0]->field_6A)) {
+                            view = (u8 *)&D_800E9FF0[D_8009B1D5 ^ 1];
+                            life = Mods_DamageLife(D_8009B1D5 ^ 1, H(view, 0x14), result, 0);
+                            H(view, 0x14) = life;
+                            if ((s16)life < 0) H(view, 0x14) = 0;
+                        }
+#endif
                         D_8009B1C8->rank.field_0B++;
                         D_8009B1B0[1] = -1;
                         D_800E9FF0[D_8009B1D5 ^ 1].rank.field_0C++;
+#ifdef MEMORIES_PC
+                        MonsterEffects_ApplyBattleOutcome(D_800E9EF0[0]->field_6A,
+                                                          D_800E9EF0[1]->field_6A);
+#endif
                         return;
                     }
                     view = (u8 *)&D_800E9FF0[D_8009B1D5 ^ 1];
@@ -407,6 +419,10 @@ void DuelScene_UpdateBattle(void)
                     }
                     D_8009B1B0[1] = -1;
                     D_8009B1A4[1] = result;
+#ifdef MEMORIES_PC
+                    MonsterEffects_ApplyBattleOutcome(D_800E9EF0[0]->field_6A,
+                                                      D_800E9EF0[1] ? D_800E9EF0[1]->field_6A : -1);
+#endif
                     return;
                 }
             } else {
@@ -430,11 +446,22 @@ void DuelScene_UpdateBattle(void)
                     if (D_8009B178[1] & 0x800) {
                         D_8009B1B0[0] = 1;
                         D_800E9FF0[D_8009B1D5 ^ 1].rank.defensive_wins++;
+#ifdef MEMORIES_PC
+                        MonsterEffects_ApplyBattleOutcome(D_800E9EF0[0]->field_6A,
+                                                          D_800E9EF0[1]->field_6A);
+#endif
                         return;
                     }
                 }
             }
         }
+#ifdef MEMORIES_PC
+            /* Phoenix battle outcomes happen after retail damage maths.
+             * Their survivor gates are changed at the aftermath, after the
+             * retail presentation consumed its own damage flags. */
+            MonsterEffects_ApplyBattleOutcome(D_800E9EF0[0]->field_6A,
+                                              D_800E9EF0[1] ? D_800E9EF0[1]->field_6A : -1);
+#endif
         break;
 
     case 4:
@@ -753,6 +780,7 @@ void DuelScene_UpdateBattle(void)
         if (!(D_8009B174 & 0x80)) {
             D_8009B174 |= 0x80;
 #ifdef MEMORIES_PC
+            MonsterEffects_ApplyBattleSurvivors();
             /* Bit 0x10 is the replacement-trap abort (above): the battle
              * never reached its presentation, so slots 2 and 3 were not
              * filled, and a removed participant's slot was cleared. */
@@ -768,6 +796,9 @@ void DuelScene_UpdateBattle(void)
                 left->defense_modifier = gDuel_awSavedDefenseModifier[0];
 #endif
                 Duel_ApplyCardObjectFlags((DuelCardDisplayObject *)left->object);
+#ifdef MEMORIES_PC
+                MonsterEffects_RestoreAttack((int)(left - D_801A7AD8));
+#endif
             }
 #ifdef MEMORIES_PC
             if ((D_8009B174 & 0x10) || D_800E9EF0[3] != 0) {

@@ -78,6 +78,8 @@ typedef struct {
      * have: new fields go at the end only. */
     unsigned char battle_abort; /* bit mask: an attack trap removed battle participant(s) */
     short trap_battle_record[2]; /* attacker and defender while a trap resolves */
+    signed char battle_survivor[2]; /* -1 destroy, +1 keep, 0 retail result */
+    unsigned char attacks[MONSTER_RECORDS]; /* attacks each field record made this turn */
 } MonsterEffectsState;
 
 extern MonsterEffectsState gMonsterEffects;
@@ -103,6 +105,16 @@ void MonsterEffects_Placed(int record, int equip);
 void MonsterEffects_EffectStarted(int ritual);
 /* A battle begins (DuelScene_UpdateBattle, once the attack trap is known). */
 void MonsterEffects_Battle(void);
+/* The battle calculator has decided the normal survivor flags.  Apply a
+ * combatant's post-damage battle-outcome effects before the presentation
+ * consumes those flags. */
+void MonsterEffects_ApplyBattleOutcome(int attacker, int defender);
+/* Apply a recorded post-damage outcome immediately before the battle's
+ * field records are restored. */
+void MonsterEffects_ApplyBattleSurvivors(void);
+/* Battle-rule queries and restoration hooks for piercing and repeat attacks. */
+int MonsterEffects_HasPiercing(int record);
+void MonsterEffects_RestoreAttack(int record);
 /* The CPU puts this monster down face up (its effects want it seen). */
 int MonsterEffects_PlayFaceUp(int card);
 /* Crush Card's removal (DuelEffect_ApplyMonsterRemoval) as a

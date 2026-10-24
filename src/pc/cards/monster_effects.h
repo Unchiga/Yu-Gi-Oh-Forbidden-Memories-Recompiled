@@ -33,6 +33,15 @@ enum {
     MONSTER_DO_DESTROY,      /* the other side's monsters (or the one it battles) destroyed, as Warrior
                               * Elimination destroys */
     MONSTER_DO_CHANGE_FIELD, /* make the selected declared field active */
+    /* The three post-damage battle outcomes offered by TEA Phoenix's
+     * Battlefield Demolisher.  They are deliberately separate from
+     * DESTROY: that action removes field records before a battle, whereas
+     * these alter its already-calculated survivor flags. */
+    MONSTER_DO_BATTLE_SURVIVE,
+    MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT,
+    MONSTER_DO_BATTLE_DESTROY_BOTH,
+    MONSTER_DO_PIERCING,     /* excess ATK against a defending monster damages its owner */
+    MONSTER_DO_MULTIPLE_ATTACKS, /* `amount` attacks total each turn */
     MONSTER_DO_COUNT
 };
 enum {

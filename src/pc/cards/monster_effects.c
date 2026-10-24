@@ -17,7 +17,10 @@ extern unsigned char gDuelEffect_abGroupByEffectId[];
 
 const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT] = {"summon", "flip", "draw", "combat", "destroyed",
                                                                  "destroy_opponent", "face_up"};
-const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {"magic", "boost", "heal", "damage", "destroy", "change_field"};
+const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {
+    "magic", "boost", "heal", "damage", "destroy", "change_field",
+    "cannot_be_destroyed_by_battle", "destroy_both_non_battle_immune", "destroy_both", "piercing", "multiple_attacks"
+};
 const char *const MonsterEffect_TargetNames[MONSTER_TARGET_COUNT] = {"self", "own", "others", "opponent", "all",
                                                                      "battle"};
 const char *const MonsterEffect_EachNames[MONSTER_EACH_COUNT] = {"", "own", "opponent", "all"};
@@ -40,6 +43,10 @@ int MonsterEffect_MagicUsable(int card)
 
 int MonsterEffect_Allowed(int when, int action, int target)
 {
+    if (action == MONSTER_DO_BATTLE_SURVIVE || action == MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT ||
+        action == MONSTER_DO_BATTLE_DESTROY_BOTH || action == MONSTER_DO_PIERCING ||
+        action == MONSTER_DO_MULTIPLE_ATTACKS)
+        return when == MONSTER_WHEN_COMBAT && target == MONSTER_TARGET_SELF;
     if (action == MONSTER_DO_CHANGE_FIELD)
         return when != MONSTER_WHEN_FACE_UP && when != MONSTER_WHEN_COMBAT;
     if (when == MONSTER_WHEN_FACE_UP)
@@ -180,7 +187,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         return 0;
     }
     if (action < 0) {
-        Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"do\" must be magic, boost, heal, damage, destroy or change_field", index,
+        Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"do\" must be magic, boost, heal, damage, destroy, change_field or a battle outcome", index,
                   n);
         return 0;
     }
@@ -203,6 +210,12 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
                   when == MONSTER_WHEN_COMBAT ? " (a boost of self or battle, heal or damage)"
                   : when == MONSTER_WHEN_FACE_UP ? " (boosts only)"
                   : action == MONSTER_DO_DESTROY ? " (destroy takes opponent, or battle on flip)" : "");
+        return 0;
+    }
+    if (card_effect && (action == MONSTER_DO_BATTLE_SURVIVE || action == MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT ||
+                        action == MONSTER_DO_BATTLE_DESTROY_BOTH || action == MONSTER_DO_PIERCING ||
+                        action == MONSTER_DO_MULTIPLE_ATTACKS)) {
+        Mods_Note(mod, "cards[%d]: card_effects[%d]: a battle outcome belongs to a monster's combat", index, n);
         return 0;
     }
     /* A spell or trap is not a monster on the field: there is no useful
@@ -254,6 +267,19 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         if (!filter(mod, index, n, "", entry, &out->type, &out->attribute)) return 0;
         break;
     }
+    case MONSTER_DO_BATTLE_SURVIVE:
+    case MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT:
+    case MONSTER_DO_BATTLE_DESTROY_BOTH:
+    case MONSTER_DO_PIERCING:
+        break;
+    case MONSTER_DO_MULTIPLE_ATTACKS:
+        v = 0;
+        if (number(mod, index, n, entry, "amount", 8, &v) < 0 || v < 2) {
+            Mods_Note(mod, "cards[%d]: monster_effects[%d]: multiple_attacks needs an \"amount\" from 2 to 8", index, n);
+            return 0;
+        }
+        out->amount = v;
+        break;
     default:
         v = 0;
         if (number(mod, index, n, entry, "amount", AMOUNT_MAX, &v) < 0) return 0;
