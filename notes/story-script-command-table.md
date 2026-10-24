@@ -38,3 +38,17 @@ only the generic first-entry latch, slot 8's mode-5 consumer is not yet named,
 and slots 14 and 15 are indistinguishable empty placeholders. Naming any of
 them by table position alone would assert semantics not established by a
 consumer, script operand, or observed behavior.
+
+## A scene whose script has stopped
+
+Slot 0 stops the script's advancement, and slot 8 is what asks for the
+campaign map at the end of a scene. A community image holds its own scene
+script, and it may stop where the retail's opens the map: the scene stays up
+for ever, with the game waiting for it. The "CLT Chronicle Memories" image
+stops there, on its campaign's first screen.
+
+The port ends such a scene (`src/game/main_run_campaign.c`): a scene whose
+script has stopped for half a minute, with no fade running, requests the
+campaign map, as the retail's fade-out ends the scene it is in. The retail's
+own scenes never sit that long: their script runs, and the fade that follows
+it is running all the while, so the campaign runs the same frames as it did.

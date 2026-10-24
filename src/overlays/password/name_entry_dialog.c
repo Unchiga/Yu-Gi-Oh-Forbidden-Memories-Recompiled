@@ -33,6 +33,10 @@
    name_entry_runtime.c. The shop display unit after them has no proven
    ownership in this lifecycle. */
 
+#ifdef MEMORIES_PC
+#include "pc/text/message_wait.h"
+#endif
+
 void NameEntry_UpdateDialog(void)
 {
     DuelEffectChannel *box;
@@ -56,6 +60,9 @@ void NameEntry_UpdateDialog(void)
         flags = D_8016D400;
         if ((flags & 4) == 0) {
             D_8016D400 = flags | 4;
+#ifdef MEMORIES_PC
+            MessageWait_Begin(MESSAGE_WAIT_NAME_ENTRY);
+#endif
             func_8003B6AC(2, 2);
             box = TextBox_Create(2, D_8016D4D2 & 0xFFF, 16, 248,
                                  288, 48);
@@ -124,9 +131,29 @@ void NameEntry_UpdateDialog(void)
             func_80039794();
             if ((*(u32 *)&box->flags_34 & TEXT_BOX_COMPLETION_MASK) !=
                 TEXT_BOX_FLAG_DONE) {
+#ifdef MEMORIES_PC
+                /* A community image holds its own text, and the name entry
+                 * shows the image's text at the retail's id: a text the box
+                 * can never finish (it has no end of its own) would hold the
+                 * game here for ever. The message is on screen and the player
+                 * has asked for it to go on; after a while the game goes on.
+                 * A box whose text has ended (the retail's own text) waits
+                 * for the player's dismiss, as it always did. */
+                if (MessageWait_Frame(
+                        MESSAGE_WAIT_NAME_ENTRY,
+                        (gInput_wPad1Pressed & PAD_BUTTON_CONFIRM_MASK) != 0,
+                        box->field_60,
+                        (*(u32 *)&box->flags_34 & TEXT_BOX_FLAG_DONE) != 0)) {
+                    goto acknowledged;
+                }
+#endif
                 return;
             }
         }
+#ifdef MEMORIES_PC
+    acknowledged:
+        MessageWait_Begin(MESSAGE_WAIT_NAME_ENTRY);
+#endif
         if (D_8009B34D != 0) {
             fd = D_8016D400;
             D_8016D400 = fd & 0xDF;

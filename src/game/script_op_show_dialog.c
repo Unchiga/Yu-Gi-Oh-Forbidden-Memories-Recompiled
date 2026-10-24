@@ -6,6 +6,9 @@
 #include "script_state.h"
 #include "script_op_show_dialog.h"
 #include "duel_effect_mark_object_if_active.h"
+#ifdef MEMORIES_PC
+#include "pc/text/message_wait.h"
+#endif
 
 /* Defined rather than declared: the assembler only resolves a small
    global gp-relative when the translation unit defines it, which is what
@@ -31,6 +34,10 @@ void Script_OpShowDialog(void)
         box = TextBox_Create(0, value & 0xFFF, 0x10, 0xB0, 0x120, 0x30);
         DuelEffect_MarkObjectIfActive((MenuRecord *)box);
         box->flags_34 |= 8;
+#ifdef MEMORIES_PC
+        /* A new dialog: the wait for this box starts over (message_wait.h). */
+        MessageWait_Begin(MESSAGE_WAIT_STORY);
+#endif
         if ((value & 0x8000) != 0) {
             flags = D_8009B27C;
             boxflags = *(volatile u16 *)&box->flags_34;

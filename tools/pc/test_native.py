@@ -235,6 +235,12 @@ def main():
             [None],
         ),
         (
+            "message-wait",
+            ["tests/pc/message_wait_test.c", "src/pc/text/message_wait.c"],
+            [],
+            [None],
+        ),
+        (
             "deck-shop-native",
             ["tests/pc/deck_shop_test.c", "src/pc/saves/deck_shop.c"],
             [],
