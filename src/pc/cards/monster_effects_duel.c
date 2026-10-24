@@ -150,6 +150,7 @@ void MonsterEffects_TrackBattleParticipants(int attacker, int defender)
     /* This happens before an attack trap can suppress MonsterEffects_Battle;
      * never let a preceding battle's aftermath override leak into it. */
     S.battle_survivor[0] = S.battle_survivor[1] = 0;
+    S.battle_effects[0] = S.battle_effects[1] = 0;
     S.trap_battle_record[0] = (short)attacker;
     S.trap_battle_record[1] = (short)defender;
 }
@@ -518,6 +519,7 @@ static void look(void)
         if (before && now != before && !S.placed[record] && !S.ritual) {
             occur(before, record, MONSTER_WHEN_DESTROYED);
         }
+        if (now != before) S.attacks[record] = 0;
         if (now && up && (now != before || S.placed[record])) {
             /* A face-down play is no summon: the card's "flip" fires
              * when it is attacked instead (MonsterEffects_Battle). One
@@ -690,7 +692,10 @@ void MonsterEffects_Placed(int record, int equip)
     /* A card put back on its own zone (the 0x4000 placement, which an equip
      * and a fusion onto a field monster both take) is a new card only when
      * it is another card: the fusion's result, not the equipped monster. */
-    if (monster_zone(record) && (!equip || D_801A7AD8[record].card_id != S.card[record])) S.placed[record] = 1;
+    if (monster_zone(record) && (!equip || D_801A7AD8[record].card_id != S.card[record])) {
+        S.placed[record] = 1;
+        S.attacks[record] = 0;
+    }
 }
 
 void MonsterEffects_EffectStarted(int ritual)
@@ -733,7 +738,8 @@ void MonsterEffects_Battle(void)
         int record = records[i], other = records[i ^ 1], card, n, e, count;
         if (!monster_zone(record)) continue;
         card = D_801A7AD8[record].card_id;
-        n = announce(card, record, MONSTER_WHEN_COMBAT, MEMORIES_BEFORE) ? 0 : Cards_MonsterEffects(card, &effects);
+        S.battle_effects[i] = !announce(card, record, MONSTER_WHEN_COMBAT, MEMORIES_BEFORE);
+        n = S.battle_effects[i] ? Cards_MonsterEffects(card, &effects) : 0;
         for (e = 0; e < n; e++) {
             const MonsterEffect *effect = &effects[e];
             if (effect->when != MONSTER_WHEN_COMBAT) continue;
@@ -783,6 +789,7 @@ void MonsterEffects_ApplyBattleOutcome(int attacker, int defender)
         card[i] = D_801A7AD8[records[i]].card_id;
     }
     for (i = 0; i < 2; i++) {
+        if (!S.battle_effects[i]) continue;
         int n = Cards_MonsterEffects(card[i], &effects);
         for (e = 0; e < n; e++) {
             const MonsterEffect *effect = &effects[e];
@@ -791,6 +798,7 @@ void MonsterEffects_ApplyBattleOutcome(int attacker, int defender)
         }
     }
     for (i = 0; i < 2; i++) {
+        if (!S.battle_effects[i]) continue;
         int n = Cards_MonsterEffects(card[i], &effects);
         for (e = 0; e < n; e++) {
             const MonsterEffect *effect = &effects[e];
@@ -816,17 +824,12 @@ void MonsterEffects_ApplyBattleOutcome(int attacker, int defender)
     if (destroy_all) S.battle_survivor[0] = S.battle_survivor[1] = -1;
 }
 
-void MonsterEffects_ApplyBattleSurvivors(void)
+int MonsterEffects_RestoreBattleCard(int side, int retail_survives)
 {
-    int i;
-    for (i = 0; i < 2; i++) {
-        if (S.battle_survivor[i] < 0) D_800E9EF0[i + 2] = 0;
-        /* The aftermath only asks whether this gate is non-null; its field
-         * object is D_800E9EF0[i].  A non-null sentinel safely restores a
-         * card retail had removed after its battle presentation. */
-        else if (S.battle_survivor[i] > 0 && D_800E9EF0[i + 2] == 0)
-            D_800E9EF0[i + 2] = (DisplayObject *)(uintptr_t)1;
-    }
+    if (side < 0 || side > 1) return retail_survives;
+    if (S.battle_survivor[side] < 0) return 0;
+    if (S.battle_survivor[side] > 0) return 1;
+    return retail_survives;
 }
 
 static int combat_action(int record, int action)
@@ -834,6 +837,8 @@ static int combat_action(int record, int action)
     const MonsterEffect *effects;
     int card, n, i;
     if (!monster_zone(record)) return 0;
+    if (record == S.trap_battle_record[0] && !S.battle_effects[0]) return 0;
+    if (record == S.trap_battle_record[1] && !S.battle_effects[1]) return 0;
     card = D_801A7AD8[record].card_id;
     n = Cards_MonsterEffects(card, &effects);
     for (i = 0; i < n; i++)
@@ -846,6 +851,8 @@ int MonsterEffects_HasPiercing(int record)
     const MonsterEffect *effects;
     int card, n, i;
     if (!monster_zone(record)) return 0;
+    if (record == S.trap_battle_record[0] && !S.battle_effects[0]) return 0;
+    if (record == S.trap_battle_record[1] && !S.battle_effects[1]) return 0;
     card = D_801A7AD8[record].card_id;
     n = Cards_MonsterEffects(card, &effects);
     for (i = 0; i < n; i++)

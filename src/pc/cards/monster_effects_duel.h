@@ -79,6 +79,7 @@ typedef struct {
     unsigned char battle_abort; /* bit mask: an attack trap removed battle participant(s) */
     short trap_battle_record[2]; /* attacker and defender while a trap resolves */
     signed char battle_survivor[2]; /* -1 destroy, +1 keep, 0 retail result */
+    unsigned char battle_effects[2]; /* combat event was not handled by a code mod */
     unsigned char attacks[MONSTER_RECORDS]; /* attacks each field record made this turn */
 } MonsterEffectsState;
 
@@ -109,9 +110,8 @@ void MonsterEffects_Battle(void);
  * combatant's post-damage battle-outcome effects before the presentation
  * consumes those flags. */
 void MonsterEffects_ApplyBattleOutcome(int attacker, int defender);
-/* Apply a recorded post-damage outcome immediately before the battle's
- * field records are restored. */
-void MonsterEffects_ApplyBattleSurvivors(void);
+/* Whether this side's lifted card is restored to its field record. */
+int MonsterEffects_RestoreBattleCard(int side, int retail_survives);
 /* Battle-rule queries and restoration hooks for piercing and repeat attacks. */
 int MonsterEffects_HasPiercing(int record);
 void MonsterEffects_RestoreAttack(int record);

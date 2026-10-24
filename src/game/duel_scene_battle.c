@@ -780,11 +780,10 @@ void DuelScene_UpdateBattle(void)
         if (!(D_8009B174 & 0x80)) {
             D_8009B174 |= 0x80;
 #ifdef MEMORIES_PC
-            MonsterEffects_ApplyBattleSurvivors();
             /* Bit 0x10 is the replacement-trap abort (above): the battle
              * never reached its presentation, so slots 2 and 3 were not
              * filled, and a removed participant's slot was cleared. */
-            if (((D_8009B174 & 0x10) || D_800E9EF0[2] != 0) && D_800E9EF0[0] != 0) {
+            if (((D_8009B174 & 0x10) || MonsterEffects_RestoreBattleCard(0, D_800E9EF0[2] != 0)) && D_800E9EF0[0] != 0) {
 #else
             if (D_800E9EF0[2] != 0) {
 #endif
@@ -801,7 +800,7 @@ void DuelScene_UpdateBattle(void)
 #endif
             }
 #ifdef MEMORIES_PC
-            if ((D_8009B174 & 0x10) || D_800E9EF0[3] != 0) {
+            if ((D_8009B174 & 0x10) || MonsterEffects_RestoreBattleCard(1, D_800E9EF0[3] != 0)) {
 #else
             if (D_800E9EF0[3] != 0) {
 #endif
