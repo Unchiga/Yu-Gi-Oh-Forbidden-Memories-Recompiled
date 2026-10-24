@@ -116,11 +116,11 @@ accept v0.2.0 export name was the C library macros' parameter, never a name the 
 # as DuelResultDisplayState's starchip_prize above.
 accept v0.3.0 record MonsterEffect widened attribute and each_attribute into their own trailing pad byte
 
-# PR #381 (peek and poke by name): the control channel's parsed command
-# gained `symbol` and `offset` at its end. ControlCommand is only filled by
-# ControlProtocol_Parse for the channel MEMORIES_CONTROL opens (src/pc/debug);
-# no mod parses control lines or receives one.
-accept v0.3.0 record ControlCommand grew by symbol and offset at its end
+# API 19 (Monster effects system): MonsterEffectsState grew at its end to
+# track attack counts and piercing damage. It is a single engine global
+# (gMonsterEffects) never allocated by mods; all earlier fields keep their
+# offsets and types.
+accept v0.3.0 record MonsterEffectsState grew by attack counts and piercing damage at its end
 
 # API 19 (Monster effects system): MonsterEffect_DoNames array grew by two
 # entries at its end ("battle_immunity" and "piercing").
