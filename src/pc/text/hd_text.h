@@ -52,6 +52,10 @@ int HdText_TitleCard(int page_x, int page_y, int u, int v, int factor, int *atla
  * through the palette at clut_x, clut_y: where its texel u, v is in the
  * atlas. Returns 0 for any other sprite. */
 int HdText_HudEnabled(void);
+/* A mod-defined field has a logical name even when Video > HD text is off.
+ * The OpenGL renderer uses this narrow signal to substitute only the FIELD
+ * word, without turning on the rest of the HD HUD. */
+int HdText_FieldWordEnabled(void);
 int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u, int v, int w, int h, int factor,
                int *atlas_u, int *atlas_v);
 /* The active field's own name over the FIELD box's terrain word (fields.h,

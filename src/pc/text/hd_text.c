@@ -1791,6 +1791,12 @@ int HdText_HudEnabled(void)
     return HdText_Enabled();
 }
 
+int HdText_FieldWordEnabled(void)
+{
+    int active = Fields_Active();
+    return active >= 0 && Fields_HasCustomName(active);
+}
+
 /* The word a label shows: a terrain label's own word unless the active
  * field has a name of its own for it (fields.h, Fields_HasCustomName). */
 static const char *field_label_text(const Label *l)
@@ -1842,7 +1848,7 @@ int HdText_FieldWord(int depth, int page_x, int page_y, int clut_x, int clut_y, 
     const uint16_t *words = SoftGpu_Vram();
     int active = Fields_Active();
     unsigned i;
-    if (active < 0 || !Fields_HasCustomName(active) || wanted < 2 || wanted > MAX_FACTOR || !words || w < 1 || h < 1) {
+    if (!HdText_FieldWordEnabled() || wanted < 2 || wanted > MAX_FACTOR || !words || w < 1 || h < 1) {
         return 0;
     }
     make_labels();

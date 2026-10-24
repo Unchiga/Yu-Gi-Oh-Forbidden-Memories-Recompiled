@@ -280,7 +280,7 @@ static unsigned bank_generation = ~0u;
 /* HD text (hd_text.h): whether it is on for this replay, and its atlas of
  * glyph pictures, 8-bit indices, as an integer texture on unit 6; and HD
  * numbers and labels, whose pictures are in the same atlas. */
-static int hd_text, hd_hud, opponent_name;
+static int hd_text, hd_hud, field_word, opponent_name;
 /* A capture (SoftGpu_Capture): the scaled picture of what the game loaded
  * at capture_rect (x, y, w, h in VRAM words; w 0 for none), on unit 7,
  * which 16-bit textures there take their color from. It holds until a
@@ -1365,7 +1365,7 @@ static size_t polygon(const uint32_t *words, size_t count)
             flags |= 16;
         }
     }
-    if (!(flags & 16) && quad && textured && hd_hud && !state.bank) {
+    if (!(flags & 16) && quad && textured && field_word && !state.bank) {
         /* The FIELD box's terrain word, when the active field renamed it:
          * checked and drawn even over a texture pack's own FIELD box, the
          * same rule HdText_TitleCard keeps for a card's name. */
@@ -1506,7 +1506,7 @@ static size_t rectangle(const uint32_t *words, size_t count)
             return need;
         }
     }
-    if (w && h && textured && hd_hud && !state.bank) {
+    if (w && h && textured && field_word && !state.bank) {
         /* The FIELD box's terrain word, when the active field renamed it:
          * checked and drawn even over a texture pack's own FIELD box, the
          * same rule HdText_TitleCard keeps for a card's name. */
@@ -2197,7 +2197,7 @@ static void flush_runs(void)
     group_runs();
     sync_banks();
     sync_pack();
-    if (hd_text || hd_hud || opponent_name) sync_glyphs();
+    if (hd_text || hd_hud || field_word || opponent_name) sync_glyphs();
     gl_ActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, vram_texture);
     gl_UseProgram(program);
@@ -2591,6 +2591,7 @@ int GlPicture_Replay(void)
     hd_text = HdText_Enabled();
     set_samples(Settings_Get(SET_MSAA));
     hd_hud = HdText_HudEnabled();
+    field_word = HdText_FieldWordEnabled();
     opponent_name = HdText_NameEnabled();
     if (overflow || wanted_resync) {
         /* Too much for the arena: from VRAM as it is now, with the state

@@ -48,6 +48,23 @@ int TexturePack_ImageSize(const char *path, int *width, int *height)
 }
 static unsigned selected_group = ~0u;
 void TexturePack_SelectGroup(unsigned group) { selected_group = group; }
+static int state_loading;
+static int state_has_field;
+static int saved_field;
+int Memories_StateLoading(const MemoriesState *state) { (void)state; return state_loading; }
+int Memories_StateChunk(MemoriesState *state, const char *tag, const MemoriesStateField *fields, size_t count)
+{
+    (void)state;
+    assert(!strcmp(tag, "fields") && count == 1 && fields[0].size == sizeof(saved_field));
+    if (state_loading) {
+        if (!state_has_field) return 0;
+        memcpy(fields[0].data, &saved_field, sizeof(saved_field));
+        return 1;
+    }
+    memcpy(&saved_field, fields[0].data, sizeof(saved_field));
+    state_has_field = 1;
+    return 1;
+}
 
 int main(void)
 {
@@ -166,6 +183,27 @@ int main(void)
      * leave the field bank still reporting Volcano, and must restore the
      * retail texture group (0), not leave Volcano's bank selected. */
     Fields_Observe();
+    assert(Fields_Active() == -1 && selected_group == 0);
+
+    /* The game's terrain byte carries only a custom field's retail carrier.
+     * Native state data must retain the logical id and restore its texture
+     * bank without pretending another terrain effect is still pending. */
+    Fields_Activate(7);
+    state_loading = 0;
+    Fields_State(NULL);
+    Fields_ResetActive();
+    state_loading = 1;
+    selected_group = ~0u;
+    Fields_State(NULL);
+    assert(Fields_Active() == 7 && selected_group == 7);
+    Fields_Observe();
+    assert(Fields_Active() == -1 && selected_group == 0);
+    /* A state made with a field this mod set no longer supplies (or an old
+     * state that has no fields chunk) cannot leave the previous state's
+     * texture bank selected. */
+    saved_field = 255;
+    Fields_Activate(7);
+    Fields_State(NULL);
     assert(Fields_Active() == -1 && selected_group == 0);
 
     /* A new duel (func_80024DC8's reset) must clear a field left active at

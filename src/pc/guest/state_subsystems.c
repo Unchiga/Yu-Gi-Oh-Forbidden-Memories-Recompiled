@@ -19,6 +19,7 @@
 #include "pc/render/texture_dump.h"
 #include "pc/saves/deck_menu.h"
 #include "pc/cards/pack_shop.h"
+#include "pc/cards/fields.h"
 #include "pc/text/language.h"
 #include "pc/text/text.h"
 #include "pc/platform/menu.h"
@@ -259,6 +260,7 @@ void Memories_StateSubsystems(MemoriesState *state)
     SaveMenu_State(state);
     if (!Memories_StateLoading(state)) DeckMenu_ShopState(state);
     if (!Memories_StateLoading(state)) PackShop_State(state);
+    Fields_State(state);
     Tower_State(state); /* the other towers' progress lines; the rest is game data */
     TitleJump_State(state);
     TitleScreen_State(state);

@@ -3,6 +3,7 @@
  * renderer can select it independently of the rules it gives monsters. */
 #include "fields.h"
 #include "pc/compat/fs.h"
+#include "pc/guest/state.h"
 #include "pc/mods/json.h"
 #include "pc/mods/mods.h"
 #include "pc/platform/paths.h"
@@ -204,6 +205,27 @@ void Fields_Observe(void)
         return;
     }
     Fields_ResetActive();
+}
+
+/* The retail game stores only gDuel_bTerrain, which is deliberately the
+ * carrier package for an added field.  Keep the logical id in the native
+ * state too, otherwise a restored state has the right floor geometry but
+ * loses its field's rules, name and texture bank.  Loading never sets
+ * active_pending: no terrain effect is in flight merely because a state was
+ * restored, so the next genuine retail terrain effect must clear this field. */
+void Fields_State(MemoriesState *state)
+{
+    int saved = active_field;
+    MemoriesStateField field = {&saved, sizeof(saved)};
+    if (!Memories_StateLoading(state)) {
+        Memories_StateChunk(state, "fields", &field, 1);
+        return;
+    }
+    Fields_ResetActive(); /* Old states have no chunk; never retain live state. */
+    if (Memories_StateChunk(state, "fields", &field, 1) && saved >= 1 && Fields_Declared(saved)) {
+        active_field = saved;
+        TexturePack_SelectGroup(saved > FIELDS_RETAIL ? (unsigned)saved : 0);
+    }
 }
 int Fields_Carrier(int field) { return field <= FIELDS_RETAIL ? field : 1 + (field - FIELDS_RETAIL - 1) % FIELDS_RETAIL; }
 int Fields_UnmirrorCentre(void)

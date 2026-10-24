@@ -22,6 +22,7 @@
 #include "game/func_80018004.h"
 #include "game/display_object_core.h"
 #include "pc/cards/cards.h"
+#include "pc/cards/fields.h"
 #include "pc/cards/tables.h"
 #include "pc/mods/modapi.h"
 #include <string.h>
@@ -161,7 +162,11 @@ static HmBoard board(const HmOptions *o)
 {
     HmBoard b = {0};
     int i, side = D_8009B1D5;
-    b.hand_count = window(); b.terrain = gDuel_bTerrain;
+    b.hand_count = window();
+    /* Added fields borrow a retail gDuel_bTerrain package solely for the
+     * original board renderer.  Planning must score their logical field,
+     * just as Duel_GetTerrainBoost does. */
+    b.terrain = Fields_Active() >= 0 ? Fields_Active() : gDuel_bTerrain;
     b.lp = D_800E9FF0[side].life_points.unsigned_value;
     b.max_lp = D_800E9FF0[side].max_life_points;
     b.enemy_lp = D_800E9FF0[side ^ 1].life_points.unsigned_value;

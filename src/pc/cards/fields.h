@@ -7,6 +7,7 @@
  * than an opaque number. */
 
 struct JsonValue;
+struct MemoriesState;
 
 #define FIELDS_RETAIL 6
 #define FIELDS_MAX 255
@@ -43,6 +44,10 @@ void Fields_ResetActive(void);
  * Fields_Activate leaves Fields_Active reporting the terrain actually on
  * screen rather than a stale custom field. */
 void Fields_Observe(void);
+/* The logical field is host-side (the game's terrain byte contains only its
+ * retail carrier), so carry it in native save states and reselect its board
+ * bank when a state is restored. */
+void Fields_State(struct MemoriesState *state);
 int Fields_Carrier(int field);
 /* The board renderer asks this while it emits a centre-floor polygon.  An
  * added field with a full board picture and `"mirror": false` opts out of

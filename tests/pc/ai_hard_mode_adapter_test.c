@@ -23,6 +23,8 @@ DuelHandSlot D_800EA030[5];
 u8 gDuel_bTerrain;
 s8 gDuel_aTerrainBoost[20][6];
 s32 gDuel_adwCardStats[1024];
+static int active_field = -1;
+int Fields_Active(void) { return active_field; }
 static DuelCardDisplayObject objects[10];
 static int spawned, released, original_calls, hidden_lookups, observed_visibility, observed_mode;
 static int deck_mode, hidden_mode, custom_window = 20, retail_hand = 1;
@@ -121,6 +123,7 @@ static void reset(void)
     spawned = released = original_calls = hidden_lookups = 0;
     ai_card = ai_value = 0;
     hidden_mode = deck_mode = 0; retail_hand = 1;
+    active_field = -1;
     initialize(D_801A8000);
 }
 
@@ -143,6 +146,10 @@ int main(void)
     star_points = -300;
     assert(Hm_StarBonus(11, 12) == -300 && Hm_StarBonus(12, 11) == 0);
     terrain_override = star_points = 0;
+    /* An added field may borrow any retail board, but tactical terrain
+     * scoring must receive the logical id declared by the field registry. */
+    reset(); gDuel_bTerrain = 2; active_field = 7; o = options(); b = board(&o);
+    assert(b.terrain == 7);
     reset(); assert(window() == 20);
     deck_mode = 1; assert(window() == 5);
     deck_mode = 2; custom_window = 999; assert(window() == 20);
