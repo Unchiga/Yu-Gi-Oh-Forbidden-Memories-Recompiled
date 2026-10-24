@@ -454,14 +454,14 @@ void DuelScene_UpdateBattle(void)
                     }
                 }
             }
-        }
 #ifdef MEMORIES_PC
-            /* Phoenix battle outcomes happen after retail damage maths.
-             * Their survivor gates are changed at the aftermath, after the
-             * retail presentation consumed its own damage flags. */
+            /* The fade is over and retail has now calculated its outcome.
+             * This path reaches here once; the return paths above apply
+             * their outcomes immediately before returning. */
             MonsterEffects_ApplyBattleOutcome(D_800E9EF0[0]->field_6A,
                                               D_800E9EF0[1] ? D_800E9EF0[1]->field_6A : -1);
 #endif
+        }
         break;
 
     case 4:

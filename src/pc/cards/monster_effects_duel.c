@@ -746,7 +746,11 @@ void MonsterEffects_Battle(void)
             trace("battle", card, record, effect);
             count = times(effect, record);
             if (!count) continue;
-            played = 1;
+            /* Battle-rule effects are evaluated at aftermath (or while the
+             * card is restored); they do not make the boost sound. */
+            if (effect->action == MONSTER_DO_HEAL || effect->action == MONSTER_DO_DAMAGE ||
+                effect->action == MONSTER_DO_BOOST)
+                played = 1;
             if (effect->action == MONSTER_DO_HEAL || effect->action == MONSTER_DO_DAMAGE) {
                 /* Made with its splash at the next frames, before the
                  * battle goes on (MonsterEffects_Update). */
@@ -794,17 +798,9 @@ void MonsterEffects_ApplyBattleOutcome(int attacker, int defender)
         for (e = 0; e < n; e++) {
             const MonsterEffect *effect = &effects[e];
             if (effect->when != MONSTER_WHEN_COMBAT) continue;
-            if (effect->action == MONSTER_DO_BATTLE_SURVIVE) immune[i] = 1;
-        }
-    }
-    for (i = 0; i < 2; i++) {
-        if (!S.battle_effects[i]) continue;
-        int n = Cards_MonsterEffects(card[i], &effects);
-        for (e = 0; e < n; e++) {
-            const MonsterEffect *effect = &effects[e];
-            if (effect->when != MONSTER_WHEN_COMBAT) continue;
             switch (effect->action) {
             case MONSTER_DO_BATTLE_SURVIVE:
+                immune[i] = 1;
                 break;
             case MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT:
                 destroy_except = 1;
