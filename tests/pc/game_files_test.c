@@ -70,6 +70,31 @@ static void make_disc(const char *path, int malformed)
     assert(!fclose(file));
 }
 
+/* A community "free version" image ships its executable with the magic's
+ * first byte wiped; the rest of the header is the retail one, so the disc
+ * is still the disc. */
+static void make_wiped_disc(const char *path)
+{
+    unsigned char raw[2352] = {0};
+    FILE *file = fopen(path, "wb");
+    int sector;
+    assert(file);
+    for (sector = 0; sector < 23; sector++) {
+        unsigned char *data = raw + 24;
+        memset(raw, 0, sizeof(raw));
+        if (sector == 16) {
+            data[0] = 1; memcpy(data + 1, "CD001", 5);
+            little(data + 158, 20); little(data + 166, 2048);
+        } else if (sector == 20) {
+            data[0] = 46;
+            little(data + 2, 21); little(data + 10, 4096);
+            data[32] = 13; memcpy(data + 33, "SLUS_014.11;1", 13);
+        } else if (sector == 21) memcpy(data, "\0S-X EXE", 8);
+        assert(fwrite(raw, 1, sizeof(raw), file) == sizeof(raw));
+    }
+    assert(!fclose(file));
+}
+
 static int change_dir(const char *path)
 {
 #ifdef _WIN32
@@ -84,7 +109,7 @@ static int change_dir(const char *path)
 
 int main(int argc, char **argv)
 {
-    char why[1024], saved[1024], buffer[1024];
+    char why[1024], saved[1024], buffer[1024], iso[1024];
     FILE *file;
     size_t length;
     unsigned char *exe;
@@ -117,6 +142,15 @@ int main(int argc, char **argv)
         make_disc(valid, 1);
         assert(GameFiles_SelectDisc(valid, why, sizeof(why)) == -1);
         assert(access(saved, F_OK));
+    } else if (!strcmp(argv[1], "wiped")) {
+        /* An image whose executable has the magic's first byte wiped is still
+         * the disc: it is taken, and its executable comes out of it. */
+        snprintf(iso, sizeof(iso), "%s/free-version.bin", root);
+        make_wiped_disc(iso);
+        assert(GameFiles_SelectDisc(iso, why, sizeof(why)) == 0);
+        assert(!strcmp(GameFiles_Disc(why, sizeof(why)), iso));
+        exe = GameFiles_ReadExecutable(iso, &length);
+        assert(exe && length == 4096 && !memcmp(exe, "\0S-X EXE", 8)); free(exe);
     } else if (!strcmp(argv[1], "write-failure")) {
         assert(!mkdir(saved, 0700));
         assert(GameFiles_SelectDisc(valid, why, sizeof(why)) == -1);

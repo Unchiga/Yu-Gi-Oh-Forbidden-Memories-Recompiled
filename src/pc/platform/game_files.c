@@ -5,6 +5,7 @@
 #include "game_files.h"
 #include "paths.h"
 #include "platform.h"
+#include "pc/guest/exe_magic.h"
 #include <dirent.h>
 #include <limits.h>
 #include <stdio.h>
@@ -107,7 +108,7 @@ static int is_the_disc(const char *path)
     int yes;
     if (!file) return 0;
     yes = find_executable(file, &lba, &size) && read_sector(file, lba, header) &&
-          !memcmp(header, "PS-X EXE", 8) &&
+          Memories_ExeMagicOk(header) &&
           read_sector(file, lba + (size - 1) / SECTOR, header);
     fclose(file);
     return yes;

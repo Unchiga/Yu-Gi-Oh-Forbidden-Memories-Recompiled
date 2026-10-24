@@ -47,6 +47,7 @@
 #include "platform.h"
 #include "paths.h"
 #include "game_files.h"
+#include "pc/guest/exe_magic.h"
 #include "pc/guest/image.h"
 #include <SDL3/SDL.h>
 #include <android/log.h>
@@ -221,7 +222,7 @@ static int is_the_disc(FILE *file, Sint64 *bytes)
     *bytes = (Sint64)(sector[80] | (unsigned)sector[81] << 8 | (unsigned)sector[82] << 16 |
                       (unsigned)sector[83] << 24) * 2352;
     return *bytes > 0 && GameFiles_FindFile(file, "SLUS_014.11", &lba, &size) && size > 2048 &&
-           size < (4u << 20) && GameFiles_ReadSector(file, lba, sector) && !memcmp(sector, "PS-X EXE", 8);
+           size < (4u << 20) && GameFiles_ReadSector(file, lba, sector) && Memories_ExeMagicOk(sector);
 }
 
 /* DiscPicker.java, through JNI: the picker started, the copy's box shown

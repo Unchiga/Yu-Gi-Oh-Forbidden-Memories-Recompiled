@@ -23,8 +23,16 @@ int main(void)
     entry = 0xfeedfaceu;
     CHECK(Memories_LoadTranslatedExe(memory, image, sizeof(image) - 1, &entry) == -1);
     image[0] = 0;
-    CHECK(Memories_LoadTranslatedExe(memory, image, sizeof(image), &entry) == -1);
+    /* A community "free version" image ships its executable with the magic's
+     * first byte wiped and the rest of the header unchanged: it loads. */
+    CHECK(Memories_LoadTranslatedExe(memory, image, sizeof(image), &entry) == 0);
     image[0] = 'P';
+    image[1] = 0;
+    CHECK(Memories_LoadTranslatedExe(memory, image, sizeof(image), &entry) == -1);
+    image[1] = 'S';
+    /* The loads that failed left the memory and the entry as they were. */
+    memset(memory->ram + 0x10000, 0x5a, 16);
+    entry = 0xfeedfaceu;
     Memories_WriteLE32(image + 0x1c, 0);
     CHECK(Memories_LoadTranslatedExe(memory, image, sizeof(image), &entry) == -1);
     Memories_WriteLE32(image + 0x1c, 1);
