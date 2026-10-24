@@ -119,6 +119,12 @@ class ControlError(RuntimeError):
     """The game answered "err ..."."""
 
 
+class GameHung(Exception):
+    """No reply within Game's command_timeout: the game was ended. Not a
+    RuntimeError or TimeoutError (wait_until's), which scenario loops catch
+    to go on with the same game; any later command raises it again."""
+
+
 def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -169,11 +175,19 @@ class Game:
     headless    no window (the default); a window shows each frame as it is stepped
     mods_dir    a mods folder of its own (MEMORIES_MODS_DIR); by default the
                 mods shipped beside the executable, as smoke.py runs them
+    command_timeout
+                seconds a command's reply may take (None: forever); past it
+                the game is taken for hung, ended, and GameHung raised
     """
 
     def __init__(self, executable: Path | str | None = None, out: Path | str | None = None,
                  settings: dict[str, object] | None = None, env: dict[str, str] | None = None,
-                 headless: bool = True, mods_dir: Path | str | None = None, timeout: float = 60.0):
+                 headless: bool = True, mods_dir: Path | str | None = None, timeout: float = 60.0,
+                 command_timeout: float | None = 300.0):
+        if command_timeout is not None and command_timeout <= 0:   # 0 would make the socket non-blocking
+            raise ValueError(f"command_timeout must be positive or None, not {command_timeout}")
+        self.command_timeout = command_timeout
+        self._hung = ""
         self.executable = Path(executable or os.environ.get("YFM_EXECUTABLE") or EXECUTABLE).resolve()
         if not self.executable.is_file():
             raise FileNotFoundError(f"no game at {self.executable} (build it with tools/pc/build_game32.py)")
@@ -233,25 +247,43 @@ class Game:
                 time.sleep(0.05)
                 continue
             connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            connection.settimeout(None)
+            connection.settimeout(self.command_timeout)
             return connection
         return None
 
     # The protocol: one line out, one line back.
 
     def command(self, line: str) -> str:
-        """Send one command; its reply without "ok". ControlError on "err"."""
-        self.connection.sendall(line.encode() + b"\n")
-        while b"\n" not in self._buffer:
-            chunk = self.connection.recv(1 << 20)
-            if not chunk:
-                raise ControlError(f"the game closed the channel after {line!r}; see {self.log_path}")
-            self._buffer += chunk
+        """Send one command; its reply without "ok". ControlError on "err",
+        GameHung past command_timeout."""
+        if self._hung:
+            raise GameHung(self._hung)
+        try:
+            self.connection.sendall(line.encode() + b"\n")
+            while b"\n" not in self._buffer:
+                chunk = self.connection.recv(1 << 20)
+                if not chunk:
+                    raise ControlError(f"the game closed the channel after {line!r}; see {self.log_path}")
+                self._buffer += chunk
+        except socket.timeout:   # a game that never answers is hung
+            _end(self.process)
+            self._hung = (f"no reply to {line!r} in {self.command_timeout} s (after frame {self.frame}, VBlank "
+                          f"{self.vblank}); the game was ended. {self.log_path} ends:\n{self._log_tail()}")
+            raise GameHung(self._hung) from None
         reply, self._buffer = self._buffer.split(b"\n", 1)
         text = reply.decode()
         if text.startswith("err"):
             raise ControlError(f"{line.split()[0]}: {text[4:]}")
         return text[3:] if text.startswith("ok ") else ""
+
+    def _log_tail(self, lines: int = 8) -> str:
+        """The log's last lines (a hung game's may be huge: only its end is read)."""
+        try:
+            with self.log_path.open("rb") as log:
+                log.seek(max(0, log.seek(0, os.SEEK_END) - 0x10000))
+                return b"".join(log.read().splitlines(True)[-lines:]).decode(errors="replace")
+        except OSError as error:
+            return f"(unreadable: {error})\n"
 
     def _stopped(self, reply: str) -> dict[str, object]:
         fields = reply.split()
@@ -738,7 +770,7 @@ class Game:
         """Ask the game to end, and wait for it."""
         try:
             self.command("quit")
-        except (ControlError, OSError):
+        except (ControlError, GameHung, OSError):
             pass
         self.close()
 

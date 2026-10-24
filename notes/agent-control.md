@@ -413,7 +413,12 @@ CI can hold retail inputs.
   default; Wine for a Windows build off Windows (`smoke.launcher`). A free
   port is picked and retried if the game cannot listen on it. The process
   ends with its `Game` (`with`, `quit()`, or when the object or the
-  interpreter goes), since a game whose client has gone runs on.
+  interpreter goes), since a game whose client has gone runs on. A command
+  whose reply takes over `command_timeout` seconds (300 by default, `None`
+  for no limit) takes the game for hung: it is ended and `GameHung` (not a
+  `RuntimeError` or `TimeoutError`, which scenario loops catch to go on)
+  names the command, the last frame and the log's last lines, again for any
+  later command, instead of the client waiting for good.
 - **Primitives:** `step`, `info`, `mode`, `resident(module)` (an overlay's
   identifier word at its load address), `pad`, `press(keys, hold=6,
   after=6)` and `presses` (names: `start`, `cross`, `up+cross`...),
