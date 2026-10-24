@@ -92,11 +92,44 @@ int GameFiles_FindFile(FILE *file, const char *path, unsigned *lba, unsigned *si
     return 1;
 }
 
-/* Where SLUS_014.11 is on the image, or 0 when the image is not that disc
- * (not raw, not ISO 9660, or another game). */
+/* The name the disc's own SYSTEM.CNF gives for the file it boots, without
+ * the directory and the ";1" (the retail disc says "BOOT2 = cdrom:\SLUS_014.11;1").
+ * A community image may rename it, and then the retail name is of no use. */
+static int boot_file_name(FILE *file, char *out, size_t size)
+{
+    unsigned lba, length;
+    unsigned char sector[SECTOR];
+    char text[SECTOR + 1];
+    const char *boot;
+    size_t i, n;
+    if (!GameFiles_FindFile(file, "SYSTEM.CNF", &lba, &length) || length < 8) return 0;
+    if (!read_sector(file, lba, sector)) return 0;
+    n = length < SECTOR ? length : SECTOR;
+    memcpy(text, sector, n);
+    text[n] = 0;
+    boot = strstr(text, "BOOT");
+    if (!boot) return 0;
+    boot = strchr(boot, '\\');
+    if (!boot) return 0;
+    boot++;
+    n = strcspn(boot, ";");
+    if (!n || n >= size) return 0;
+    for (i = 0; i < n; ++i) out[i] = boot[i];
+    out[n] = 0;
+    return 1;
+}
+
+/* Where the executable is on the image, or 0 when the image is not that disc
+ * (not raw, not ISO 9660, or another game). The retail disc's executable is
+ * SLUS_014.11; an image that renamed it says which one it boots in its own
+ * SYSTEM.CNF, which is where the PlayStation would look too. */
 static int find_executable(FILE *file, unsigned *lba, unsigned *size)
 {
-    return GameFiles_FindFile(file, EXECUTABLE, lba, size) && *size > SECTOR && *size < (4u << 20);
+    char name[64];
+    if (GameFiles_FindFile(file, EXECUTABLE, lba, size) && *size > SECTOR && *size < (4u << 20))
+        return 1;
+    if (!boot_file_name(file, name, sizeof(name))) return 0;
+    return GameFiles_FindFile(file, name, lba, size) && *size > SECTOR && *size < (4u << 20);
 }
 
 static int is_the_disc(const char *path)
@@ -245,6 +278,11 @@ unsigned char *GameFiles_ReadExecutable(const char *disc, size_t *size)
         }
     }
     fclose(file);
-    if (data) *size = length;
+    /* The sectors the file takes, not the bytes it holds: a community image
+     * may leave the last sector of its executable short (the zeros at the end
+     * of the image trimmed away), and the image's own header says how long
+     * the data is. The bytes past the file's end are read from the disc
+     * anyway. */
+    if (data) *size = (length + SECTOR - 1) / SECTOR * SECTOR;
     return data;
 }

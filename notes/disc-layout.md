@@ -57,3 +57,11 @@ The disc directory order places the executable and small data files first,
 followed by the large model archive, then XA audio and movie data at the end.
 This order and the exact LBAs must be retained when investigating streaming or
 seek behavior.
+
+The executable is the file the disc's own `SYSTEM.CNF` names
+(`BOOT = cdrom:\SLUS_014.11;1` above). A community image may rename it — the
+"Galaxy of Gods" image calls it `GOG_VNT.223`, and every data file of the
+disc with it — and the port follows the `SYSTEM.CNF` rather than the retail
+name. The image's data segment may also be shorter than its own header says
+(the zeros at its end trimmed away), so the port reports the sectors it
+read, not the bytes the file holds.

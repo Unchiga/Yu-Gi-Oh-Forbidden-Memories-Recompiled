@@ -46,6 +46,39 @@ static void little(unsigned char *p, unsigned value)
     p[0] = value; p[1] = value >> 8; p[2] = value >> 16; p[3] = value >> 24;
 }
 
+/* A disc whose executable is not called SLUS_014.11: a community image may
+ * rename it, and then the name comes from the disc's own SYSTEM.CNF, which
+ * is where the PlayStation would look too. */
+static void make_named_disc(const char *path)
+{
+    unsigned char raw[2352] = {0};
+    FILE *file = fopen(path, "wb");
+    int sector;
+    assert(file);
+    for (sector = 0; sector < 24; sector++) {
+        unsigned char *data = raw + 24;
+        memset(raw, 0, sizeof(raw));
+        if (sector == 16) {
+            data[0] = 1; memcpy(data + 1, "CD001", 5);
+            little(data + 158, 20); little(data + 166, 2048);
+        } else if (sector == 20) {
+            /* SYSTEM.CNF, then the executable it names. */
+            unsigned char *record = data;
+            record[0] = 46;
+            little(record + 2, 21); little(record + 10, 32);
+            record[32] = 13; memcpy(record + 33, "SYSTEM.CNF;1", 13);
+            record += 46;
+            record[0] = 48;
+            little(record + 2, 22); little(record + 10, 4096);
+            record[32] = 14; memcpy(record + 33, "GOG_VNT.223;1", 14);
+        } else if (sector == 21) {
+            memcpy(data, "BOOT = cdrom:\\GOG_VNT.223;1\nTCB = 4\n", 32);
+        } else if (sector == 22) memcpy(data, "PS-X EXE", 8);
+        assert(fwrite(raw, 1, sizeof(raw), file) == sizeof(raw));
+    }
+    assert(!fclose(file));
+}
+
 /* Minimal synthetic MODE2/2352 disc: ISO root + two-sector PS-X EXE.
  * No copyrighted game bytes are needed to exercise discovery and setup. */
 static void make_disc(const char *path, int malformed)
@@ -84,7 +117,7 @@ static int change_dir(const char *path)
 
 int main(int argc, char **argv)
 {
-    char why[1024], saved[1024], buffer[1024];
+    char why[1024], saved[1024], buffer[1024], iso[1024];
     FILE *file;
     size_t length;
     unsigned char *exe;
@@ -117,6 +150,16 @@ int main(int argc, char **argv)
         make_disc(valid, 1);
         assert(GameFiles_SelectDisc(valid, why, sizeof(why)) == -1);
         assert(access(saved, F_OK));
+    } else if (!strcmp(argv[1], "named")) {
+        /* An image that renamed its executable: the disc is found through
+         * the name in its own SYSTEM.CNF, and its executable comes out. */
+        snprintf(iso, sizeof(iso), "%s/galaxy.bin", root);
+        make_named_disc(iso);
+        assert(GameFiles_Setup(why, sizeof(why)) == 1);
+        assert(picks == 0);
+        assert(!strcmp(GameFiles_Disc(why, sizeof(why)), iso));
+        exe = GameFiles_ReadExecutable(iso, &length);
+        assert(exe && length == 4096 && !memcmp(exe, "PS-X EXE", 8)); free(exe);
     } else if (!strcmp(argv[1], "write-failure")) {
         assert(!mkdir(saved, 0700));
         assert(GameFiles_SelectDisc(valid, why, sizeof(why)) == -1);
