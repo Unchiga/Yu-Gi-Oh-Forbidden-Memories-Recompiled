@@ -473,7 +473,10 @@ if(BUILD_TESTING)
     add_test(NAME pc_starchip_award COMMAND memories_starchip_award_test)
     add_executable(memories_disc_test tests/pc/disc_test.c src/pc/sdk/libds.c ${MOD_TEST_SOURCES})
     target_include_directories(memories_disc_test PRIVATE src)
-    target_compile_definitions(memories_disc_test PRIVATE MEMORIES_PC _POSIX_C_SOURCE=200809L)
+    # The bigger models' arenas where a test process (32 bits without
+    # --large-address-aware, or under ASan) can map them.
+    target_compile_definitions(memories_disc_test PRIVATE MEMORIES_PC _POSIX_C_SOURCE=200809L
+                               MODEL_ARENA_BASE=0x50000000u)
     target_link_libraries(memories_disc_test PRIVATE m Threads::Threads)
     if(NOT MSVC)
         target_compile_options(memories_disc_test PRIVATE -Wall -Wextra -Werror)
@@ -486,6 +489,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_disc_capacity COMMAND memories_disc_test capacity)
     add_test(NAME pc_disc_failed_code COMMAND memories_disc_test failed-code)
     add_test(NAME pc_disc_models COMMAND memories_disc_test models)
+    add_test(NAME pc_disc_bigger_models COMMAND memories_disc_test bigger-models)
     # The test includes cards.c and relies on --gc-sections to drop the parts
     # that need the game and renderer. ELF linkers resolve symbols after GC;
     # the PE linker reports them before it, so this test is ELF-only.
@@ -558,7 +562,7 @@ if(BUILD_TESTING)
     # Two mods' "cards" in the load order the settings give, through the real
     # mod loader and cards.c's Cards_Build: once as the folders sort, once
     # with the second moved first (notes/more-cards.md).
-    add_executable(memories_cards_order_test tests/pc/cards_order_test.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_cards_order_test tests/pc/cards_order_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_order_test PRIVATE src)
     target_compile_definitions(memories_cards_order_test PRIVATE MEMORIES_PC)
@@ -572,7 +576,7 @@ if(BUILD_TESTING)
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods
     # redefining one id, and a name the game has no letters for.
-    add_executable(memories_card_types_test tests/pc/card_types_test.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_card_types_test tests/pc/card_types_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_card_types_test PRIVATE src)
     target_compile_definitions(memories_card_types_test PRIVATE MEMORIES_PC)

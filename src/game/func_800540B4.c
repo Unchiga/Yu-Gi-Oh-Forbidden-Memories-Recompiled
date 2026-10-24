@@ -139,6 +139,23 @@ static inline s32 Model_MirrorOffset(s32 index, s32 value, s32 offset)
     return value + offset;
 }
 
+#ifdef MEMORIES_PC
+#include "pc/cards/battle_models.h"
+/* A battle slot holding a mod's bigger model draws into its own RAM
+   (src/pc/cards/battle_models.h); any other draws as the console does. */
+static void sort_slot(s32 index);
+void func_800540B4(s32 index)
+{
+    s32 saved;
+    s32 begun = BattleModels_BeginSort(index, &saved);
+    if (begun < 0) {
+        return;
+    }
+    sort_slot(index);
+    BattleModels_EndSort(begun, saved);
+}
+#define func_800540B4 sort_slot
+#endif
 void func_800540B4(s32 index)
 {
     MATRIX zero;

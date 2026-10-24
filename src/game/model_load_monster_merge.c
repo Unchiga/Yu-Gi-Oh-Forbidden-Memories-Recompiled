@@ -54,6 +54,9 @@ s32 Model_LoadMonsterMerge(s32 slot, s32 model, s32 p2, s32 p3, s32 p4,
         SD_KeyOffVoiceSlots();
     }
     File_WaitForTransfers();
+#ifdef MEMORIES_PC
+    Cards_ModelLoads(slot);   /* a mod model's window, if it is one, is given below */
+#endif
     func_8004CB0C(slot, 0, 0, arg6);
     D_800F2C40[slot].field_E1D = flags;
     if (slot < 2) {
@@ -72,7 +75,8 @@ s32 Model_LoadMonsterMerge(s32 slot, s32 model, s32 p2, s32 p3, s32 p4,
         /* A mod's model: its record is read from the mod into this slot's
            window, past the disc (src/pc/mods/mods.c), and the drive reads
            it there as it would MODEL.MRG's, from where MODEL.MRG starts.
-           One that cannot be read (its file gone or changed since startup)
+           One that cannot be read (its file gone or changed since startup),
+           or a bigger one that does not fit (src/pc/cards/battle_models.h),
            loads as its base, a monster of the disc. */
         if (model >= CARDS_MODEL_MOD_FIRST) {
             s32 window = Cards_ModelWindow(slot, model);

@@ -672,7 +672,7 @@ of two records past the disc's end, one for each battle slot, which the
 drive reads as it reads `MODEL.MRG`) and by 3D Monsters. A mod that replaces
 `MODEL.MRG` whole (`data`) leaves them alone. A model whose file is gone or
 has changed since the game started fights as its `base` (as Blue-eyes
-without one) and is not drawn by 3D Monsters, until the next launch.
+without one), and 3D Monsters stands the base, until the next launch.
 
 Like data overrides, a mod with models needs a restart. Models take their
 places in the order the mods load, so a model's place is not fixed from one
@@ -703,9 +703,42 @@ none) is record number C - 1, from which take 50 when C - 1 is 350 or more,
 another 50 when it is 700 or more and another 1 when it is 721 or more; the
 record is the 276 sectors from `MODEL.MRG`'s start plus 276 times that number.
 
-A model is as big as the disc's are: 192 KiB of model data, the texture
-column of one slot, eight palettes. The disc's models use nearly all of the
-model data already.
+A record holds as much as the disc's models take: 192 KiB of model data,
+the texture column of one slot, eight palettes. The disc's models use
+nearly all of the model data already (Dark Magician 110 KiB, the biggest
+all 192 KiB with its work area).
+
+### Bigger models
+
+A model may have more model data than a record holds: its `file` is then
+the model data, in whole sectors, followed by the record's other 180
+sectors (from the 48 texture sectors on, as the table above lists them). A
+file longer than 276 sectors is taken as one: 277 to 692 sectors, so 97 to
+512 sectors (1 MiB) of model data, its first word the data's size as in a
+record. Nothing else of the manifest changes.
+
+```text
+record (276 sectors):  [ model data, 96 ][ the other stages, 180 ]
+bigger model:          [ model data, up to 512 ][ the other stages, 180 ]
+```
+
+The battle parses the model data in an arena of its slot's own past the
+console's RAM, and draws the model into the RAM that model data takes for a
+record (`src/pc/cards/battle_models.h`): 106 KiB of GPU packets a frame
+for that slot alone, against any opponent, besides the frame's shared 137
+KiB. The disc's models take 29 KiB of packets for most, 62 KiB for the
+biggest, about 40 bytes a polygon, so a bigger model has room for about 2,600
+polygons, some 1.7 times the biggest disc model's and 3.7 times most. Its limits
+are the game's own besides: 58 animated parts, 60 units, 65,535 normals.
+Before it first loads the game checks it against all of them; one that does
+not fit fights as its `base`, and the log (`MEMORIES_TRACE=mods`) says which
+limit it passed. The texture column and the palettes are a record's (bigger
+textures are the next step).
+
+3D Monsters stands a bigger model's `base` on the field: the field's ten
+monsters share the frame's packets, and a bigger model there is a follow-up.
+A save state taken with a bigger model in a battle slot carries its arena
+(3 MiB more for the two slots, written once a bigger model is added).
 
 ## Audio: songs, voices and sounds from files
 

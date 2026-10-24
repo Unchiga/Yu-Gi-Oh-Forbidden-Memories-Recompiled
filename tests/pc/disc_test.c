@@ -113,6 +113,62 @@ static int inspect_startup(const char *directory, unsigned rank, int (*part)(con
 }
 static void unload_pack(void) {}
 
+/* "bigger-models": a model bigger than a record, its model data and then the
+ * record's other stages. It has no sector; its window holds those stages
+ * after a first stage of zeros, and its model data goes to its slot's arena
+ * (at MODEL_ARENA_BASE, the test's own). A file that is not whole sectors,
+ * or has more model data than an arena takes, is refused. */
+static int bigger_models_case(void)
+{
+    enum { DATA = 136, TAIL = 180 };
+    static unsigned char big[(DATA + TAIL) * 2048], odd[RECORD + 100], huge[(512 + 1 + TAIL) * 2048], got[2048];
+    unsigned char *arena;
+    char path[1024];
+    int window, *windows;
+    unsigned size;
+    for (size_t i = 0; i < sizeof(big); i++) big[i] = (unsigned char)(i / 2048 + 1);
+    manifest("b-big", "{\"enabled\":true,\"models\":[{\"name\":\"big\",\"file\":\"big.bin\"}]}");
+    write_file("mods/b-big/big.bin", big, sizeof(big));
+    manifest("c-odd", "{\"enabled\":true,\"models\":[{\"name\":\"odd\",\"file\":\"odd.bin\"}]}");
+    write_file("mods/c-odd/odd.bin", odd, sizeof(odd));
+    manifest("d-huge", "{\"enabled\":true,\"models\":[{\"name\":\"huge\",\"file\":\"huge.bin\"}]}");
+    write_file("mods/d-huge/huge.bin", huge, sizeof(huge));
+    snprintf(path, sizeof(path), "%s/mods", root); assert(!setenv("MEMORIES_MODS_DIR", path, 1));
+    assert(!setenv("MEMORIES_USER_DIR", root, 1));
+    snprintf(path, sizeof(path), "%s/settings", root); assert(!setenv("MEMORIES_SETTINGS", path, 1));
+    Settings_Load(); Mods_Load();
+    assert(Mods_Active(find("b-big")));
+    assert(!Mods_Active(find("c-odd")) && strstr(Mods_Status(find("c-odd")), "not a bigger model"));
+    assert(!Mods_Active(find("d-huge")) && strstr(Mods_Status(find("d-huge")), "not a bigger model"));
+    assert(Mods_ModelCount() == 1 && Mods_ModelGeometry(0) == DATA * 2048);
+    /* No sector: a native extra reads its base instead (3D Monsters). */
+    assert(Mods_ModelSector(0) == -1 && Mods_ModelRead(0x1000000, 1, got) == 0);
+    arena = Mods_ModelArena(0, &size);
+    assert(arena && (uintptr_t)arena == 0x50000000u && size == 0x180000);
+    assert((uintptr_t)Mods_ModelArena(2, NULL) == 0x50000000u + 2 * 0x180000 && !Mods_ModelArena(3, NULL));
+    window = Mods_ModelWindow(1, 0);
+    assert(window >= 0 && Mods_ModelPending(1) && !Mods_ModelPending(0));
+    assert(Memories_DiscReadSectors(window + 5, 1, got) == 1 && got[0] == 0 && got[2047] == 0);
+    assert(Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == (unsigned char)(DATA + 1));
+    assert(Memories_DiscReadSectors(window + 275, 1, got) == 1 && got[0] == (unsigned char)(DATA + TAIL));
+    arena = Mods_ModelArena(1, NULL);
+    assert(arena[0] == 1 && arena[(DATA - 1) * 2048] == DATA && arena[DATA * 2048] == 0);
+    Mods_ModelParsed(1);
+    assert(!Mods_ModelPending(1));
+    /* A save state's load reads the window again but leaves the arena, which
+       the state brings as the game left it, and the pending flag with it. */
+    arena[0] = 0x5A;
+    Mods_ModelRebind();
+    assert(arena[0] == 0x5A && !Mods_ModelPending(1));
+    assert(Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == (unsigned char)(DATA + 1));
+    /* The slot loading something else lets the window go. */
+    Mods_ModelForget(1);
+    windows = Mods_ModelWindows(&size);
+    assert(windows[1] == -1 && Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == 0);
+    Mods_Shutdown();
+    return 0;
+}
+
 /* "models": two records of a mod's own, read from its files into the battle
  * slots' windows past the disc and the files it relocates, which the drive
  * reads; a file larger than a record is refused, and one changed since
@@ -216,6 +272,11 @@ int main(int argc, char **argv)
         model_file = 1;
         fixture(600);
         return models_case();
+    }
+    if (argc > 1 && !strcmp(argv[1], "bigger-models")) {
+        model_file = 1;
+        fixture(600);
+        return bigger_models_case();
     }
     fixture(capacity ? MEMORIES_DISC_MAX_LBA - 2 : 40);
     for (size_t i = 0; i < sizeof(replacement); i++) replacement[i] = (unsigned char)(i * 13 + 7);

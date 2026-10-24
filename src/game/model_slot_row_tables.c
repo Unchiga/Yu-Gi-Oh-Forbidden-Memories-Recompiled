@@ -391,6 +391,13 @@ void func_8004D58C(s32 arg0, u8 *arg1)
                 s[(u32)&((ModelSlot *)0)->field_BEC] = x;
                 g += 4;
                 i++;
+#ifdef MEMORIES_PC
+                /* field_BEC holds 64 bits; a mod's model may say more
+                   (the disc's say 45 at most). */
+                if (i >= 64) {
+                    break;
+                }
+#endif
             } while ((u32)i < *(u16 *)k);
         }
         *(s32 *)(t + (u32)&((ModelSlot *)0)->field_DD8) = *(s32 *)p3;

@@ -19,6 +19,9 @@
 #include "script_state.h"
 
 #include "model_load_step.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
+#endif
 
 static inline s16 load_phase(ModelSlot *slot)
 {
@@ -49,6 +52,17 @@ void func_80056828(s32 index)
             payload = D_80010004;
             break;
         }
+#ifdef MEMORIES_PC
+        /* A mod's bigger model, whose model data its slot's arena holds
+           (src/pc/cards/battle_models.h). Only for this load's own
+           payload: 3D Monsters parses its models in slot 0's place with
+           D_80010000 pointing at its own arenas. */
+        if (index < 2 && (u32)(__UINTPTR_TYPE__)payload == (index == 0 ? 0x80100000u : 0x80140000u) &&
+            Cards_ModelArena(index)) {
+            payload = Cards_ModelArena(index);
+            Cards_ModelParsed(index);
+        }
+#endif
         if (*(s32 *)payload != 0) {
             size = *(s32 *)payload;
         }
