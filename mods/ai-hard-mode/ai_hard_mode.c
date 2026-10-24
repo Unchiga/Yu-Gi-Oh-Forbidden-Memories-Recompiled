@@ -23,6 +23,7 @@
 #include "game/display_object_core.h"
 #include "pc/cards/cards.h"
 #include "pc/cards/monster_effects.h"
+#include "pc/cards/monster_effects_duel.h"
 #include "pc/cards/tables.h"
 #include "pc/mods/modapi.h"
 #include <string.h>
@@ -147,6 +148,7 @@ static HmCard snapshot(int index, int effective, int secret)
 {
     AiActiveCard a = gDuel_aActiveCards[index];
     HmCard c = {0};
+    int record = -1, side = D_8009B1D5;
     if (!a.card_id) return c;
     /* Redact before looking up metadata, including custom effect identities. */
     if (secret && !sees_hidden() && (a.flags & HM_DOWN)) {
@@ -155,6 +157,10 @@ static HmCard snapshot(int index, int effective, int secret)
         return c;
     }
     c = card_info(a.card_id);
+    if (index >= 1 && index <= 5) record = side * 15 + 5 + index - 1;
+    else if (index >= 56 && index <= 60) record = (side ^ 1) * 15 + 5 + index - 56;
+    if (record >= 0 && record < MONSTER_RECORDS && D_801A7AD8[record].card_id == a.card_id)
+        c.attacks_used = gMonsterEffects.attacks[record];
     c.flags = a.flags;
     if (effective) { c.attack = a.attack; c.defense = a.defense; }
     c.star = a.guardian_star;

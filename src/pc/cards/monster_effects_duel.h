@@ -110,6 +110,11 @@ void MonsterEffects_Battle(void);
  * combatant's post-damage battle-outcome effects before the presentation
  * consumes those flags. */
 void MonsterEffects_ApplyBattleOutcome(int attacker, int defender);
+/* Apply the forced survivor decisions to the battle scene's two result
+ * flags: negative destroys, positive restores, zero leaves retail's result. */
+void MonsterEffects_ApplyBattleSurvivors(signed char survivors[2]);
+/* -1 forced destruction, +1 forced survival, or 0 for retail's result. */
+int MonsterEffects_BattleSurvivorOverride(int side);
 /* Whether this side's lifted card is restored to its field record. */
 int MonsterEffects_RestoreBattleCard(int side, int retail_survives);
 /* Battle-rule queries and restoration hooks for piercing and repeat attacks. */

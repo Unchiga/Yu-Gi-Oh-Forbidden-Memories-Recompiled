@@ -67,14 +67,17 @@ void AiScript_FindKiller(void) {
         {
             unsigned attacker_effects = MonsterEffects_CombatFlags(c->card_id);
             unsigned defender_effects = MonsterEffects_CombatFlags(ref->card_id);
-            int forced = attacker_effects & (MONSTER_COMBAT_DESTROY_BOTH | MONSTER_COMBAT_DESTROY_NON_IMMUNE);
+            unsigned combined = attacker_effects | defender_effects;
+            int forced_kill = (combined & MONSTER_COMBAT_DESTROY_BOTH) ||
+                ((combined & MONSTER_COMBAT_DESTROY_NON_IMMUNE) &&
+                 !(defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE));
             /* A normal winning comparison cannot kill a battle-immune card.
              * Only destroy_both ignores that immunity; the conditional
              * destroy rule deliberately does not. */
             if ((defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) &&
-                !(attacker_effects & MONSTER_COMBAT_DESTROY_BOTH))
+                !(combined & MONSTER_COMBAT_DESTROY_BOTH))
                 continue;
-            if (forced && !(defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE)) d = 1;
+            if (forced_kill) d = 1;
         }
 #endif
         if (d > 0) {

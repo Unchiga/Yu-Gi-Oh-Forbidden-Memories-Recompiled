@@ -17,7 +17,7 @@ typedef struct {
     int id, effect, type, attack, defense, star, star2, flags;
     int worth; /* what a stat cut took off value(): a kill is worth as much */
     unsigned combat; /* MONSTER_COMBAT_* (mirrored here so fixtures stay standalone) */
-    int attack_limit; /* total attacks this turn; one for an ordinary monster */
+    int attack_limit, attacks_used; /* total and already-spent attacks this turn */
 } HmCard;
 typedef struct {
     HmCard own[5], enemy[5], back[5], enemy_back[5], hand[HM_HAND];

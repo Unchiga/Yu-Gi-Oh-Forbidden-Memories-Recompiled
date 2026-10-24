@@ -789,7 +789,13 @@ void MonsterEffects_ApplyBattleOutcome(int attacker, int defender)
      * retail-accurate while only destruction changes. */
     if (!S.ready) return;
     for (i = 0; i < 2; i++) {
-        if (!monster_zone(records[i]) || !(D_801A7AD8[records[i]].flags & DUEL_CARD_FLAG_OCCUPIED)) return;
+        /* Battle presentation lifts both field records with func_80024D34,
+         * which deliberately clears OCCUPIED until state 11 restores a
+         * survivor.  Their card ids remain, and TrackBattleParticipants
+         * recorded those exact cards before the lift. */
+        if (!monster_zone(records[i]) || records[i] != S.trap_battle_record[i] ||
+            D_801A7AD8[records[i]].card_id != S.fight_card[i])
+            return;
         card[i] = D_801A7AD8[records[i]].card_id;
     }
     for (i = 0; i < 2; i++) {
@@ -818,6 +824,19 @@ void MonsterEffects_ApplyBattleOutcome(int attacker, int defender)
         for (i = 0; i < 2; i++) if (!immune[i]) S.battle_survivor[i] = -1;
     /* This outcome overrides battle immunity, independent of list order. */
     if (destroy_all) S.battle_survivor[0] = S.battle_survivor[1] = -1;
+}
+
+void MonsterEffects_ApplyBattleSurvivors(signed char survivors[2])
+{
+    int i;
+    if (!survivors) return;
+    for (i = 0; i < 2; i++)
+        if (S.battle_survivor[i]) survivors[i] = S.battle_survivor[i];
+}
+
+int MonsterEffects_BattleSurvivorOverride(int side)
+{
+    return side >= 0 && side < 2 ? S.battle_survivor[side] : 0;
 }
 
 int MonsterEffects_RestoreBattleCard(int side, int retail_survives)

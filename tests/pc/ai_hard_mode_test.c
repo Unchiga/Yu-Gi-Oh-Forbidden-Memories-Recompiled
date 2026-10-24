@@ -9,7 +9,7 @@
 static int probes;
 static HmCard card(int id)
 {
-    HmCard c = {id, id, 0, 1000, 800, 1, 2, 0, 0, 0, 0};
+    HmCard c = {id, id, 0, 1000, 800, 1, 2, 0, 0, 0, 0, 0};
     if (id == 100) c.attack = c.defense = 3000;
     if (id == 101) c.attack = c.defense = 3500;
     return c;
@@ -45,7 +45,7 @@ static HmCard monster(int id, int atk, int def)
 }
 static HmCard magic(int id, int type)
 {
-    HmCard c = {id,id,type,0,0,0,0,0,0,0,0}; return c;
+    HmCard c = {id,id,type,0,0,0,0,0,0,0,0,0}; return c;
 }
 
 static void tactical_cases(void)
@@ -116,7 +116,7 @@ static void tactical_cases(void)
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 56);
 
     b = empty(); o = opts(); b.own[0] = monster(1,3000,2500);
-    b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN,0,0,0}; o.blind_risk = 0;
+    b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN,0,0,0,0}; o.blind_risk = 0;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
     o.blind_risk = 100;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 56 && d.score < HM_WIN);
@@ -130,7 +130,7 @@ static void spell_cases(void)
     assert(d.selection[9] == 6 && d.selection[10] == 6 && d.score >= HM_WIN);
     b.enemy_back[0] = magic(687,21);
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.result == 3);
-    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0,0,0};
+    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0,0,0,0};
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 6);
 
     b = empty(); b.back[0] = magic(342,20);
@@ -138,7 +138,7 @@ static void spell_cases(void)
     b.lp = 1000;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 6);
     b = empty(); b.back[0] = magic(672,20);
-    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0,0,0};
+    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0,0,0,0};
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 6);
 
     b = empty(); b.back[0] = magic(336,20); b.own[0] = monster(1,3000,2500);
@@ -215,17 +215,17 @@ static void hand_cases(void)
     /* A replacement Magic with an ai_effect acts like that analogue; without
      * one it is safely set rather than guessed as its obsolete retail card.
      * A trap analogue is still a reactive face-down card, never a spell. */
-    b.hand[0] = (HmCard){500,347,20,0,0,0,0,0,0,0,0};
+    b.hand[0] = (HmCard){500,347,20,0,0,0,0,0,0,0,0,0};
     d = Hm_PlanHand(&b,&o,&rules); assert(d.selection[0] == 11 && !d.selection[8]);
     b.hand[0].effect = 0;
     d = Hm_PlanHand(&b,&o,&rules); assert(d.selection[0] == 11 && d.selection[8]);
-    b.hand[0] = (HmCard){501,681,21,0,0,0,0,0,0,0,0};
+    b.hand[0] = (HmCard){501,681,21,0,0,0,0,0,0,0,0,0};
     d = Hm_PlanHand(&b,&o,&rules);
     assert(d.selection[0] == 11 && d.selection[6] == 6 && d.selection[8]);
     /* Retail trap analogues currently have no utility score. Keep this
      * deliberately cross-type fixture as a future-proof guard: even if a
      * Trap is assigned positive utility, it must still be set, never cast. */
-    b.hand[0] = (HmCard){502,347,21,0,0,0,0,0,0,0,0};
+    b.hand[0] = (HmCard){502,347,21,0,0,0,0,0,0,0,0,0};
     d = Hm_PlanHand(&b,&o,&rules); assert(d.selection[0] == 11 && d.selection[8]);
     b = empty(); b.hand_count = 1; b.hand[0] = magic(657,23);
     b.own[0] = monster(10,1800,1000); b.own[0].star = 2;
@@ -252,12 +252,21 @@ static void combat_effect_cases(void)
 {
     HmBoard b = empty(); HmOptions o = opts(); HmDecision d;
 
-    /* A battle-immune target is not treated as free removal. */
+    /* A battle-immune target is not treated as removal, but a winning
+     * attack-position battle still damages its owner. */
     b.own[0] = monster(1, 3000, 1000);
     b.enemy[0] = monster(2, 1000, 1000);
     b.enemy[0].combat = HM_COMBAT_BATTLE_IMMUNE;
     d = Hm_PlanField(&b, &o, &rules, 0);
-    assert(!d.selection[10]);
+    assert(d.selection[9] == 1 && d.selection[10] == 56);
+
+    /* Destruction rules are symmetric: a defending destroy_both monster
+     * still offers a worthwhile mutual-destruction attack. */
+    b = empty(); b.own[0] = monster(1, 1000, 1000);
+    b.enemy[0] = monster(2, 3000, 1000);
+    b.enemy[0].combat = HM_COMBAT_DESTROY_BOTH;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[10] == 56);
 
     /* A weak destroy_both monster can deliberately trade for a stronger one. */
     b = empty(); b.own[0] = monster(1, 1000, 1000);
@@ -283,6 +292,15 @@ static void combat_effect_cases(void)
         HmDecision twice = Hm_PlanField(&b, &o, &rules, 0);
         assert(twice.selection[9] == 1 && twice.selection[10] >= 56 && twice.selection[10] <= 57);
         assert(twice.score > d.score);
+    }
+
+    /* Previous attacks consume the same per-turn allowance as this search. */
+    b.own[0].attack_limit = 3;
+    {
+        HmDecision fresh = Hm_PlanField(&b, &o, &rules, 0);
+        b.own[0].attacks_used = 2;
+        d = Hm_PlanField(&b, &o, &rules, 0);
+        assert(fresh.score > d.score);
     }
 }
 

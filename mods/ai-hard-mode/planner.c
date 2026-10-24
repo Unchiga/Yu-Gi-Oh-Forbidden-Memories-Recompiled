@@ -114,11 +114,21 @@ static int emptied(const HmBoard *b, int attacker, unsigned dead, unsigned targe
     return hit;
 }
 
-/* Three bits per field slot count simulated attacks.  The public limit is at
- * most eight, while this bounded search never needs to represent an eighth
- * continuation. */
-static int attack_count(unsigned used, int slot) { return (used >> (slot * 3)) & 7; }
-static unsigned attack_used(unsigned used, int slot) { return used + (1u << (slot * 3)); }
+/* Four bits per field slot preserve attacks already spent before this plan.
+ * The data reader caps a card's configured allowance below sixteen. */
+static int attack_count(unsigned used, int slot) { return (used >> (slot * 4)) & 15; }
+static unsigned attack_used(unsigned used, int slot) { return used + (1u << (slot * 4)); }
+static unsigned attack_counts(const HmBoard *b)
+{
+    unsigned used = 0;
+    int i;
+    for (i = 0; i < 5; i++) {
+        int count = b->own[i].attacks_used;
+        if (count > 15) count = 15;
+        if (count > 0) used |= (unsigned)count << (i * 4);
+    }
+    return used;
+}
 
 /* Work out the post-damage battlefield.  The data effects intentionally run
  * after normal battle maths: an unconditional destroy wins over immunity;
@@ -173,7 +183,9 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned own_dead, uns
                 /* A forced mutual destruction is useful even against a
                  * stronger monster.  Otherwise do not spend an attack that
                  * neither damages nor removes anything. */
-                if (!e_dead && !(defense && (a.combat & HM_COMBAT_PIERCING) && diff > 0)) continue;
+                /* An immune attack-position monster can still take combat
+                 * damage for its owner even though it remains on the field. */
+                if (!e_dead && !(diff > 0 && (!defense || (a.combat & HM_COMBAT_PIERCING)))) continue;
                 if (diff == 0 && !defense && !s->o->trades && a_dead && e_dead) continue;
                 move.damage = defense ? ((a.combat & HM_COMBAT_PIERCING) && diff > 0 ? diff : 0) : max(0, diff);
                 move.removed = e_dead ? value(e) + 400 : 0;
@@ -233,7 +245,7 @@ static HmDecision attacks(const HmBoard *b, const HmOptions *o)
 {
     AttackSearch s = {b, o, {{0}, 0, 0, 0}, 0};
     Attack first = {0};
-    if (!b->pinned) attack_search(&s, 0, 0, 0, 0, 0, 0, first);
+    if (!b->pinned) attack_search(&s, attack_counts(b), 0, 0, 0, 0, 0, first);
     s.best.nodes = s.nodes;
     return s.best;
 }

@@ -53,13 +53,31 @@ void AiScript_FindBestAttack(void) {
             if ((f & DUEL_CARD_FLAG_USED_THIS_TURN) != 0) {
                 continue;
             }
-            /* Piercing attackers deliberately consider defenders too. */
 #ifdef MEMORIES_PC
-            if ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) != 0 &&
-                !(MonsterEffects_CombatFlags(r->card_id) & MONSTER_COMBAT_PIERCING)) {
+            {
+                unsigned attacker_effects = MonsterEffects_CombatFlags(r->card_id);
+                unsigned defender_effects = MonsterEffects_CombatFlags(e->card_id);
+                unsigned combined = attacker_effects | defender_effects;
+                int forced_kill = (combined & MONSTER_COMBAT_DESTROY_BOTH) ||
+                    ((combined & MONSTER_COMBAT_DESTROY_NON_IMMUNE) &&
+                     !(defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE));
+                /* Piercing and either combatant's forced-destruction rule
+                 * both make a defender a meaningful attack target. */
+                if ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) != 0 &&
+                    !(attacker_effects & MONSTER_COMBAT_PIERCING) && !forced_kill)
+                    continue;
+                if (want != 0 && (f & DUEL_CARD_FLAG_FACE_DOWN) != 0) continue;
+                v = r->attack - ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) ? e->defense : e->attack);
+                v += Duel_CalcGuardianStarMatchup(r->guardian_star, e->guardian_star);
+                /* Immunity prevents removal, not LP damage from winning an
+                 * attack-position battle.  destroy_both overrides it. */
+                if ((defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) &&
+                    !(combined & MONSTER_COMBAT_DESTROY_BOTH) && v <= 0)
+                    continue;
+                if (forced_kill && v <= 0) v = 1;
+            }
 #else
             if ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) != 0) {
-#endif
                 continue;
             }
             if (want != 0) {
@@ -69,18 +87,6 @@ void AiScript_FindBestAttack(void) {
             }
             v = r->attack - ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) ? e->defense : e->attack);
             v += Duel_CalcGuardianStarMatchup(r->guardian_star, e->guardian_star);
-#ifdef MEMORIES_PC
-            {
-                unsigned attacker_effects = MonsterEffects_CombatFlags(r->card_id);
-                unsigned defender_effects = MonsterEffects_CombatFlags(e->card_id);
-                int forced = attacker_effects & (MONSTER_COMBAT_DESTROY_BOTH | MONSTER_COMBAT_DESTROY_NON_IMMUNE);
-                if ((defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) &&
-                    !(attacker_effects & MONSTER_COMBAT_DESTROY_BOTH))
-                    continue;
-                /* A forced destruction can deliberately trade a weaker
-                 * monster for a stronger one; make it selectable. */
-                if (forced && !(defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) && v <= 0) v = 1;
-            }
 #endif
             if (gAiScript_State.attack_best_stat < v) {
                 gAiScript_State.attack_best_stat = v;
