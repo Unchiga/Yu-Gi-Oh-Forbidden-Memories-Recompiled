@@ -73,6 +73,29 @@ int main(void)
     CHECK(Memories_GpuCollect(&memory, 0x80094728u, out, 16, 2, &count) == MEMORIES_GPU_OK);
     CHECK(count == 8 && out[0] == 0x80000000u && out[3] == 0x00010002u && out[7] == 0);
     CHECK(Memories_GpuValidate(out, count) == MEMORIES_GPU_OK);
+    {
+        /* The mods' packet area (memory.h): a link past RAM is refused until
+         * a mod has one, then a chain runs from RAM into it and back. */
+        static uint8_t area[0x100];
+        uint8_t *a, *b;
+        put(0x480, 0x00800010u);                          /* empty OT entry -> the area */
+        put(0x500, 0x00ffffffu);                          /* the chain's end, in RAM */
+        Memories_WriteLE32(area + 0x10, 0x01000500u);     /* one word, then back to RAM */
+        Memories_WriteLE32(area + 0x14, 0xe1000220u);
+        CHECK(Memories_GpuCollect(&memory, 0x480, out, 16, 8, &count) == MEMORIES_GPU_ADDRESS);
+        Memories_SetModPackets(area, 0x00800000u, sizeof(area));
+        CHECK(Memories_GpuCollect(&memory, 0x480, out, 16, 8, &count) == MEMORIES_GPU_OK);
+        CHECK(count == 1 && out[0] == 0xe1000220u);
+        /* Handed out per frame, 4-aligned, never past the end. */
+        a = Memories_TakeModPackets(6);
+        b = Memories_TakeModPackets(8);
+        CHECK(a == area && b == area + 8);
+        CHECK(Memories_TakeModPackets(sizeof(area)) == NULL);
+        Memories_ModPacketsFrame();
+        CHECK(Memories_TakeModPackets(sizeof(area)) == area);
+        Memories_SetModPackets(NULL, 0, 0);
+        CHECK(Memories_GpuCollect(&memory, 0x480, out, 16, 8, &count) == MEMORIES_GPU_ADDRESS);
+    }
     puts("Retail packet traversal, validation and malformed-chain checks passed");
     return 0;
 }

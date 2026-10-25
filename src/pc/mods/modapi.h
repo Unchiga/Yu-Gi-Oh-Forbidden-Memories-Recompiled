@@ -63,6 +63,8 @@
  *      (manifest); no host layout or event change. host->disc_read also
  *      reads a mod's model at Cards_ModelSector, and
  *      AnimatedBattleModelProperties's model_id is unsigned (0x8000 up)
+ *  22  packet_area: room for a mod's polygons past the game's 140 KB frame
+ *      buffer (the mods' packet area, src/pc/memory.h)
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 
@@ -263,6 +265,16 @@ struct MemoriesModHost {
     int (*sound_add)(const MemoriesModHost *, const int16_t *samples, size_t frames, int channels, unsigned rate);
     int (*sound_play)(const MemoriesModHost *, int sound, int volume, int pan);
     void (*sound_free)(const MemoriesModHost *, int sound);
+
+    /* --- API 22 ---
+     * `bytes` of this frame's share of the mods' packet area (src/pc/memory.h),
+     * for polygons the game's own 140 KB frame buffer has no room for, or
+     * NULL (none left this frame, or a build without one: then use the game's
+     * buffer as before). Packets there link into the ordering tables like any
+     * other: sort into it by pointing the packet cursor D_800FE240 at it
+     * around GsSortPoly and the like, and putting the cursor back after. Good
+     * until the frame's list is drawn (DrawOTag): ask again each frame. */
+    void *(*packet_area)(const MemoriesModHost *, size_t bytes);
 };
 
 /* The symbol a mod's object defines, and its type. */
