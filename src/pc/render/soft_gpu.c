@@ -867,6 +867,23 @@ static int owns(const Vertex *a, const Vertex *b)
     return dy < 0 || (dy == 0 && dx > 0);
 }
 
+/* Narrow first..last, pixel offsets along a row, to those at which an edge
+ * function that is w at offset 0 and grows by d a pixel is >= 0. */
+static inline __attribute__((always_inline)) void row_span(int32_t w, int32_t d, int *first, int *last)
+{
+    if (d > 0) {
+        if (w < 0) {
+            int64_t from = (-(int64_t)w + d - 1) / d;
+            if (from > *first) *first = from > *last ? *last + 1 : (int)from;
+        }
+    } else if (w < 0) {
+        *first = *last + 1; /* never inside: it only falls (or stays) */
+    } else if (d < 0) {
+        int64_t to = (int64_t)w / -(int64_t)d;
+        if (to < *last) *last = (int)to;
+    }
+}
+
 static inline __attribute__((always_inline)) void triangle_with(Vertex a, Vertex b, Vertex c, const int flags)
 {
     int min_x, max_x, min_y, max_y, x, y, bias0, bias1, bias2;
@@ -920,20 +937,28 @@ static inline __attribute__((always_inline)) void triangle_with(Vertex a, Vertex
                                (int64_t)step_y[k] * (min_y - a.y));
         }
         for (y = min_y; y <= max_y; y++) {
-            int32_t w0 = row0, w1 = row1, w2 = row2;
-            int32_t r = row[0], g = row[1], blue = row[2], u = row[3], v = row[4];
-            for (x = min_x; x <= max_x; x++) {
-                if ((w0 | w1 | w2) >= 0) {
+            /* The row's pixels inside are one run, from the first to the
+             * last at which all three edge functions are >= 0: worked out
+             * from them rather than tested across the whole box, which
+             * half of a triangle's box is outside of. */
+            int first = 0, last = max_x - min_x;
+            row_span(row0, dx0, &first, &last);
+            row_span(row1, dx1, &first, &last);
+            row_span(row2, dx2, &first, &last);
+            if (first <= last) {
+                int32_t r = (int32_t)(row[0] + (int64_t)step_x[0] * first);
+                int32_t g = (int32_t)(row[1] + (int64_t)step_x[1] * first);
+                int32_t blue = (int32_t)(row[2] + (int64_t)step_x[2] * first);
+                int32_t u = (int32_t)(row[3] + (int64_t)step_x[3] * first);
+                int32_t v = (int32_t)(row[4] + (int64_t)step_x[4] * first);
+                for (x = min_x + first; x <= min_x + last; x++) {
                     plot(x, y, r >> FRACTION, g >> FRACTION, blue >> FRACTION, u >> FRACTION, v >> FRACTION, flags);
+                    r += step_x[0];
+                    g += step_x[1];
+                    blue += step_x[2];
+                    u += step_x[3];
+                    v += step_x[4];
                 }
-                w0 += dx0;
-                w1 += dx1;
-                w2 += dx2;
-                r += step_x[0];
-                g += step_x[1];
-                blue += step_x[2];
-                u += step_x[3];
-                v += step_x[4];
             }
             row0 += dy0;
             row1 += dy1;
