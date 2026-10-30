@@ -136,3 +136,9 @@ accept v0.3.0 variable MonsterEffect_DoNames grew by change_field at its end
 accept v0.1.2 record AnimatedBattleModelProperties reads model_id unsigned, for a mod's models from 0x8000
 accept v0.2.0 record AnimatedBattleModelProperties reads model_id unsigned, for a mod's models from 0x8000
 accept v0.3.0 record AnimatedBattleModelProperties reads model_id unsigned, for a mod's models from 0x8000
+
+# The touch controls' top row: TouchButton gained TOUCH_STATES and
+# TOUCH_SPEED after TOUCH_MENU, so TOUCH_BUTTONS, its count, is 17 where it
+# was 15. Every button keeps its value; the touch pad's calls are the
+# platform's, and no mod takes a TouchButton or sizes anything by the count.
+accept v0.3.0 enum TOUCH_BUTTONS counts the touch controls' top row
