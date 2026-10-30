@@ -2269,9 +2269,9 @@ void TexturePack_ReadStats(unsigned *images, unsigned *us, unsigned *max_us)
  * primitive the image it asked for before the next frame, as before, and
  * waits for it if need be (a replay with a pack checks the frames the
  * software GPU drew from those images, x64-data-mods). The wait is shorter:
- *  - the images one Service wants are read side by side, on DECODE_THREADS
- *    threads and on the main thread, which takes a waiting one itself
- *    (reads ahead leave one thread to these);
+ *  - the images one Service wants are read side by side, on the threads
+ *    decode_start starts and on the main thread, which takes a waiting one
+ *    itself (reads ahead leave one thread to these);
  *  - when a sheet's head is first given its image, the other readings of
  *    the same words (its other palettes) are read ahead, while nothing waits
  *    for them: the game draws them only later, the Build Deck's icons 6 s
@@ -2286,7 +2286,6 @@ void TexturePack_ReadStats(unsigned *images, unsigned *us, unsigned *max_us)
  * can run from the interrupt tick, where no lock may be taken. Made images
  * (TexturePack_AddMade) are still read where they are wanted (load_pixels).
  * No thread exists until a pack's image is first wanted. */
-#define DECODE_THREADS 3
 enum { DECODE_QUEUED, DECODE_RUNNING, DECODE_DONE };
 typedef struct Decode {
     struct Decode *next;
@@ -2306,7 +2305,7 @@ typedef struct Decode {
 static pthread_mutex_t decode_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t decode_work = PTHREAD_COND_INITIALIZER, decode_done = PTHREAD_COND_INITIALIZER;
 static Decode *decodes; /* oldest first: reads ahead are taken in the order asked */
-static int decode_threads, decode_threads_tried, decode_ahead_running;
+static int decode_threads, decode_threads_tried, decode_ahead_running, decode_ahead_most;
 static size_t decode_ahead_bytes, decode_ahead_limit;
 static unsigned decode_now_count, decode_ahead_count, decode_shared_count;
 
@@ -2381,7 +2380,8 @@ static void decode_finish(Decode *decode)
 }
 
 /* A job not started, those a Service waits for first. Reads ahead keep one
- * thread free, for what the next Service wants. */
+ * thread free, for what the next Service wants, and run at most
+ * decode_ahead_most at once (decode_start). */
 static Decode *decode_next(int only_now)
 {
     Decode *at, *ahead = NULL;
@@ -2390,7 +2390,7 @@ static Decode *decode_next(int only_now)
         if (at->now) return at;
         if (!ahead) ahead = at;
     }
-    return only_now || decode_ahead_running >= DECODE_THREADS - 1 ? NULL : ahead;
+    return only_now || decode_ahead_running >= decode_ahead_most ? NULL : ahead;
 }
 
 static void *decode_thread(void *unused)
@@ -2417,6 +2417,35 @@ static void *decode_thread(void *unused)
     return NULL;
 }
 
+/* How many threads read: one per core but the main thread's, 3 to 8. With
+ * the HD pack at Internal 4x, a duel's first two seconds read about fifty
+ * PNGs, one to five per Service, each about evenly inflate and resample.
+ * More threads shorten a Service that asks for several; one big sheet alone
+ * still takes what it takes on one core (80-100 ms on a Samsung A22), so
+ * all the waits together hardly change. Never fewer than 3, so a 2-4 core
+ * phone reads as it did. At most 8: a read holds its whole RGBA image (4 MB
+ * for a 1024x1024 sheet, 16 for 2048x2048) while it runs, and a 32-bit
+ * game has 2-4 GB for everything. The count configured, not online: a
+ * phone's idle cores can be off the moment the threads start, and they are
+ * started once. MEMORIES_PACK_THREADS sets it, 2 to 16. */
+static int decode_thread_count(void)
+{
+    const char *named = getenv("MEMORIES_PACK_THREADS");
+    long cores;
+    if (named && *named) {
+        long wanted = strtol(named, NULL, 10);
+        return wanted < 2 ? 2 : wanted > 16 ? 16 : (int)wanted;
+    }
+#ifdef _WIN32
+    cores = pthread_num_processors_np();
+#elif defined(_SC_NPROCESSORS_CONF) /* macOS has it only with _DARWIN_C_SOURCE */
+    cores = sysconf(_SC_NPROCESSORS_CONF);
+#else
+    cores = 0;
+#endif
+    return cores - 1 < 3 ? 3 : cores - 1 > 8 ? 8 : (int)(cores - 1);
+}
+
 /* The threads, the first time a pack's image is wanted. MEMORIES_PACK_READ_AHEAD
  * (megabytes, 0 none) sets how much may be read ahead; read here, on the
  * main thread. None started: the main thread reads all a Service wants. */
@@ -2424,9 +2453,10 @@ static void decode_start(void)
 {
     const char *named;
     sigset_t all, previous;
-    int i;
+    int i, wanted;
     if (decode_threads_tried) return;
     decode_threads_tried = 1;
+    wanted = decode_thread_count();
     named = getenv("MEMORIES_PACK_READ_AHEAD");
     /* A 32-bit game has 2-4 GB to hold every image it has read; a phone
      * holds the pack's images beside them and is the app the system ends
@@ -2445,16 +2475,23 @@ static void decode_start(void)
     /* The timer signal is the game's interrupt and must stay on the main thread. */
     sigfillset(&all);
     pthread_sigmask(SIG_BLOCK, &all, &previous);
-    for (i = 0; i < DECODE_THREADS; i++) {
+    for (i = 0; i < wanted; i++) {
         pthread_t thread;
         if (pthread_create(&thread, NULL, decode_thread, NULL)) break;
         pthread_detach(thread);
         decode_threads++;
     }
     pthread_sigmask(SIG_SETMASK, &previous, NULL);
-    if (decode_threads < DECODE_THREADS)
+    /* Reads ahead: 2 at once, as beside 3 threads before there were more,
+     * so the threads added go to what a Service waits for and a read ahead
+     * does not take a core from the game; one thread is kept from them,
+     * unless it is the only one (the main thread then reads what waits). */
+    pthread_mutex_lock(&decode_lock);
+    decode_ahead_most = decode_threads > 2 ? 2 : decode_threads > 1 ? decode_threads - 1 : 1;
+    pthread_mutex_unlock(&decode_lock);
+    if (decode_threads < wanted)
         fprintf(stderr, "memories-pc: texture pack: %d of %d read-ahead threads started\n", decode_threads,
-                DECODE_THREADS);
+                wanted);
 }
 
 static int decode_same(const Decode *decode, const Entry *entry)
