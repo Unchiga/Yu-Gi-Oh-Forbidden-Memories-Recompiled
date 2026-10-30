@@ -28,6 +28,10 @@ API = 24
 # clang 21 or later (x64 gate: clang 12 miscompiles __ptr32 silently); NDK
 # r29's is 21.
 TRIPLES = {"x86": "i686-linux-android", "arm64-v8a": "aarch64-linux-android"}
+# What <abi>/.complete holds once the libraries are built as this script
+# builds them, for every ABI; a folder built before ("done": libpng without
+# NEON on arm64-v8a, before 30 October 2026) is built again.
+STAMP = "2\n"
 # The ABIs the game builds for, with their own compiler flags: the indirect
 # branch thunks (src/pc/guest/branch_thunks.c) and the rest. x86 reuses every
 # i386 piece of the desktop port.
@@ -80,13 +84,20 @@ def main(abi):
         sys.exit(f"unknown Android ABI {abi}; known: {', '.join(TRIPLES)}")
     stamp = os.path.join(OUT, abi, ".complete")
     if os.path.exists(stamp):
-        return
+        with open(stamp) as handle:
+            if handle.read() == STAMP:
+                return
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import fetch_tools
     fetch_tools.ensure("cmake")
     fetch_tools.ensure("ninja")
+    # NEON on arm64-v8a (libpng's own default there; every arm64 CPU has it):
+    # the row filters (paeth, average) and the palette expansion in vector
+    # code, the same pixels. A Samsung A22's small cores read the HD pack's
+    # PNGs in 13.6 s instead of 17.7 (30 October 2026). Passed explicitly:
+    # the build folder keeps an older "off" in its CMake cache.
     cmake(abi, "libpng", build_win32_deps.fetch("libpng"), "-DPNG_SHARED=OFF", "-DPNG_STATIC=ON", "-DPNG_TESTS=OFF",
-          "-DPNG_TOOLS=OFF", "-DPNG_FRAMEWORK=OFF", "-DPNG_ARM_NEON=off")
+          "-DPNG_TOOLS=OFF", "-DPNG_FRAMEWORK=OFF", "-DPNG_ARM_NEON=" + ("on" if abi == "arm64-v8a" else "off"))
     cmake(abi, "freetype", build_win32_deps.fetch("freetype"), "-DBUILD_SHARED_LIBS=OFF", "-DFT_DISABLE_ZLIB=ON",
           "-DFT_DISABLE_BZIP2=ON", "-DFT_DISABLE_PNG=ON", "-DFT_DISABLE_HARFBUZZ=ON", "-DFT_DISABLE_BROTLI=ON")
     build_linux_sysroot.fetch_sdl()
@@ -99,7 +110,7 @@ def main(abi):
         shutil.copytree(os.path.join(build_linux_sysroot.SDL_SOURCE, "android-project", "app", "src", "main", "java"),
                         java)
     with open(stamp, "w") as handle:
-        handle.write("done\n")
+        handle.write(STAMP)
     print(f"android deps ({abi}): {os.path.join(OUT, abi)}")
 
 
