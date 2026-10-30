@@ -33,6 +33,7 @@
 #include "pc/platform/settings.h"
 #include "pc/compat/signal.h"
 #include "pc/debug/log.h"
+#include "pc/sdk/display.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
 #include <stdio.h>
@@ -2203,8 +2204,8 @@ static void group_runs(void)
 }
 
 /* --- fast HD pack drawing ------------------------------------------------
- * Video > Fast HD pack drawing (`hd_fast`, off by default). With a texture
- * pack at Internal 2x and up, nearly all a screen draws can be pack images
+ * Video > Fast HD pack drawing (`hd_fast`, Automatic by default). With a
+ * texture pack at Internal 2x and up, nearly all a screen draws can be pack images
  * (the duel field: 2.6 of 2.7 Mpx a frame at 4x), and the program above
  * spends ten cycles a pixel on each: the texel's place in the pack's maps,
  * its entry, the image's pixel. On a Samsung A22 (Mali-G52) that held a
@@ -2231,7 +2232,7 @@ typedef struct LeanHead {
     int count, whole;   /* whole: every word of the rectangle, in place */
 } LeanHead;
 static GLuint lean_program;
-static int lean_tried, hd_fast;
+static int lean_tried, hd_fast, pack_drawn;
 static GLint ul_picture_size, ul_pack_entry, ul_pack_size, ul_pack_origin, ul_pack;
 static LeanHead *lean_heads;
 static int lean_head_count;
@@ -2525,6 +2526,53 @@ static void lean_draw(size_t r)
     if (stretches > 1) stats.draws += (unsigned)(stretches - 1);
 }
 
+/* Whether this replay draws the pack's images with lean_program: the
+ * setting on (1), or Automatic (2, the default) once the frames fell behind
+ * on the GPU's account where a pack was drawn. Every 120 frames the game's
+ * own times (Memories_FrameStats, averages over those frames) are looked
+ * at: the game's work and the present together past 17.5 ms (it does not
+ * hold 60 frames a second), the present the longer of the two (it waits
+ * for the GPU; a 3D battle waiting for the CPU does not count), and a pack
+ * drawn in half the replays, two windows running, turn it on, for as long
+ * as the setting and the internal resolution stay. A window with a present
+ * past 40 ms is a screen reading its pack's images, which the present waits
+ * for (a duel's first seconds at 2x: 12 ms a frame, 199 at most), and
+ * counts for nothing. A Samsung A22 with the HD pack at 4x: game 9.7 ms,
+ * present 10.7; at 2x, past the reads, 8.0 and 5.4, left as it is. A
+ * machine that keeps up never sees it, and turning it off again would mean
+ * falling behind again to find out, so it stays. */
+static int fast_auto, fast_mode = -1, fast_scale;
+static unsigned fast_window, fast_pack_frames, fast_behind; /* fast_window: FrameStats' windows seen */
+
+static int fast_wanted(void)
+{
+    int mode = Settings_Get(SET_HD_FAST);
+    const FrameStats *stats = Memories_FrameStats();
+    if (mode != fast_mode || scale != fast_scale) {
+        fast_mode = mode;
+        fast_scale = scale;
+        fast_auto = 0;
+        fast_behind = 0;
+        fast_window = stats->windows;
+        fast_pack_frames = 0;
+    }
+    fast_pack_frames += pack_drawn != 0;
+    pack_drawn = 0;
+    if (stats->windows != fast_window) { /* a window just counted: its times, and the replays since the last */
+        int behind = fast_pack_frames >= 60 && scale >= 2 && stats->game_us + stats->present_us > 17500 &&
+                     stats->present_us > stats->game_us;
+        if (mode == 2 && !fast_auto && stats->present_max_us <= 40000) fast_behind = behind ? fast_behind + 1 : 0;
+        if (fast_behind >= 2 && !fast_auto) {
+            fast_auto = 1;
+            fprintf(stderr, "memories-pc: fast HD pack drawing turned on: game %u us, present %u us a frame at %dx\n",
+                    stats->game_us, stats->present_us, scale);
+        }
+        fast_window = stats->windows;
+        fast_pack_frames = 0;
+    }
+    return mode == 1 || (mode == 2 && fast_auto);
+}
+
 /* The primitives gathered so far, in order, into the picture. */
 static void flush_runs(void)
 {
@@ -2536,6 +2584,7 @@ static void flush_runs(void)
         return;
     }
     group_runs();
+    for (i = 0; i < run_count && !pack_drawn; i++) pack_drawn = runs[i].pack > 0;
     sync_banks();
     sync_pack();
     if (hd_text || hd_hud || opponent_name) sync_glyphs();
@@ -2935,7 +2984,7 @@ int GlPicture_Replay(void)
     capture_uniform();
     gl_Uniform1i(u_tex_xbr, Settings_Get(SET_XBR));
     hd_text = HdText_Enabled();
-    hd_fast = Settings_Get(SET_HD_FAST) != 0;
+    hd_fast = fast_wanted();
     set_samples(Settings_Get(SET_MSAA));
     hd_hud = HdText_HudEnabled();
     opponent_name = HdText_NameEnabled();

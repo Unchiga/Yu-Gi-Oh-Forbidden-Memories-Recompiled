@@ -2370,10 +2370,18 @@ carry names, and a card a mod adds reads like the rest.
 
 ### Fast HD pack drawing
 
-Video > Fast HD pack drawing (`hd_fast`, `MEMORIES_HD_FAST=1`, off by
-default) draws a texture pack's images with a shorter program at internal
-2x and up (`gl_picture.c`, `lean_program`). With a pack, nearly all a
-screen draws can be pack images (the duel field: 2.6 of 2.7 Mpx a frame at
+Video > Fast HD pack drawing (`hd_fast`, `MEMORIES_HD_FAST`: 0 Off, 1 On,
+2 Automatic, the default) draws a texture pack's images with a shorter
+program at internal 2x and up (`gl_picture.c`, `lean_program`).
+Automatic turns it on once the game falls behind on the GPU's account
+while a pack is drawn: two windows of 120 frames running in which the
+game's work and the present take more than 17.5 ms a frame together, the
+present the longer, a pack drawn in half the frames, and no frame held
+past 40 ms (a screen reading its pack's images). It stays on while the
+setting and the internal resolution stay. A machine that holds 60 never
+sees it: the Samsung A22 turns it on at 4x with the HD pack, not at 2x.
+
+With a pack, nearly all a screen draws can be pack images (the duel field: 2.6 of 2.7 Mpx a frame at
 4x), and the picture's program spends about ten cycles a pixel on each,
 finding the texel's entry and place in the pack's maps; on a Samsung A22
 (Mali-G52) a duel ran at 47 fps at 4x with the Forbidden Memories HD pack,
