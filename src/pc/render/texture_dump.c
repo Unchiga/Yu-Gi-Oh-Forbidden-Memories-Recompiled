@@ -411,9 +411,15 @@ void TextureDump_Moved(int sx, int sy, int dx, int dy, int w, int h)
     if (TextureDump_Follow) TextureDump_Follow(sx, sy, dx, dy, w, h);
 }
 
+/* TextureDump_Touched's calls. The game clock's tick may upload in the
+ * middle of a clear (MEMORIES_CLOCK=interrupt), and the clear then leaves
+ * every block of it not clean. */
+static volatile unsigned touches;
+
 void TextureDump_Touched(int x, int y, int w, int h)
 {
     int j, b, first = (x & (SOFT_GPU_WIDTH - 1)) / TEXTURE_CLEAN_WORDS, last;
+    touches++;
     if (w <= 0 || h <= 0) return;
     last = w >= SOFT_GPU_WIDTH ? first + TEXTURE_CLEAN_COLUMNS - 1
                                : ((x & (SOFT_GPU_WIDTH - 1)) + w - 1) / TEXTURE_CLEAN_WORDS;
@@ -444,7 +450,10 @@ static void clean_whole(int x, int y, int w, int h)
 void TextureDump_Cleared(int x, int y, int w, int h)
 {
     int j;
+    unsigned touched;
     if (!TextureDump_Tags) return;
+    touched = touches;
+    __atomic_signal_fence(__ATOMIC_SEQ_CST);
     for (j = 0; j < h; j++) {
         /* Clear contiguous spans, retaining VRAM's horizontal wrap. This
          * also avoids resolving each cell in the translated backend. */
@@ -468,6 +477,8 @@ void TextureDump_Cleared(int x, int y, int w, int h)
      * marked after it. */
     if (TextureDump_Forget) TextureDump_Forget(x, y, w, h);
     clean_whole(x, y, w, h);
+    __atomic_signal_fence(__ATOMIC_SEQ_CST);
+    if (touches != touched) TextureDump_Touched(x, y, w, h);
 }
 
 size_t TextureDump_TagRuns(uint32_t *runs, size_t max)
@@ -494,6 +505,9 @@ size_t TextureDump_TagRuns(uint32_t *runs, size_t max)
 void TextureDump_TagsLoaded(const uint32_t *runs, size_t count)
 {
     size_t i, at = 0, words = (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT;
+    /* The translated backend's state holds the tags and the shadow, not
+     * which blocks are clean: what it restored is cleared everywhere. */
+    TextureDump_Touched(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     TextureDump_Cleared(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     if (!TextureDump_Tags) return;
     TextureDump_Touched(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);

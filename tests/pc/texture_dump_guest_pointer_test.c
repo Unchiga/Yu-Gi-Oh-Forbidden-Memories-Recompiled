@@ -94,8 +94,14 @@ int main(void)
      * range, not their native host address, as the stable provenance key. */
     for (size_t i = 0; i < 64; i++) registered_pixels[i] = (uint16_t)(0xabcd - i * 19u);
     TextureDump_Delivered((const void *)(uintptr_t)registered_region.guest, byte_count, 9, 21);
+    TextureDump_Cleared(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* every block clean */
     TextureDump_Loaded(80, 90, 8, 8, registered_pixels);
     assert(TextureDump_Tags[90 * SOFT_GPU_WIDTH + 80] == 9 * 2048u + 22u);
+    /* An upload and a move mark what they tag: a clear finds them. */
+    TextureDump_Moved(80, 90, 300, 200, 8, 8);
+    assert(TextureDump_Tags[200 * SOFT_GPU_WIDTH + 300] == 9 * 2048u + 22u);
+    TextureDump_Cleared(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
+    assert(TextureDump_Tags[90 * SOFT_GPU_WIDTH + 80] == 0 && TextureDump_Tags[200 * SOFT_GPU_WIDTH + 300] == 0);
     /* Bulk clearing must preserve wrapping and leave adjacent cells intact. */
     assert(TextureDump_EnableShadow());
     for (int y = 0; y < SOFT_GPU_HEIGHT; y++) {

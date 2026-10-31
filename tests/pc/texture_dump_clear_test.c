@@ -13,7 +13,7 @@
 static uint32_t tags[WORDS + 2];
 static uint16_t shadow[WORDS * 4 + 2];
 static unsigned char cleared[WORDS];
-static int forget_calls, expected_x, expected_y, expected_w, expected_h;
+static int forget_calls, expected_x, expected_y, expected_w, expected_h, touch_in_forget;
 
 const uint16_t *SoftGpu_Vram(void) { return NULL; }
 
@@ -22,6 +22,7 @@ static void forget(int x, int y, int w, int h)
     assert(x == expected_x && y == expected_y);
     assert(w == expected_w && h == expected_h);
     forget_calls++;
+    if (touch_in_forget) TextureDump_Touched(500, 400, 1, 1); /* the clock's tick, uploading in the middle */
 }
 
 static void check_clear(int x, int y, int w, int h, int with_shadow)
@@ -91,6 +92,20 @@ static void check_clean(void)
     }
     TextureDump_Touched(5, 9, SOFT_GPU_WIDTH, 1);
     for (int block = 0; block < TEXTURE_CLEAN_COLUMNS; block++) assert(!clean(block, 9));
+    /* An upload in the middle of a clear leaves none of its blocks clean. */
+    expected_x = 0; expected_y = 20; expected_w = SOFT_GPU_WIDTH; expected_h = 2;
+    touch_in_forget = 1;
+    TextureDump_Cleared(0, 20, SOFT_GPU_WIDTH, 2);
+    touch_in_forget = 0;
+    for (int block = 0; block < TEXTURE_CLEAN_COLUMNS; block++) assert(!clean(block, 20) && !clean(block, 21));
+    /* A state's VRAM holds tags and shadow the clean blocks do not know of. */
+    expected_y = 0; expected_h = SOFT_GPU_HEIGHT;
+    TextureDump_Cleared(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
+    tag[100 * SOFT_GPU_WIDTH + 300] = 11;
+    shadow[1 + (100 * SOFT_GPU_WIDTH + 300) * 4] = 17;
+    TextureDump_TagsLoaded(NULL, 0);
+    assert(tag[100 * SOFT_GPU_WIDTH + 300] == 0 && shadow[1 + (100 * SOFT_GPU_WIDTH + 300) * 4] == 0);
+    assert(!clean(4, 100));
 }
 
 int main(void)
