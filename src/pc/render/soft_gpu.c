@@ -131,8 +131,8 @@ void SoftGpu_StateWords(uint32_t words[6])
     words = GuestRuntime_ResolveData(words, 6 * sizeof(*words));
 #endif
     uint32_t bank = 0, b;
-    for (b = 1; b < SOFT_GPU_BANKS; b++) {
-        if (banks[b] && texture_source == banks[b]) bank = b; /* bits 11-14, as set_page reads them */
+    for (b = 1; b < 16; b++) { /* an E1 word names banks 0-15 only (set_page): 16-31 come back as VRAM */
+        if (banks[b] && texture_source == banks[b]) bank = b;
     }
     words[0] = 0xe1000000u | (uint32_t)(gpu.page_x / 64) | ((uint32_t)(gpu.page_y / 256) << 4) |
                ((uint32_t)gpu.blend << 5) | ((uint32_t)gpu.depth << 7) | ((uint32_t)gpu.dither << 9) | (bank << 11);
@@ -1017,9 +1017,10 @@ static void set_position(Vertex *vertex, uint32_t word)
     vertex->y = (((int32_t)(word << 5)) >> 21) + gpu.offset_y;
 }
 
-static void set_page(uint32_t value)
+/* `polygon`: a polygon's page word, whose bit 10 names banks 16-31 (soft_gpu.h). */
+static void set_page(uint32_t value, int polygon)
 {
-    int bank = (int)((value >> 11) & (SOFT_GPU_BANKS - 1));
+    int bank = (int)((value >> 11) & 15) | (polygon ? (int)((value >> 10) & 1) << 4 : 0);
     texture_source = bank && banks[bank] ? banks[bank] : vram;
     texture_bank = texture_source == vram ? 0 : bank;
     gpu.page_x = (value & 0xf) * 64;
@@ -1066,7 +1067,7 @@ static size_t polygon(const uint32_t *words, size_t count)
                 gpu.clut_x = ((word >> 16) & 0x3f) * 16;
                 gpu.clut_y = (word >> 22) & 0x1ff;
             } else if (i == 1) {
-                set_page(word >> 16);
+                set_page(word >> 16, 1);
             } else if (i == 2) {
                 fade = (int)(word >> 16);
             }
@@ -1348,7 +1349,7 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
         } else if (command >= 0xc0 && command < 0xe0) {
             used = count - at >= 3 ? 3 : 0;
         } else if (command == 0xe1) {
-            set_page(word);
+            set_page(word, 0);
             gpu.dither = (word >> 9) & 1;
         } else if (command == 0xe2) {
             gpu.window_mask_x = word & 0x1f;

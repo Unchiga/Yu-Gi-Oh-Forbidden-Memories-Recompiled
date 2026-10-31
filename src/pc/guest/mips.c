@@ -28,6 +28,7 @@
 #include "pc/debug/log.h"
 #include "pc/debug/crash.h"
 #include <setjmp.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,9 +120,13 @@ static int ensure_stack(void)
     return 0;
 }
 
+/* The last run's instructions, for the trace (Memories_MipsTry), failed runs too. */
+static unsigned try_steps;
+
 static void fail(State *s, uint32_t pc, const char *what, uint32_t detail)
 {
     char text[160];
+    try_steps = s->steps;
     fprintf(stderr, "memories-pc: MIPS overlay: %s (0x%08x at 0x%08x)\n", what, detail, pc);
     if (s->escape) {
         longjmp(*s->escape, 1);
@@ -319,7 +324,111 @@ static void delay(State *s, uint32_t pc)
     plain(s, pc);
 }
 
+/* MEMORIES_TRACE=frames: what the interpreter costs (Memories_MipsFrame).
+ * Only the outermost run counts: one a native routine it called starts is
+ * inside it. `regions`: the slots' control modules (A, B), the rest of the
+ * battle's overlay range, the credits. `modules`: the modules that took the
+ * most instructions, by the identifier Memories_MipsAttribute named. */
+#define TRACE_MODULES 6
+static struct {
+    unsigned calls, instructions, us;
+} frame_cost, window_cost;
+static unsigned worst_instructions, worst_us, region_instructions[4], depth, nested_steps;
+static struct {
+    uint32_t identifier;
+    unsigned instructions, calls;
+} modules[TRACE_MODULES];
+static uint32_t attributed;
+
+void Memories_MipsAttribute(uint32_t identifier) { attributed = identifier; }
+
+static int region_of(uint32_t address)
+{
+    if (address >= 0x8013A000u && address < 0x8013C000u) return 0;
+    if (address >= 0x8017A000u && address < 0x8017C000u) return 1;
+    if (address >= 0x80180000u && address < 0x80188000u) return 3;
+    return 2;
+}
+
+static void count_module(uint32_t identifier, unsigned instructions)
+{
+    int i, least = 0;
+    for (i = 0; i < TRACE_MODULES; i++) {
+        if (modules[i].calls && modules[i].identifier == identifier) break;
+        if (modules[i].instructions < modules[least].instructions) least = i;
+    }
+    if (i == TRACE_MODULES) {   /* replace the least: a rough top list over the window */
+        i = least;
+        modules[i].identifier = identifier;
+        modules[i].instructions = modules[i].calls = 0;
+    }
+    modules[i].instructions += instructions;
+    modules[i].calls++;
+}
+
+void Memories_MipsFrame(unsigned frames)
+{
+    window_cost.calls += frame_cost.calls;
+    window_cost.instructions += frame_cost.instructions;
+    window_cost.us += frame_cost.us;
+    if (frame_cost.instructions > worst_instructions) worst_instructions = frame_cost.instructions;
+    if (frame_cost.us > worst_us) worst_us = frame_cost.us;
+    memset(&frame_cost, 0, sizeof(frame_cost));
+    if (frames && window_cost.calls) {
+        char top[256] = "";
+        size_t used = 0;
+        int i;
+        for (i = 0; i < TRACE_MODULES && used < sizeof(top); i++)
+            if (modules[i].calls)
+                used += (size_t)snprintf(top + used, sizeof(top) - used, "%s%08x %u/%u", used ? ", " : "",
+                                         (unsigned)modules[i].identifier, modules[i].instructions, modules[i].calls);
+        LOG(LOG_FRAMES, "interpreter: %u calls in %u frames; %u instructions, %u us per frame (worst frame %u instructions, %u us); "
+                        "instructions in slot A's modules %u, slot B's %u, other overlay code %u, credits %u; modules "
+                        "(identifier instructions/calls): %s",
+            window_cost.calls, frames, window_cost.instructions / frames, window_cost.us / frames, worst_instructions,
+            worst_us, region_instructions[0], region_instructions[1], region_instructions[2], region_instructions[3],
+            top);
+    }
+    if (frames) {
+        memset(&window_cost, 0, sizeof(window_cost));
+        memset(region_instructions, 0, sizeof(region_instructions));
+        memset(modules, 0, sizeof(modules));
+        worst_instructions = worst_us = 0;
+    }
+}
+
+static int interpret(uint32_t address, const uint32_t *args, unsigned count, uint32_t *result);
+
 int Memories_MipsTry(uint32_t address, const uint32_t *args, unsigned count, uint32_t *result)
+{
+    struct timespec t0, t1;
+    uint32_t identifier = attributed;
+    unsigned steps;
+    int done;
+    attributed = 0;
+    if (depth) {   /* inside a traced run: its instructions are the outermost's, as its time is */
+        try_steps = 0;
+        done = interpret(address, args, count, result);
+        nested_steps += try_steps;
+        return done;
+    }
+    if (!Log_Enabled(LOG_FRAMES)) return interpret(address, args, count, result);
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    depth++;
+    try_steps = nested_steps = 0;
+    done = interpret(address, args, count, result);
+    depth--;
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    steps = try_steps + nested_steps;
+    frame_cost.calls++;
+    frame_cost.instructions += steps;
+    frame_cost.us += (unsigned)((t1.tv_sec - t0.tv_sec) * 1000000 + (t1.tv_nsec - t0.tv_nsec) / 1000);
+    region_instructions[region_of(address)] += steps;
+    if (identifier) count_module(identifier, steps);
+    return done;
+}
+
+static int interpret(uint32_t address, const uint32_t *args, unsigned count, uint32_t *result)
 {
     State s;
     jmp_buf escape;
@@ -405,6 +514,7 @@ int Memories_MipsTry(uint32_t address, const uint32_t *args, unsigned count, uin
         s.pc = take ? s.pc + 4 + ((uint32_t)im << 2) : next;
     }
     current_sp = saved_sp;
+    try_steps = s.steps;
     *result = (uint32_t)HANDED(s.r[2]); /* to native code: as the arguments above */
     return 0;
 }

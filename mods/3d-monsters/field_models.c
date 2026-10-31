@@ -290,7 +290,11 @@ static u32 isqrt(u64 value)
 static int record_sector(int model)
 {
     if (model >= CARDS_MODEL_MOD_FIRST) {
-        return Cards_ModelSector(model);
+        /* A mod's model, read from its file; one bigger than a record, or
+           whose file is gone or changed, has none: its base stands in, as
+           it fights in the battle. */
+        int sector = Cards_ModelSector(model);
+        return sector >= 0 ? sector : record_sector(Cards_ModelStatsIndex(model));
     }
     if (model < 0 || model >= MODEL_MRG_ID_END ||
         (model >= MODEL_MRG_FIRST_GAP_START && model < MODEL_MRG_FIRST_GAP_END) ||

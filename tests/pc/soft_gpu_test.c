@@ -144,6 +144,34 @@ int main(void)
         SoftGpu_SetWidescreen(0);
     }
     SoftGpu_SetRecorder(NULL);
-    puts("Software GPU fill-rule, CLUT, clip, transfer and widescreen checks passed");
+
+    /* Texture banks: a polygon's page word names 1-15 by bits 11-14 and
+     * 16-31 with bit 10 too; an E1 word's bit 10 names no bank. */
+    {
+        const uint32_t area[] = {0xe3000000u, 0xe4000000u | 1023 | (511 << 10), 0xe5000000u};
+        uint32_t triangle[] = {0x25808080u, 200 | (200 << 16), 0, 204 | (200 << 16), 0, 200 | (204 << 16), 0};
+        const uint32_t page = 0xe1000000u | 0x100 | (1 << 10) | SOFT_GPU_BANK_TPAGE(1);
+        const uint32_t sprite15[] = {0x65808080u, 210 | (210 << 16), 0, 2 | (2 << 16)};
+        const uint16_t blue = 0x7c00;
+        uint16_t *seventeen = SoftGpu_Bank(17), *one = SoftGpu_Bank(1);
+        uint32_t state[6];
+        SoftGpu_Reset();
+        CHECK(SoftGpu_Gp0(area, 3) == 3);
+        CHECK(seventeen && one && SoftGpu_BankPixels(17) == seventeen && !SoftGpu_BankPixels(18));
+        CHECK(SOFT_GPU_BANK_TPAGE(17) == ((1u << 11) | (1u << 10)) && SOFT_GPU_BANK_TPAGE(15) == 15u << 11);
+        seventeen[0] = 0x001f;
+        one[0] = 0x03e0;
+        SoftGpu_Load(0, 0, 1, 1, &blue);
+        triangle[4] = (0x100 | SOFT_GPU_BANK_TPAGE(17)) << 16;
+        CHECK(SoftGpu_Gp0(triangle, 7) == 7 && AT(201, 201) == 0x001f);
+        SoftGpu_StateWords(state);
+        CHECK(((state[0] >> 11) & 15) == 0); /* an E1 cannot name 17 */
+        triangle[4] = (0x100 | SOFT_GPU_BANK_TPAGE(1)) << 16;
+        CHECK(SoftGpu_Gp0(triangle, 7) == 7 && AT(201, 201) == 0x03e0);
+        triangle[4] = (0x100 | SOFT_GPU_BANK_TPAGE(18)) << 16; /* never made: VRAM */
+        CHECK(SoftGpu_Gp0(triangle, 7) == 7 && AT(201, 201) == blue);
+        CHECK(SoftGpu_Gp0(&page, 1) == 1 && SoftGpu_Gp0(sprite15, 4) == 4 && AT(210, 210) == 0x03e0);
+    }
+    puts("Software GPU fill-rule, CLUT, clip, transfer, widescreen and texture bank checks passed");
     return 0;
 }

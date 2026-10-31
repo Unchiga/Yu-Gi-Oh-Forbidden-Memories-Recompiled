@@ -1776,27 +1776,102 @@ static void check_load_bias(void)
 }
 #endif
 
+/* Java's getExternalFilesDir(null), asked now, into `out`: 0, with the
+ * reason in `why`, when it gives no folder. Asking is also what has the
+ * system make the folder: under scoped storage (Android 11 on) the app
+ * cannot make its own Android/data/<package> folder, the system does when
+ * Java asks for it. SDL_GetAndroidExternalStoragePath keeps its first
+ * answer, so it asks only once. */
+static int external_files_dir(char *out, size_t size, char *why, size_t why_size)
+{
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject activity, file = NULL, text = NULL;
+    jclass type;
+    jmethodID method;
+    int ok = 0;
+    if (!env || !(activity = (jobject)SDL_GetAndroidActivity())) {
+        snprintf(why, why_size, "Android gave no activity to ask for the folder");
+        return 0;
+    }
+    if ((type = (*env)->GetObjectClass(env, activity)) != NULL &&
+        (method = (*env)->GetMethodID(env, type, "getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;")) != NULL)
+        file = (*env)->CallObjectMethod(env, activity, method, (jstring)NULL);
+    if (type) (*env)->DeleteLocalRef(env, type);
+    if (file && !(*env)->ExceptionCheck(env) && (type = (*env)->GetObjectClass(env, file)) != NULL) {
+        if ((method = (*env)->GetMethodID(env, type, "getAbsolutePath", "()Ljava/lang/String;")) != NULL)
+            text = (*env)->CallObjectMethod(env, file, method);
+        (*env)->DeleteLocalRef(env, type);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        snprintf(why, why_size, "Android's getExternalFilesDir failed");
+    } else if (!text) {
+        snprintf(why, why_size, "Android gave no folder (the shared storage is not mounted, or Android could not make the folder)");
+    } else {
+        const char *chars = (*env)->GetStringUTFChars(env, (jstring)text, NULL);
+        if (chars) {
+            ok = *chars && snprintf(out, size, "%s", chars) < (int)size;
+            (*env)->ReleaseStringUTFChars(env, (jstring)text, chars);
+        }
+        if (!ok) snprintf(why, why_size, "Android's folder name could not be read");
+    }
+    if (text) (*env)->DeleteLocalRef(env, text);
+    if (file) (*env)->DeleteLocalRef(env, file);
+    (*env)->DeleteLocalRef(env, activity);
+    return ok;
+}
+
+/* Why `files` could not be made (mkdir's `error`), with what is there of
+ * it: the folder, its package folder and Android/data, each there (its
+ * owner and mode) or stat's reason, beside the app's own user and the
+ * Android version, so a player's report tells which of them is in the way. */
+static void describe_folder(const char *files, int error, char *why, size_t why_size)
+{
+    char level[1024];
+    int used, i;
+    used = snprintf(why, why_size, "%s: %s; Android %d, the app is user %u", files,
+                    error ? strerror(error) : "the system gave no reason", SDL_GetAndroidSDKVersion(),
+                    (unsigned)getuid());
+    snprintf(level, sizeof(level), "%s", files);
+    for (i = 0; i < 3 && used >= 0 && (size_t)used < why_size; i++) {
+        struct stat seen;
+        char *name = strrchr(level, '/');
+        const char *label = name ? name + 1 : NULL;
+        int more;
+        if (!name || name == level) break;
+        if (i == 2) { /* "Android/data", as a player's file manager names it */
+            const char *above = name;
+            while (above > level && above[-1] != '/') above--;
+            label = above;
+        }
+        if (stat(level, &seen))
+            more = snprintf(why + used, why_size - (size_t)used, "; %s: %s", label, strerror(errno));
+        else
+            more = snprintf(why + used, why_size - (size_t)used, "; %s: there, owner %u, mode %03o", label,
+                            (unsigned)seen.st_uid, (unsigned)(seen.st_mode & 0777));
+        if (more < 0) break;
+        used += more;
+        *name = 0;
+    }
+}
+
 /* The player's folder (the external files folder, top of this file), made
  * if it is not there yet; NULL when it cannot be, with the reason in `why`.
  * While the shared storage is not mounted (it can be unmounted, and may
  * not be mounted yet just after a boot) Java's getExternalFilesDir gives
- * no folder, and SDL asks Java again on the next call: so a few seconds
- * of asking again, and the storage mounted meanwhile reaches this process
- * too. There is no other folder to fall back on: the disc image and the
- * saves are in this one, and a second folder would split them. */
+ * no folder; it is asked again each time (external_files_dir), so a few
+ * seconds of asking again, and the storage mounted meanwhile reaches this
+ * process too. There is no other folder to fall back on: the disc image and
+ * the saves are in this one, and a second folder would split them. */
 static const char *user_folder(char *why, size_t why_size)
 {
-    const char *files = NULL;
-    char said[600] = "";
+    static char files[1024];
+    char said[1000] = "";
     int attempt;
     for (attempt = 0; attempt < 40; attempt++) { /* 10 s */
         if (attempt) SDL_Delay(250);
-        SDL_ClearError();
-        files = SDL_GetAndroidExternalStoragePath();
-        if (!files || !*files) {
-            snprintf(why, why_size, "Android gave no folder: %s",
-                     *SDL_GetError() ? SDL_GetError() : "the system gave no reason");
-            files = NULL;
+        if (!external_files_dir(files, sizeof(files), why, why_size)) {
+            /* the reason is in `why` */
         } else if (!Paths_MakeDirs(files)) {
             if (attempt) fprintf(stderr, "memories-pc: the external files folder is there after %d ms\n", attempt * 250);
             return files;
@@ -1804,11 +1879,7 @@ static const char *user_folder(char *why, size_t why_size)
             /* Even "File exists" is waited for: just as the storage mounts,
              * Java may give the folder (made under /data/media) while mkdir
              * here says it exists, whether or not stat sees it yet. */
-            int error = errno;
-            struct stat seen;
-            int found = stat(files, &seen) ? errno : 0;
-            snprintf(why, why_size, "%s: %s; stat: %s", files, error ? strerror(error) : "the system gave no reason",
-                     found ? strerror(found) : "there");
+            describe_folder(files, errno, why, why_size);
         }
         if (strcmp(said, why)) { /* each new reason once */
             fprintf(stderr, "memories-pc: no external files folder yet after %d ms (%s); waiting for the storage\n",
@@ -1825,7 +1896,7 @@ int Memories_AndroidMain(int argc, char **argv)
 {
     static char name[] = "memories-pc";
     char *args[] = {name, NULL};
-    char why[600], message[900];
+    char why[1000], message[2000];
     const char *files;
     (void)argc;
     (void)argv;
@@ -1852,8 +1923,14 @@ int Memories_AndroidMain(int argc, char **argv)
             if (named && *named)
                 fprintf(stderr, "memories-pc: nor the MEMORIES_USER_DIR environment.txt names: %s: %s\n", named,
                         strerror(errno));
-            snprintf(message, sizeof(message), "The game could not use its storage folder right now.\n\n"
-                     "Close the game and open it again.\n\n(%s)", why);
+            snprintf(message, sizeof(message), "The game could not use its storage folder.\n\n"
+                     "Close the game and open it again. If this comes back:\n"
+                     "- restart the phone;\n"
+                     "- if a file manager shows the folder Android/data/org.yfmredecomp.game, delete it and open "
+                     "the game again (the saves in it go with it: copy them out first if you can);\n"
+                     "- if you never played, Settings > Apps > the game > Storage > Clear storage;\n"
+                     "- last, uninstall the game and install it again (this too removes the saves; a game of the "
+                     "same name signed by someone else must go first).\n\n(%s)", why);
             Platform_ShowError("Yu-Gi-Oh! Forbidden Memories", message);
             return 1;
         }

@@ -124,7 +124,7 @@ checked as well, when it starts.
 | 17 | the release after v0.3.0 | a duelist's `bust` or `replace_bust`; a tower story's `"expression"` by name ([More duelists](more-duelists.md#bust--the-large-character)) |
 | 18 | the release after v0.3.0 | the card frames' keys ([Frame styles](#frame-styles-and-the-rules-that-pick-them)): a card's `frame_style`; `card_layout`'s `default_styles`, `atk_label`, `dfd_label` and `type_label`; in a `frame_styles` entry `hand`, `hand_image`, `field_image`, `field_back_image`, `back_image`, `library_icon`, `full_bleed`, `atk_label`, `dfd_label`, `type_label`, `digits`, or a part of its own (`title`, `stars`, `attribute`, `spell`, `art`, `atk`, `def`); a `hide`, `hidden`, `show` or `color` on a card part; `digits`' own `atk` and `def` |
 | 20 | the release after v0.3.0 | `fields`: renamed retail fields, new fields and their pictures; a monster effect's `"do": "change_field"` |
-| 21 | the release after v0.3.0 | `models`: battle models the mod adds ([Battle models](#battle-models-monsters-the-disc-does-not-have)), and a card's `model` naming one |
+| 21 | the release after v0.3.0 | `models`: battle models the mod adds ([Battle models](#battle-models-monsters-the-disc-does-not-have)), a model entry's `texture_pages`, and a card's `model` naming one |
 
 The FM Editor writes `min_api` on save as the lowest one of these that has
 everything the mod uses, never lowering one written higher, and its Mod
@@ -672,7 +672,7 @@ of two records past the disc's end, one for each battle slot, which the
 drive reads as it reads `MODEL.MRG`) and by 3D Monsters. A mod that replaces
 `MODEL.MRG` whole (`data`) leaves them alone. A model whose file is gone or
 has changed since the game started fights as its `base` (as Blue-eyes
-without one) and is not drawn by 3D Monsters, until the next launch.
+without one), and 3D Monsters stands the base, until the next launch.
 
 Like data overrides, a mod with models needs a restart. Models take their
 places in the order the mods load, so a model's place is not fixed from one
@@ -703,9 +703,77 @@ none) is record number C - 1, from which take 50 when C - 1 is 350 or more,
 another 50 when it is 700 or more and another 1 when it is 721 or more; the
 record is the 276 sectors from `MODEL.MRG`'s start plus 276 times that number.
 
-A model is as big as the disc's are: 192 KiB of model data, the texture
-column of one slot, eight palettes. The disc's models use nearly all of the
-model data already.
+A record holds as much as the disc's models take: 192 KiB of model data,
+the texture column of one slot, eight palettes. The disc's models use
+nearly all of the model data already (Dark Magician 110 KiB, the biggest
+all 192 KiB with its work area).
+
+### Bigger models
+
+A model may have more model data than a record holds: its `file` is then
+the model data, in whole sectors, followed by the record's other 180
+sectors (from the 48 texture sectors on, as the table above lists them). A
+file longer than 276 sectors is taken as one: 277 to 692 sectors, so 97 to
+512 sectors (1 MiB) of model data, its first word the data's size as in a
+record. Nothing else of the manifest changes.
+
+```text
+record (276 sectors):  [ model data, 96 ][ the other stages, 180 ]
+bigger model:          [ model data, up to 512 ][ the other stages, 180 ]
+```
+
+The battle parses the model data in an arena of its slot's own past the
+console's RAM, and draws the model into the RAM that model data takes for a
+record (`src/pc/cards/battle_models.h`): 106 KiB of GPU packets a frame
+for that slot alone, against any opponent, besides the frame's shared 137
+KiB. The disc's models take 29 KiB of packets for most, 62 KiB for the
+biggest, about 40 bytes a polygon, so a bigger model has room for about 2,600
+polygons, some 1.7 times the biggest disc model's and 3.7 times most. Its limits
+are the game's own besides: 58 animated parts, 60 units, 65,535 normals.
+Before it first loads the game checks it against all of them; one that does
+not fit fights as its `base`, and the log (`MEMORIES_TRACE=mods`) says which
+limit it passed. The palettes are a record's.
+
+#### Texture pages of its own
+
+A bigger model may also bring more texture than a record's: `"texture_pages":
+N` (0 to 8) in its `models` entry, and N pages after the record's other 180
+sectors, 16 sectors each (a page is 64 by 256 halfwords of VRAM, the rows
+one after another). A model with pages has 96 sectors of model data at
+least, so a record-sized model with pages is a bigger model with 96.
+
+```text
+with pages:   [ model data ][ the other stages, 180 ][ page, 16 ] ... N pages
+```
+
+A polygon names its texture page as the model authors it, and the game moves
+it to the slot's place: a record's polygons use pages 10 to 13 of the lower
+row (the record's 48 + 16 texture sectors). A model's own pages are, in
+order, 14 and 15 of the lower row, then 10 to 15 of the upper row: with all 8,
+12 pages against a record's 4, three times the texture. A polygon on a page
+reads that page and, at 8 bits, the next one too (an 8-bit page is 128
+halfwords across), at 16 bits the next three; a page below 10 cannot be
+moved, so a polygon there, or on a page the model does not bring, or whose
+page word has any of bits 10-14 set (the texture bank, which the game puts
+there itself), is refused by the check and the model fights as its `base`. The upper row's last 16
+lines hold the slot's palettes, which the game tints as it draws: leave
+them unused in an upper page. A picture or palette the model data carries
+(a type-2 unit) must lie in the slot's own block (a picture at x 640 to 895
+as authored, which the game moves to the slot's 256 columns, and y 256 to
+511; a palette in rows 248 to 255 once moved) or it is not uploaded, and
+refused. The check holds every bigger model to these pages and blocks,
+with texture pages of its own or without.
+
+The slot then draws from a texture bank of its own (17 for slot 0, 18 for
+slot 1; `src/pc/render/soft_gpu.h`): the record's block and palettes as the
+game leaves them in VRAM, copied in each frame the slot draws, and the
+pages. The OpenGL picture then uploads that bank again on a frame whose
+palettes changed (a megabyte).
+
+3D Monsters stands a bigger model's `base` on the field: the field's ten
+monsters share the frame's packets, and a bigger model there is a follow-up.
+A save state taken with a bigger model in a battle slot carries its arena
+(3 MiB more for the two slots, written once a bigger model is added).
 
 ## Audio: songs, voices and sounds from files
 

@@ -143,7 +143,18 @@ unsigned Mods_DiscSignature(void);
  * `slot`'s window (0 or 1), where the drive finds it, and gives the window's
  * first sector, or -1; only while no transfer runs (Model_LoadMonsterMerge
  * waits for them first). Mods_ModelWindows: the windows' models, which save
- * states carry, and Mods_ModelRebind reads them in again after a load. */
+ * states carry, and Mods_ModelRebind reads them in again after a load.
+ * Mods_ModelForget: the slot loads something else.
+ * A model bigger than a record (Mods_ModelGeometry: its bytes of model
+ * data, 0 for a record) has no sector; its window holds the record's other
+ * stages, and Mods_ModelWindow puts its model data in the slot's arena
+ * (Mods_ModelArena: `arena` 0 or 1 for the slots, 2 to check one in; NULL
+ * before a bigger model is added), where the slot parses it:
+ * Mods_ModelPending until Mods_ModelParsed. A save state brings the arenas
+ * and Mods_ModelPendings itself (src/pc/cards/battle_models.c), after the
+ * windows. Mods_ModelPages: the texture pages ("texture_pages") of the
+ * model in slot `slot`'s window, 64x256 halfwords each, and how many; NULL
+ * and 0 for none. */
 int Mods_ModelCount(void);
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod);
 int Mods_ModelSector(int i);
@@ -151,6 +162,13 @@ int Mods_ModelRead(int lba, int sectors, void *out);
 int Mods_ModelWindow(int slot, int i);
 int *Mods_ModelWindows(unsigned *size);
 void Mods_ModelRebind(void);
+void Mods_ModelForget(int slot);
+int Mods_ModelGeometry(int i);
+unsigned char *Mods_ModelArena(int arena, unsigned *size);
+int Mods_ModelPending(int slot);
+const unsigned char *Mods_ModelPages(int slot, int *count);
+int *Mods_ModelPendings(unsigned *size);
+void Mods_ModelParsed(int slot);
 
 /* Manager metadata and configuration. Borrowed strings live until exit. */
 const struct JsonValue *Mods_Manifest(int mod);

@@ -18,6 +18,9 @@
 #include "model_primitive_handler.h"
 #include "model_handler_registry.h"
 #include "../unmatched.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/battle_models.h"
+#endif
 
 #define MODEL_TYPE2_RECORD_VIEW(record) ((ModelType2Record *)(record))
 
@@ -299,6 +302,14 @@ void Model_ProcessType2Unit(
                         }
                         rec->field_02 = rec->field_02 + 0xF8;
                     }
+#ifdef MEMORIES_PC
+                    /* A mod's model's palette outside its slot's rows is
+                       not uploaded (src/pc/cards/battle_models.h). */
+                    if (f && !BattleModels_Image(1, model_index, rec->field_00, rec->field_02, rec->column_count,
+                                                 rec->row_count)) {
+                        rec->column_count = rec->row_count = 0;
+                    }
+#endif
                     q += sizeof(ModelType2Record);
                 }
             }
@@ -306,6 +317,14 @@ void Model_ProcessType2Unit(
                 w = MODEL_TYPE2_RECORD_VIEW(p)->field_00;
                 MODEL_TYPE2_RECORD_VIEW(p)->field_00 = (w - 0x280) + sh;
             }
+#ifdef MEMORIES_PC
+            /* and a picture outside its slot's VRAM block neither */
+            if (f && !BattleModels_Image(0, model_index, MODEL_TYPE2_RECORD_VIEW(p)->field_00,
+                                         MODEL_TYPE2_RECORD_VIEW(p)->field_02, MODEL_TYPE2_RECORD_VIEW(p)->column_count,
+                                         MODEL_TYPE2_RECORD_VIEW(p)->row_count)) {
+                MODEL_TYPE2_RECORD_VIEW(p)->column_count = MODEL_TYPE2_RECORD_VIEW(p)->row_count = 0;
+            }
+#endif
             i++;
             p = q;
 

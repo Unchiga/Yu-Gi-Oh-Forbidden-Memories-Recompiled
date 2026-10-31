@@ -106,8 +106,9 @@ static int tunable(const char *key, int fallback)
 #define SECTOR 2048
 #define ART_SECTORS 7
 
-/* Where the art's pixels and its CLUT sit inside the private bank: any two
- * places that do not overlap, since nothing else ever reads this bank. */
+/* Where the art's pixels and its CLUT sit inside the card's bank: any two
+ * places that do not overlap each other, nor the model's textures
+ * (field_models.c) or, in bank 1, the glow (GLOW_PIXELS_X below). */
 #define PIXELS_X 0
 #define PIXELS_Y 0
 #define CLUT_X 0
@@ -295,8 +296,10 @@ static int duel_field_up(void)
  * corners rather than four strips meeting at a seam (which is what the
  * first attempt at this did: visible double-bright overlaps at the
  * corners, and banding read as "on/off" rather than a smooth breathing
- * glow). A bank of its own past the per-card cache (CACHE banks 1..CACHE,
- * so GLOW_BANK is always free) holds one square texture, GLOW_SIZE across,
+ * glow). A place in the first cached card's bank that no cached card uses
+ * (its art is at x 0, its model's textures from y 0xF0 and x 0x200 on, in
+ * field_models.c; bank 13, past the cache, is the card frames', which wrote
+ * over a glow kept there) holds one square texture, GLOW_SIZE across,
  * generated once: at each texel, in coordinates normalised to [-1, 1]
  * across the texture, INNER_HALF is the half-width of a middle square left
  * untouched (it sits under the cutout itself, which draws over it, so its
@@ -319,11 +322,11 @@ static int duel_field_up(void)
  * scaled to match the cutout's own rectangle exactly (so the diffusing part
  * sits outside it) and its overall size then scaled again by glow_reach, at
  * the cutout's own depth so it sorts with it. */
-#define GLOW_BANK (CACHE + 1)
+#define GLOW_BANK 1
 #define GLOW_SIZE 48
-#define GLOW_PIXELS_X 0
+#define GLOW_PIXELS_X 0x100   /* a page of its own: x 0x100 to 0x117, y 0 to 47 */
 #define GLOW_PIXELS_Y 0
-#define GLOW_CLUT_X 0
+#define GLOW_CLUT_X 0x100
 #define GLOW_CLUT_Y GLOW_SIZE
 #define GLOW_INNER_HALF 0.30 /* the middle square's half-width, normalised */
 #define GLOW_REACH_DEFAULT 50

@@ -30,6 +30,11 @@ int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod
 }
 int Mods_ModelSector(int i) { (void)i; return -1; }
 int Mods_ModelWindow(int slot, int i) { (void)slot; (void)i; return -1; }
+int Mods_ModelPending(int slot) { (void)slot; return 0; }
+void Mods_ModelForget(int slot) { (void)slot; }
+void Mods_ModelParsed(int slot) { (void)slot; }
+unsigned char *Mods_ModelArena(int arena, unsigned *size) { (void)arena; (void)size; return 0; }
+int BattleModels_Check(int slot) { (void)slot; return 0; }
 
 void Mods_Note(const char *id, const char *format, ...)
 {

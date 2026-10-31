@@ -120,6 +120,14 @@ void Graphics_BeginFrame(void)
     gGraphics_pActiveFrameBuffer =
         &gGraphics_aFrameBuffers[gGraphics_bActiveBuffer];
     GsSetWorkBase((PACKET *)arg);
+#ifdef MEMORIES_PC
+    {
+        /* A slot drawing a bigger model starts its own half here too
+           (src/pc/cards/battle_models.h). */
+        extern void BattleModels_BeginFrame(void);
+        BattleModels_BeginFrame();
+    }
+#endif
     base = D_800E9D90;
     slot = base + 3;
     do {

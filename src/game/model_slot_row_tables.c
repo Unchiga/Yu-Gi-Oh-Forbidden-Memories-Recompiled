@@ -116,6 +116,13 @@ s32 func_8004D134(s32 mode, u16 *kind, u8 *ctx, s32 *best, s32 *total)
             if (mode < 2) {
                 p = rec + off1;
                 v = MODEL_CHANNEL_HALFWORD(p);
+#ifdef MEMORIES_PC
+                {
+                    /* the page a mod's model's polygon names (src/pc/cards/battle_models.h) */
+                    extern void BattleModels_Page(unsigned authored);
+                    BattleModels_Page(v);
+                }
+#endif
                 adjusted = v + add1;
                 MODEL_CHANNEL_HALFWORD(p) = adjusted;
                 f = (v >> 7) & 3;
@@ -391,6 +398,13 @@ void func_8004D58C(s32 arg0, u8 *arg1)
                 s[(u32)&((ModelSlot *)0)->field_BEC] = x;
                 g += 4;
                 i++;
+#ifdef MEMORIES_PC
+                /* field_BEC holds 64 bits; a mod's model may say more
+                   (the disc's say 45 at most). */
+                if (i >= 64) {
+                    break;
+                }
+#endif
             } while ((u32)i < *(u16 *)k);
         }
         *(s32 *)(t + (u32)&((ModelSlot *)0)->field_DD8) = *(s32 *)p3;

@@ -6,6 +6,9 @@
 #include "model_graphics_state.h"
 #include "model_slot_properties.h"
 #include "model_has_insufficient_buffer_space.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/battle_models.h"
+#endif
 
 #define MODEL_SLOT_AT_OFFSET(slots, offset) \
     ((ModelSlot *)((u8 *)(slots) + (offset)))
@@ -24,6 +27,16 @@ s32 Model_HasInsufficientBufferSpace(s32 index, s32 type) {
     if (type < 0) {
         type = func_80059520(index)[3];
     }
+#ifdef MEMORIES_PC
+    {
+        /* A battle slot that draws into its own RAM: room there
+           (src/pc/cards/battle_models.h). */
+        s32 own = BattleModels_Insufficient(index, type);
+        if (own >= 0) {
+            return own;
+        }
+    }
+#endif
     size = record->field_E00;
     if (type == 5) {
         room -= size * 2;

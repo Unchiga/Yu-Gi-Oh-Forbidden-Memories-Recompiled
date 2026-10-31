@@ -55,9 +55,16 @@ int Cards_ModelId(int id);
  * and Cards_ModelSector gives the sector a native extra reads it at
  * (host->disc_read); both -1 for any other id. Cards_ModelStatsIndex is the
  * gDuel_adwCardStats index the game reads for a model: its own card's, or a
- * mod model's "base" (0 without). */
+ * mod model's "base" (0 without).
+ * A model bigger than a record (battle_models.h) has no sector; its window
+ * is given only if it fits, and Cards_ModelArena is where the slot then
+ * parses its model data, until Cards_ModelParsed (NULL otherwise).
+ * Cards_ModelLoads: the slot loads a model, any model. */
 #define CARDS_MODEL_MOD_FIRST 0x8000
 int Cards_ModelWindow(int slot, int model);
+void Cards_ModelLoads(int slot);
+unsigned char *Cards_ModelArena(int slot);
+void Cards_ModelParsed(int slot);
 int Cards_ModelSector(int model);
 int Cards_ModelStatsIndex(int model);
 int Cards_EffectId(int id);

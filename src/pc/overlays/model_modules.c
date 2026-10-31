@@ -100,6 +100,7 @@ static int run_module(uint32_t module, int variant, void *context, int command)
         uint32_t args[2], result;
         args[0] = (uint32_t)(uintptr_t)context;
         args[1] = (uint32_t)command;
+        Memories_MipsAttribute(identifier);
         if (!Memories_MipsTry(module + 4, args, 2, &result)) {
             return (int)result;
         }

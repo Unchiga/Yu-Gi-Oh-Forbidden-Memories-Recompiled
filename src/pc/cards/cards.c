@@ -26,6 +26,7 @@
 #include "pc/text/glyphs.h"
 #include "pc/text/text.h"
 #include "pc/mods/mods.h"
+#include "battle_models.h"
 #include "pc/mods/json.h"
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
@@ -173,9 +174,16 @@ static int mod_model_named(const JsonValue *value)
 int Cards_ModelSector(int model) { return Mods_ModelSector(mod_model(model)); }
 int Cards_ModelWindow(int slot, int model)
 {
-    int i = mod_model(model);
-    return i >= 0 ? Mods_ModelWindow(slot, i) : -1;
+    int i = mod_model(model), window = i >= 0 ? Mods_ModelWindow(slot, i) : -1;
+    if (window >= 0 && Mods_ModelPending(slot) && !BattleModels_Check(slot)) {
+        Mods_ModelForget(slot);
+        return -1;
+    }
+    return window;
 }
+void Cards_ModelLoads(int slot) { Mods_ModelForget(slot); }
+unsigned char *Cards_ModelArena(int slot) { return Mods_ModelPending(slot) ? Mods_ModelArena(slot, NULL) : NULL; }
+void Cards_ModelParsed(int slot) { Mods_ModelParsed(slot); }
 /* A mod model's "base": a monster of the disc, or 0. */
 static int model_base(int model)
 {

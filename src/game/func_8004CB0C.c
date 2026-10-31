@@ -11,6 +11,9 @@
 #include "../game/model_handler_registry.h"
 #include "../game/model_packet_handlers.h"
 #include "../game/model_parent_search.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/battle_models.h"
+#endif
 #define MODEL_SLOT_SETUP_EXPLICIT_TRANSFER_ARGS
 #include "../game/model_slot_setup.h"
 
@@ -204,6 +207,9 @@ void func_8004CB0C(s32 index, u8 *hmd, s32 size, s32 flags)
     i = 1;
     base->field_E00 = count;
     base->field_E02 = acc + i;
+#ifdef MEMORIES_PC
+    BattleModels_Parsed(hmd, count, acc + i);   /* as counted, past the u16 fields */
+#endif
     if (i < base->field_E1A - 1) {
         off = 0;
     link:
