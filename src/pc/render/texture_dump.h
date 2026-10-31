@@ -103,7 +103,8 @@ static inline uint16_t *TextureDump_Cell(int x, int y, int sub)
  * no pack entry (texture_pack.c): 1 clean, 0 maybe not, as every block
  * starts. A clear that covers a whole block marks it clean, and anything
  * that writes a tag, a texel or an entry other than 0 marks what it writes
- * with TextureDump_Touched first. Clears pass over the whole clean blocks:
+ * with TextureDump_Touched (after writing, where the game clock's tick may
+ * clear in between). Clears pass over the whole clean blocks:
  * the game clears its picture every frame, and nothing is tagged there. */
 #define TEXTURE_CLEAN_WORDS 64
 #define TEXTURE_CLEAN_COLUMNS (SOFT_GPU_WIDTH / TEXTURE_CLEAN_WORDS)

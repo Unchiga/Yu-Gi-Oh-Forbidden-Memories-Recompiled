@@ -380,7 +380,6 @@ void TextureDump_Loaded(int x, int y, int w, int h, const uint16_t *pixels)
             return;
         }
     }
-    TextureDump_Touched(x, y, w, h);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             *tag_at(x + i, y + j) = disc ? disc + (uint32_t)((size_t)j * w + i) * 2 + 1
@@ -393,13 +392,13 @@ void TextureDump_Loaded(int x, int y, int w, int h, const uint16_t *pixels)
         }
         if (TextureDump_Paint) TextureDump_Paint(x, y, w, h);
     }
+    TextureDump_Touched(x, y, w, h); /* after: a clear in the clock's tick may come in between */
 }
 
 void TextureDump_Moved(int sx, int sy, int dx, int dy, int w, int h)
 {
     int i, j;
     if (!TextureDump_Tags) return;
-    TextureDump_Touched(dx, dy, w, h); /* and for the pack's entries (follow) */
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             *tag_at(dx + i, dy + j) = *tag_at(sx + i, sy + j);
@@ -409,6 +408,7 @@ void TextureDump_Moved(int sx, int sy, int dx, int dy, int w, int h)
         }
     }
     if (TextureDump_Follow) TextureDump_Follow(sx, sy, dx, dy, w, h);
+    TextureDump_Touched(dx, dy, w, h); /* the tags, texels and the pack's entries (follow) */
 }
 
 /* TextureDump_Touched's calls. The game clock's tick may upload in the
