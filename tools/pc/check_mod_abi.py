@@ -548,7 +548,7 @@ def run_mods(tag, release, executable, build):
             # Since v0.3.0 --game needs the target it checks, which older
             # SDKs have no option for.
             with open(os.path.join(sdk, "tools", "build_mod.py"), encoding="utf-8") as handle:
-                named = ["--target", "i386"] if "--target" in handle.read() else []
+                named = ["--target", "i386"] if 'add_argument("--target"' in handle.read() else []
             subprocess.run([sys.executable, os.path.join(sdk, "tools", "build_mod.py"), *named, "--game", release,
                             target], check=True, capture_output=True)
     ids = {}
