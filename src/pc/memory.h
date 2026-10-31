@@ -30,10 +30,16 @@ void Memories_WriteLE32(uint8_t *bytes, uint32_t value);
  * (Memories_ModPacketsFrame). Never mapped in a translated build. */
 #define MEMORIES_MOD_PACKETS_FIRST 0x00800000u
 #define MEMORIES_MOD_PACKETS_LAST 0x01000000u /* the 24-bit link space's end */
+#define MEMORIES_MOD_PACKETS_SIZE 0x100000u
 extern uint8_t *Memories_ModPacketBase;
 extern uint32_t Memories_ModPacketPhysical, Memories_ModPacketSize;
 void Memories_SetModPackets(void *base, uint32_t physical, uint32_t size);
+/* Maps the area at `physical` if there is none yet; 1 if it is there now. */
+int Memories_MapModPackets(uint32_t physical);
 /* `bytes` of this frame's area, 4-aligned; NULL when there is none or no room. */
 void *Memories_TakeModPackets(size_t bytes);
 void Memories_ModPacketsFrame(void);
+/* The bytes handed out since the last reset, and a save state's say so. */
+uint32_t Memories_ModPacketsUsed(void);
+void Memories_SetModPacketsUsed(uint32_t bytes);
 #endif

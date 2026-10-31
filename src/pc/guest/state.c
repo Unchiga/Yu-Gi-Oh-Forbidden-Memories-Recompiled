@@ -8,6 +8,7 @@
 #include "pc/platform/paths.h"
 #include "pc/mods/mods.h"
 #include "pc/mods/events.h"
+#include "pc/memory.h"
 #include "image.h"
 #include "retail_image.h"
 #include "pc/audio/spu.h"
@@ -463,6 +464,14 @@ static void serialize(MemoriesState *state)
         MemoriesModEvent event = {MEMORIES_EVENT_SAVE, MEMORIES_BEFORE, 0, 0, 0, 0, 0};
         Mods_Dispatch(&event);
     }
+    if (Memories_ModPacketsUsed()) {
+        /* The state point is before GsDrawOt: the frame's ordering tables
+         * still link into the mods' packet area, so it goes with them. */
+        uint32_t physical = Memories_ModPacketPhysical;
+        MemoriesStateField fields[] = {{&physical, sizeof(physical)},
+                                       {Memories_ModPacketBase, Memories_ModPacketsUsed()}};
+        Memories_StateChunk(state, "mod-packets", fields, 2);
+    }
     state_subsystems(state);
     {
         MemoriesStateField fields[] = {{(void *)(uintptr_t)MEMORIES_STATE_ENTRY_SP(entry), STACK_TOP - MEMORIES_STATE_ENTRY_SP(entry)}};
@@ -550,6 +559,19 @@ static void apply(void)
             memcpy(region->bss, chunk, size);
         } else if (chunk) {
             fprintf(stderr, "memories-pc: state: zeroed variables of '%s' do not match this build\n", region->name);
+        }
+    }
+    Memories_ModPacketsFrame();
+    chunk = Memories_StateFindChunk(&state, "mod-packets", &size);
+    if (chunk && size > 4 && size - 4 <= MEMORIES_MOD_PACKETS_SIZE) {
+        /* Mapped here too: a new process has no mod that asked for it yet. */
+        uint32_t physical;
+        memcpy(&physical, chunk, sizeof(physical));
+        if (Memories_MapModPackets(physical)) {
+            memcpy(Memories_ModPacketBase, chunk + 4, size - 4);
+            Memories_SetModPacketsUsed((uint32_t)(size - 4));
+        } else {
+            fprintf(stderr, "memories-pc: state: no room for the mods' packet area\n");
         }
     }
     state_subsystems(&state);

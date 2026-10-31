@@ -426,7 +426,6 @@ static void *host_map_fixed(const MemoriesModHost *host, uintptr_t address, size
 /* The mods' packet area (API 22, src/pc/memory.h): mapped on the first ask,
  * at the first 1 MiB of physical 8..16 MiB that is free, at its guest
  * (direct, KSEG0) address so a packet's own pointer and its link agree. */
-#define MOD_PACKETS_SIZE 0x100000u
 static void *host_packet_area(const MemoriesModHost *host, size_t bytes)
 {
 #ifdef MEMORIES_TRANSLATED
@@ -439,15 +438,11 @@ static void *host_packet_area(const MemoriesModHost *host, size_t bytes)
     if (!tried) {
         uint32_t physical;
         tried = 1;
-        for (physical = MEMORIES_MOD_PACKETS_FIRST; physical < MEMORIES_MOD_PACKETS_LAST; physical += MOD_PACKETS_SIZE) {
-            void *wanted = (void *)(uintptr_t)(MEMORIES_GUEST_RAM + physical);
-            void *got = Memories_MapFixed(wanted, MOD_PACKETS_SIZE, PROT_READ | PROT_WRITE,
-                                          MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-            if (got == wanted) {
-                Memories_SetModPackets(got, physical, MOD_PACKETS_SIZE);
+        for (physical = MEMORIES_MOD_PACKETS_FIRST; !Memories_ModPacketBase && physical < MEMORIES_MOD_PACKETS_LAST;
+             physical += MEMORIES_MOD_PACKETS_SIZE) {
+            if (Memories_MapModPackets(physical)) {
                 LOG(LOG_MODS, "packet area for mods at physical 0x%x, %u KiB", (unsigned)physical,
-                    (unsigned)(MOD_PACKETS_SIZE / 1024));
-                break;
+                    (unsigned)(MEMORIES_MOD_PACKETS_SIZE / 1024));
             }
         }
         if (!Memories_ModPacketBase) {
