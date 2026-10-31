@@ -33,6 +33,7 @@
 #include "pc/platform/settings.h"
 #include "pc/compat/signal.h"
 #include "pc/debug/log.h"
+#include "pc/sdk/display.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
 #include <stdio.h>
@@ -2202,17 +2203,388 @@ static void group_runs(void)
     run_count = count;
 }
 
+/* --- fast HD pack drawing ------------------------------------------------
+ * Video > Fast HD pack drawing (`hd_fast`, Automatic by default). With a
+ * texture pack at Internal 2x and up, nearly all a screen draws can be pack images
+ * (the duel field: 2.6 of 2.7 Mpx a frame at 4x), and the program above
+ * spends ten cycles a pixel on each: the texel's place in the pack's maps,
+ * its entry, the image's pixel. On a Samsung A22 (Mali-G52) that held a
+ * duel at 47 fps at 4x; 60 without the pack (30 October 2026).
+ *
+ * A primitive that samples one entry's image within the words the entry
+ * covers needs none of that: its image pixel is a straight line of its
+ * texel coordinate, ((page - origin) * texels per word - crop + u) *
+ * image width / crop width across, (page - origin + v) * image height /
+ * rows down, so lean_program reads the image once from the interpolated
+ * texel (1.9 cycles a pixel, all of the GPU's threads in flight). The rest
+ * of the program's work on such a primitive is the same at each of its
+ * pixels and is done here once per triangle: the half-pixel moves (flag
+ * 64, `back`). The texel is clamped and placed in the image with the same
+ * sums. What is not the same: a texel coordinate interpolated already
+ * moved, instead of moved at each pixel by the derivatives there, rounds
+ * differently, so now and then a pixel on a texel's edge takes its
+ * neighbour. Hence an option. Everything else (semi-transparent,
+ * perspective, HD text, a bank's sprite, an entry over words that are not
+ * one rectangle of it) draws as before, in the same order. */
+typedef struct LeanHead {
+    int x0, y0, x1, y1; /* the words of the head's entries */
+    int ox, oy;         /* the word of row 0, word 0 */
+    int count, whole;   /* whole: every word of the rectangle, in place */
+} LeanHead;
+static GLuint lean_program;
+static int lean_tried, hd_fast, pack_drawn;
+static GLint ul_picture_size, ul_pack_entry, ul_pack_size, ul_pack_origin, ul_pack;
+static LeanHead *lean_heads;
+static int lean_head_count;
+static unsigned lean_maps = ~0u;
+static unsigned char *lean_of; /* per triangle of the flush: drawn by lean_program */
+static size_t lean_room;
+
+static const char *lean_vertex_source =
+#ifdef __APPLE__
+    "#version 150\n"
+#else
+    "#version 130\n"
+#endif
+    "uniform vec2 picture_size;\n"
+    "uniform ivec4 pack_entry;\n"
+    "uniform ivec3 pack_size;\n"
+    "uniform ivec2 pack_origin;\n"
+    "in vec2 position;\n"
+    "in vec2 texcoord;\n"
+    "in vec4 color;\n"
+    "in ivec4 texture_page;\n"
+    "in ivec4 texture_mode;\n"
+    "in ivec4 texture_bounds;\n"
+    "noperspective out vec2 uv;\n"
+    "noperspective out vec3 rgb;\n"
+    "flat out int flags;\n"
+    "flat out int fade;\n"
+    "flat out ivec4 bounds;\n"
+    "flat out ivec2 start;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(position.x / picture_size.x * 2.0 - 1.0, position.y / picture_size.y * 2.0 - 1.0, 0.0, 1.0);\n"
+    "    uv = texcoord;\n"
+    "    rgb = color.rgb;\n"
+    "    flags = int(color.a);\n"
+    "    fade = texture_mode.w;\n"
+    "    bounds = texture_bounds;\n"
+    "    start = ivec2((texture_page.x - pack_origin.x) * pack_size.z - pack_entry.y, texture_page.y - pack_origin.y);\n"
+    "}\n";
+
+/* The program above's pack branch from its texel on: the texel clamped
+ * to the primitive's, its place in the image with the same sums, in the
+ * same order, then the same color and fade. */
+static const char *lean_fragment_source =
+#ifdef __APPLE__
+    "#version 150\n"
+#else
+    "#version 130\n"
+#endif
+    "uniform sampler2D pack;\n"
+    "uniform ivec4 pack_entry;\n"
+    "uniform ivec3 pack_size;\n"
+    "noperspective in vec2 uv;\n"
+    "noperspective in vec3 rgb;\n"
+    "flat in int flags;\n"
+    "flat in int fade;\n"
+    "flat in ivec4 bounds;\n"
+    "flat in ivec2 start;\n"
+    "out vec4 fragment;\n"
+    "void main() {\n"
+    "    vec3 c = floor(rgb + 1.0 / 256.0);\n"
+    "    float ub = uv.x + 1.0 / 256.0, vb = uv.y + 1.0 / 256.0;\n"
+    "    int u = clamp(int(floor(ub)), bounds.x, bounds.z), v = clamp(int(floor(vb)), bounds.y, bounds.w);\n"
+    "    int px = int(floor((float(start.x + u) + fract(ub)) * float(pack_size.x) / float(pack_entry.z)));\n"
+    "    int py = int(floor((float(start.y + v) + fract(vb)) * float(pack_size.y) / float(pack_entry.w)));\n"
+    "    vec4 p = texelFetch(pack, ivec2(clamp(px, 0, pack_size.x - 1), clamp(py, 0, pack_size.y - 1)), 0);\n"
+    "    if (p.a < 8.0 / 255.0) discard;\n"
+    "    vec3 t = floor(p.rgb * 255.0 + 0.5);\n"
+    "    if ((flags & 1) != 0) c = t;\n"
+    "    else c = floor(t * c / 128.0);\n"
+    "    c = clamp(c, 0.0, 255.0) * p.a;\n"
+    "    float alpha = 1.0 - p.a;\n"
+    "    if (fade != 0) {\n"
+    "        float f = float(fade) / 255.0;\n"
+    "        c *= 1.0 - f;\n"
+    "        alpha = 1.0 - (1.0 - alpha) * (1.0 - f);\n"
+    "    }\n"
+    "    fragment = vec4(c / 255.0, alpha);\n"
+    "}\n";
+
+/* lean_program, made the first time the option is on; 0 when it cannot be
+ * (each primitive then draws with the program above). */
+static GLuint lean(void)
+{
+    GLuint vs, fs, made;
+    GLint ok = 0;
+    if (lean_tried) return lean_program;
+    lean_tried = 1;
+    vs = compile(GL_VERTEX_SHADER, lean_vertex_source, NULL);
+    fs = vs ? compile(GL_FRAGMENT_SHADER, lean_fragment_source, NULL) : 0;
+    if (!fs) {
+        if (vs) gl_DeleteShader(vs);
+        return 0;
+    }
+    made = gl_CreateProgram();
+    gl_AttachShader(made, vs);
+    gl_AttachShader(made, fs);
+    gl_BindAttribLocation(made, 0, "position");
+    gl_BindAttribLocation(made, 1, "texcoord");
+    gl_BindAttribLocation(made, 2, "color");
+    gl_BindAttribLocation(made, 3, "texture_page");
+    gl_BindAttribLocation(made, 4, "texture_mode");
+    gl_BindAttribLocation(made, 6, "texture_bounds");
+    gl_LinkProgram(made);
+    gl_DeleteShader(vs);
+    gl_DeleteShader(fs);
+    gl_GetProgramiv(made, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[2048];
+        gl_GetProgramInfoLog(made, sizeof(log), NULL, log);
+        fprintf(stderr, "memories-pc: OpenGL picture: fast HD pack drawing: %s\n", log);
+        gl_DeleteProgram(made);
+        return 0;
+    }
+    lean_program = made;
+    ul_picture_size = gl_GetUniformLocation(made, "picture_size");
+    ul_pack_entry = gl_GetUniformLocation(made, "pack_entry");
+    ul_pack_size = gl_GetUniformLocation(made, "pack_size");
+    ul_pack_origin = gl_GetUniformLocation(made, "pack_origin");
+    ul_pack = gl_GetUniformLocation(made, "pack");
+    return made;
+}
+
+/* Each head's words, from the pack's maps when they changed: where its
+ * rectangle lies and whether every word of it is the head's, at the place
+ * its position gives. */
+static void lean_read_maps(void)
+{
+    const uint16_t *entry_map = TexturePack_EntryMap();
+    const uint32_t *place_map = TexturePack_PlaceMap();
+    int x, y, top = 0, i;
+    LeanHead *more;
+    lean_maps = TexturePack_MapGeneration();
+    lean_head_count = 0;
+    if (!entry_map || !place_map) return;
+    for (i = 0; i < SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT; i++) {
+        if (entry_map[i] > top) top = entry_map[i];
+    }
+    if (!(more = realloc(lean_heads, (size_t)(top + 1) * sizeof(*more)))) return;
+    lean_heads = more;
+    memset(lean_heads, 0, (size_t)(top + 1) * sizeof(*lean_heads));
+    for (y = 0; y < SOFT_GPU_HEIGHT; y++) {
+        for (x = 0; x < SOFT_GPU_WIDTH; x++) {
+            int e = entry_map[y * SOFT_GPU_WIDTH + x];
+            uint32_t place = place_map[y * SOFT_GPU_WIDTH + x];
+            int ox = x - (int)(place & 0xffffu), oy = y - (int)(place >> 16);
+            LeanHead *h = &lean_heads[e];
+            if (!e) continue;
+            if (!h->count++) {
+                h->x0 = h->x1 = x;
+                h->y0 = h->y1 = y;
+                h->ox = ox;
+                h->oy = oy;
+                h->whole = 1;
+                continue;
+            }
+            if (ox != h->ox || oy != h->oy) h->whole = 0;
+            if (x < h->x0) h->x0 = x;
+            if (x > h->x1) h->x1 = x;
+            if (y > h->y1) h->y1 = y;
+        }
+    }
+    for (i = 1; i <= top; i++) {
+        LeanHead *h = &lean_heads[i];
+        if (h->count && h->count != (h->x1 - h->x0 + 1) * (h->y1 - h->y0 + 1)) h->whole = 0;
+    }
+    lean_head_count = top + 1;
+}
+
+/* The run's entry, as lean_program takes it: 0 when it cannot. */
+typedef struct LeanEntry {
+    int head, crop_left, crop_width, rows, per, width, height; /* head 0: none */
+} LeanEntry;
+static LeanEntry *lean_runs; /* per run of the flush, as lean_mark found it */
+static size_t lean_run_room;
+
+static int lean_entry(const Run *run, LeanEntry *out)
+{
+    const unsigned char *rgba;
+    if (run->pack <= 0 || run->subtractive) return 0;
+    if (!TexturePack_EntryImage(run->pack, &rgba, &out->width, &out->height, &out->crop_left, &out->crop_width,
+                                &out->rows, &out->per)) return 0;
+    out->head = TexturePack_EntryHead(run->pack);
+    if (out->per < 1 || out->crop_width < 1 || out->rows < 1 || out->head < 1 || out->head >= lean_head_count) return 0;
+    return lean_heads[out->head].whole;
+}
+
+/* Whether the triangle at t is lean_program's; if so its texel coordinates
+ * take the moves the program above makes per pixel (flag 64: half a pixel
+ * back along the screen's diagonal; `back`: where the texels run against
+ * the picture, a picture pixel short of the next texel), which for a
+ * triangle drawn without perspective are the same at every pixel. */
+static int lean_triangle(GlVertex *t, const LeanEntry *e)
+{
+    const LeanHead *h = &lean_heads[e->head];
+    int f = t[0].flags, u0 = t[0].bounds[0], v0 = t[0].bounds[1], u1 = t[0].bounds[2], v1 = t[0].bounds[3];
+    int x0 = t[0].page_x + u0 / e->per, x1 = t[0].page_x + u1 / e->per, y0 = t[0].page_y + v0, y1 = t[0].page_y + v1;
+    int first = (t[0].page_x - h->ox) * e->per - e->crop_left;
+    double dx1 = t[1].x - t[0].x, dy1 = t[1].y - t[0].y, dx2 = t[2].x - t[0].x, dy2 = t[2].y - t[0].y;
+    double det = dx1 * dy2 - dx2 * dy1, grad[2][2], move[2];
+    int i, k;
+    if ((f & (4 | 8)) != (4 | 8) || (f & (2 | 16 | 32))) return 0;
+    if ((f & 64) && (t[1].r != t[0].r || t[1].g != t[0].g || t[1].b != t[0].b || t[2].r != t[0].r ||
+                     t[2].g != t[0].g || t[2].b != t[0].b)) return 0; /* a color moved by part of a step */
+    if (u1 > 255 || v1 > 255 || u0 > u1 || v0 > v1 || x1 >= SOFT_GPU_WIDTH || y1 >= SOFT_GPU_HEIGHT) return 0;
+    if (x0 < h->x0 || x1 > h->x1 || y0 < h->y0 || y1 > h->y1) return 0;
+    if (first + u0 < 0 || first + u1 >= e->crop_width) return 0;
+    if (t[0].page_y + v0 - h->oy < 0 || t[0].page_y + v1 - h->oy >= e->rows) return 0;
+    if (det == 0.0) return 0;
+    for (k = 0; k < 2; k++) {
+        double d1 = k ? t[1].v - t[0].v : t[1].u - t[0].u, d2 = k ? t[2].v - t[0].v : t[2].u - t[0].u;
+        grad[k][0] = (d1 * dy2 - d2 * dy1) / det; /* per picture pixel across */
+        grad[k][1] = (d2 * dx1 - d1 * dx2) / det; /* and down */
+        move[k] = (f & 64) ? -0.5 * (grad[k][0] + grad[k][1]) : 0.0;
+        move[k] += ((-grad[k][0] > 0.0 ? (-grad[k][0] * scale < 1.0 ? -grad[k][0] * scale : 1.0) : 0.0) +
+                    (-grad[k][1] > 0.0 ? (-grad[k][1] * scale < 1.0 ? -grad[k][1] * scale : 1.0) : 0.0)) *
+                   (1.0 - 1.0 / scale);
+    }
+    for (i = 0; i < 3; i++) {
+        t[i].u += (float)move[0];
+        t[i].v += (float)move[1];
+    }
+    return 1;
+}
+
+/* Before the vertices go up: which triangles lean_program draws. 0 when
+ * none (the option off, or nothing of the pack's it can draw). */
+static int lean_mark(void)
+{
+    size_t r, n = vertex_count / 3, any = 0;
+    if (!hd_fast) return 0;
+    for (r = 0; r < run_count && (runs[r].pack <= 0 || runs[r].subtractive); r++) {}
+    if (r == run_count || !lean()) return 0; /* no run of a pack's: the maps can wait */
+    if (lean_maps != TexturePack_MapGeneration()) lean_read_maps();
+    if (n > lean_room) {
+        unsigned char *more = realloc(lean_of, n);
+        if (!more) return 0;
+        lean_of = more;
+        lean_room = n;
+    }
+    if (run_count > lean_run_room) {
+        LeanEntry *more = realloc(lean_runs, run_count * sizeof(*more));
+        if (!more) return 0;
+        lean_runs = more;
+        lean_run_room = run_count;
+    }
+    memset(lean_of, 0, n);
+    for (r = 0; r < run_count; r++) {
+        LeanEntry *e = &lean_runs[r];
+        size_t t;
+        if (!lean_entry(&runs[r], e)) {
+            e->head = 0;
+            continue;
+        }
+        for (t = runs[r].first; t + 2 < runs[r].first + runs[r].count; t += 3) {
+            if (lean_triangle(&vertices[t], e)) {
+                lean_of[t / 3] = 1;
+                any = 1;
+            }
+        }
+    }
+    return any != 0;
+}
+
+/* Run r: in order, its lean triangles with lean_program and the rest with
+ * the program above, a draw for each stretch of one kind. Its entry's
+ * image is bound (bind_pack_entry). */
+static void lean_draw(size_t r)
+{
+    const Run *run = &runs[r];
+    const LeanEntry *e = &lean_runs[r];
+    size_t t = run->first, end = run->first + run->count, stretches = 0;
+    while (t < end) {
+        int kind = e->head && lean_of[t / 3];
+        size_t from = t;
+        while (t < end && (e->head && lean_of[t / 3]) == kind) t += 3;
+        if (kind) {
+            const LeanHead *h = &lean_heads[e->head];
+            gl_UseProgram(lean_program);
+            gl_Uniform2f(ul_picture_size, (float)(SOFT_GPU_WIDTH * scale), (float)(SOFT_GPU_HEIGHT * scale));
+            gl_Uniform4i(ul_pack_entry, e->head, e->crop_left, e->crop_width, e->rows);
+            gl_Uniform3i(ul_pack_size, fitted(e->width), fitted(e->height), e->per);
+            gl_Uniform2i(ul_pack_origin, h->ox, h->oy);
+            gl_Uniform1i(ul_pack, 5);
+            glDrawArrays(GL_TRIANGLES, (GLint)from, (GLsizei)(t - from));
+            gl_UseProgram(program);
+        } else {
+            glDrawArrays(GL_TRIANGLES, (GLint)from, (GLsizei)(t - from));
+        }
+        stretches++;
+    }
+    if (stretches > 1) stats.draws += (unsigned)(stretches - 1);
+}
+
+/* Whether this replay draws the pack's images with lean_program: the
+ * setting on (1), or Automatic (2, the default) once the frames fell behind
+ * on the GPU's account where a pack was drawn. Every 120 frames the game's
+ * own times (Memories_FrameStats, averages over those frames) are looked
+ * at: the game's work and the present together past 17.5 ms (it does not
+ * hold 60 frames a second), the present the longer of the two (it waits
+ * for the GPU; a 3D battle waiting for the CPU does not count), and a pack
+ * drawn in half the replays, two windows running, turn it on, for as long
+ * as the setting and the internal resolution stay. A window with a present
+ * past 40 ms is a screen reading its pack's images, which the present waits
+ * for (a duel's first seconds at 2x: 12 ms a frame, 199 at most), and
+ * counts for nothing. A Samsung A22 with the HD pack at 4x: game 9.7 ms,
+ * present 10.7; at 2x, past the reads, 8.0 and 5.4, left as it is. A
+ * machine that keeps up never sees it, and turning it off again would mean
+ * falling behind again to find out, so it stays. */
+static int fast_auto, fast_mode = -1, fast_scale;
+static unsigned fast_window, fast_pack_frames, fast_behind; /* fast_window: FrameStats' windows seen */
+
+static int fast_wanted(void)
+{
+    int mode = Settings_Get(SET_HD_FAST);
+    const FrameStats *stats = Memories_FrameStats();
+    if (mode != fast_mode || scale != fast_scale) {
+        fast_mode = mode;
+        fast_scale = scale;
+        fast_auto = 0;
+        fast_behind = 0;
+        fast_window = stats->windows;
+        fast_pack_frames = 0;
+    }
+    fast_pack_frames += pack_drawn != 0;
+    pack_drawn = 0;
+    if (stats->windows != fast_window) { /* a window just counted: its times, and the replays since the last */
+        int behind = fast_pack_frames >= 60 && scale >= 2 && stats->game_us + stats->present_us > 17500 &&
+                     stats->present_us > stats->game_us;
+        if (mode == 2 && !fast_auto && stats->present_max_us <= 40000) fast_behind = behind ? fast_behind + 1 : 0;
+        if (fast_behind >= 2 && !fast_auto) {
+            fast_auto = 1;
+            fprintf(stderr, "memories-pc: fast HD pack drawing turned on: game %u us, present %u us a frame at %dx\n",
+                    stats->game_us, stats->present_us, scale);
+        }
+        fast_window = stats->windows;
+        fast_pack_frames = 0;
+    }
+    return mode == 1 || (mode == 2 && fast_auto);
+}
+
 /* The primitives gathered so far, in order, into the picture. */
 static void flush_runs(void)
 {
     size_t i;
-    int origin_x = 0, origin_y = 0;
+    int origin_x = 0, origin_y = 0, leaning, bound;
     if (!vertex_count || scale < 2) {
         vertex_count = 0;
         run_count = 0;
         return;
     }
     group_runs();
+    for (i = 0; i < run_count && !pack_drawn; i++) pack_drawn = runs[i].pack > 0;
     sync_banks();
     sync_pack();
     if (hd_text || hd_hud || opponent_name) sync_glyphs();
@@ -2223,6 +2595,7 @@ static void flush_runs(void)
     glEnable(GL_SCISSOR_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_SRC_ALPHA);
+    leaning = lean_mark(); /* before the vertices go up: it moves the lean ones' texels */
     bind_attributes();
     gl_BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(vertex_count * sizeof(GlVertex)), vertices, GL_STREAM_DRAW);
     stats.draws += (unsigned)run_count;
@@ -2245,14 +2618,18 @@ static void flush_runs(void)
         scissor_words(run->clip[0], run->clip[1], run->clip[2], run->clip[3], origin_x, origin_y);
         gl_Uniform4i(u_window, run->window[0] * 8, run->window[1] * 8, (run->window[2] & run->window[0]) * 8,
                     (run->window[3] & run->window[1]) * 8);
-        if (!run->pack || !bind_pack_entry(run->pack)) {
+        bound = run->pack && bind_pack_entry(run->pack);
+        if (!bound) {
             gl_Uniform4i(u_pack_entry, 0, 0, 0, 0);
             gl_Uniform4i(u_bank_sprite, 0, 0, 0, 0);
             gl_Uniform4i(u_bank_source, 0, 0, 0, 0);
         }
         if (!run->subtractive) {
             gl_Uniform1i(u_pass, 0);
-            glDrawArrays(GL_TRIANGLES, (GLint)run->first, (GLsizei)run->count);
+            /* Not bound (out of memory): drawn from VRAM, its lean
+             * triangles' texels moved by up to about two texels. */
+            if (leaning && bound) lean_draw(i);
+            else glDrawArrays(GL_TRIANGLES, (GLint)run->first, (GLsizei)run->count);
         } else {
             /* Its opaque texels, then its semi-transparent ones subtracted. */
             gl_Uniform1i(u_pass, 1);
@@ -2607,6 +2984,7 @@ int GlPicture_Replay(void)
     capture_uniform();
     gl_Uniform1i(u_tex_xbr, Settings_Get(SET_XBR));
     hd_text = HdText_Enabled();
+    hd_fast = fast_wanted();
     set_samples(Settings_Get(SET_MSAA));
     hd_hud = HdText_HudEnabled();
     opponent_name = HdText_NameEnabled();
@@ -2952,6 +3330,7 @@ static void delete_names(void)
         gl_UseProgram(0);
         gl_DeleteProgram(program);
     }
+    if (lean_program) gl_DeleteProgram(lean_program);
     if (buffer) gl_DeleteBuffers(1, &buffer);
     if (vertex_array && glDeleteVertexArrays_) glDeleteVertexArrays_(1, &vertex_array);
     if (vram_fbo) gl_DeleteFramebuffers(1, &vram_fbo);
@@ -2986,6 +3365,9 @@ static void forget_names(void)
     int bank;
     on = 0;
     program = buffer = vertex_array = 0;
+    lean_program = 0;
+    lean_tried = 0; /* made again in the new context, when wanted */
+    lean_maps = ~0u;
     vram_texture = vram_scratch = vram_fbo = vram_scratch_fbo = 0;
     picture_texture = picture_scratch = picture_fbo = picture_scratch_fbo = 0;
     picture_ms_fbo = picture_ms_buffer = 0;

@@ -545,7 +545,11 @@ def run_mods(tag, release, executable, build):
         target = os.path.join(mods, "example-" + os.path.basename(example))
         shutil.copytree(example, target)
         if glob.glob(os.path.join(target, "*.c")):
-            subprocess.run([sys.executable, os.path.join(sdk, "tools", "build_mod.py"), "--game", release,
+            # Since v0.3.0 --game needs the target it checks, which older
+            # SDKs have no option for.
+            with open(os.path.join(sdk, "tools", "build_mod.py"), encoding="utf-8") as handle:
+                named = ["--target", "i386"] if 'add_argument("--target"' in handle.read() else []
+            subprocess.run([sys.executable, os.path.join(sdk, "tools", "build_mod.py"), *named, "--game", release,
                             target], check=True, capture_output=True)
     ids = {}
     wide = is_64bit(executable)

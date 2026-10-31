@@ -320,6 +320,7 @@ int Memories_VSync(int mode)
             frame_stats.fps_tenths = seconds > 0 ? (unsigned)(1200.0 / seconds + 0.5) : 0;
             frame_stats.shown_tenths =
                 seconds > 0 ? (unsigned)((Memories_ShownFrames() - shown_then) * 10.0 / seconds + 0.5) : 0;
+            frame_stats.windows++;
             if (Log_Enabled(LOG_FRAMES)) {
                 LOG(LOG_FRAMES, "game %u us, present %u us per frame (max %u, %u); %u VBlanks missed in 120 frames",
                     game_us / 120, present_us / 120, game_max, present_max, late);

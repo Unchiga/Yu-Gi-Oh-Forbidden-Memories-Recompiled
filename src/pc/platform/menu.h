@@ -87,8 +87,9 @@ typedef enum {
                       * presenter's (present_pass.c, Menu_SetPresentPass) */
     MENU_ITEM_CRT,
     MENU_ITEM_FLASH,
-    MENU_ITEM_XBR /* Video > Effects > xBR: the desktop presenter's, or the OpenGL picture
-                   * pass's at Internal 2x and up */
+    MENU_ITEM_XBR, /* Video > Effects > xBR: the desktop presenter's, or the OpenGL picture
+                    * pass's at Internal 2x and up */
+    MENU_ITEM_HD_FAST /* Video > Fast HD pack drawing: the OpenGL picture pass's, at Internal 2x and up */
 } MenuItemId;
 
 /* The stored settings (settings.txt in the user directory, see paths.h;

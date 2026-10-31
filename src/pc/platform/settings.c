@@ -75,6 +75,11 @@ static const SettingInfo info[SET_COUNT] = {
      * phone whether auto-rotate is on or not, 1 it follows the system's
      * auto-rotate (android.c, Android_ApplyScreenRotation). */
     [SET_SCREEN_ROTATION] = {"screen_rotation", NULL, "MEMORIES_SCREEN_ROTATION", NULL, 0, 0, 1},
+    /* Video > Fast HD pack drawing: a texture pack's images drawn by a
+     * shorter program at Internal 2x and up (gl_picture.c, lean_program),
+     * nearly the same picture. 0 off, exactly as before; 1 on; 2 automatic,
+     * on once frames fall behind while a pack is drawn (fast_wanted). */
+    [SET_HD_FAST] = {"hd_fast", NULL, "MEMORIES_HD_FAST", NULL, 2, 0, 2},
     /* View > Touch controls > Opacity: how much of a touch control a button
      * let go covers, in percent; held, it is twice that (touch_pad_art.c).
      * 0, the default, is the style's own: 59% with the game's buttons (as
