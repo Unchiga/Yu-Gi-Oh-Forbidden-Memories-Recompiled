@@ -1542,10 +1542,10 @@ typedef struct {
 static void tag_block(int x, int y, uint32_t disc, int words, int rows)
 {
     int i, j;
-    TextureDump_Touched(x, y, words, rows);
     for (j = 0; j < rows; j++)
         for (i = 0; i < words; i++)
             TextureDump_Tags[(size_t)(y + j) * SOFT_GPU_WIDTH + x + i] = disc + (uint32_t)(j * words + i) * 2 + 1;
+    TextureDump_Touched(x, y, words, rows); /* after, as TextureDump_Loaded */
 }
 
 /* How far `disc` lies from the disc offsets tagged just around the block at
