@@ -763,6 +763,26 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size)
         snprintf(why, why_size, "Could not read that file: %s", SDL_GetError());
         return 0;
     }
+    {
+        /* The copy first needs room of its own (the import checks for the
+         * unpacked mods later); a size the provider does not give is -1. */
+        Sint64 known = SDL_GetIOSize(stream);
+        struct statvfs space;
+        if (known > (Sint64)MODS_IMPORT_ZIP_BYTES) {
+            snprintf(why, why_size, "That file is too large for a mod (more than %lu MB).",
+                     (unsigned long)(MODS_IMPORT_ZIP_BYTES >> 20) + 1);
+            SDL_CloseIO(stream);
+            return 0;
+        }
+        if (known > 0 && !statvfs(folder, &space) &&
+            (Sint64)space.f_bavail * (Sint64)space.f_frsize < known + (16 << 20)) {
+            snprintf(why, why_size, "There is not enough free space to copy the .zip: it needs %lld MB, and %lld MB "
+                     "are free.", (long long)(known >> 20) + 1,
+                     (long long)((Sint64)space.f_bavail * (Sint64)space.f_frsize >> 20));
+            SDL_CloseIO(stream);
+            return 0;
+        }
+    }
     if (!(out = fopen(path, "wb"))) {
         snprintf(why, why_size, "Could not write in the mods folder: %s.", strerror(errno));
         SDL_CloseIO(stream);
@@ -775,8 +795,9 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size)
             break;
         }
         total += (Sint64)got;
-        if (total > (1 << 30)) {
-            snprintf(why, why_size, "That file is too large for a mod (more than 1 GB).");
+        if (total > (Sint64)MODS_IMPORT_ZIP_BYTES) {
+            snprintf(why, why_size, "That file is too large for a mod (more than %lu MB).",
+                     (unsigned long)(MODS_IMPORT_ZIP_BYTES >> 20) + 1);
             ok = 0;
             break;
         }

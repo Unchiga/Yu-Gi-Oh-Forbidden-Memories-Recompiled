@@ -82,12 +82,16 @@ paused while the panel shows.
 **Import mod...** (Android; `ModsWindow_SetImport`, which no desktop
 calls, so the desktop window and the desktop's test panels have no such
 button) opens the system's file picker; the chosen document is copied into
-the mods folder (`mods/.incoming.zip`), read
+the mods folder (`mods/.incoming.zip`; a document over the importer's 4 GB,
+or one whose size the provider gives and the free space cannot hold, is
+refused before the copy), read
 (`src/pc/mods/import.c`), and its mods are put in place and added to the
 list, off, without a restart (`Mods_Discover`): the first one is selected,
 and the message line says "Imported <name>." (or "Imported 3 mods: A, B and
 C."). Turning one on is then like any other mod's change (Apply, a restart
-when the mod needs one).
+when the mod needs one). The copy, the reading and the unpacking run on the
+game's thread, so the panel waits through them without a progress bar: a
+few seconds for a usual mod, minutes for a pack of gigabytes.
 
 - **What counts as a mod in it**: every folder with a `mod.json` at the
   `.zip`'s root (the whole `.zip` is then the mod, in a folder named by the
@@ -130,7 +134,8 @@ when the mod needs one).
   one folder or one `id`, names that are not UTF-8, ZIP64 or split
   archives (the plain form holds 65,534 entries and 4 GB, which is what
   the importer takes), more than 4 GB unpacked or more than the free space
-  holds, a `.zip` over 4 GB (2 GB on a 32-bit build, where `ftell` stops),
+  holds, a `.zip` over 4 GB (2 GB where a `long` has 32 bits, where `ftell`
+  stops: Windows and the 32-bit builds; Android's arm64 game takes 4 GB),
   a file that is not a `.zip`, or more mods than the game takes (256, in
   one `.zip` or with those installed). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
   Unpacking goes into a hidden `mods/.import-XXXXXX` folder (the scan skips

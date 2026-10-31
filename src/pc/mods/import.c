@@ -11,7 +11,6 @@
 #include "json.h"
 #include "manifest_code.h"
 #include <errno.h>
-#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,9 +23,7 @@
 #include <unistd.h>
 #endif
 
-/* The .zip itself: the plain form's 4 GB where a long holds it (fseek,
- * ftell), else 2 GB. */
-#define ZIP_MAX ((unsigned long)(LONG_MAX < 0xFFFFFFFFL ? LONG_MAX : 0xFFFFFFFFL))
+#define ZIP_MAX MODS_IMPORT_ZIP_BYTES
 #define DIRECTORY_MAX (32u << 20)       /* its central directory */
 #define MANIFEST_MAX (4u << 20)         /* a mod.json read to name the mod */
 #define NAME_MAX_ 512
@@ -551,7 +548,7 @@ ModsImport *Mods_ImportOpen(const char *zip, char *why, size_t why_size)
             if (depth > 2)
                 continue;
             if (n == MODS_IMPORT_MAX) {
-                snprintf(why, why_size, "The .zip has more than %d mods; import them a few at a time.",
+                snprintf(why, why_size, "The .zip has more than %d mods, more than the game takes.",
                          MODS_IMPORT_MAX);
                 goto fail;
             }
