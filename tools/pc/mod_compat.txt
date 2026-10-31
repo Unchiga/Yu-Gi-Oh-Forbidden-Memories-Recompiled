@@ -136,3 +136,10 @@ accept v0.3.0 variable MonsterEffect_DoNames grew by change_field at its end
 accept v0.1.2 record AnimatedBattleModelProperties reads model_id unsigned, for a mod's models from 0x8000
 accept v0.2.0 record AnimatedBattleModelProperties reads model_id unsigned, for a mod's models from 0x8000
 accept v0.3.0 record AnimatedBattleModelProperties reads model_id unsigned, for a mod's models from 0x8000
+
+# PR #421 (fast HD pack drawing): FrameStats grew by its windows counter at
+# its end. Memories_FrameStats hands out a pointer to the port's one copy, so
+# a mod built against the shorter record reads the same fields at the same
+# offsets and never allocates one.
+accept v0.2.0 record FrameStats grew by the windows counter at its end
+accept v0.3.0 record FrameStats grew by the windows counter at its end

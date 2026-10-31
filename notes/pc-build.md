@@ -2368,6 +2368,38 @@ strip, or a piece of the turning card) samples the picture instead. Twenty
 titles are kept, the least recently drawn made over. So no pack needs to
 carry names, and a card a mod adds reads like the rest.
 
+### Fast HD pack drawing
+
+Video > Fast HD pack drawing (`hd_fast`, `MEMORIES_HD_FAST`: 0 Off, 1 On,
+2 Automatic, the default) draws a texture pack's images with a shorter
+program at internal 2x and up (`gl_picture.c`, `lean_program`).
+Automatic turns it on once the game falls behind on the GPU's account
+while a pack is drawn: two windows of 120 frames running in which the
+game's work and the present take more than 17.5 ms a frame together, the
+present the longer, a pack drawn in half the frames, and no frame held
+past 40 ms (a screen reading its pack's images). It stays on while the
+setting and the internal resolution stay. A machine that holds 60 never
+sees it: the Samsung A22 turns it on at 4x with the HD pack, not at 2x.
+
+With a pack, nearly all a screen draws can be pack images (the duel field: 2.6 of 2.7 Mpx a frame at
+4x), and the picture's program spends about ten cycles a pixel on each,
+finding the texel's entry and place in the pack's maps; on a Samsung A22
+(Mali-G52) a duel ran at 47 fps at 4x with the Forbidden Memories HD pack,
+60 without it.
+
+A primitive that samples one entry's image within the words the entry
+covers, without perspective, semi-transparency or HD text, has its image
+pixel on a straight line of its texel coordinate, so the shorter program
+reads the image once from the interpolated texel, with the same clamp and
+the same sums (about 1.9 cycles a pixel); the half-pixel moves the
+picture's program makes at each pixel are made once per triangle instead.
+Anything else draws as before, in the same order. With it on the A22
+holds 60 fps at 4x. It is nearly the same picture, not the same: the
+texel coordinate moved once rounds a little differently from one moved at
+each pixel, so now and then a pixel on a texel's edge takes its
+neighbour (15 of the 1,228,800 pixels of the duel field at 4x on the A22,
+2 of 1,262,080 on Windows). Off, the picture is exactly as before.
+
 ### HD numbers and labels
 
 HD numbers and labels come with HD text (the same item; they had one of

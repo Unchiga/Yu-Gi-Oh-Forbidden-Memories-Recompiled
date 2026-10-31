@@ -118,11 +118,11 @@ enum { MENU_FILE, MENU_VIDEO, MENU_AUDIO, MENU_GAME, MENU_VIEW, MENU_DEBUG, MENU
 #else
 #define HELP_ITEMS 6
 #endif
-enum { SUB_SCALE, SUB_MENU_SIZE, SUB_SPEED, SUB_FPS, SUB_CHEATS, SUB_TRACE, SUB_SCALING, SUB_ASPECT, SUB_RESOLUTION, SUB_COLOR, SUB_EFFECTS, SUB_JUMP, SUB_ANTIALIAS, SUB_FILTER, SUB_RANK, SUB_LANGUAGE, SUB_PGXP, SUB_TOUCH, SUB_ROTATION, SUB_COUNT };
+enum { SUB_SCALE, SUB_MENU_SIZE, SUB_SPEED, SUB_FPS, SUB_CHEATS, SUB_TRACE, SUB_SCALING, SUB_ASPECT, SUB_RESOLUTION, SUB_COLOR, SUB_EFFECTS, SUB_JUMP, SUB_ANTIALIAS, SUB_FILTER, SUB_RANK, SUB_LANGUAGE, SUB_PGXP, SUB_TOUCH, SUB_ROTATION, SUB_HD_FAST, SUB_COUNT };
 #ifdef __ANDROID__
-#define VIDEO_ITEMS 15 /* with Screen rotation */
+#define VIDEO_ITEMS 16 /* with Screen rotation */
 #else
-#define VIDEO_ITEMS 14
+#define VIDEO_ITEMS 15
 #endif
 static Menu menus[MENU_COUNT] = {
     {"File", {{"Save state", "F5", ITEM_ACTION, ACT_SAVE_STATE, -1},
@@ -146,6 +146,7 @@ static Menu menus[MENU_COUNT] = {
               {"Aspect Ratio", 0, ITEM_SUBMENU, 0, -1, SUB_ASPECT},
               {"Resolution", 0, ITEM_SUBMENU, 0, -1, SUB_RESOLUTION},
               {"HD text", 0, ITEM_CHECK, MENU_ITEM_HD_TEXT, SET_HD_TEXT},
+              {"Fast HD pack drawing", 0, ITEM_SUBMENU, MENU_ITEM_HD_FAST, -1, SUB_HD_FAST},
               {"Anti-aliasing", 0, ITEM_SUBMENU, 0, -1, SUB_ANTIALIAS},
               {"Filtering", 0, ITEM_SUBMENU, MENU_ITEM_FILTER, -1, SUB_FILTER, ITEM_GROUP_BREAK},
               {"VSync", 0, ITEM_CHECK, MENU_ITEM_VSYNC, SET_VSYNC},
@@ -307,6 +308,11 @@ static Menu submenus[SUB_COUNT] = {
      * phone by its sensor, or only as the system's auto-rotate allows. */
     {"Screen rotation", {{"Turn with the phone", 0, ITEM_RADIO, 0, SET_SCREEN_ROTATION, 0},
                          {"Follow auto-rotate", 0, ITEM_RADIO, 0, SET_SCREEN_ROTATION, 1}}, 2},
+    /* A texture pack's images by a shorter program (gl_picture.c,
+     * lean_program); Automatic turns it on once frames fall behind. */
+    {"Fast HD pack drawing", {{"Off", 0, ITEM_RADIO, 0, SET_HD_FAST, 0},
+                              {"On", 0, ITEM_RADIO, 0, SET_HD_FAST, 1},
+                              {"Automatic", 0, ITEM_RADIO, 0, SET_HD_FAST, 2}}, 3},
 };
 
 static int open_menu = -1, hot_item = -1, hover_bar = -1, grabbed, ready, visible = 1;
@@ -986,7 +992,7 @@ static void update_effect_items(int console, const char *no_picture)
  * opponent's name also at 1x, where the software GPU draws it. */
 static void update_hd_items(void)
 {
-    static const int ids[] = {MENU_ITEM_HD_TEXT, MENU_ITEM_OPPONENT_NAME, MENU_ITEM_PGXP};
+    static const int ids[] = {MENU_ITEM_HD_TEXT, MENU_ITEM_OPPONENT_NAME, MENU_ITEM_PGXP, MENU_ITEM_HD_FAST};
     int console = Settings_Get(SET_INTERNAL_SCALE) < 2;
 #ifdef __ANDROID__ /* the system's GL is GLES (sdl.c, es_wanted) */
     const char *hd_why = !hd_picture ? "needs OpenGL ES 3" : console ? "needs Internal 2x" : NULL;
