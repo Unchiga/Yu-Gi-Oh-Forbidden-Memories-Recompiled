@@ -2294,6 +2294,33 @@ same with no mod hooking anything (the smoke screenshots are unchanged).
   `srand`, which give the same numbers on Linux and Windows and leave the
   game's own random numbers (and so its duels) alone.
 
+### Packets of the mod's own (API 22)
+
+Every polygon a mod sorts (`GsSortPoly` and the like) is written into the
+game's frame packet buffer, 140 KB a frame (`GRAPHICS_PACKET_BUFFER_SIZE`),
+after the game's own and every other mod's; running past its end breaks the
+next frame. A mod that draws a lot can ask for room of its own instead:
+
+* **`packet_area(host, bytes)`** (check `host->api >= 22`): `bytes` of this
+  frame's share of the mods' packet area, a megabyte past guest RAM. NULL when
+  it is used up this frame, or in a build without one (the translated macOS
+  and Android builds): then draw into the game's buffer as before. The packets
+  link into the ordering tables like any other, so they sort with the cards
+  and the field as before. Sort into the area by pointing the packet cursor
+  at it, and put the cursor back after:
+
+  ```c
+  extern u32 D_800FE240;               /* the frame's packet cursor */
+  void *area = host->api >= 22 ? host->packet_area(host, need) : NULL;
+  u32 saved = D_800FE240;
+  if (area) D_800FE240 = (u32)(uintptr_t)area;
+  /* ... GsSortPoly(...) as usual, at most `need` bytes ... */
+  if (area) D_800FE240 = saved;  /* the game's buffer goes on where it was */
+  ```
+
+  Ask again every frame: the area is free again once the frame's list has
+  been drawn (`DrawOTag`).
+
 ### One click: build a mod with nothing installed
 
 No Python and no compiler? The release's `sdk` folder has a script that
