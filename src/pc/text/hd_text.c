@@ -969,6 +969,8 @@ static int make_ramp(const uint16_t *words, int clut_x, int clut_y, int from, in
     return n;
 }
 
+#define SHEET_WORDS 64 /* a row of the ten digits' words, at most */
+
 /* The sheets the duel draws numbers from: digit d is the cell at
  * u + d * step, v. Each is measured from its own ten digits: the outline
  * (the index round them), the fill (the commonest inside), the ramp between
@@ -983,6 +985,8 @@ typedef struct {
     int ok;
     signed char drawn[10];                     /* 1 drawn, -1 none, 0 not yet */
     Retail r;
+    uint16_t seen[CELL][SHEET_WORDS];          /* the words `sum` was taken from (sheet_unchanged) */
+    int seen_ok;
 } Sheet;
 
 /* The duel's sheet is read through six palette rows (the hand, the card
@@ -1012,6 +1016,29 @@ static uint32_t read_digit(const uint16_t *words, const Sheet *s, int d, unsigne
         }
     }
     return sum;
+}
+
+/* Whether VRAM holds the words the ten digits were last read from, so their
+ * sum is the same. It compares every word, a difference or not, and copies
+ * the ones that differ for the next time. HdText_Hud asks for every digit
+ * drawn, and comparing the words costs less than reading the texels. */
+static int sheet_unchanged(const uint16_t *words, Sheet *s)
+{
+    int shift = s->depth ? 1 : 2, first = s->u >> shift;
+    int count = ((s->u + 9 * s->step + s->width - 1) >> shift) - first + 1, same = s->seen_ok, x, y;
+    if (count > SHEET_WORDS || s->height > CELL) return 0;
+    for (y = 0; y < s->height; y++) {
+        const uint16_t *row = words + (size_t)((s->page_y + s->v + y) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH;
+        for (x = 0; x < count; x++) {
+            uint16_t word = row[(s->page_x + first + x) & (SOFT_GPU_WIDTH - 1)];
+            if (s->seen[y][x] != word) {
+                s->seen[y][x] = word;
+                same = 0;
+            }
+        }
+    }
+    s->seen_ok = 1;
+    return same;
 }
 
 static int measure_sheet(Sheet *s, const uint16_t *words)
@@ -1914,7 +1941,11 @@ int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u,
         d = (u - s->u) / s->step;
         if (d > 9 || u != s->u + d * s->step || w > s->width || h > s->height) return 0;
         if (wanted != factor && !make_atlas(wanted)) return 0;
-        for (d = 0; d < 10; d++) sum = read_digit(words, s, d, cell, sum);
+        if (sheet_unchanged(words, s)) {
+            sum = s->sum;
+        } else {
+            for (d = 0; d < 10; d++) sum = read_digit(words, s, d, cell, sum);
+        }
         d = (u - s->u) / s->step;
         if (sum != s->sum || s->made != generation) {
             /* Measured again when the sheet changes (another package). */
