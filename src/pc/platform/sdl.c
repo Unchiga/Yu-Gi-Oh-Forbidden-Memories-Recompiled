@@ -506,6 +506,31 @@ static void panel_after(int tapped)
 static void pump(void);
 
 #ifdef SDL_PLATFORM_ANDROID
+/* A .zip opened with the game from another app (OpenWith.java; "Open with"
+ * or Share): twice a second, whether it left its record, and then the Mods
+ * panel opens on the import of that file, which asks before it imports. A
+ * notice up (a question of the game's own) is answered first, and so is a
+ * question or a job of the panel's own. Before the game runs (the first
+ * run's welcome and disc image) this is not asked, nor before its first
+ * frames (a panel opened then pauses the game before anything is drawn:
+ * black), so the record waits, for as long as it is fresh
+ * (Platform_TakeOpenedMod). */
+static void open_with(void)
+{
+    static Uint64 checked;
+    Uint64 now = SDL_GetTicks();
+    char why[400];
+    int taken;
+    if (now - checked < 500) return;
+    checked = now;
+    if (current_frame < 60 || Menu_NoticeShown() || !Platform_OpenedModWaiting()) return;
+    if (Panel_Shown() != PANEL_MODS) open_panel(PANEL_MODS);
+    if (Panel_Shown() != PANEL_MODS || ModsWindow_ImportBusy()) return;
+    taken = Platform_TakeOpenedMod(why, sizeof(why));
+    if (!ModsWindow_ImportOpened(taken ? NULL : why)) Platform_DropOpenedMod();
+    menu_dirty = 1;
+}
+
 /* MEMORIES_TEST_JAVA=<frame>, or <frame>box: at that frame, from inside
  * the game loop, the Java calls a player's input or a menu can make (the
  * cursor hidden and shown, the clipboard; with "box" a message box too),
@@ -2198,6 +2223,9 @@ static void pump(void)
     /* A notice answers a controller and keeps the game's input at rest. */
     ControlsRuntime_Hold(Menu_NoticeShown());
     if (Menu_NoticePad(ControlsRuntime_TakePadPresses() | TouchPad_TakePresses(), &quit)) menu_dirty = 1;
+#ifdef SDL_PLATFORM_ANDROID
+    open_with();
+#endif
     if (Panel_Shown()) {
         if (Panel_Tick()) menu_dirty = 1;
         if (!Panel_Shown()) panel_after(0);

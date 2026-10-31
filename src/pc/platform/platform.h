@@ -26,6 +26,17 @@ void Platform_OpenMods(void);
 int Platform_PickModZip(char *why, size_t why_size);
 int Platform_PickedModZip(char *why, size_t why_size);
 int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size);
+/* Android only: a .zip the player opened with the game, from "Open with" or
+ * Share in another app (OpenWith.java writes the document's URI to a record
+ * in the internal files folder). Platform_OpenedModWaiting is whether there
+ * is one; Platform_TakeOpenedMod takes it (removes the record) and makes the
+ * next Platform_PickModZip answer with it at once (1; 0 with why: the
+ * sender's refusal, or a record too old). */
+int Platform_OpenedModWaiting(void);
+int Platform_TakeOpenedMod(char *why, size_t why_size);
+/* The file taken is not imported after all: the next Platform_PickModZip
+ * opens the picker again. */
+void Platform_DropOpenedMod(void);
 /* Android only (android.c; sdl.c hands it to HdPack_SetNet there): the
  * network for the Mods panel's HD pack... (src/pc/mods/hd_pack.h), Java's
  * HttpURLConnection on the download's own thread. */

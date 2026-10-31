@@ -63,6 +63,11 @@ static int (*import_pick)(char *, size_t), (*import_picked)(char *, size_t),
 static int import_step;
 static char import_zip[1024];
 static ModsImport *import_waiting;
+/* A .zip the player opened with the game (ModsWindow_ImportOpened) is
+ * imported as the picked one is, but asks first, whether it replaces a mod
+ * or not: import_outside while the import is under way, import_plain while
+ * the question is not a Replace one. */
+static int import_outside, import_plain;
 /* Remove (touch panels with Import mod...): the mod its question (pending
  * 5) is about. */
 static int remove_target = -1;
@@ -360,6 +365,7 @@ void ModsWindow_Init(void)
     if (import_waiting) { /* a Replace question the last showing left open */
         Mods_ImportClose(import_waiting);
         import_waiting = NULL;
+        import_plain = 0;
         Mods_ImportRemoveTree(import_zip);
     }
     if (hd_step == 2) { /* the HD pack's Download question, left open */
@@ -835,7 +841,7 @@ static void draw_details(MenuCanvas *c, const Layout *l)
 }
 static const char *apply_label(void)
 {
-    return pending == 5 ? "Remove" : pending == 4 ? "Download" : pending == 3 ? "Replace" : pending == 2 ? "Discard changes" : pending == 1 ? "Apply & restart" : "Apply changes";
+    return pending == 5 ? "Remove" : pending == 4 ? "Download" : pending == 3 ? (import_plain ? "Import" : "Replace") : pending == 2 ? "Discard changes" : pending == 1 ? "Apply & restart" : "Apply changes";
 }
 /* With a finger: the fields and the list, the details (side by side or the
  * page shown), and the footer: the message (or the counts) beside Close and
@@ -1029,6 +1035,7 @@ static void import_done(void)
 {
     Mods_ImportClose(import_waiting);
     import_waiting = NULL;
+    import_plain = 0;
     Mods_ImportRemoveTree(import_zip);
 }
 /* The names of the mods of `import` that `pick` picks, "A", "A and B",
@@ -1232,7 +1239,8 @@ static int import_target(ModsImport *import, int index, const char *folder)
 static void import_read(void)
 {
     char why[400], folder[1024], names[300];
-    int taken = 0, fresh = 0;
+    int taken = 0, fresh = 0, outside = import_outside;
+    import_outside = 0;
     if (!import_fetch(import_zip, sizeof(import_zip), why, sizeof(why))) {
         put(status, sizeof(status), "%s", why);
         return;
@@ -1270,11 +1278,17 @@ static void import_read(void)
         import_done();
         return;
     }
-    if (!taken) {
+    if (!taken && !outside) {
         import_install();
         return;
     }
     pending = 3;
+    if (!taken) {
+        import_plain = 1;
+        import_names(import_waiting, any_mod, names, sizeof(names));
+        put(status, sizeof(status), "Import %s from the .zip you opened with the game?", names);
+        return;
+    }
     import_names(import_waiting, replacing, names, sizeof(names));
     if (taken == 1)
         put(status, sizeof(status), "%s is already installed. Replace it with the one in this .zip?", names);
@@ -1292,6 +1306,25 @@ static void import_start(void)
     }
     import_step = 1;
     put(status, sizeof(status), "Choose a mod's .zip.");
+}
+int ModsWindow_ImportBusy(void) { return hd_step || import_step || import_waiting || pending; }
+int ModsWindow_ImportOpened(const char *refusal)
+{
+    if (!import_pick)
+        return 0;
+    if (refusal) {
+        put(status, sizeof(status), "%s", refusal);
+        return 0;
+    }
+    if (ModsWindow_ImportBusy()) {
+        put(status, sizeof(status), "Finish what this panel is doing, then open the .zip with the game again.");
+        return 0;
+    }
+    import_outside = 1;
+    import_start();
+    if (!import_step)
+        import_outside = 0;
+    return import_step != 0;
 }
 /* --- Remove ------------------------------------------------------------ */
 
@@ -1612,6 +1645,8 @@ int ModsWindow_Tick(void)
     if (!result)
         return 0;
     import_step = result > 0 ? 2 : 0;
+    if (result <= 0)
+        import_outside = 0;
     if (result > 0)
         put(status, sizeof(status), "Importing...");
     else if (result == -1)

@@ -7,7 +7,8 @@ be run on its own: package_android.py <build dir> <abi>. Uses only the JDK
 (javac) and the Android SDK's own tools, no Gradle: SDL's Java shell
 (org.libsdl.app, from the same SDL release as libSDL3.so; build_android_deps.py)
 and the game's own Java (src/pc/platform/android/*.java: the restart activity,
-in a process of its own, and the first run's document picker, among others)
+in a process of its own, the first run's document picker and "Open with" for
+a mod's .zip, among others)
 are compiled against the SDK's android.jar and dexed with d8, aapt2 links the
 manifest, the native libraries go in lib/<abi>/, and the APK is aligned
 (zipalign) and signed (apksigner). The key is the release key named by the
@@ -120,6 +121,34 @@ MANIFEST = f"""<?xml version="1.0" encoding="utf-8"?>
             android:taskAffinity="{PACKAGE}.disc" android:excludeFromRecents="true"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- Open with: a mod's .zip chosen for the game in a browser, Discord
+             or a file manager (VIEW), or shared to it (SEND). OpenWith.java
+             takes the document's URI and brings the game forward, which opens
+             the Mods panel on the same import as Import mod...; a task of its
+             own, shown to nobody. Not application/octet-stream, which would
+             offer the game for every file of no known type. -->
+        <activity android:name="org.yfmredecomp.game.OpenWith" android:exported="true"
+            android:taskAffinity="{PACKAGE}.open" android:excludeFromRecents="true" android:noHistory="true"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="multipart/x-zip" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="multipart/x-zip" />
+            </intent-filter>
+        </activity>
         <provider android:name="org.yfmredecomp.game.ReportProvider"
             android:authorities="{PACKAGE}.reports"
             android:exported="false" android:grantUriPermissions="true" />
@@ -416,9 +445,9 @@ def package(build, abi, library, game, assets):
     os.makedirs(os.path.join(work, "dex"))
     # SDL's Java shell, from the SDL release libSDL3.so was built from, and
     # the game's own (JAVA): the activity that restarts it (Restart.java), the
-    # first run's document picker (DiscPicker.java), the HD pack's download
-    # (HdDownload.java), the message boxes and the crash report's
-    # ReportProvider.
+    # first run's document picker (DiscPicker.java), "Open with" for a mod's
+    # .zip (OpenWith.java), the HD pack's download (HdDownload.java), the
+    # message boxes and the crash report's ReportProvider.
     sources = sorted(glob.glob(os.path.join(build_android_deps.OUT, "java", "**", "*.java"), recursive=True))
     sources += sorted(glob.glob(os.path.join(JAVA, "*.java")))
     check_report_authority()

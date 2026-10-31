@@ -89,6 +89,36 @@ and the message line says "Imported <name>." (or "Imported 3 mods: A, B and
 C."). Turning one on is then like any other mod's change (Apply, a restart
 when the mod needs one).
 
+**Open with** (Android): a mod's `.zip` chosen for the game in a browser,
+Discord or a file manager ("Open with", `ACTION_VIEW`), or shared to it
+(`ACTION_SEND`), goes to the same import without the picker. The game is
+offered for `application/zip`, `application/x-zip`,
+`application/x-zip-compressed` and `multipart/x-zip`, with `content://` and
+`file://` URIs, one file at a time (not `application/octet-stream`, which
+would offer the game for every file of no known type). `OpenWith.java` (a
+translucent activity in a task of its own, in the manifest of
+`tools/pc/package_android.py`) writes the document's URI to
+`open-with.txt` in the internal files folder, in `DiscPicker`'s format, and
+brings the game forward (the same whether it was closed or running:
+`SDLActivity` is `singleInstance` and has no `onNewIntent`, so the intent is
+not given to it); the read right the sender gave goes on to the game with it
+(`ClipData` and `FLAG_GRANT_READ_URI_PERMISSION`). The game looks for the
+record twice a second once it runs (`open_with` in `sdl.c`; before that, at
+the first run's welcome and in its first 60 frames (a panel opened earlier
+pauses the game before it drew anything: black), it waits, and a record over
+15 minutes old is dropped), opens the Mods panel and starts the import with the file already
+picked (`ModsWindow_ImportOpened`, `Platform_TakeOpenedMod`): the same
+copy, checks and messages as Import mod..., with a question first. A mod
+already installed gets the usual Replace question; a new one gets "Import
+<name> from the .zip you opened with the game?" with an Import button and
+Cancel, so a file another app hands over installs nothing unasked. A file
+that is no mod gets the usual refusal ("That file is not a .zip.", "This .zip
+has no mod in it."). While the panel is busy (a question up, an import or the
+HD pack running) the game waits to start it until that is over. A `file://` URI is
+opened as the plain path; one into another app's storage is not readable by
+the game on a current Android (no storage permission), and a URI whose right
+has ended likewise, and both say "Could not read that file".
+
 - **What counts as a mod in it**: every folder with a `mod.json` at the
   `.zip`'s root (the whole `.zip` is then the mod, in a folder named by the
   manifest's `id`), in its top folders, or one wrapper folder down (a
@@ -143,7 +173,11 @@ when the mod needs one).
 - **Testing**: `MEMORIES_IMPORT_ZIP=<file>` (in `environment.txt`) makes
   Import mod... take that file instead of opening the picker.
   `pc_mod_import` checks the reader and the installer on `.zip` files it
-  writes; `pc_mods_window` drives the panel's import with a fake picker.
+  writes; `pc_mods_window` drives the panel's import with a fake picker, and
+  Open with (`ModsWindow_ImportOpened`) the same way. On a phone,
+  `adb shell am start -a android.intent.action.VIEW -d <uri> -t application/zip
+  --grant-read-uri-permission` (and `-a android.intent.action.SEND -t
+  application/zip --eu android.intent.extra.STREAM <uri>`) fires the intent.
 
 **Remove** (Android; it comes with `ModsWindow_SetImport`, so no desktop
 panel has it either): a mod that is off, or does not load (an old code mod
