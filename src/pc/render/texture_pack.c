@@ -1262,6 +1262,7 @@ static void paint(int x, int y, int w, int h)
         wanted_resolve = 1;
         return;
     }
+    TextureDump_Touched(x, y, w, h);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             int vx = (x + i) & (SOFT_GPU_WIDTH - 1), vy = (y + j) & (SOFT_GPU_HEIGHT - 1), row, word, index, k, per;
@@ -1321,34 +1322,45 @@ static void paint(int x, int y, int w, int h)
     if (asked) wait_for_image(x, y, w, h);
 }
 
-/* The maps follow the words as the shadow does (texture_dump.c): cleared
- * with them, and moved with them. */
-static void forget(int x, int y, int w, int h)
+/* The entries other than 0 among `count` from `first`, which are cleared. */
+static unsigned clear_entries(uint16_t *first, size_t count)
 {
 #ifdef MEMORIES_TRANSLATED
+    return GuestRuntime_Clear16(first, count);
+#else
+    unsigned cleared = 0;
+    size_t i;
+    for (i = 0; i < count; i++) {
+        if (first[i]) {
+            first[i] = 0;
+            cleared++;
+        }
+    }
+    return cleared;
+#endif
+}
+
+/* The maps follow the words as the shadow does (texture_dump.c): cleared
+ * with them, and moved with them. The clean blocks the clear passes over
+ * (TextureDump_Clean) have no entry. */
+static void forget(int x, int y, int w, int h)
+{
     for (int j = 0; j < h; j++) {
         int left = w, column = x & (SOFT_GPU_WIDTH - 1);
         size_t row = (size_t)((y + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH;
         while (left > 0) {
-            int count = SOFT_GPU_WIDTH - column;
+            int count = SOFT_GPU_WIDTH - column, end, at;
             if (count > left) count = left;
-            map_generation += GuestRuntime_Clear16(entry_of + row + column, (size_t)count);
+            end = column + count;
+            for (at = TextureDump_PastClean(y + j, column, end); at < end;) {
+                int stop = TextureDump_PastUnclean(y + j, at, end);
+                map_generation += clear_entries(entry_of + row + at, (size_t)(stop - at));
+                at = TextureDump_PastClean(y + j, stop, end);
+            }
             left -= count;
             column = 0;
         }
     }
-#else
-    int i, j;
-    for (j = 0; j < h; j++) {
-        for (i = 0; i < w; i++) {
-            size_t at = (size_t)((y + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + ((x + i) & (SOFT_GPU_WIDTH - 1));
-            if (entry_of[at]) {
-                entry_of[at] = 0;
-                map_generation++;
-            }
-        }
-    }
-#endif
 }
 
 static void follow(int sx, int sy, int dx, int dy, int w, int h)
@@ -1530,6 +1542,7 @@ typedef struct {
 static void tag_block(int x, int y, uint32_t disc, int words, int rows)
 {
     int i, j;
+    TextureDump_Touched(x, y, words, rows);
     for (j = 0; j < rows; j++)
         for (i = 0; i < words; i++)
             TextureDump_Tags[(size_t)(y + j) * SOFT_GPU_WIDTH + x + i] = disc + (uint32_t)(j * words + i) * 2 + 1;
