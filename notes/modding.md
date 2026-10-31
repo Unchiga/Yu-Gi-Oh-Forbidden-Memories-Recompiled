@@ -461,8 +461,9 @@ console, rather than drawn black.
 
 A pack's PNG is read when the game first uploads the words it covers, or
 first draws them through its palette, and is given to them before the next
-frame, as it always was. The reading itself happens on three threads, side
-by side, and the main thread waits only for what that frame asked for; when
+frame, as it always was. The reading itself happens on one thread per core
+but one (3 to 8; `MEMORIES_PACK_THREADS=<n>` sets it, 2 to 16), side by
+side, and the main thread waits only for what that frame asked for; when
 an image is given to the first entry of some words (the head), the other
 entries of the same words (their other palettes) are read ahead, before the
 game draws them, since a screen typically draws its sheets through those

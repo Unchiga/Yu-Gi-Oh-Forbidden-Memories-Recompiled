@@ -99,6 +99,38 @@ static inline uint16_t *TextureDump_Cell(int x, int y, int sub)
 {
     return &TextureDump_Shadow[(y & (SOFT_GPU_HEIGHT - 1)) * TEXTURE_SHADOW_WIDTH + (x & (SOFT_GPU_WIDTH - 1)) * 4 + sub];
 }
+/* Blocks of 64 words of a VRAM row known to hold no tag, no shadow texel and
+ * no pack entry (texture_pack.c): 1 clean, 0 maybe not, as every block
+ * starts. A clear that covers a whole block marks it clean, and anything
+ * that writes a tag, a texel or an entry other than 0 marks what it writes
+ * with TextureDump_Touched (after writing, where the game clock's tick may
+ * clear in between). Clears pass over the whole clean blocks:
+ * the game clears its picture every frame, and nothing is tagged there. */
+#define TEXTURE_CLEAN_WORDS 64
+#define TEXTURE_CLEAN_COLUMNS (SOFT_GPU_WIDTH / TEXTURE_CLEAN_WORDS)
+extern uint8_t TextureDump_Clean[SOFT_GPU_HEIGHT * TEXTURE_CLEAN_COLUMNS];
+void TextureDump_Touched(int x, int y, int w, int h);
+static inline int TextureDump_WholeClean(int y, int column, int end)
+{
+    return !(column & (TEXTURE_CLEAN_WORDS - 1)) && end - column >= TEXTURE_CLEAN_WORDS &&
+           TextureDump_Clean[(y & (SOFT_GPU_HEIGHT - 1)) * TEXTURE_CLEAN_COLUMNS + column / TEXTURE_CLEAN_WORDS];
+}
+/* Within a clear's span of row y, column to end (not wrapping): past the
+ * whole clean blocks from column, and then past the words to clear up to
+ * the next whole clean block. */
+static inline int TextureDump_PastClean(int y, int column, int end)
+{
+    while (column < end && TextureDump_WholeClean(y, column, end)) column += TEXTURE_CLEAN_WORDS;
+    return column;
+}
+static inline int TextureDump_PastUnclean(int y, int column, int end)
+{
+    do {
+        column = (column | (TEXTURE_CLEAN_WORDS - 1)) + 1;
+        if (column > end) column = end;
+    } while (column < end && !TextureDump_WholeClean(y, column, end));
+    return column;
+}
 /* The disc layer, which names the archives (Memories_DiscFileInfo). */
 void TextureDump_SetDiscFiles(int (*file_info)(const char *path, int *lba, unsigned *size));
 /* That lookup, for the pack: 0 and the file's first sector when it is on the disc. */

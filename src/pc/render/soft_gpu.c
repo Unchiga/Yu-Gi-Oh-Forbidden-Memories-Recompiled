@@ -240,12 +240,6 @@ void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
     }
 }
 
-/* The same word in whichever bank the current texture page names. */
-static inline __attribute__((always_inline)) uint16_t sample(int x, int y)
-{
-    return texture_source[(y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
-}
-
 /* Seed transferred words in a scaled companion. Primitive rendering then
  * replaces these blocks with samples at the requested internal resolution. */
 static void wide_picture_words(WideTarget *wt, int x, int y, int w, int h)
@@ -550,38 +544,87 @@ void SoftGpu_Fill(int x, int y, int w, int h, uint32_t rgb24)
     fill_words(x, y, w, h, rgb24);
 }
 
-static inline __attribute__((always_inline)) uint16_t texel(int u, int v)
+/* What a primitive's texels are read with, and what plot draws it with:
+ * the state as the primitive starts, taken once. Nothing a primitive's
+ * pixels do changes it, and in locals it stays in registers; read from the
+ * globals at each pixel it was loaded again after every store, since any
+ * store may alias them here (-fno-strict-aliasing). */
+typedef struct Sampler {
+    int keep_u, set_u, keep_v, set_v; /* the texture window, as masks */
+    int page_x, page_y, depth, clut_x, clut_y, shadow_on;
+    const uint16_t *source;
+} Sampler;
+
+typedef struct Plotter {
+    Sampler texels;
+    int clip_x1, clip_y1, clip_x2, clip_y2;
+    int mask_check, mask_set, dither, dither_shift, blend, fade;
+    uint16_t *target;
+    uint32_t *tags; /* NULL into a widescreen target or with provenance tags off */
+    uint16_t *shadow;
+} Plotter;
+
+static inline __attribute__((always_inline)) Sampler sampler(void)
+{
+    Sampler s;
+    s.keep_u = ~(gpu.window_mask_x * 8);
+    s.set_u = (gpu.window_x & gpu.window_mask_x) * 8;
+    s.keep_v = ~(gpu.window_mask_y * 8);
+    s.set_v = (gpu.window_y & gpu.window_mask_y) * 8;
+    s.page_x = gpu.page_x;
+    s.page_y = gpu.page_y;
+    s.depth = gpu.depth;
+    s.clut_x = gpu.clut_x;
+    s.clut_y = gpu.clut_y;
+    s.shadow_on = shadow_on;
+    s.source = texture_source;
+    return s;
+}
+
+/* The same word in whichever bank the primitive's texture page names. */
+static inline __attribute__((always_inline)) uint16_t sample(const Sampler *s, int x, int y)
+{
+    return s->source[(y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
+}
+
+static inline __attribute__((always_inline)) uint16_t texel_from(const Sampler *s, int u, int v)
 {
     int x, y;
     uint16_t word;
-    u = (u & ~(gpu.window_mask_x * 8)) | ((gpu.window_x & gpu.window_mask_x) * 8);
-    v = (v & ~(gpu.window_mask_y * 8)) | ((gpu.window_y & gpu.window_mask_y) * 8);
+    u = (u & s->keep_u) | s->set_u;
+    v = (v & s->keep_v) | s->set_v;
     u &= 0xff;
     v &= 0xff;
-    y = gpu.page_y + v;
-    if (gpu.depth == 0) {
-        x = gpu.page_x + u / 4;
-        word = sample(gpu.clut_x + ((sample(x, y) >> ((u & 3) * 4)) & 0xf), gpu.clut_y);
-    } else if (gpu.depth == 1) {
-        x = gpu.page_x + u / 2;
-        word = sample(gpu.clut_x + ((sample(x, y) >> ((u & 1) * 8)) & 0xff), gpu.clut_y);
+    y = s->page_y + v;
+    if (s->depth == 0) {
+        x = s->page_x + u / 4;
+        word = sample(s, s->clut_x + ((sample(s, x, y) >> ((u & 3) * 4)) & 0xf), s->clut_y);
+    } else if (s->depth == 1) {
+        x = s->page_x + u / 2;
+        word = sample(s, s->clut_x + ((sample(s, x, y) >> ((u & 1) * 8)) & 0xff), s->clut_y);
     } else {
-        word = sample(gpu.page_x + u, y);
+        word = sample(s, s->page_x + u, y);
     }
-    if (shadow_on == 1) {
+    if (s->shadow_on == 1) {
         /* A replaced texel: the pack's color, 0 for one painted transparent.
          * The texel's own semi-transparency bit stays: a pack replaces the
          * color, not how the game draws it. Black is 0x8000 with that bit
          * and the darkest non-zero color without it (texture_dump.h).
          * (2: the primitive reads the words with another palette than the
          * shadow's image; the scaled picture has that image, VRAM stays.) */
-        uint16_t cell = gpu.depth == 0 ? *TextureDump_Cell(gpu.page_x + u / 4, y, u & 3)
-                        : gpu.depth == 1 ? *TextureDump_Cell(gpu.page_x + u / 2, y, (u & 1) * 2)
-                                         : *TextureDump_Cell(gpu.page_x + u, y, 0);
+        uint16_t cell = s->depth == 0 ? *TextureDump_Cell(s->page_x + u / 4, y, u & 3)
+                        : s->depth == 1 ? *TextureDump_Cell(s->page_x + u / 2, y, (u & 1) * 2)
+                                        : *TextureDump_Cell(s->page_x + u, y, 0);
         if (cell == TEXTURE_SHADOW_BLACK) return (word & 0x8000) ? 0x8000 : 0x0001;
         if (cell) return (cell & 0x7fff) ? (uint16_t)((cell & 0x7fff) | (word & 0x8000)) : 0;
     }
     return word;
+}
+
+static inline __attribute__((always_inline)) uint16_t texel(int u, int v)
+{
+    const Sampler s = sampler();
+    return texel_from(&s, u, v);
 }
 
 static inline __attribute__((always_inline)) int clamp8(int value)
@@ -589,33 +632,47 @@ static inline __attribute__((always_inline)) int clamp8(int value)
     return value < 0 ? 0 : value > 255 ? 255 : value;
 }
 
-/* The provenance tag of the word plot is about to draw, or NULL when it draws
- * into a widescreen target (whose words have no tags) or tracing is off.
- * Outside plot, whose local target hides the global one. */
-static inline __attribute__((always_inline)) uint32_t *drawn_tag(const uint16_t *word)
+/* The state plot draws a primitive with, as it starts. */
+static inline __attribute__((always_inline)) Plotter plotter(void)
 {
-    return TextureDump_Tags && target == vram ? &TextureDump_Tags[word - vram] : NULL;
+    Plotter p;
+    p.texels = sampler();
+    p.clip_x1 = gpu.clip_x1;
+    p.clip_y1 = gpu.clip_y1;
+    p.clip_x2 = gpu.clip_x2;
+    p.clip_y2 = gpu.clip_y2;
+    p.mask_check = gpu.mask_check;
+    p.mask_set = gpu.mask_set ? 0x8000 : 0;
+    p.dither = gpu.dither;
+    p.dither_shift = dither_shift;
+    p.blend = gpu.blend;
+    p.fade = fade;
+    p.target = target;
+    p.tags = TextureDump_Tags && target == vram ? TextureDump_Tags : NULL;
+    p.shadow = TextureDump_Shadow;
+    return p;
 }
 
 /* flags: 1 raw texture, 2 semi-transparent, 4 textured, 8 dither-eligible */
-static inline __attribute__((always_inline)) void plot(int x, int y, int r, int g, int b, int u, int v, int flags)
+static inline __attribute__((always_inline)) void plot(const Plotter *p, int x, int y, int r, int g, int b, int u,
+                                                       int v, int flags)
 {
     uint16_t *target, source;
-    uint32_t *tag;
     int semi = flags & 2;
-    if (x < gpu.clip_x1 || x > gpu.clip_x2 || y < gpu.clip_y1 || y > gpu.clip_y2) {
+    if (x < p->clip_x1 || x > p->clip_x2 || y < p->clip_y1 || y > p->clip_y2) {
         return;
     }
-    target = pixel(x, y);
-    if (gpu.mask_check && (*target & 0x8000)) {
+    target = &p->target[(y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
+    if (p->mask_check && (*target & 0x8000)) {
         return;
     }
-    if ((tag = drawn_tag(target)) != NULL) { /* drawn, not from the disc */
-        *tag = 0;
-        if (TextureDump_Shadow) memset(TextureDump_Shadow + (tag - TextureDump_Tags) * 4, 0, 4 * sizeof(uint16_t));
+    if (p->tags) { /* drawn, not from the disc */
+        size_t at = (size_t)(target - vram);
+        p->tags[at] = 0;
+        if (p->shadow) memset(p->shadow + at * 4, 0, 4 * sizeof(uint16_t));
     }
     if (flags & 4) {
-        source = flags & 16 ? (uint16_t)u : texel(u, v); /* 16: the texel's word given in u */
+        source = flags & 16 ? (uint16_t)u : texel_from(&p->texels, u, v); /* 16: the texel's word given in u */
         if (!source) {
             return;
         }
@@ -632,8 +689,8 @@ static inline __attribute__((always_inline)) void plot(int x, int y, int r, int 
     } else {
         source = 0;
     }
-    if ((flags & 8) && gpu.dither) {
-        int offset = dither_matrix[y & 3][(x - dither_shift) & 3];
+    if ((flags & 8) && p->dither) {
+        int offset = dither_matrix[y & 3][(x - p->dither_shift) & 3];
         r += offset;
         g += offset;
         b += offset;
@@ -643,7 +700,7 @@ static inline __attribute__((always_inline)) void plot(int x, int y, int r, int 
     b = clamp8(b) >> 3;
     if (semi) {
         int br = *target & 0x1f, bg = (*target >> 5) & 0x1f, bb = (*target >> 10) & 0x1f;
-        switch (gpu.blend) {
+        switch (p->blend) {
         case 0: r = (br + r) >> 1; g = (bg + g) >> 1; b = (bb + b) >> 1; break;
         case 1: r += br; g += bg; b += bb; break;
         case 2: r = br - r; g = bg - g; b = bb - b; break;
@@ -653,14 +710,13 @@ static inline __attribute__((always_inline)) void plot(int x, int y, int r, int 
         g = g < 0 ? 0 : g > 31 ? 31 : g;
         b = b < 0 ? 0 : b > 31 ? 31 : b;
     }
-    if (fade) {
+    if (p->fade) {
         int br = *target & 0x1f, bg = (*target >> 5) & 0x1f, bb = (*target >> 10) & 0x1f;
-        r = (r * (255 - fade) + br * fade) / 255;
-        g = (g * (255 - fade) + bg * fade) / 255;
-        b = (b * (255 - fade) + bb * fade) / 255;
+        r = (r * (255 - p->fade) + br * p->fade) / 255;
+        g = (g * (255 - p->fade) + bg * p->fade) / 255;
+        b = (b * (255 - p->fade) + bb * p->fade) / 255;
     }
-    *target = (uint16_t)(r | (g << 5) | (b << 10) | (source & 0x8000) |
-                         (gpu.mask_set ? 0x8000 : 0));
+    *target = (uint16_t)(r | (g << 5) | (b << 10) | (source & 0x8000) | p->mask_set);
 }
 
 /* --- the scaled picture's own pass ------------------------------------
@@ -867,6 +923,23 @@ static int owns(const Vertex *a, const Vertex *b)
     return dy < 0 || (dy == 0 && dx > 0);
 }
 
+/* Narrow first..last, pixel offsets along a row, to those at which an edge
+ * function that is w at offset 0 and grows by d a pixel is >= 0. */
+static inline __attribute__((always_inline)) void row_span(int32_t w, int32_t d, int *first, int *last)
+{
+    if (d > 0) {
+        if (w < 0) {
+            int64_t from = (-(int64_t)w + d - 1) / d;
+            if (from > *first) *first = from > *last ? *last + 1 : (int)from;
+        }
+    } else if (w < 0) {
+        *first = *last + 1; /* never inside: it only falls (or stays) */
+    } else if (d < 0) {
+        int64_t to = (int64_t)w / -(int64_t)d;
+        if (to < *last) *last = (int)to;
+    }
+}
+
 static inline __attribute__((always_inline)) void triangle_with(Vertex a, Vertex b, Vertex c, const int flags)
 {
     int min_x, max_x, min_y, max_y, x, y, bias0, bias1, bias2;
@@ -911,6 +984,7 @@ static inline __attribute__((always_inline)) void triangle_with(Vertex a, Vertex
         const int values[5][3] = {{a.r, b.r, c.r}, {a.g, b.g, c.g}, {a.b, b.b, c.b}, {a.u, b.u, c.u}, {a.v, b.v, c.v}};
         int32_t step_x[5], step_y[5], row[5];
         int k;
+        const Plotter p = plotter();
         for (k = 0; k < 5; k++) {
             int64_t nx = (int64_t)dx0 * values[k][0] + (int64_t)dx1 * values[k][1] + (int64_t)dx2 * values[k][2];
             int64_t ny = (int64_t)dy0 * values[k][0] + (int64_t)dy1 * values[k][1] + (int64_t)dy2 * values[k][2];
@@ -920,20 +994,28 @@ static inline __attribute__((always_inline)) void triangle_with(Vertex a, Vertex
                                (int64_t)step_y[k] * (min_y - a.y));
         }
         for (y = min_y; y <= max_y; y++) {
-            int32_t w0 = row0, w1 = row1, w2 = row2;
-            int32_t r = row[0], g = row[1], blue = row[2], u = row[3], v = row[4];
-            for (x = min_x; x <= max_x; x++) {
-                if ((w0 | w1 | w2) >= 0) {
-                    plot(x, y, r >> FRACTION, g >> FRACTION, blue >> FRACTION, u >> FRACTION, v >> FRACTION, flags);
+            /* The row's pixels inside are one run, from the first to the
+             * last at which all three edge functions are >= 0: worked out
+             * from them rather than tested across the whole box, which
+             * half of a triangle's box is outside of. */
+            int first = 0, last = max_x - min_x;
+            row_span(row0, dx0, &first, &last);
+            row_span(row1, dx1, &first, &last);
+            row_span(row2, dx2, &first, &last);
+            if (first <= last) {
+                int32_t r = (int32_t)(row[0] + (int64_t)step_x[0] * first);
+                int32_t g = (int32_t)(row[1] + (int64_t)step_x[1] * first);
+                int32_t blue = (int32_t)(row[2] + (int64_t)step_x[2] * first);
+                int32_t u = (int32_t)(row[3] + (int64_t)step_x[3] * first);
+                int32_t v = (int32_t)(row[4] + (int64_t)step_x[4] * first);
+                for (x = min_x + first; x <= min_x + last; x++) {
+                    plot(&p, x, y, r >> FRACTION, g >> FRACTION, blue >> FRACTION, u >> FRACTION, v >> FRACTION, flags);
+                    r += step_x[0];
+                    g += step_x[1];
+                    blue += step_x[2];
+                    u += step_x[3];
+                    v += step_x[4];
                 }
-                w0 += dx0;
-                w1 += dx1;
-                w2 += dx2;
-                r += step_x[0];
-                g += step_x[1];
-                blue += step_x[2];
-                u += step_x[3];
-                v += step_x[4];
             }
             row0 += dy0;
             row1 += dy1;
@@ -997,9 +1079,10 @@ static void line(Vertex a, Vertex b, int flags)
         picture_triangle(quad[0], quad[1], quad[2], flags);
         picture_triangle(quad[1], quad[2], quad[3], flags);
     }
+    const Plotter p = plotter();
     for (i = 0; i <= steps; i++) {
         int n = steps ? steps : 1;
-        plot(a.x + dx * i / n, a.y + dy * i / n, a.r + (b.r - a.r) * i / n,
+        plot(&p, a.x + dx * i / n, a.y + dy * i / n, a.r + (b.r - a.r) * i / n,
              a.g + (b.g - a.g) * i / n, a.b + (b.b - a.b) * i / n, 0, 0, flags);
     }
 }
@@ -1155,12 +1238,13 @@ static void name_over_panel(int x, int y, int width, int height, int u0, int v0,
         top = y + (by - (v0 - 128)) * height / h;
         right = x + (bx + bw - (u0 - 128)) * width / w;
         bottom = y + (by + bh - (v0 - 128)) * height / h;
+        const Plotter p = plotter();
         for (j = top; j < bottom; j++) {
             for (i = left; i < right; i++) {
                 /* Each pixel the box texel under it, as a quad samples. */
                 int tx = (i - left) * bw / (right - left), ty = (j - top) * bh / (bottom - top);
                 uint16_t word = vram[gpu.clut_y * SOFT_GPU_WIDTH + gpu.clut_x + box[(size_t)ty * stride + tx]];
-                plot(i, j, color->r, color->g, color->b, word, 0, (flags & 3) | 4 | 16);
+                plot(&p, i, j, color->r, color->g, color->b, word, 0, (flags & 3) | 4 | 16);
             }
         }
     }
@@ -1208,11 +1292,12 @@ static size_t rectangle(const uint32_t *words, size_t count)
             }
         }
     }
+    const Plotter p = plotter();
     switch (flags) {
 #define CASE(n) case n: \
         for (j = 0; j < h; j++) { \
             for (i = 0; i < w; i++) { \
-                plot(base.x + i, base.y + j, base.r, base.g, base.b, base.u + i, base.v + j, n); \
+                plot(&p, base.x + i, base.y + j, base.r, base.g, base.b, base.u + i, base.v + j, n); \
             } \
         } \
         break;

@@ -162,15 +162,17 @@ static void decode_block(Voice *voice)
 static void envelope(Voice *voice)
 {
     int rate, exponential, decreasing, shift, step, cycles;
+    /* Most samples only count down to the next step. (Not in a phase: off,
+     * or a value no phase has, from a state file.) */
+    if (voice->phase < ATTACK || voice->phase > RELEASE || --voice->wait > 0) {
+        return;
+    }
     switch (voice->phase) {
     case ATTACK: rate = (voice->adsr1 >> 8) & 0x7f; exponential = voice->adsr1 >> 15; decreasing = 0; break;
     case DECAY: rate = ((voice->adsr1 >> 4) & 15) * 4; exponential = 1; decreasing = 1; break;
     case SUSTAIN: rate = (voice->adsr2 >> 6) & 0x7f; exponential = voice->adsr2 >> 15; decreasing = (voice->adsr2 >> 14) & 1; break;
     case RELEASE: rate = (voice->adsr2 & 31) * 4; exponential = (voice->adsr2 >> 5) & 1; decreasing = 1; break;
     default: return;
-    }
-    if (--voice->wait > 0) {
-        return;
     }
     shift = rate >> 2;
     step = decreasing ? -8 + (rate & 3) : 7 - (rate & 3);
@@ -260,8 +262,8 @@ void Spu_Mix(int16_t *out, size_t frames)
                                            bus_volume[SPU_BUS_STREAM] << 8};
     size_t n;
     unsigned v;
-    uint32_t on;
-    int replaced;
+    uint32_t on, sounding = 0;
+    int replaced, cubic;
     /* A save state is being taken or applied: stay out of the voices. */
     __atomic_store_n(&mixing, 1, __ATOMIC_SEQ_CST);
     if (__atomic_load_n(&hold, __ATOMIC_SEQ_CST)) {
@@ -302,7 +304,13 @@ void Spu_Mix(int16_t *out, size_t frames)
             voice->phase = RELEASE;
             voice->wait = 0;
         }
+        if (voice->phase != OFF) {
+            sounding |= 1u << v;
+        }
     }
+    /* Keys change only above, so within the period the voices that sound
+     * can only fall silent: the frames visit just those. */
+    cubic = interpolation == SPU_INTERPOLATION_CUBIC;
     for (n = 0; n < frames; n++) {
         int music_l = 0, music_r = 0, sfx_l = 0, sfx_r = 0, left, right;
         int bus, extra[6] = {0, 0, 0, 0, 0, 0};
@@ -313,13 +321,13 @@ void Spu_Mix(int16_t *out, size_t frames)
                 bus_gain[bus] += step;
             }
         }
-        for (v = 0; v < SPU_VOICES; v++) {
-            Voice *voice = &voices[v];
+        uint32_t left_to_mix;
+        for (left_to_mix = sounding; left_to_mix; left_to_mix &= left_to_mix - 1) {
+            Voice *voice;
             const int16_t *taps;
             int sample, fraction;
-            if (voice->phase == OFF) {
-                continue;
-            }
+            v = (unsigned)__builtin_ctz(left_to_mix);
+            voice = &voices[v];
             while (voice->position >= 28) {
                 if (voice->stop) {
                     voice->phase = OFF;
@@ -330,6 +338,7 @@ void Spu_Mix(int16_t *out, size_t frames)
                 voice->position -= 28;
             }
             if (voice->phase == OFF) {
+                sounding &= ~(1u << v);
                 continue;
             }
             /* Four-tap Gaussian interpolation over the newest samples, as the
@@ -338,7 +347,7 @@ void Spu_Mix(int16_t *out, size_t frames)
              * taps[2] like the Gaussian) keeps it. */
             fraction = (int)(voice->counter >> 4 & 0xff);
             taps = &voice->block[voice->position];
-            if (interpolation == SPU_INTERPOLATION_CUBIC) {
+            if (cubic) {
                 int a = 3 * (taps[1] - taps[2]) + taps[3] - taps[0];
                 int b = 2 * taps[0] - 5 * taps[1] + 4 * taps[2] - taps[3];
                 int c = taps[2] - taps[0];
@@ -352,6 +361,9 @@ void Spu_Mix(int16_t *out, size_t frames)
             voice->position += (int)(voice->counter >> 12);
             voice->counter &= 0xfff;
             envelope(voice);
+            if (voice->phase == OFF) {
+                sounding &= ~(1u << v); /* released: this is its last sample */
+            }
             sample = (sample * voice->level) >> 15;
             if (v < SPU_SFX_FIRST_VOICE) {
                 if (replaced & AUDIO_MIX_MUTE_MUSIC) continue; /* still advanced: the song keeps its time */
@@ -369,10 +381,15 @@ void Spu_Mix(int16_t *out, size_t frames)
             sfx_l += extra[2];
             sfx_r += extra[3];
         }
-        left = (int)(((int64_t)music_l * bus_gain[SPU_BUS_MUSIC] +
-                      (int64_t)sfx_l * bus_gain[SPU_BUS_SFX]) / GAIN_ONE);
-        right = (int)(((int64_t)music_r * bus_gain[SPU_BUS_MUSIC] +
-                       (int64_t)sfx_r * bus_gain[SPU_BUS_SFX]) / GAIN_ONE);
+        if (bus_gain[SPU_BUS_MUSIC] == GAIN_ONE && bus_gain[SPU_BUS_SFX] == GAIN_ONE) {
+            left = music_l + sfx_l; /* what the sums below give at full gain */
+            right = music_r + sfx_r;
+        } else {
+            left = (int)(((int64_t)music_l * bus_gain[SPU_BUS_MUSIC] +
+                          (int64_t)sfx_l * bus_gain[SPU_BUS_SFX]) / GAIN_ONE);
+            right = (int)(((int64_t)music_r * bus_gain[SPU_BUS_MUSIC] +
+                           (int64_t)sfx_r * bus_gain[SPU_BUS_SFX]) / GAIN_ONE);
+        }
         left = (left * volume(master_left)) >> 15;
         right = (right * volume(master_right)) >> 15;
         if (cd_enabled) {
@@ -399,8 +416,13 @@ void Spu_Mix(int16_t *out, size_t frames)
             int stream_r = cd_last[1] + (int)((int64_t)(cd_next[1] - cd_last[1]) * cd_phase / 44100) + extra[5];
             stream_l = (int)(((int64_t)stream_l * cd_left) >> 15);
             stream_r = (int)(((int64_t)stream_r * cd_right) >> 15);
-            left += (int)((int64_t)stream_l * bus_gain[SPU_BUS_STREAM] / GAIN_ONE);
-            right += (int)((int64_t)stream_r * bus_gain[SPU_BUS_STREAM] / GAIN_ONE);
+            if (bus_gain[SPU_BUS_STREAM] == GAIN_ONE) {
+                left += stream_l;
+                right += stream_r;
+            } else {
+                left += (int)((int64_t)stream_l * bus_gain[SPU_BUS_STREAM] / GAIN_ONE);
+                right += (int)((int64_t)stream_r * bus_gain[SPU_BUS_STREAM] / GAIN_ONE);
+            }
         }
         if (output_gain != output_target) {
             int step = output_target - output_gain;

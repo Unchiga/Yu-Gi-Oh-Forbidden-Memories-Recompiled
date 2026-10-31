@@ -80,6 +80,15 @@ static const SettingInfo info[SET_COUNT] = {
      * nearly the same picture. 0 off, exactly as before; 1 on; 2 automatic,
      * on once frames fall behind while a pack is drawn (fast_wanted). */
     [SET_HD_FAST] = {"hd_fast", NULL, "MEMORIES_HD_FAST", NULL, 2, 0, 2},
+    /* View > Touch controls > Opacity: how much of a touch control a button
+     * let go covers, in percent; held, it is twice that (touch_pad_art.c).
+     * 0, the default, is the style's own: 59% with the game's buttons (as
+     * they always were), 25% Simple. */
+    [SET_TOUCH_OPACITY] = {"touch_opacity", NULL, "MEMORIES_TOUCH_OPACITY", NULL, 0, 0, 100},
+    /* View > Touch controls: 0 the game's buttons, where they always were;
+     * 1 Simple, a handheld's layout in grey with MENU, STATES and SPEED along
+     * the top (touch_pad.h). */
+    [SET_TOUCH_STYLE] = {"touch_style", NULL, "MEMORIES_TOUCH_STYLE", NULL, 0, 0, 1},
     [SET_MASTER_VOLUME] = {"master_volume", "volume", "MEMORIES_MASTER_VOLUME", "MEMORIES_VOLUME", 100, 0, 100},
     [SET_MUSIC_VOLUME] = {"music_volume", NULL, "MEMORIES_MUSIC_VOLUME", NULL, 100, 0, 100},
     [SET_SFX_VOLUME] = {"sfx_volume", NULL, "MEMORIES_SFX_VOLUME", NULL, 100, 0, 100},

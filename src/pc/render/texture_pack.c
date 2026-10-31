@@ -595,41 +595,126 @@ static int read_png(const char *path, unsigned char **rgba, unsigned *width, uns
     return 1;
 }
 
+/* floor(value / n) as a multiply and a shift, for value < 2^24 and
+ * 1 <= n < RESAMPLE_EXACT: m = ceil(2^(24+l) / n) with 2^l >= n, so that
+ * m*n - 2^(24+l) < n <= 2^l, which is what makes it exact for every value
+ * below 2^24 (Granlund and Montgomery, "Division by invariant integers using
+ * multiplication", 1994, theorem 4.2). */
+typedef struct {
+    uint64_t m;
+    int shift;
+} Reciprocal;
+
+#define RESAMPLE_EXACT 65536u /* a texel's sum of 255s stays under 2^24 */
+#define RESAMPLE_WIDTHS 64    /* the column widths a row keeps a reciprocal for */
+
+static Reciprocal reciprocal(unsigned n)
+{
+    Reciprocal r;
+    int l = 0;
+    while ((1u << l) < n) l++;
+    r.shift = 24 + l;
+    r.m = (((uint64_t)1 << r.shift) + n - 1) / n;
+    return r;
+}
+
 /* The PNG, as the texture's own grid of 15-bit colors (words x rows at
  * bpp, the crop's columns): each texel takes the average of the image
  * pixels that fall on it (a pack image is any size), alpha below half is
- * the transparent color. NULL out of memory. */
+ * the transparent color. NULL out of memory.
+ *
+ * The same texels as averaging each texel's pixels in turn, read faster:
+ * a column's span of image pixels is worked out once, not once per texel;
+ * a texel row's pixels are summed image row by image row, in the order
+ * they are in memory; the alpha test is a >= 128 * n, which needs no
+ * division; and the averages divide by a reciprocal, the same quotient
+ * (sums of 65536 pixels and more, and columns 64 pixels wide or more,
+ * divide as before). Checked against the
+ * texel-by-texel loop on every entry of the Forbidden Memories HD pack and
+ * 48,925 other geometries (up, down, cropped, past the width), on Windows
+ * i686 and Android arm64: the same texels. On a Samsung A22's small cores
+ * (Cortex-A55, where the read-ahead threads mostly run) the pack's 1,957
+ * entries took 4.4 s instead of 10.1 s, against 17.6 s for reading their
+ * PNGs; on its big ones 2.1 s instead of 2.3 (29 October 2026). */
 static uint16_t *resample(const unsigned char *rgba, unsigned image_width, unsigned image_height, int words,
                           int rows, int bpp, int crop_left, int crop_width)
 {
-    int width = words * per_word(bpp), height = rows, x, y;
+    int width = words * per_word(bpp), height = rows, y, c;
+    int end = crop_left + crop_width < width ? crop_left + crop_width : width;
+    int columns = end > crop_left ? end - crop_left : 0;
     uint16_t *pixels = calloc((size_t)width * height, sizeof(uint16_t));
-    if (!pixels) return NULL;
+    int *first, *count, stamp[RESAMPLE_WIDTHS];
+    unsigned long *sum;
+    Reciprocal by[RESAMPLE_WIDTHS] = {{0, 0}};
+    if (!pixels || !columns) return pixels;
+    first = malloc((size_t)columns * 2 * sizeof(int));
+    sum = malloc((size_t)columns * 4 * sizeof(unsigned long));
+    if (!first || !sum) {
+        free(first);
+        free(sum);
+        free(pixels);
+        return NULL;
+    }
+    count = first + columns;
+    for (c = 0; c < columns; c++) {
+        int sx0 = (int)((long long)c * image_width / crop_width), sx1 = (int)((long long)(c + 1) * image_width / crop_width);
+        if (sx1 <= sx0) sx1 = sx0 + 1;
+        if (sx1 > (int)image_width) sx1 = (int)image_width;
+        first[c] = sx0;
+        count[c] = sx1 > sx0 ? sx1 - sx0 : 0;
+    }
+    for (c = 0; c < RESAMPLE_WIDTHS; c++) stamp[c] = -1;
     for (y = 0; y < height; y++) {
         int sy0 = (int)((long long)y * image_height / height), sy1 = (int)((long long)(y + 1) * image_height / height);
+        int sy, tall;
+        uint16_t *out = pixels + (size_t)y * width + crop_left;
         if (sy1 <= sy0) sy1 = sy0 + 1;
-        for (x = crop_left; x < crop_left + crop_width && x < width; x++) {
-            int px = x - crop_left;
-            int sx0 = (int)((long long)px * image_width / crop_width);
-            int sx1 = (int)((long long)(px + 1) * image_width / crop_width);
-            unsigned long r = 0, g = 0, b = 0, a = 0, n = 0;
-            int sx, sy;
-            if (sx1 <= sx0) sx1 = sx0 + 1;
-            for (sy = sy0; sy < sy1 && sy < (int)image_height; sy++) {
-                for (sx = sx0; sx < sx1 && sx < (int)image_width; sx++) {
-                    const unsigned char *p = rgba + ((size_t)sy * image_width + sx) * 4;
-                    r += p[0]; g += p[1]; b += p[2]; a += p[3]; n++;
+        if (sy1 > (int)image_height) sy1 = (int)image_height;
+        tall = sy1 > sy0 ? sy1 - sy0 : 0;
+        memset(sum, 0, (size_t)columns * 4 * sizeof(unsigned long));
+        for (sy = sy0; sy < sy1; sy++) {
+            const unsigned char *line = rgba + (size_t)sy * image_width * 4;
+            unsigned long *s = sum;
+            for (c = 0; c < columns; c++, s += 4) {
+                const unsigned char *p = line + (size_t)first[c] * 4;
+                unsigned long r = 0, g = 0, b = 0, a = 0;
+                int k;
+                for (k = count[c]; k > 0; k--, p += 4) {
+                    r += p[0]; g += p[1]; b += p[2]; a += p[3];
                 }
-            }
-            if (n && a / n >= 128) {
-                uint16_t color = (uint16_t)(((r / n) >> 3) | (((g / n) >> 3) << 5) | (((b / n) >> 3) << 10));
-                /* Black stays opaque: 0x8000 alone is transparent. */
-                pixels[y * width + x] = color ? (uint16_t)(color | 0x8000) : TEXTURE_SHADOW_BLACK;
-            } else {
-                pixels[y * width + x] = 0x8000; /* painted transparent: replaced, by nothing */
+                s[0] += r; s[1] += g; s[2] += b; s[3] += a;
             }
         }
+        for (c = 0; c < columns; c++) {
+            const unsigned long *s = sum + (size_t)c * 4;
+            unsigned long n = (unsigned long)count[c] * (unsigned long)tall, r, g, b;
+            uint16_t color;
+            if (!n || (n < RESAMPLE_EXACT ? s[3] < 128 * n : s[3] / n < 128)) {
+                out[c] = 0x8000; /* painted transparent: replaced, by nothing */
+                continue;
+            }
+            if (n < RESAMPLE_EXACT && count[c] < RESAMPLE_WIDTHS) {
+                /* A row's texels are one or two widths: a reciprocal each. */
+                Reciprocal *d = &by[count[c]];
+                if (stamp[count[c]] != y) {
+                    *d = reciprocal((unsigned)n);
+                    stamp[count[c]] = y;
+                }
+                r = (unsigned long)((s[0] * d->m) >> d->shift);
+                g = (unsigned long)((s[1] * d->m) >> d->shift);
+                b = (unsigned long)((s[2] * d->m) >> d->shift);
+            } else {
+                r = s[0] / n;
+                g = s[1] / n;
+                b = s[2] / n;
+            }
+            color = (uint16_t)((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10));
+            /* Black stays opaque: 0x8000 alone is transparent. */
+            out[c] = color ? (uint16_t)(color | 0x8000) : TEXTURE_SHADOW_BLACK;
+        }
     }
+    free(first);
+    free(sum);
     return pixels;
 }
 
@@ -1262,6 +1347,7 @@ static void paint(int x, int y, int w, int h)
         wanted_resolve = 1;
         return;
     }
+    TextureDump_Touched(x, y, w, h);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             int vx = (x + i) & (SOFT_GPU_WIDTH - 1), vy = (y + j) & (SOFT_GPU_HEIGHT - 1), row, word, index, k, per;
@@ -1321,34 +1407,45 @@ static void paint(int x, int y, int w, int h)
     if (asked) wait_for_image(x, y, w, h);
 }
 
-/* The maps follow the words as the shadow does (texture_dump.c): cleared
- * with them, and moved with them. */
-static void forget(int x, int y, int w, int h)
+/* The entries other than 0 among `count` from `first`, which are cleared. */
+static unsigned clear_entries(uint16_t *first, size_t count)
 {
 #ifdef MEMORIES_TRANSLATED
+    return GuestRuntime_Clear16(first, count);
+#else
+    unsigned cleared = 0;
+    size_t i;
+    for (i = 0; i < count; i++) {
+        if (first[i]) {
+            first[i] = 0;
+            cleared++;
+        }
+    }
+    return cleared;
+#endif
+}
+
+/* The maps follow the words as the shadow does (texture_dump.c): cleared
+ * with them, and moved with them. The clean blocks the clear passes over
+ * (TextureDump_Clean) have no entry. */
+static void forget(int x, int y, int w, int h)
+{
     for (int j = 0; j < h; j++) {
         int left = w, column = x & (SOFT_GPU_WIDTH - 1);
         size_t row = (size_t)((y + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH;
         while (left > 0) {
-            int count = SOFT_GPU_WIDTH - column;
+            int count = SOFT_GPU_WIDTH - column, end, at;
             if (count > left) count = left;
-            map_generation += GuestRuntime_Clear16(entry_of + row + column, (size_t)count);
+            end = column + count;
+            for (at = TextureDump_PastClean(y + j, column, end); at < end;) {
+                int stop = TextureDump_PastUnclean(y + j, at, end);
+                map_generation += clear_entries(entry_of + row + at, (size_t)(stop - at));
+                at = TextureDump_PastClean(y + j, stop, end);
+            }
             left -= count;
             column = 0;
         }
     }
-#else
-    int i, j;
-    for (j = 0; j < h; j++) {
-        for (i = 0; i < w; i++) {
-            size_t at = (size_t)((y + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + ((x + i) & (SOFT_GPU_WIDTH - 1));
-            if (entry_of[at]) {
-                entry_of[at] = 0;
-                map_generation++;
-            }
-        }
-    }
-#endif
 }
 
 static void follow(int sx, int sy, int dx, int dy, int w, int h)
@@ -1533,6 +1630,7 @@ static void tag_block(int x, int y, uint32_t disc, int words, int rows)
     for (j = 0; j < rows; j++)
         for (i = 0; i < words; i++)
             TextureDump_Tags[(size_t)(y + j) * SOFT_GPU_WIDTH + x + i] = disc + (uint32_t)(j * words + i) * 2 + 1;
+    TextureDump_Touched(x, y, words, rows); /* after, as TextureDump_Loaded */
 }
 
 /* How far `disc` lies from the disc offsets tagged just around the block at
@@ -2269,9 +2367,9 @@ void TexturePack_ReadStats(unsigned *images, unsigned *us, unsigned *max_us)
  * primitive the image it asked for before the next frame, as before, and
  * waits for it if need be (a replay with a pack checks the frames the
  * software GPU drew from those images, x64-data-mods). The wait is shorter:
- *  - the images one Service wants are read side by side, on DECODE_THREADS
- *    threads and on the main thread, which takes a waiting one itself
- *    (reads ahead leave one thread to these);
+ *  - the images one Service wants are read side by side, on the threads
+ *    decode_start starts and on the main thread, which takes a waiting one
+ *    itself (reads ahead leave one thread to these);
  *  - when a sheet's head is first given its image, the other readings of
  *    the same words (its other palettes) are read ahead, while nothing waits
  *    for them: the game draws them only later, the Build Deck's icons 6 s
@@ -2286,7 +2384,6 @@ void TexturePack_ReadStats(unsigned *images, unsigned *us, unsigned *max_us)
  * can run from the interrupt tick, where no lock may be taken. Made images
  * (TexturePack_AddMade) are still read where they are wanted (load_pixels).
  * No thread exists until a pack's image is first wanted. */
-#define DECODE_THREADS 3
 enum { DECODE_QUEUED, DECODE_RUNNING, DECODE_DONE };
 typedef struct Decode {
     struct Decode *next;
@@ -2306,7 +2403,7 @@ typedef struct Decode {
 static pthread_mutex_t decode_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t decode_work = PTHREAD_COND_INITIALIZER, decode_done = PTHREAD_COND_INITIALIZER;
 static Decode *decodes; /* oldest first: reads ahead are taken in the order asked */
-static int decode_threads, decode_threads_tried, decode_ahead_running;
+static int decode_threads, decode_threads_tried, decode_ahead_running, decode_ahead_most;
 static size_t decode_ahead_bytes, decode_ahead_limit;
 static unsigned decode_now_count, decode_ahead_count, decode_shared_count;
 
@@ -2381,7 +2478,8 @@ static void decode_finish(Decode *decode)
 }
 
 /* A job not started, those a Service waits for first. Reads ahead keep one
- * thread free, for what the next Service wants. */
+ * thread free, for what the next Service wants, and run at most
+ * decode_ahead_most at once (decode_start). */
 static Decode *decode_next(int only_now)
 {
     Decode *at, *ahead = NULL;
@@ -2390,7 +2488,7 @@ static Decode *decode_next(int only_now)
         if (at->now) return at;
         if (!ahead) ahead = at;
     }
-    return only_now || decode_ahead_running >= DECODE_THREADS - 1 ? NULL : ahead;
+    return only_now || decode_ahead_running >= decode_ahead_most ? NULL : ahead;
 }
 
 static void *decode_thread(void *unused)
@@ -2417,6 +2515,35 @@ static void *decode_thread(void *unused)
     return NULL;
 }
 
+/* How many threads read: one per core but the main thread's, 3 to 8. With
+ * the HD pack at Internal 4x, a duel's first two seconds read about fifty
+ * PNGs, one to five per Service, each about evenly inflate and resample.
+ * More threads shorten a Service that asks for several; one big sheet alone
+ * still takes what it takes on one core (80-100 ms on a Samsung A22), so
+ * all the waits together hardly change. Never fewer than 3, so a 2-4 core
+ * phone reads as it did. At most 8: a read holds its whole RGBA image (4 MB
+ * for a 1024x1024 sheet, 16 for 2048x2048) while it runs, and a 32-bit
+ * game has 2-4 GB for everything. The count configured, not online: a
+ * phone's idle cores can be off the moment the threads start, and they are
+ * started once. MEMORIES_PACK_THREADS sets it, 2 to 16. */
+static int decode_thread_count(void)
+{
+    const char *named = getenv("MEMORIES_PACK_THREADS");
+    long cores;
+    if (named && *named) {
+        long wanted = strtol(named, NULL, 10);
+        return wanted < 2 ? 2 : wanted > 16 ? 16 : (int)wanted;
+    }
+#ifdef _WIN32
+    cores = pthread_num_processors_np();
+#elif defined(_SC_NPROCESSORS_CONF) /* macOS has it only with _DARWIN_C_SOURCE */
+    cores = sysconf(_SC_NPROCESSORS_CONF);
+#else
+    cores = 0;
+#endif
+    return cores - 1 < 3 ? 3 : cores - 1 > 8 ? 8 : (int)(cores - 1);
+}
+
 /* The threads, the first time a pack's image is wanted. MEMORIES_PACK_READ_AHEAD
  * (megabytes, 0 none) sets how much may be read ahead; read here, on the
  * main thread. None started: the main thread reads all a Service wants. */
@@ -2424,9 +2551,10 @@ static void decode_start(void)
 {
     const char *named;
     sigset_t all, previous;
-    int i;
+    int i, wanted;
     if (decode_threads_tried) return;
     decode_threads_tried = 1;
+    wanted = decode_thread_count();
     named = getenv("MEMORIES_PACK_READ_AHEAD");
     /* A 32-bit game has 2-4 GB to hold every image it has read; a phone
      * holds the pack's images beside them and is the app the system ends
@@ -2445,16 +2573,23 @@ static void decode_start(void)
     /* The timer signal is the game's interrupt and must stay on the main thread. */
     sigfillset(&all);
     pthread_sigmask(SIG_BLOCK, &all, &previous);
-    for (i = 0; i < DECODE_THREADS; i++) {
+    for (i = 0; i < wanted; i++) {
         pthread_t thread;
         if (pthread_create(&thread, NULL, decode_thread, NULL)) break;
         pthread_detach(thread);
         decode_threads++;
     }
     pthread_sigmask(SIG_SETMASK, &previous, NULL);
-    if (decode_threads < DECODE_THREADS)
+    /* Reads ahead: 2 at once, as beside 3 threads before there were more,
+     * so the threads added go to what a Service waits for and a read ahead
+     * does not take a core from the game; one thread is kept from them,
+     * unless it is the only one (the main thread then reads what waits). */
+    pthread_mutex_lock(&decode_lock);
+    decode_ahead_most = decode_threads > 2 ? 2 : decode_threads > 1 ? decode_threads - 1 : 1;
+    pthread_mutex_unlock(&decode_lock);
+    if (decode_threads < wanted)
         fprintf(stderr, "memories-pc: texture pack: %d of %d read-ahead threads started\n", decode_threads,
-                DECODE_THREADS);
+                wanted);
 }
 
 static int decode_same(const Decode *decode, const Entry *entry)
