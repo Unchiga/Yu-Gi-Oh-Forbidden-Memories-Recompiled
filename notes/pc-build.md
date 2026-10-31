@@ -3903,7 +3903,10 @@ adb install -r tmp/pc/android-x86/memories-x86.apk
   builds SDL3 (shared), libpng and FreeType (static) with the NDK from the
   same pinned archives as the Linux and Windows builds, into
   `tmp/pc/android-deps/<abi>`, and keeps SDL's Java shell (`org.libsdl.app`)
-  from the same SDL release. zlib is the system's.
+  from the same SDL release. zlib is the system's. libpng has its NEON row
+  filters and palette expansion on arm64-v8a; `<abi>/.complete` names how
+  the folder was built, and one built otherwise (before 30 October 2026,
+  without NEON) is built again.
 - `build_game32.py --target android-<abi>` compiles every unit with NDK clang
   for the ABI at API 24, `-fPIC`, and links the game as the shared object
   `libgame.so` (`-Bsymbolic`, `--no-undefined`; pins `HIDDEN`, no fixed
