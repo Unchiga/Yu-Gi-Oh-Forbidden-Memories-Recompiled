@@ -261,6 +261,8 @@ static void test_import_opened(void)
     static const ZipItem two[] = {{"o1/mod.json", "{\"name\": \"Open one\"}", 0, 0, 0, 0, 0, 0},
                                   {"o2/mod.json", "{\"name\": \"Open two\"}", 0, 0, 0, 0, 0, 0}};
     static const ZipItem none[] = {{"readme.txt", "no mod here", 0, 0, 0, 0, 0, 0}};
+    static const ZipItem fresh[] = {{"fresh/mod.json", "{\"id\": \"fresh\", \"name\": \"Fresh\"}", 0, 0, 0, 0, 0, 0}};
+    static const ZipItem later[] = {{"later/mod.json", "{\"id\": \"later\", \"name\": \"Later\"}", 0, 0, 0, 0, 0, 0}};
     int count, x, y, before;
     const char *said;
     snprintf(import_source, sizeof(import_source), "%s/picked.zip", root);
@@ -326,11 +328,29 @@ static void test_import_opened(void)
     tap_widget(MODS_UI_FOLDER);
     settle();
     assert(ModsWindow_Locate(MODS_UI_APPLY, &x, &y));
-    assert(ModsWindow_ImportBusy() && !ModsWindow_ImportOpened(NULL) && picks == before + 1);
+    assert(ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0)); /* a closed panel's question is no more */
+    assert(!ModsWindow_ImportOpened(NULL) && picks == before + 1);
     draw(1600, 900);
-    assert(strstr(drawn, "Finish what this panel is doing") || strstr(drawn, "Replace it"));
+    assert(strstr(drawn, "Opened mod is already installed. Replace it with the one in this .zip?"));
     tap_widget(MODS_UI_CLOSE); /* Cancel */
-    assert(!ModsWindow_ImportBusy());
+    assert(!ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0));
+    /* An import under way (the picker open) holds it up, shown or not. */
+    tap_widget(MODS_UI_FOLDER);
+    assert(ModsWindow_ImportBusy(1) && ModsWindow_ImportBusy(0) && !ModsWindow_ImportOpened(NULL));
+    settle();
+    tap_widget(MODS_UI_CLOSE); /* Cancel the Replace question it ended in */
+    assert(!ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0));
+    /* Import mod... after an opened one is its own again: no question for a
+     * new mod, and the refusals as ever. */
+    said = open_zip(fresh, 1);
+    assert(strstr(said, "Import Fresh from the .zip you opened with the game?"));
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    said = import_zip(fresh, 1);
+    assert(strstr(said, "Imported Fresh.") && !strstr(said, "you opened with the game") && find("fresh") >= 0);
+    said = open_zip(none, 1);
+    assert(strstr(said, "This .zip has no mod in it."));
+    said = import_zip(later, 1);
+    assert(strstr(said, "Imported Later.") && !strstr(said, "you opened with the game") && find("later") >= 0);
     ModsWindow_SetImport(NULL, NULL, NULL);
     test_touch = 0;
 }
@@ -715,6 +735,9 @@ static void test_hd_pack(void)
     said = hd_said();
     assert(strstr(said, "Download the HD pack (v9.0.0)? 0 MB; Wi-Fi recommended. Needs ~34 MB free."));
     assert(strstr(said, "Download") && fake_files == 0);
+    /* A file opened with the game waits for it while the panel shows; closed,
+     * the question goes with the panel (Init), so nothing waits. */
+    assert(ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0));
     tap_widget(MODS_UI_CLOSE); /* Cancel */
     assert(HdPack_State() == HD_IDLE && fake_files == 0);
     /* A damaged download: nothing installed, nothing left. */
@@ -768,6 +791,9 @@ static void test_hd_pack(void)
     while (HdPack_Done() == 0)
         nap();
     assert(HdPack_Busy());
+    /* A job running holds a file opened with the game up, the panel shown or
+     * not: sdl.c then neither opens the panel nor takes the record. */
+    assert(ModsWindow_ImportBusy(1) && ModsWindow_ImportBusy(0));
     tap_widget(MODS_UI_APPLY); /* Apply waits for it */
     draw(1600, 900);
     assert(strstr(drawn, "Wait for the HD pack to finish") && strstr(drawn, "Stop"));

@@ -54,10 +54,13 @@ void ModsWindow_SetImport(int (*pick)(char *why, size_t why_size), int (*picked)
  * file, which asks before it imports (the Replace question, or "Import X
  * from the .zip you opened with the game?"). `refusal`, when the platform
  * could not take the file, is shown instead. 1 when the import started; 0
- * when it did not (the reason is the message). The panel is busy while a
- * question is up or an import or the HD pack runs (ModsWindow_ImportBusy):
- * the caller waits for it to end rather than ask. */
-int ModsWindow_ImportBusy(void);
+ * when it did not (the message says why, but for a busy panel, which is left
+ * as it is). The panel is busy while a
+ * question is up or an import or the HD pack runs (ModsWindow_ImportBusy;
+ * `shown`: the panel is open, which a question left open by a closed panel
+ * does not count): the caller waits for it to end rather than open the
+ * panel on it, or ask. */
+int ModsWindow_ImportBusy(int shown);
 int ModsWindow_ImportOpened(const char *refusal);
 /* Once per pump while the panel shows: an import's next step. 1 when the
  * window must be drawn again. */

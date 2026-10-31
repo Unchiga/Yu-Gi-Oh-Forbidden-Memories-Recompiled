@@ -508,24 +508,27 @@ static void pump(void);
 #ifdef SDL_PLATFORM_ANDROID
 /* A .zip opened with the game from another app (OpenWith.java; "Open with"
  * or Share): twice a second, whether it left its record, and then the Mods
- * panel opens on the import of that file, which asks before it imports. A
- * notice up (a question of the game's own) is answered first, and so is a
- * question or a job of the panel's own. Before the game runs (the first
- * run's welcome and disc image) this is not asked, nor before its first
- * frames (a panel opened then pauses the game before anything is drawn:
- * black), so the record waits, for as long as it is fresh
- * (Platform_TakeOpenedMod). */
+ * panel opens on the import of that file, which asks before it imports. The
+ * record is taken only when the game can show that: it waits (for as long as
+ * it is fresh, Platform_TakeOpenedMod) before the first run's welcome and
+ * disc image, before the game's first frames (a panel opened then pauses it
+ * before anything is drawn: black), while a notice, the menu or the Controls
+ * panel is up (none of them is replaced), and while a job of the Mods
+ * panel's own (an import, a question, the HD pack's download) is not over:
+ * the panel is opened by the player then, never forced open again. */
 static void open_with(void)
 {
     static Uint64 checked;
     Uint64 now = SDL_GetTicks();
     char why[400];
-    int taken;
+    int taken, shown = Panel_Shown();
     if (now - checked < 500) return;
     checked = now;
-    if (current_frame < 60 || Menu_NoticeShown() || !Platform_OpenedModWaiting()) return;
-    if (Panel_Shown() != PANEL_MODS) open_panel(PANEL_MODS);
-    if (Panel_Shown() != PANEL_MODS || ModsWindow_ImportBusy()) return;
+    if (current_frame < 60 || !Platform_OpenedModWaiting()) return;
+    if (Menu_NoticeShown() || Menu_IsOpen() || shown == PANEL_CONTROLS || ModsWindow_ImportBusy(shown == PANEL_MODS))
+        return;
+    if (shown != PANEL_MODS) open_panel(PANEL_MODS);
+    if (Panel_Shown() != PANEL_MODS) return;
     taken = Platform_TakeOpenedMod(why, sizeof(why));
     if (!ModsWindow_ImportOpened(taken ? NULL : why)) Platform_DropOpenedMod();
     menu_dirty = 1;

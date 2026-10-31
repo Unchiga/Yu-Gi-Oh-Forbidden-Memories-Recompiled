@@ -756,45 +756,35 @@ int Platform_OpenedModWaiting(void)
     return opened_record(record, sizeof(record)) && !stat(record, &seen);
 }
 
-/* A file:// URI as the path SDL opens (it takes a content:// URI as it is,
- * not this one): the "%XX" escapes undone, "file://" and a host name gone. */
-static void file_uri_path(char *uri)
-{
-    const char *from = uri + 7; /* after "file://" */
-    char *to = uri;
-    if (strncmp(uri, "file://", 7)) return;
-    if (*from != '/') from += strcspn(from, "/");
-    for (; *from; from++) {
-        unsigned code;
-        if (from[0] == '%' && sscanf(from + 1, "%2x", &code) == 1 && code) {
-            *to++ = (char)code;
-            from += 2;
-        } else
-            *to++ = *from;
-    }
-    *to = '\0';
-}
-
 int Platform_TakeOpenedMod(char *why, size_t why_size)
 {
-    char record[1100], *text;
+    char record[1100], taken[1110], *text;
     int what;
     opened_uri[0] = '\0';
-    if (!opened_record(record, sizeof(record))) {
+    if (!opened_record(record, sizeof(record)) || snprintf(taken, sizeof(taken), "%s.taken", record) >= (int)sizeof(taken)) {
         snprintf(why, why_size, "Could not find the file that was opened with the game.");
         return 0;
     }
-    what = take_pick(record, NULL, &text);
-    if (what == PICK_CHOSEN && strlen(text) < sizeof(opened_uri)) {
+    /* renamed before it is read, so that a record OpenWith writes while it
+     * is read is a new one, not removed with this one */
+    if (rename(record, taken)) {
+        snprintf(why, why_size, "Could not find the file that was opened with the game.");
+        return 0;
+    }
+    what = take_pick(taken, NULL, &text);
+    if (what == PICK_CHOSEN && strncmp(text, "content://", 10)) {
+        snprintf(why, why_size, "The game cannot read that file; open it from a file manager or the Downloads app.");
+    } else if (what == PICK_CHOSEN && strlen(text) < sizeof(opened_uri)) {
         snprintf(opened_uri, sizeof(opened_uri), "%s", text);
         free(text);
-        file_uri_path(opened_uri);
-        fprintf(stderr, "memories-pc: opened with the game: %s\n", opened_uri);
+        fprintf(stderr, "memories-pc: opened with the game: a URI of %u characters\n", (unsigned)strlen(opened_uri));
         return 1;
-    }
-    if (what == PICK_CHOSEN) snprintf(why, why_size, "The address of that file is too long to open.");
-    else if (what == PICK_NONE) snprintf(why, why_size, "That file was opened too long ago. Open it with the game again.");
-    else snprintf(why, why_size, "%s", text ? text : "That file could not be opened.");
+    } else if (what == PICK_CHOSEN)
+        snprintf(why, why_size, "The address of that file is too long to open.");
+    else if (what == PICK_NONE)
+        snprintf(why, why_size, "That file was opened too long ago. Open it with the game again.");
+    else
+        snprintf(why, why_size, "%s", text ? text : "That file could not be opened.");
     free(text);
     return 0;
 }
@@ -813,7 +803,7 @@ int Platform_PickedModZip(char *why, size_t why_size)
         return -2;
     }
     if (!mod_pick.result) return -1;
-    fprintf(stderr, "memories-pc: mod chosen: %s\n", mod_pick.uri);
+    fprintf(stderr, "memories-pc: mod chosen: a URI of %u characters\n", (unsigned)strlen(mod_pick.uri));
     return 1;
 }
 

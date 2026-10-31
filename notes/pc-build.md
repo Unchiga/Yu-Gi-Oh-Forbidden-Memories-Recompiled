@@ -4364,11 +4364,12 @@ untouched: with a mouse every path is the old one, pixel for pixel.
   back is as above (the panel repainted for a second).
 - **Open with** A mod's `.zip` opened with, or shared to, the game from a
   browser, Discord or a file manager goes to the same import as Import
-  mod...: `OpenWith.java` (an exported translucent activity of its own, with
-  the `VIEW` and `SEND` filters for the zip types in
-  `tools/pc/package_android.py`) writes the URI to `open-with.txt` and brings
-  `SDLActivity` forward; `open_with` in `sdl.c` opens the Mods panel on it,
-  and the panel asks before importing ([Mod manager](mods-window.md)).
+  mod...: `OpenWith.java` (an exported translucent activity in its own
+  process, `:open`, with the `VIEW` and `SEND` filters for the zip types in
+  `tools/pc/package_android.py`; `content://` URIs only) writes the URI to
+  `open-with.txt` and brings `SDLActivity` forward; `open_with` in `sdl.c`
+  opens the Mods panel on it when nothing else of the game's is up, and the
+  panel asks before importing ([Mod manager](mods-window.md)).
 - **Remove** In the Mods panel's footer, left of Import mod... (on a phone,
   on the selected mod's page): deletes the selected mod's folder from
   `mods/` after a question, for a mod that is off or does not load (the

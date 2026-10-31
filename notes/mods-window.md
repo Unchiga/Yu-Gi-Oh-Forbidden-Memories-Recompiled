@@ -93,31 +93,59 @@ when the mod needs one).
 Discord or a file manager ("Open with", `ACTION_VIEW`), or shared to it
 (`ACTION_SEND`), goes to the same import without the picker. The game is
 offered for `application/zip`, `application/x-zip`,
-`application/x-zip-compressed` and `multipart/x-zip`, with `content://` and
-`file://` URIs, one file at a time (not `application/octet-stream`, which
-would offer the game for every file of no known type). `OpenWith.java` (a
-translucent activity in a task of its own, in the manifest of
-`tools/pc/package_android.py`) writes the document's URI to
-`open-with.txt` in the internal files folder, in `DiscPicker`'s format, and
-brings the game forward (the same whether it was closed or running:
-`SDLActivity` is `singleInstance` and has no `onNewIntent`, so the intent is
-not given to it); the read right the sender gave goes on to the game with it
-(`ClipData` and `FLAG_GRANT_READ_URI_PERMISSION`). The game looks for the
-record twice a second once it runs (`open_with` in `sdl.c`; before that, at
-the first run's welcome and in its first 60 frames (a panel opened earlier
-pauses the game before it drew anything: black), it waits, and a record over
-15 minutes old is dropped), opens the Mods panel and starts the import with the file already
-picked (`ModsWindow_ImportOpened`, `Platform_TakeOpenedMod`): the same
-copy, checks and messages as Import mod..., with a question first. A mod
-already installed gets the usual Replace question; a new one gets "Import
-<name> from the .zip you opened with the game?" with an Import button and
-Cancel, so a file another app hands over installs nothing unasked. A file
-that is no mod gets the usual refusal ("That file is not a .zip.", "This .zip
-has no mod in it."). While the panel is busy (a question up, an import or the
-HD pack running) the game waits to start it until that is over. A `file://` URI is
-opened as the plain path; one into another app's storage is not readable by
-the game on a current Android (no storage permission), and a URI whose right
-has ended likewise, and both say "Could not read that file".
+`application/x-zip-compressed` and `multipart/x-zip`, one file at a time (not
+`application/octet-stream`, which would offer the game for every file of no
+known type; not `BROWSABLE`, so a web page cannot bring the game forward).
+Only a `content://` URI is taken, which is what the Downloads app, Discord
+and file managers send: a `file://` one is refused ("The game cannot read
+that file; open it from a file manager or the Downloads app."), since the
+game cannot read another app's files and it would let any app aim the game
+at its own private ones.
+
+`OpenWith.java` (in the manifest of `tools/pc/package_android.py`) runs in a
+process of its own (`:open`, as `Restart`), everything it does caught, so an
+intent from any app, however malformed, cannot take the running game down.
+It is translucent and ends at once. It is a task of its own only when the
+sender asks for one (`FLAG_ACTIVITY_NEW_TASK`; otherwise it sits on top of
+the sender's task for that moment); the game, `singleInstance`, always comes
+up in its own. It writes the document's URI to `open-with.txt` in the
+internal files folder, in `DiscPicker`'s format (an earlier record is removed
+first, so a file opened before is never imported in its place), and brings
+the game forward, the same whether it was closed or running: `SDLActivity` is
+`singleInstance` and has no `onNewIntent`, so the intent is not given to it.
+The read right the sender gave goes on to the game with that intent
+(`ClipData` and `FLAG_GRANT_READ_URI_PERMISSION`); if the system refuses to
+pass it on, the game is brought forward without it and the record says "The
+game could not be given access to that file; open it from a file manager or
+the Downloads app." Nothing is copied there: a `.zip` can be a gigabyte, and
+that is the main thread.
+
+The game looks for the record twice a second once it runs (`open_with` in
+`sdl.c`) and takes it only when it can show the question: not at the first
+run's welcome, not in its first 60 frames (a panel opened earlier pauses the
+game before it drew anything: black), not while a notice, the in-game menu or
+the Controls panel is up (none is replaced), and not while the Mods panel's
+own work is not over (an import, a question of its own, the HD pack's
+download: `ModsWindow_ImportBusy`; with the panel closed, the HD pack's job
+holds it too, and the player opens the panel to see it through). It waits
+then, opening nothing, so the panel is never forced open over what the
+player does. Once it can, the Mods panel opens and the import starts with the
+file already picked (`ModsWindow_ImportOpened`, `Platform_TakeOpenedMod`):
+the same copy, checks and messages as Import mod..., with a question first.
+A mod already installed gets the usual Replace question; a new one gets
+"Import <name> from the .zip you opened with the game?" with an Import button
+and Cancel, so a file another app hands over installs nothing unasked. A
+file that is no mod gets the usual refusal ("That file is not a .zip.",
+"This .zip has no mod in it.").
+
+- **When the file cannot be read any more**: the right to read the document
+  lasts as long as the game's activity that received it. A game started again
+  before the record is taken (Apply & restart, or the system ending its
+  process) no longer has it; a record older than 15 minutes is no longer
+  trusted either. The player then sees the Mods panel open on "Could not
+  read that file: ..." (or "That file was opened too long ago. Open it with
+  the game again."), and shares or opens the file again.
+- **Logs**: only the length of a URI is logged, never the URI.
 
 - **What counts as a mod in it**: every folder with a `mod.json` at the
   `.zip`'s root (the whole `.zip` is then the mod, in a folder named by the

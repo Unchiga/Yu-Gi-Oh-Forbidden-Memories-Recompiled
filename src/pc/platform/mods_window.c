@@ -1307,7 +1307,12 @@ static void import_start(void)
     import_step = 1;
     put(status, sizeof(status), "Choose a mod's .zip.");
 }
-int ModsWindow_ImportBusy(void) { return hd_step || import_step || import_waiting || pending; }
+int ModsWindow_ImportBusy(int shown)
+{
+    /* a question the panel left open (the HD pack's Download, a Replace) is
+     * answered no when it shows again (Init): it holds nothing up */
+    return (hd_step && (shown || hd_step != 2)) || import_step || (shown && (import_waiting || pending));
+}
 int ModsWindow_ImportOpened(const char *refusal)
 {
     if (!import_pick)
@@ -1316,10 +1321,8 @@ int ModsWindow_ImportOpened(const char *refusal)
         put(status, sizeof(status), "%s", refusal);
         return 0;
     }
-    if (ModsWindow_ImportBusy()) {
-        put(status, sizeof(status), "Finish what this panel is doing, then open the .zip with the game again.");
+    if (ModsWindow_ImportBusy(1)) /* the caller waits for it (sdl.c); its question stays as it is */
         return 0;
-    }
     import_outside = 1;
     import_start();
     if (!import_step)

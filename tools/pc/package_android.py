@@ -124,17 +124,20 @@ MANIFEST = f"""<?xml version="1.0" encoding="utf-8"?>
         <!-- Open with: a mod's .zip chosen for the game in a browser, Discord
              or a file manager (VIEW), or shared to it (SEND). OpenWith.java
              takes the document's URI and brings the game forward, which opens
-             the Mods panel on the same import as Import mod...; a task of its
-             own, shown to nobody. Not application/octet-stream, which would
-             offer the game for every file of no known type. -->
+             the Mods panel on the same import as Import mod...; in a process
+             of its own (as Restart), so that an intent from any app cannot
+             take the running game down with it, shown to nobody. Not
+             application/octet-stream, which would offer the game for every
+             file of no known type; not BROWSABLE, so that a web page cannot
+             bring the game forward. -->
         <activity android:name="org.yfmredecomp.game.OpenWith" android:exported="true"
-            android:taskAffinity="{PACKAGE}.open" android:excludeFromRecents="true" android:noHistory="true"
+            android:process=":open" android:taskAffinity="{PACKAGE}.open"
+            android:excludeFromRecents="true" android:noHistory="true"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:mimeType="application/zip" />
                 <data android:mimeType="application/x-zip" />
                 <data android:mimeType="application/x-zip-compressed" />
