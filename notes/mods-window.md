@@ -128,9 +128,11 @@ when the mod needs one).
   Android's shared storage, are found as the second is written: "Two files
   in the .zip are one file on this storage..."), two mods with
   one folder or one `id`, names that are not UTF-8, ZIP64 or split
-  archives, more than 20,000 entries, more than 512 MB unpacked, a `.zip`
-  over 1 GB, a file that is not a `.zip`, or more mods than the game takes
-  (256). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
+  archives (the plain form holds 65,534 entries and 4 GB, which is what
+  the importer takes), more than 4 GB unpacked or more than the free space
+  holds, a `.zip` over 4 GB (2 GB on a 32-bit build, where `ftell` stops),
+  a file that is not a `.zip`, or more mods than the game takes (256, in
+  one `.zip` or with those installed). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
   Unpacking goes into a hidden `mods/.import-XXXXXX` folder (the scan skips
   names starting with a dot), checking each file's size and CRC; only then
   is each mod renamed into place, and any failure puts back what was moved
@@ -219,9 +221,9 @@ installs a `.zip`. Nothing is contacted until it is tapped.
   and takes its asset `yfm-redecomp-hd-mod-<tag>.zip` (else the first
   `yfm-redecomp-hd-mod-*.zip`), its size and its `digest` (an asset without
   one is refused: the download could not be checked; one over the
-  importer's 512 MB unpacked is refused before anything is downloaded, since
+  importer's 4 GB unpacked is refused before anything is downloaded, since
   pictures barely compress: "The HD pack of <tag> is too large: more than
-  512 MB once unpacked."). Then:
+  4096 MB once unpacked."). Then:
   - the same release installed (its tag in the mod folder's `.hd-release`,
     since the pack's `mod.json` says `"version": "1.0"` in every release):
     "The HD pack is already installed (v0.2.0)." and nothing is downloaded;

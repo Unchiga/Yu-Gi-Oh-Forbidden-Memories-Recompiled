@@ -158,7 +158,7 @@ int HdPack_PickAsset(const char *json, HdRelease *out, char *why, size_t why_siz
         }
         if ((unsigned long)size > MODS_IMPORT_BYTES) { /* the importer's cap: pictures barely compress */
             snprintf(why, why_size, "The HD pack of %s is too large: more than %u MB once unpacked.", out->tag,
-                     MODS_IMPORT_BYTES >> 20);
+                     (MODS_IMPORT_BYTES >> 20) + 1);
             break;
         }
         if (!hex_digest(Json_String(Json_Member(asset, "digest"), NULL), out->sha256)) {
