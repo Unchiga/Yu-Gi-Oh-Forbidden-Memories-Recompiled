@@ -14,6 +14,7 @@
 int TextureDump_Enabled;
 uint32_t *TextureDump_Tags;
 uint16_t *TextureDump_Shadow;
+uint8_t TextureDump_Clean[SOFT_GPU_HEIGHT * TEXTURE_CLEAN_COLUMNS];
 void (*TextureDump_Paint)(int x, int y, int w, int h);
 int (*TextureDump_Prepare)(int page_x, int page_y, int depth, int clut_x, int clut_y, int u, int v);
 uint32_t (*TextureDump_Recall)(const uint16_t *pixels, size_t words);
@@ -379,6 +380,7 @@ void TextureDump_Loaded(int x, int y, int w, int h, const uint16_t *pixels)
             return;
         }
     }
+    TextureDump_Touched(x, y, w, h);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             *tag_at(x + i, y + j) = disc ? disc + (uint32_t)((size_t)j * w + i) * 2 + 1
@@ -397,6 +399,7 @@ void TextureDump_Moved(int sx, int sy, int dx, int dy, int w, int h)
 {
     int i, j;
     if (!TextureDump_Tags) return;
+    TextureDump_Touched(dx, dy, w, h); /* and for the pack's entries (follow) */
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             *tag_at(dx + i, dy + j) = *tag_at(sx + i, sy + j);
@@ -408,6 +411,36 @@ void TextureDump_Moved(int sx, int sy, int dx, int dy, int w, int h)
     if (TextureDump_Follow) TextureDump_Follow(sx, sy, dx, dy, w, h);
 }
 
+void TextureDump_Touched(int x, int y, int w, int h)
+{
+    int j, b, first = (x & (SOFT_GPU_WIDTH - 1)) / TEXTURE_CLEAN_WORDS, last;
+    if (w <= 0 || h <= 0) return;
+    last = w >= SOFT_GPU_WIDTH ? first + TEXTURE_CLEAN_COLUMNS - 1
+                               : ((x & (SOFT_GPU_WIDTH - 1)) + w - 1) / TEXTURE_CLEAN_WORDS;
+    for (j = 0; j < h && j < SOFT_GPU_HEIGHT; j++) {
+        uint8_t *clean = TextureDump_Clean + ((y + j) & (SOFT_GPU_HEIGHT - 1)) * TEXTURE_CLEAN_COLUMNS;
+        for (b = first; b <= last; b++) clean[b % TEXTURE_CLEAN_COLUMNS] = 0;
+    }
+}
+
+/* The blocks a clear covers whole are clean after it. */
+static void clean_whole(int x, int y, int w, int h)
+{
+    int j;
+    for (j = 0; j < h && j < SOFT_GPU_HEIGHT; j++) {
+        uint8_t *clean = TextureDump_Clean + ((y + j) & (SOFT_GPU_HEIGHT - 1)) * TEXTURE_CLEAN_COLUMNS;
+        int left = w, column = x & (SOFT_GPU_WIDTH - 1);
+        while (left > 0) {
+            int count = SOFT_GPU_WIDTH - column, b;
+            if (count > left) count = left;
+            for (b = (column + TEXTURE_CLEAN_WORDS - 1) / TEXTURE_CLEAN_WORDS; (b + 1) * TEXTURE_CLEAN_WORDS <= column + count; b++)
+                clean[b] = 1;
+            left -= count;
+            column = 0;
+        }
+    }
+}
+
 void TextureDump_Cleared(int x, int y, int w, int h)
 {
     int j;
@@ -417,16 +450,24 @@ void TextureDump_Cleared(int x, int y, int w, int h)
          * also avoids resolving each cell in the translated backend. */
         int left = w, column = x & (SOFT_GPU_WIDTH - 1);
         while (left > 0) {
-            int count = SOFT_GPU_WIDTH - column;
+            int count = SOFT_GPU_WIDTH - column, end, at;
             if (count > left) count = left;
-            memset(tag_at(column, y + j), 0, (size_t)count * sizeof(uint32_t));
-            if (TextureDump_Shadow)
-                memset(TextureDump_Cell(column, y + j, 0), 0, (size_t)count * 4 * sizeof(uint16_t));
+            end = column + count;
+            for (at = TextureDump_PastClean(y + j, column, end); at < end;) {
+                int stop = TextureDump_PastUnclean(y + j, at, end);
+                memset(tag_at(at, y + j), 0, (size_t)(stop - at) * sizeof(uint32_t));
+                if (TextureDump_Shadow)
+                    memset(TextureDump_Cell(at, y + j, 0), 0, (size_t)(stop - at) * 4 * sizeof(uint16_t));
+                at = TextureDump_PastClean(y + j, stop, end);
+            }
             left -= count;
             column = 0;
         }
     }
+    /* The pack's forget passes over the same clean blocks, so they are
+     * marked after it. */
     if (TextureDump_Forget) TextureDump_Forget(x, y, w, h);
+    clean_whole(x, y, w, h);
 }
 
 size_t TextureDump_TagRuns(uint32_t *runs, size_t max)
@@ -455,6 +496,7 @@ void TextureDump_TagsLoaded(const uint32_t *runs, size_t count)
     size_t i, at = 0, words = (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT;
     TextureDump_Cleared(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     if (!TextureDump_Tags) return;
+    TextureDump_Touched(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     for (i = 0; runs && i < count && at < words; i++) {
         uint32_t tag = runs[i * 2], length = runs[i * 2 + 1], k;
         if (length > words - at) length = (uint32_t)(words - at);

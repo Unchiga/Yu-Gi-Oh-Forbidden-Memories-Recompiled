@@ -104,6 +104,7 @@ int main(void)
             for (int sub = 0; sub < 4; sub++) *TextureDump_Cell(x, y, sub) = 17;
         }
     }
+    TextureDump_Touched(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     TextureDump_Cleared(SOFT_GPU_WIDTH - 2, SOFT_GPU_HEIGHT - 1, 4, 2);
     for (int y = 0; y < SOFT_GPU_HEIGHT; y++) {
         for (int x = 0; x < SOFT_GPU_WIDTH; x++) {
