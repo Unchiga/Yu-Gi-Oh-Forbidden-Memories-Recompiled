@@ -1,6 +1,7 @@
 /* The on-screen controller's pictures (touch_pad_art.h). */
 #include "touch_pad_art.h"
 #include "touch_pad.h"
+#include "settings.h"
 #include "pc/cards/disc_art.h"
 #include "pc/text/overlay_text.h"
 #include <stdio.h>
@@ -50,7 +51,7 @@ static int read_art(void)
         !DiscArt_LoadRect(RAMP_SECTOR, 0, RAMP_X, RAMP_Y, RAMP_W, RAMP_H))
         return 0;
     for (i = 0; i < TOUCH_BUTTONS; i++) {
-        if (i == TOUCH_SELECT || i == TOUCH_MENU) continue;
+        if (i == TOUCH_SELECT || i >= TOUCH_MENU) continue; /* in the font, or Simple's */
         if (!DiscArt_Cut(&art.button[i], BUTTON_PAGE, 0, 4, cells[i].u, cells[i].v, cells[i].w, cells[i].h,
                          BUTTON_CLUT_X, BUTTON_CLUT_Y))
             return 0;
@@ -148,14 +149,21 @@ static void grow(int *x0, int *y0, int *x1, int *y1, int x, int y, int w, int h)
 void TouchPadArt_Draw(MenuCanvas *canvas, int *x, int *y, int *w, int *h)
 {
     int x0 = 1 << 30, y0 = 1 << 30, x1 = -(1 << 30), y1 = -(1 << 30), i, bx, by, bw, bh;
+    int setting = Settings_Get(SET_TOUCH_OPACITY);
+    /* Let go, the picture is see-through over what is behind it, by default
+     * 150 of 255 as it always was; held, it is twice as solid (so solid by
+     * default) and a little smaller, as if pushed in. */
+    unsigned light = setting > 0 ? (unsigned)setting * 255 / 100 : 150, held = light * 2 > 255 ? 255 : light * 2;
+    if (TouchPad_Style() == TOUCH_STYLE_SIMPLE) {
+        TouchPadArt_DrawSimple(canvas, x, y, w, h);
+        return;
+    }
     *x = *y = *w = *h = 0;
     if (!TouchPad_Shown() || !ready()) return;
     for (i = 0; i < TOUCH_BUTTONS; i++) {
-        /* Let go, the picture is see-through over what is behind it; held,
-         * it is solid and a little smaller, as if pushed in. */
         int down = TouchPad_Held((TouchButton)i), inset;
-        unsigned opacity = down ? 255 : 150;
-        if (!TouchPad_Rect((TouchButton)i, &bx, &by, &bw, &bh)) return;
+        unsigned opacity = down ? held : light;
+        if (!TouchPad_Rect((TouchButton)i, &bx, &by, &bw, &bh)) continue; /* Simple's only */
         grow(&x0, &y0, &x1, &y1, bx, by, bw, bh);
         inset = down ? bw / 16 : 0;
         if (i == TOUCH_SELECT || i == TOUCH_MENU) {

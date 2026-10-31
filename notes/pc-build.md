@@ -347,14 +347,53 @@ after-hook sees what the game gets ([mod API](mod-api-3.md)).
 
 **View > Touch controls** (`touch_controls`, `MEMORIES_TOUCH_CONTROLS`: 0
 Automatic, the default; 1 Show; 2 Hide) is an on-screen controller for touch
-screens (phones, tablets, touch laptops): a D-pad and the four face buttons
-at the middle of the left and right sides, L2/L1 and R1/R2 above them,
-SELECT and START below (`platform/touch_pad.c`). It is drawn with the game's
-own pictures, cut off the disc from the boot package the game keeps in VRAM
-(`touch_pad_art.c`, `cards/disc_art.h`): the round Cross, Circle, Triangle and
-Square, START, the L1/L2/R1/R2 tabs and the boxed arrows (Left is Right's,
-turned round); SELECT is set in the game's text font. A button let go is
-see-through; held, it is solid and a little smaller. Automatic shows it once
+screens (phones, tablets, touch laptops) (`platform/touch_pad.c`), in one of
+two styles, **View > Touch controls > Style** (`touch_style`,
+`MEMORIES_TOUCH_STYLE`):
+
+- **Game** (0, the default): a D-pad and the four face buttons at the
+  middle of the left and right sides, L2/L1 and R1/R2 above them, SELECT
+  and START below. It is drawn with the game's own pictures, cut off the
+  disc from the boot package the game keeps in VRAM (`touch_pad_art.c`,
+  `cards/disc_art.h`): the round Cross, Circle, Triangle and Square, START,
+  the L1/L2/R1/R2 tabs and the boxed arrows (Left is Right's, turned
+  round); SELECT is set in the game's text font. A button let go is
+  see-through; held, it is solid and a little smaller. **MENU**, in the
+  game's font under L2/L1 (the D-pad below it), opens the menu bar's first
+  menu as it is touched (`TouchPad_TakeMenu`, taken in the event pump): the
+  way to the menus where the bar is hidden, as in fullscreen or on a phone.
+  The D-pad and the face buttons take a touch two buttons from their
+  middles.
+- **Simple** (1): laid out as a handheld's: L2, L1 and SELECT down the top
+  left corner and R2, R1 and START down the top right, each a frame 1.6
+  buttons wide; the D-pad in the bottom left corner, its arrows in a ring
+  3.2 buttons across, and the four face buttons in the bottom right, each
+  ring taking a touch only inside what is drawn of it; the picture's middle
+  is left clear, and on a phone the corners fall in the black bars beside
+  the 4:3 picture. It is drawn in one grey scale (`touch_pad_simple_art.c`):
+  frames and the face buttons' discs are dark with a light edge; the
+  D-pad's arrows are solid triangles in dark discs inside a light ring; the
+  face buttons' marks are outlines (triangle, circle, cross, square), with
+  none of the PlayStation's colours. Everything is drawn (no picture of the
+  game's), and each part is drawn whole into a layer first, so its edge,
+  fill and mark fade together. L1/L2/R1/R2, SELECT and START are words in
+  the game text's font (`overlay_text.h`). A column's frames take a touch
+  between them by the nearer middle. **The top row**, three frames in the
+  middle of the top edge, presses no pad button; each takes its tap as the
+  finger lifts on it (so one brushing SPEED changes nothing, and a touch
+  the system cancels, `TOUCH_FINGER_CANCEL`, taps nothing), in the event
+  pump (`TouchPad_TakeMenu`, `TouchPad_TakeStates`, `TouchPad_TakeSpeed`):
+  **MENU** (a cog) opens the menu bar's Game menu and **STATES** (a
+  triangle pointing down) its File menu, Save state, Load state and the
+  state slot (`Menu_OpenAt`); **SPEED** (two triangles and the speed, x1 to
+  x4) steps Game speed through 100% to 400% a tap, back to 100% after 400%
+  or from any other speed, and saves it as the menu does.
+
+Either style is laid over the picture at **View > Touch controls >
+Opacity** (`touch_opacity`, `MEMORIES_TOUCH_OPACITY`): 0, the default, is
+the style's own (Game's 59%, as it always was; Simple's 25%); 25%, 50% or
+75% from the menu, any 1-100 in the file; a button held is twice as solid.
+Changing the style lets go of what the pad held. Automatic shows it once
 the screen is touched (that touch presses nothing) and hides it when a key or
 a controller button is pressed. Several fingers work at once; a finger that
 lands on the pad stays the pad's while it slides (the D-pad goes by the angle
@@ -362,10 +401,9 @@ from its middle, so between two arrows presses both), and one that lands
 elsewhere is the mouse SDL makes of it (the menu bar). It presses the button
 it shows: its bits join the pad state beside the mouse's, which View >
 Japanese buttons does not exchange, and a tap shorter than a frame counts
-once. Hidden, it draws nothing and takes no touch.
-**MENU**, in the game's font under L2/L1 (the D-pad below it), opens the
-menu bar's first menu (`TouchPad_TakeMenu`, taken in the event pump): the
-way to the menus where the bar is hidden, as in fullscreen or on a phone.
+once. Hidden, it draws nothing and takes no touch. `MEMORIES_SDL_SCRIPT`'s
+`tap:x:y`, `fdown:x:y` and `fup:x:y` put a finger there, which is how both
+layouts and the top row were checked in a window.
 While a menu, a notice or a bar drawn over the picture is up, the pad
 steps aside (`TouchPad_Block`: it draws nothing, takes no touch and lets
 go of what it held), so their rows and buttons are the finger's; it is
@@ -377,10 +415,12 @@ the top of the screen shows a hidden bar under it. Where the window is
 always the whole screen (`Platform_HasWindowModes` 0, an Android app) the
 bar is drawn over the picture instead of pushing it down. Where the system
 gives the density (Android), a button is 48 to 80 dp wide (13% of the
-short side otherwise, and never above 16% of it), and SELECT, START and
-MENU take a touch a button tall. The save slot and deck slot menus, which
-the pad plays, keep between its columns while it shows
-(`TouchPad_FreeSpan`, `Menu_SetOverlayArea`); narrower than their one-row
+short side otherwise, and never above 16% of it; with Simple, nor so big
+that the columns would reach the D-pad's ring: 6.4 buttons tall in all),
+and SELECT, START, MENU and Simple's frames take a touch a button tall. The
+save slot and deck slot menus, which the pad plays, keep between its
+columns (and below Simple's top row) while it shows (`TouchPad_FreeSpan`,
+`TouchPad_TopRowBottom`, `Menu_SetOverlayArea`); narrower than their one-row
 layout, a slot's details go on lines under its name and the hints wrap
 (`saves/flow_text.h`); the deck slot menu's messages break at spaces where
 the box is narrower than them (`centred_words`, `deck_menu.c`); the text
@@ -4189,8 +4229,9 @@ launch, let it crash, remove the line, launch again; `adb shell ls
   dp. The bar is hidden, as in a desktop's fullscreen, and drawn over the
   picture when it shows (where the window is always the whole screen,
   `bar_overlays`), so the picture and the touch controls never move: MENU on
-  the touch controls opens it, as does a tap at the top of the screen or
-  Back's Menu. The mouse SDL makes of a finger does not hover: before, its
+  the touch controls opens it (Simple's opens its Game menu, and STATES its
+  File menu), as do a tap at the top of the screen and Back's Menu. The
+  mouse SDL makes of a finger does not hover: before, its
   last place (0,0 at start, the top after a tap on the bar) kept the bar
   shown for good, and its move to a tap opened the menu that the press then
   closed. Everything else there is the desktop's.
