@@ -51,6 +51,7 @@
 #include <time.h>
 #include <limits.h>
 #include "pc/compat/mman.h"
+#include "pc/memory.h" /* the mods' packet area */
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -422,6 +423,36 @@ static void *host_map_fixed(const MemoriesModHost *host, uintptr_t address, size
     return got == MAP_FAILED ? NULL : got;
 }
 
+/* The mods' packet area (API 22, src/pc/memory.h): mapped on the first ask,
+ * at the first 1 MiB of physical 8..16 MiB that is free, at its guest
+ * (direct, KSEG0) address so a packet's own pointer and its link agree. */
+static void *host_packet_area(const MemoriesModHost *host, size_t bytes)
+{
+#ifdef MEMORIES_TRANSLATED
+    (void)host;
+    (void)bytes;
+    return NULL; /* guest memory is not host memory there */
+#else
+    static int tried;
+    if (!owner(host)) return NULL;
+    if (!tried) {
+        uint32_t physical;
+        tried = 1;
+        for (physical = MEMORIES_MOD_PACKETS_FIRST; !Memories_ModPacketBase && physical < MEMORIES_MOD_PACKETS_LAST;
+             physical += MEMORIES_MOD_PACKETS_SIZE) {
+            if (Memories_MapModPackets(physical)) {
+                LOG(LOG_MODS, "packet area for mods at physical 0x%x, %u KiB", (unsigned)physical,
+                    (unsigned)(MEMORIES_MOD_PACKETS_SIZE / 1024));
+            }
+        }
+        if (!Memories_ModPacketBase) {
+            fprintf(stderr, "memories-pc: mods: no room for the mods' packet area: they use the game's\n");
+        }
+    }
+    return Memories_TakeModPackets(bytes);
+#endif
+}
+
 static int (*card_resolver)(const char *);
 static unsigned card_signature;
 void Mods_SetCardSignature(unsigned signature) { card_signature = signature; }
@@ -637,6 +668,7 @@ static void fill_host(Mod *mod)
     mod->host.sound_add = host_sound_add;
     mod->host.sound_play = host_sound_play;
     mod->host.sound_free = host_sound_free;
+    mod->host.packet_area = host_packet_area;
     mod->host.api = MEMORIES_MOD_API;
     mod->host.id = mod->id;
     mod->host.directory = mod->directory;

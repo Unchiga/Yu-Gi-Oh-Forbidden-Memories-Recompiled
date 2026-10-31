@@ -19,7 +19,7 @@ from pathlib import Path
 from .gamedata import FRAME_COLOR_NAMES, TYPE_MAGIC
 from .model import type_named
 
-HOST_API = 21
+HOST_API = 22
 
 # The release each mod API first shipped in, for the hints. An API past the
 # last listed is newer than every release.

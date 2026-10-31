@@ -6,6 +6,7 @@
 #include "psyq/libgpu.h"
 #include "pc/compat/libgs_ot.h"
 #include "pc/guest/image.h"
+#include "pc/memory.h"
 #include "pc/platform/platform.h"
 #include "pc/platform/credits.h"
 #include "pc/render/soft_gpu.h"
@@ -479,6 +480,9 @@ void DrawOTag(u32 *list)
         exit(70);
     }
     pending_words = count;
+    /* The list's words are copied out: the mods' packet area is free for the
+     * next frame's polygons (memory.h). */
+    Memories_ModPacketsFrame();
     /* PGXP (pgxp.h): the frame's words that are vertices projected since the
      * last DrawOTag, with where they really are: those the game's drawing
      * wrote by address, the rest by value; then the next frame's. Below
