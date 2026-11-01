@@ -574,10 +574,10 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
         if when != "face_up":
             return None
         raw_conds = effect["conditions"]
-        if not isinstance(raw_conds, list):
+        if not isinstance(raw_conds, list) or len(raw_conds) > MAX_CONDITIONS:
             return None
         norm_conds = []
-        for c in raw_conds[:MAX_CONDITIONS]:
+        for c in raw_conds:
             nc = normalize_condition(c, resolve, type_names)
             if nc is None:
                 return None

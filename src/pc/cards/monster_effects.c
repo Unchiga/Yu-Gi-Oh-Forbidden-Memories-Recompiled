@@ -572,7 +572,7 @@ static int read_conditions(const char *mod, int index, int n, const JsonValue *e
             if (out_ex->cond_count >= MONSTER_CONDITIONS_MAX) {
                 Mods_Note(mod, "cards[%d]: monster_effects[%d]: at most %d conditions allowed", index, n,
                           MONSTER_CONDITIONS_MAX);
-                break;
+                return 0;
             }
             if (!read_one_condition(mod, index, n, c_idx, item, &out_ex->conditions[out_ex->cond_count])) return 0;
             out_ex->cond_count++;
@@ -780,12 +780,14 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
 
         snprintf(key, sizeof(key), "%samount", prefix);
         const JsonValue *am_val = Json_Member(entry, key);
-        if (am_val && Json_TypeOf(am_val) == JSON_NUMBER) {
-            int amt = (int)Json_Number(am_val, 0);
-            if (amt >= 0 && amt <= AMOUNT_MAX) {
-                attacker_amount = (short)amt;
-                if (attacker_stat == 0) attacker_stat = 1; /* default to ATK */
+        if (am_val) {
+            long amt = Json_Number(am_val, -1);
+            if (Json_TypeOf(am_val) != JSON_NUMBER || amt < 0 || amt > AMOUNT_MAX) {
+                Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"%s\" must be 0 to %d", index, n, key, AMOUNT_MAX);
+                return 0;
             }
+            attacker_amount = (short)amt;
+            if (attacker_stat == 0) attacker_stat = 1; /* default to ATK */
         }
 
         snprintf(key, sizeof(key), "%slevel_op", prefix);
@@ -802,14 +804,13 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
 
         snprintf(key, sizeof(key), "%slevel", prefix);
         const JsonValue *l_val = Json_Member(entry, key);
-        if (l_val && Json_TypeOf(l_val) == JSON_NUMBER) {
-            int lvl = (int)Json_Number(l_val, 0);
-            if (lvl >= 1 && lvl <= 12) {
-                attacker_level = lvl;
-            } else {
+        if (l_val) {
+            long lvl = Json_Number(l_val, 0);
+            if (Json_TypeOf(l_val) != JSON_NUMBER || lvl < 1 || lvl > 12) {
                 Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"%s\" must be 1 to 12", index, n, key);
                 return 0;
             }
+            attacker_level = (int)lvl;
         }
         if (out_ex) {
             out_ex->battle_modifier = (unsigned char)battle_modifier;

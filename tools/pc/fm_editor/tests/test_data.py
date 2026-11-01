@@ -1730,6 +1730,11 @@ class MonsterEffectsTest(unittest.TestCase):
         # Pruned alias piercing_damage is rejected, and singular "condition" / "battle_modifier" are ignored
         self.assertIsNone(fx.normalize({"when": "face_up", "do": "piercing_damage"}))
         self.assertNotIn("conditions", fx.normalize({"when": "face_up", "do": "piercing", "condition": {"type": "lower_lp"}}))
+        # More than 4 conditions is rejected rather than truncated
+        self.assertIsNone(fx.normalize({
+            "when": "face_up", "do": "piercing", "condition_mode": "any",
+            "conditions": [{"type": "lower_lp"}, {"type": "higher_lp"}, {"type": "lowest_atk"}, {"type": "highest_atk"}, {"type": "fewer_monsters"}]
+        }))
         self.assertFalse(fx.effect_has_attack_condition({"when": "face_up", "do": "battle_immunity", "battle_modifier": "first_attacked"}))
 
         # Disallowed when not face_up

@@ -459,20 +459,31 @@ static void monster_effect_conditions_and_battle_immunity(void)
                                    "     {\"type\":\"named_card\",\"card\":1,\"whose\":\"own\"},"
                                    "     {\"type\":\"fewer_monsters\"},"
                                    "     {\"type\":\"stat_threshold\",\"stat\":\"def\",\"op\":\"<=\",\"value\":2000},"
+                                   "     {\"type\":\"lowest_atk\"}],"
+                                   "   \"condition_mode\":\"any\"},"
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                   "   \"conditions\":["
+                                   "     {\"type\":\"named_card\",\"card\":1,\"whose\":\"own\"},"
+                                   "     {\"type\":\"fewer_monsters\"},"
+                                   "     {\"type\":\"stat_threshold\",\"stat\":\"def\",\"op\":\"<=\",\"value\":2000},"
                                    "     {\"type\":\"lowest_atk\"},"
                                    "     {\"type\":\"highest_atk\"}],"
                                    "   \"condition_mode\":\"any\"},"
                                    "  {\"when\":\"face_up\",\"do\":\"boost\",\"attack\":500,"
                                    "   \"conditions\":[{\"type\":\"stat_threshold\",\"stat\":\"atk\",\"op\":\">\",\"value\":1500}]},"
                                    "  {\"when\":\"combat\",\"do\":\"battle_immunity\"},"
-                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\",\"conditions\":[{\"type\":\"unknown_cond\"}]}]}]",
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\",\"conditions\":[{\"type\":\"unknown_cond\"}]},"
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\",\"modifier\":\"attacked_by_stat\",\"attacker_amount\":10000},"
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\",\"modifier\":\"attacked_by_stat\",\"attacker_amount\":-1},"
+                                   "  {\"when\":\"face_up\",\"do\":\"piercing\",\"modifier\":\"attacks_stat\",\"defender_amount\":\"bad\"},"
+                                   "  {\"when\":\"face_up\",\"do\":\"piercing\",\"modifier\":\"attacks_level\",\"defender_level\":\"bad\"}]}]",
                                    error, sizeof(error));
     assert(doc);
     for (i = 0, entry = Json_At(Json_Root(doc), 0); entry; i++, entry = Json_Next(entry))
         add_entry("f", ".", i, entry, &context);
     assert(Cards_MonsterEffects(26, &effects) == 2);
     assert(Cards_MonsterEffectsEx(26, &effects_ex) == 2);
-    /* Effect 0: battle immunity with 4 conditions (max MONSTER_CONDITIONS_MAX is 4, 5th is truncated) */
+    /* Effect 0: battle immunity with 4 conditions (5-condition effect is rejected) */
     assert(effects[0].when == MONSTER_WHEN_FACE_UP);
     assert(effects[0].action == MONSTER_DO_BATTLE_IMMUNITY);
     assert(effects[0].target == MONSTER_TARGET_SELF);
@@ -497,8 +508,8 @@ static void monster_effect_conditions_and_battle_immunity(void)
     assert(effects_ex[1].conditions[0].stat == MONSTER_STAT_ATK);
     assert(effects_ex[1].conditions[0].op == MONSTER_OP_GT);
     assert(effects_ex[1].conditions[0].value == 1500);
-    /* combat battle_immunity rejected, unknown condition rejected, max conditions note */
-    assert(effect_notes > before);
+    /* 5-condition effect, combat battle_immunity, unknown condition, and 4 invalid amount/level effects rejected */
+    assert(effect_notes == before + 7);
 
     /* Attack counts are battle immunity modifiers, not conditions. */
     JsonDocument *doc2 = Json_Parse("[{\"replace\":27,\"monster_effects\":["
