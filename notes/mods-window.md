@@ -159,9 +159,12 @@ and with the buttons as for Replace ("Remove <name>? Its folder is deleted
 from the mods folder, with everything in it. This cannot be undone."; Apply
 reads Remove, Close reads Cancel; Enter says yes and Escape no); the second
 deletes.
-- **A mod in the player's own mods folder** (origin `folder`) is not removed:
-  the game does not delete from that folder, and the message says to delete it
-  there. A copy imported with the same id lands in the user folder and wins
+- **A mod in the player's own mods folder** (origin `folder`): Remove is still
+  shown, and pressing it only answers in the message line ("... is in your own
+  mods folder, which the game does not delete from. Delete it there."); no
+  question is asked and nothing is touched. (A refusal rather than a hidden
+  button, because the selected mod decides it and the button is the same for
+  every mod.) A copy imported with the same id lands in the user folder and wins
   over it; removing that copy brings the chosen folder's back at the next
   launch.
 - **What it deletes**: `Mods_ImportRemoveInstalled` (`import.c`) removes the

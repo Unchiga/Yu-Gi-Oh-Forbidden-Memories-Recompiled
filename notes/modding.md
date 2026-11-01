@@ -52,9 +52,17 @@ came from.
 A folder that is gone, is a file or cannot be read is left out, with no
 notice at start-up: the reason is in the log (`mods folder: ...`) and
 `Mods_FolderProblem`, for the Mods window to show, and the choice stays so
-the mods come back when the folder does. The choice is also refused when the
-folder is one the game reads already (the release's `mods/`, the user
-directory's, or one inside them; links are not followed).
+the mods come back when the folder does. The choice is refused when the
+folder is one of the game's own: the release's `mods/`, `MEMORIES_MODS_DIR`, the
+user directory (the game writes there: `mods/`, `downloads/`, saves) or a
+folder inside one. Folders are compared after `.` and `..` are taken out and,
+where the folder exists, its links are followed (`realpath`; on Windows
+`GetFullPathNameW`, which does not follow a junction or a link, so a link
+into the user directory is not caught there). `Mods_SetFolder` also drops double
+quotes around the path (Explorer's "Copy as path") and refuses a name with a
+line break. If `MEMORIES_MODS_FOLDER` or `MEMORIES_MODS_DIR` is set, the choice
+is saved all the same and `Mods_SetFolder` returns 1 with a reason that says it
+is overridden.
 
 | Variable | Effect |
 |---|---|

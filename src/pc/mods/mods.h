@@ -192,11 +192,17 @@ int Mods_InstallDirectory(char *out, size_t size);
  * MEMORIES_MODS_DIR set means no other folder is read, this one neither. */
 int Mods_Folder(char *out, size_t size);
 /* Choose the mods folder (writes mods-folder.txt, atomically); NULL or ""
- * chooses none (the file goes). The folder need not exist or be readable
- * yet, as when the permission for it is asked for after. -1, with the reason
- * in `why`, when the path is one the game reads already (the release's
- * mods/, the user directory's, MEMORIES_MODS_DIR, or a folder in one) or
- * the file could not be written. Does not change this launch's list. */
+ * chooses none (the file goes). Double quotes around the path (Explorer's
+ * "Copy as path") are dropped. The folder need not exist or be readable yet,
+ * as when the permission for it is asked for after. 0: saved. 1: saved, but
+ * MEMORIES_MODS_FOLDER or MEMORIES_MODS_DIR is set and overrides it this run
+ * and the next ones until it is unset; `why` says so, for the window to show.
+ * -1, with the reason in `why`: the file could not be written, the name holds
+ * a line break or is too long, or the folder is one of the game's own: the
+ * release's mods/, MEMORIES_MODS_DIR, the user directory or a folder in one
+ * (the user directory is where the game writes), compared after taking out
+ * "." and ".." and following links where the folder exists (a junction on
+ * Windows is not followed). Does not change this launch's list. */
 int Mods_SetFolder(const char *path, char *why, size_t why_size);
 /* Why this launch did not read the folder of Mods_Folder (it is gone, is not a
  * folder, cannot be read, is one the game reads already, or MEMORIES_MODS_DIR

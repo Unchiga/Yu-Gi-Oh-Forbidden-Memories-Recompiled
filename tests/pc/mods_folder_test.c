@@ -8,6 +8,7 @@
  *   precedence  the same id in all three places, a folder only the player's has
  *   missing     a chosen folder that is gone, or is a file: left out, with the reason
  *   env         MEMORIES_MODS_FOLDER over the file, and set to nothing
+ *   owned       the game's own folders named another way, by hand: not read again
  *   exclusive   MEMORIES_MODS_DIR set: the only folder read
  */
 #define main original_mods_test
@@ -15,6 +16,7 @@
 #include "mods_test.c"
 #undef main
 #include "pc/mods/import.h"
+#include "zip_writer.h"
 
 /* The three places, and the player's folder beside them. */
 static void layout(void)
@@ -109,7 +111,7 @@ static void file_case(void)
     assert(!Mods_SetFolder(expected, why, sizeof(why)) && !Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
     /* The folders the game reads already are refused, and the choice stays. */
     snprintf(path, sizeof(path), "%s/user/mods", root);
-    assert(Mods_SetFolder(path, why, sizeof(why)) == -1 && strstr(why, "reads already"));
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1 && strstr(why, "reads or writes already"));
     snprintf(path, sizeof(path), "%s/user/mods/", root);
     assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
     snprintf(path, sizeof(path), "%s/user/mods/inside/deeper", root);
@@ -117,16 +119,76 @@ static void file_case(void)
     snprintf(path, sizeof(path), "%s/prog/mods", root);
     assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
     assert(Mods_SetFolder("mods", why, sizeof(why)) == -1);   /* from the program directory: the same */
-    assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
-    /* A sibling that only starts like the user's mods folder is another folder. */
+    /* The same folders spelled another way: ".", "..", a doubled separator, a relative
+     * path through the program directory, a quoted one. */
+    snprintf(path, sizeof(path), "%s/prog/./mods", root);
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
+    snprintf(path, sizeof(path), "%s/prog/other/../mods//", root);
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
+    snprintf(path, sizeof(path), "%s/user/mods/../mods/x/..", root);
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
+    assert(Mods_SetFolder("./mods", why, sizeof(why)) == -1 && Mods_SetFolder("x/../mods", why, sizeof(why)) == -1);
+    assert(Mods_SetFolder("../prog/mods", why, sizeof(why)) == -1);
+    snprintf(path, sizeof(path), "\"%s/prog/mods\"", root);
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
+#ifndef _WIN32
+    /* A link to one of them, and a link inside the user directory. */
+    snprintf(path, sizeof(path), "%s/prog/mods", root);
+    snprintf(expected, sizeof(expected), "%s/alias-release", root);
+    assert(!symlink(path, expected));
+    assert(Mods_SetFolder(expected, why, sizeof(why)) == -1);
+    snprintf(path, sizeof(path), "%s/user", root);
+    snprintf(expected, sizeof(expected), "%s/alias-user", root);
+    assert(!symlink(path, expected));
+    assert(Mods_SetFolder(expected, why, sizeof(why)) == -1);
+    snprintf(expected, sizeof(expected), "%s/alias-user/mods", root);
+    assert(Mods_SetFolder(expected, why, sizeof(why)) == -1);
+#endif
+    /* The user directory itself and what the game keeps in it besides mods/ is
+     * the game's to write: no. */
+    snprintf(path, sizeof(path), "%s/user", root);
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
+    snprintf(path, sizeof(path), "%s/user/downloads", root);
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
     snprintf(path, sizeof(path), "%s/user/mods-extra", root);
+    assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
+    /* Nothing was changed by the refusals. */
+    snprintf(expected, sizeof(expected), "%s/not-yet", root);
+    assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
+    /* Siblings of them, that only start alike, are other folders. */
+    snprintf(path, sizeof(path), "%s/prog/mods2", root);
     assert(!Mods_SetFolder(path, why, sizeof(why)) && !Mods_Folder(out, sizeof(out)) && !strcmp(out, path));
+    snprintf(path, sizeof(path), "%s/user-extra", root);
+    assert(!Mods_SetFolder(path, why, sizeof(why)) && !Mods_Folder(out, sizeof(out)) && !strcmp(out, path));
+    assert(!Mods_SetFolder("mods2", why, sizeof(why)));   /* from the program directory */
+    snprintf(expected, sizeof(expected), "%s/prog/mods2", root);
+    assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
+    /* Double quotes, as Explorer's "Copy as path" gives, are not part of the name. */
+    snprintf(path, sizeof(path), "%s/chosen", root);
+    snprintf(expected, sizeof(expected), " \"%s/chosen\" ", root);
+    assert(!Mods_SetFolder(expected, why, sizeof(why)) && !Mods_Folder(out, sizeof(out)) && !strcmp(out, path));
+    /* A line break inside a name is no folder. */
+    snprintf(expected, sizeof(expected), "%s/chosen\nsecond", root);
+    assert(Mods_SetFolder(expected, why, sizeof(why)) == -1 && strstr(why, "line break"));
+    snprintf(expected, sizeof(expected), "%s/chosen\r%s/second", root, root);
+    assert(Mods_SetFolder(expected, why, sizeof(why)) == -1);
+    assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, path));
     /* MEMORIES_MODS_DIR stands for the user's folder. */
     snprintf(path, sizeof(path), "%s/named", root);
     assert(!setenv("MEMORIES_MODS_DIR", path, 1));
     assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
-    assert(Mods_SetFolder("", why, sizeof(why)) == 0 && Mods_Folder(out, sizeof(out)) == -1);
+    /* Saved all the same, but it says that MEMORIES_MODS_DIR overrides it. */
+    snprintf(expected, sizeof(expected), "%s/chosen", root);
+    assert(Mods_SetFolder(expected, why, sizeof(why)) == 1 && strstr(why, "MEMORIES_MODS_DIR"));
+    assert(Mods_SetFolder("", why, sizeof(why)) == 1 && Mods_Folder(out, sizeof(out)) == -1);
     unsetenv("MEMORIES_MODS_DIR");
+    /* And MEMORIES_MODS_FOLDER: the file is written, the variable is what is used. */
+    assert(!setenv("MEMORIES_MODS_FOLDER", "/from/env", 1));
+    assert(Mods_SetFolder(expected, why, sizeof(why)) == 1 && strstr(why, "MEMORIES_MODS_FOLDER"));
+    assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, "/from/env"));
+    unsetenv("MEMORIES_MODS_FOLDER");
+    assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
+    assert(Mods_SetFolder("", why, sizeof(why)) == 0 && Mods_Folder(out, sizeof(out)) == -1);
     /* Not a name: nothing written. */
     assert(Mods_SetFolder(NULL, why, sizeof(why)) == 0 && Mods_Folder(out, sizeof(out)) == -1);
     assert(Mods_SetFolder("   ", why, sizeof(why)) == 0 && Mods_Folder(out, sizeof(out)) == -1);
@@ -139,7 +201,11 @@ static void file_case(void)
         memset(tall, 'x', sizeof(tall) - 1);
         tall[0] = '/';
         tall[sizeof(tall) - 1] = '\0';
-        assert(Mods_SetFolder(tall, why, sizeof(why)) == -1 && why[0]);
+        assert(Mods_SetFolder(tall, why, sizeof(why)) == -1 && strstr(why, "too long"));
+        /* Short enough alone, too long from the program directory: still "too long", not "own folder". */
+        memset(tall, 'x', 1000);
+        tall[1000] = '\0';
+        assert(Mods_SetFolder(tall, why, sizeof(why)) == -1 && strstr(why, "too long"));
     }
 
     /* What a hand-written file may hold: a byte order mark, a CRLF, a blank
@@ -233,11 +299,21 @@ static void precedence_case(void)
     /* The install folder is the user directory's, not the chosen one. */
     snprintf(out, sizeof(out), "%s/user/mods", root);
     assert(!strcmp(install, out));
-    /* An import of an id the chosen folder has lands in the user directory's
-     * and takes the slot: Mods_Discover reads the new folder as installed. */
-    mod_at("user/mods/folder-only", "{\"id\":\"folder-only\",\"name\":\"imported\"}");
+    /* An import of an id the chosen folder has (Mods_ImportInstall, as the Android
+     * panel's Import mod... and the HD pack run it) lands in the user directory's
+     * mods folder and takes the slot: Mods_Discover reads the new folder as installed. */
     {
+        ZipItem items[] = {{"folder-only/", NULL, 0, 040755, 0, 0, 0, 0},
+                           {"folder-only/mod.json", "{\"id\":\"folder-only\",\"name\":\"imported\"}", 0, 0100644, 0, 0, 0, 0}};
+        ModsImport *import;
         int later = 0;
+        snprintf(out, sizeof(out), "%s/picked.zip", root);
+        write_zip(out, items, 2);
+        import = Mods_ImportOpen(out, why, sizeof(why));
+        assert(import && Mods_ImportCount(import) == 1);
+        assert(!strcmp(Mods_ImportMod(import, 0)->id, "folder-only") && !Mods_ImportMod(import, 0)->replace[0]);
+        assert(Mods_ImportInstall(import, install, why, sizeof(why)));
+        Mods_ImportClose(import);
         snprintf(out, sizeof(out), "%s/user/mods/folder-only", root);
         assert(Mods_Discover(out, &later) == only && !later);
         assert(in(only, "user/mods/folder-only") && !strcmp(Mods_Origin(only), "installed"));
@@ -263,6 +339,19 @@ static void missing_case(const char *place, int file)
         char out[1024];
         assert(!Mods_Folder(out, sizeof(out))); /* still chosen: it may come back */
     }
+}
+
+/* A hand-written mods-folder.txt that names the release's mods/ another way: the
+ * game's own folder is not scanned again as the player's (origin "folder"). */
+static void owned_case(const char *spelling)
+{
+    char line[1100];
+    mod_at("prog/mods/shipped-only", "{\"id\":\"shipped-only\"}");
+    snprintf(line, sizeof(line), "%s/%s\n", root, spelling);
+    write_text("user/mods-folder.txt", line);
+    load();
+    assert(Mods_Count() == 1 && !strcmp(Mods_Origin(find("shipped-only")), "shipped"));
+    assert(strstr(Mods_FolderProblem(), "own"));
 }
 
 static void env_case(int empty)
@@ -312,6 +401,9 @@ int main(int argc, char **argv)
     else if (!strcmp(what, "precedence")) precedence_case();
     else if (!strcmp(what, "missing")) missing_case("gone", 0);
     else if (!strcmp(what, "notfolder")) missing_case("a-file", 1);
+    else if (!strcmp(what, "owned")) owned_case("prog/./mods");
+    else if (!strcmp(what, "owned-up")) owned_case("prog/x/../mods/");
+    else if (!strcmp(what, "owned-user")) owned_case("user/downloads");
     else if (!strcmp(what, "env")) env_case(0);
     else if (!strcmp(what, "envempty")) env_case(1);
     else if (!strcmp(what, "exclusive")) exclusive_case();

@@ -464,7 +464,7 @@ if(BUILD_TESTING)
     add_executable(memories_mods_folder_test tests/pc/mods_folder_test.c src/pc/mods/import.c ${MOD_TEST_SOURCES})
     target_include_directories(memories_mods_folder_test PRIVATE src)
     target_link_libraries(memories_mods_folder_test PRIVATE m Threads::Threads ZLIB::ZLIB)
-    foreach(mods_folder_case file precedence missing notfolder env envempty exclusive)
+    foreach(mods_folder_case file precedence missing notfolder owned owned-up owned-user env envempty exclusive)
         add_test(NAME pc_mods_folder_${mods_folder_case} COMMAND memories_mods_folder_test ${mods_folder_case})
     endforeach()
     # What enabled mods change in common (src/pc/mods/overlap.c): the mods in
