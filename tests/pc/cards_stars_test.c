@@ -619,6 +619,45 @@ static void monster_effect_conditions_and_battle_immunity(void)
     assert(Cards_CardEffects(607, &effects) == 0);
     assert(Cards_CardEffects(608, &effects) == 0);
     assert(effect_notes >= before + 4);
+
+    /* Custom monster types 128-255 (e.g. 130 "Cyberse" and 255 "Omega") in control_type,
+     * attacked_by_type, attacked_by_monster, attacks_type, and attacks_monster. */
+    type_names[130] = "Cyberse";
+    type_names[255] = "Omega";
+    JsonDocument *doc_custom_type = Json_Parse(
+        "[{\"replace\":33,\"monster_effects\":["
+        "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+        "   \"modifier\":\"attacked_by_type\",\"attacker_type\":130,"
+        "   \"conditions\":["
+        "     {\"type\":\"control_type\",\"card_type\":130},"
+        "     {\"type\":\"control_type\",\"card_type\":\"Omega\"}]},"
+        "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+        "   \"modifier\":\"attacked_by_monster\",\"attacker_type\":\"Cyberse\"},"
+        "  {\"when\":\"face_up\",\"do\":\"piercing\","
+        "   \"modifier\":\"attacks_type\",\"defender_type\":130},"
+        "  {\"when\":\"face_up\",\"do\":\"piercing\","
+        "   \"modifier\":\"attacks_monster\",\"defender_type\":\"Omega\"}]}]",
+        error, sizeof(error));
+    assert(doc_custom_type);
+    for (i = 0, entry = Json_At(Json_Root(doc_custom_type), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(33, &effects) == 4);
+    assert(Cards_MonsterEffectsEx(33, &effects_ex) == 4);
+    assert(effects_ex[0].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE);
+    assert(effects_ex[0].attacker_type == 130);
+    assert(effects_ex[0].cond_count == 2);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_CONTROL_TYPE);
+    assert(effects_ex[0].conditions[0].card_type == 130);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_CONTROL_TYPE);
+    assert(effects_ex[0].conditions[1].card_type == 255);
+    assert(effects_ex[1].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER);
+    assert(effects_ex[1].attacker_type == 130);
+    assert(effects_ex[2].battle_modifier == MONSTER_PIERCING_MOD_TYPE);
+    assert(effects_ex[2].attacker_type == 130);
+    assert(effects_ex[3].battle_modifier == MONSTER_PIERCING_MOD_MONSTER);
+    assert(effects_ex[3].attacker_type == 255);
+    type_names[130] = NULL;
+    type_names[255] = NULL;
 }
 
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's

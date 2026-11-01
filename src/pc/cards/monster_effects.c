@@ -430,7 +430,7 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx, cons
                       index, n, c_idx);
             return 0;
         }
-        cond->card_type = (signed char)raw;
+        cond->card_type = (signed short)raw;
         break;
     }
     case MONSTER_COND_CONTROL_ATTRIBUTE: {
@@ -814,7 +814,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
         if (out_ex) {
             out_ex->battle_modifier = (unsigned char)battle_modifier;
             out_ex->battle_reset = (unsigned char)battle_reset;
-            out_ex->attacker_type = (signed char)attacker_type;
+            out_ex->attacker_type = (signed short)attacker_type;
             out_ex->attacker_attribute = (signed short)attacker_attribute;
             out_ex->attacker_stat = (unsigned char)attacker_stat;
             out_ex->attacker_stat_op = (unsigned char)attacker_stat_op;

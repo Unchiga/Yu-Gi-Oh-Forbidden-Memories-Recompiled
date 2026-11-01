@@ -693,6 +693,19 @@ static void test_control_type_condition(void)
     cond->card_type = 4;
     assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
 
+    /* Custom monster types 128-255 (e.g. 130 and 255) must not be treated as -1 ("any") */
+    cond->presence = 1;
+    cond->whose = MONSTER_EACH_OWN;
+    cond->type_mode = MONSTER_COND_TYPE_AT_LEAST_ONE;
+    cond->card_type = 130;
+    assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
+    s_mock_type[20] = 130;
+    assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+    cond->card_type = 255;
+    assert(MonsterEffects_ConditionsMet(6, &eff) == 0);
+    s_mock_type[20] = 255;
+    assert(MonsterEffects_ConditionsMet(6, &eff) == 1);
+
     puts("test_control_type_condition: PASSED");
 }
 
@@ -1007,6 +1020,20 @@ static void test_attacker_criteria_immunity(void)
     s_mock_type[1] = 2; /* Attacker is Spellcaster */
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
+    /* Custom monster type 130 and 255 in attacked_by_type */
+    eff_ex.attacker_type = 130;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 130;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+    eff_ex.attacker_type = 255;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 255;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
     /* Outside battle, immunity must be 0 */
     gMonsterEffects.trap_battle_record[0] = -1;
     gMonsterEffects.trap_battle_record[1] = -1;
@@ -1166,6 +1193,22 @@ static void test_attacker_criteria_immunity(void)
     /* Fail Level */
     s_mock_level[1] = 9; /* 9 is NOT <= 8 */
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
+    s_mock_level[1] = 8;
+
+    /* Custom monster type 130 and 255 in attacked_by_monster must not skip the type filter */
+    eff_ex.attacker_type = 130;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+    s_mock_type[1] = 130;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    eff_ex.attacker_type = 255;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+    s_mock_type[1] = 255;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    s_mock_type[1] = 1;
 
     puts("test_attacker_criteria_immunity: PASSED");
 }
@@ -1267,7 +1310,19 @@ static void test_piercing_damage(void)
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     s_mock_type[1] = 2; /* Opponent card 1 is Spellcaster */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+    /* Custom monster type 130 and 255 in attacks_type */
+    eff_ex.attacker_type = 130;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 130;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
     s_mock_type[1] = 1;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+    eff_ex.attacker_type = 255;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 255;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
 
     /* --- Test 3: MONSTER_PIERCING_MOD_ATTRIBUTE --- */
     memset(&eff_ex, 0, sizeof(eff_ex));
@@ -1419,6 +1474,21 @@ static void test_piercing_damage(void)
     s_mock_level[1] = 9; /* 9 is not <= 8 */
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
     s_mock_level[1] = 8;
+
+    /* Custom monster type 130 and 255 in attacks_monster must not skip the type filter */
+    eff_ex.attacker_type = 130;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+    s_mock_type[1] = 130;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+    eff_ex.attacker_type = 255;
+    s_test_effects_ex[0] = eff_ex;
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+    s_mock_type[1] = 255;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+    s_mock_type[1] = 1;
 
     /* --- Test 7: While Face-Up Conditions working with Piercing Damage --- */
     memset(&eff_ex, 0, sizeof(eff_ex));

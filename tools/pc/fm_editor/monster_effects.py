@@ -232,7 +232,7 @@ def _name(names, value) -> str | None:
     return key if key in names else None
 
 
-def normalize_condition(cond: dict, resolve=None) -> dict | None:
+def normalize_condition(cond: dict, resolve=None, type_names=None) -> dict | None:
     """A condition entry with its names in game spelling, or None if invalid."""
     if not isinstance(cond, dict):
         return None
@@ -313,8 +313,17 @@ def normalize_condition(cond: dict, resolve=None) -> dict | None:
             if mode == "only":
                 out["mode"] = "only"
         t = cond.get("card_type")
-        if t is not None:
-            out["card_type"] = str(t)
+        if t is None:
+            return None
+        names = type_names or TYPE_NAMES
+        if isinstance(t, str):
+            found = _letters_index(t, [name or "" for name in names])
+            t = found if found is not None else _letters_index(t, TYPE_NAMES)
+        if not isinstance(t, int) or isinstance(t, bool) or not is_monster_type(t):
+            return None
+        if t >= TYPE_MAGIC and not (t < len(names) and names[t]):
+            return None
+        out["card_type"] = names[t] if t < len(names) and names[t] else TYPE_NAMES[t]
     elif c_type == "control_attribute":
         if "whose" in cond:
             whose = _name(EACH, cond["whose"])
@@ -404,7 +413,7 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                         if isinstance(t, str):
                             found = _letters_index(t, [name or "" for name in names])
                             t = found if found is not None else _letters_index(t, TYPE_NAMES)
-                        if isinstance(t, int) and not isinstance(t, bool) and is_monster_type(t) and t != 0xFF:
+                        if isinstance(t, int) and not isinstance(t, bool) and is_monster_type(t) and                                 (t < TYPE_MAGIC or (t < len(names) and bool(names[t]))):
                             out["attacker_type"] = names[t] if t < len(names) and names[t] else TYPE_NAMES[t]
                         elif mod_name == "attacked_by_type":
                             return None
@@ -472,7 +481,7 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
                         if isinstance(t, str):
                             found = _letters_index(t, [name or "" for name in names])
                             t = found if found is not None else _letters_index(t, TYPE_NAMES)
-                        if isinstance(t, int) and not isinstance(t, bool) and is_monster_type(t) and t != 0xFF:
+                        if isinstance(t, int) and not isinstance(t, bool) and is_monster_type(t) and                                 (t < TYPE_MAGIC or (t < len(names) and bool(names[t]))):
                             out["defender_type"] = names[t] if t < len(names) and names[t] else TYPE_NAMES[t]
                         elif mod_name == "attacks_type":
                             return None
@@ -569,7 +578,7 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
             return None
         norm_conds = []
         for c in raw_conds[:MAX_CONDITIONS]:
-            nc = normalize_condition(c, resolve)
+            nc = normalize_condition(c, resolve, type_names)
             if nc is None:
                 return None
             norm_conds.append(nc)
@@ -578,7 +587,7 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
     elif "condition" in effect:
         if when != "face_up":
             return None
-        nc = normalize_condition(effect["condition"], resolve)
+        nc = normalize_condition(effect["condition"], resolve, type_names)
         if nc is None:
             return None
         out["conditions"] = [nc]

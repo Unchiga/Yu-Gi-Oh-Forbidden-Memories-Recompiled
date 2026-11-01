@@ -80,7 +80,8 @@ class EffectsBox(ttk.LabelFrame):
         else:
             # Only what is wrong with the list; nothing when it is fine.
             problems = fx.problems(self.effects, self.project.resolve if self.project else None,
-                                   self.attribute_choice if self.project else None)
+                                   self.attribute_choice if self.project else None,
+                                   self.project.type_names if self.project else None)
             self.note.configure(text="\n".join(problems))
         if self.note.cget("text"):
             self.note.grid()
@@ -97,7 +98,8 @@ class EffectsBox(ttk.LabelFrame):
     def fill(self):
         self.tree.delete(*self.tree.get_children())
         for n, effect in enumerate(self.effects):
-            normalized = fx.normalize(effect, self.project.resolve, self.attribute_choice)
+            normalized = fx.normalize(effect, self.project.resolve, self.attribute_choice,
+                                      self.project.type_names if self.project else None)
             if normalized is None:
                 when = effect.get("when", "?") if isinstance(effect, dict) else "?"
                 self.tree.insert("", "end", iid=str(n), values=(when, "(not one the game takes) " +
@@ -238,7 +240,11 @@ class ConditionDialog(FormDialog):
         line("type_mode", "Requirement", ttk.Combobox(body, textvariable=self.vars["type_mode"],
                                                      values=list(fx.TYPE_MODE_LABELS), state="readonly", width=48))
 
-        type_choices = list(TYPE_NAMES[:TYPE_MAGIC])
+        if self.project is not None:
+            names = self.project.type_names
+            type_choices = [names[i] or TYPE_NAMES[i] for i in range(TYPE_MAGIC)] +                            [names[i] for i in range(24, len(names)) if names[i]]
+        else:
+            type_choices = list(TYPE_NAMES[:TYPE_MAGIC])
         line("card_type", "Monster type", ttk.Combobox(body, textvariable=self.vars["card_type"],
                                                       values=type_choices, state="readonly", width=48))
 
@@ -470,7 +476,7 @@ class EffectDialog(FormDialog):
         self.effects = effects or []
         self.index = index
         self.result = None
-        effect = fx.normalize(effect, project.resolve, self.attribute_choice) if effect else None
+        effect = fx.normalize(effect, project.resolve, self.attribute_choice, project.type_names) if effect else None
         self.start = effect or {"when": "summon", "do": "boost", "target": "self", "attack": 500}
         self.conditions = [dict(c) for c in (effect.get("conditions") or
                            ([effect["condition"]] if effect and "condition" in effect else []))] if effect else []
@@ -557,8 +563,18 @@ class EffectDialog(FormDialog):
         line("card", "Magic card", self.choice(body, "card", [self.magic_label(c) for c in fx.MAGIC], lambda v: 0x14))
         self.target_box = line("target", "Whose", ttk.Combobox(body, textvariable=self.vars["target"],
                                                                state="readonly", width=48))
-        line("type", "Only type", self.choice(body, "type", [ANY] + TYPE_NAMES[:TYPE_MAGIC],
-                                              lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else None))
+        if project is not None:
+            names = project.type_names
+            filter_types = [names[i] or TYPE_NAMES[i] for i in range(TYPE_MAGIC)] + \
+                           [names[i] for i in range(24, len(names)) if names[i] and i != 255]
+            attacker_types = [names[i] or TYPE_NAMES[i] for i in range(TYPE_MAGIC)] + \
+                             [names[i] for i in range(24, len(names)) if names[i]]
+        else:
+            filter_types = list(TYPE_NAMES[:TYPE_MAGIC])
+            attacker_types = list(TYPE_NAMES[:TYPE_MAGIC])
+        type_icon = lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else (
+            project.type_names.index(v) if project is not None and v in project.type_names and project.type_names.index(v) < TYPE_MAGIC else None)
+        line("type", "Only type", self.choice(body, "type", [ANY] + filter_types, type_icon))
         line("attribute", "Only attribute", self.choice(body, "attribute", self.attribute_names(), self.attribute_icon))
         pictures = card_icons.photos(self.app, body, 2) if self.app is not None else {}
         for key, label in (("attack", "ATK"), ("defense", "DEF")):
@@ -571,8 +587,7 @@ class EffectDialog(FormDialog):
         # "for_each": the number above made once per face-up monster counted.
         line("each", "For each", ttk.Combobox(body, textvariable=self.vars["each"], state="readonly", width=48,
                                               values=[fx.NO_EACH] + list(fx.EACH_LABELS)))
-        line("each_type", "Counting type", self.choice(body, "each_type", [ANY] + TYPE_NAMES[:TYPE_MAGIC],
-                                                       lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else None))
+        line("each_type", "Counting type", self.choice(body, "each_type", [ANY] + filter_types, type_icon))
         line("each_attribute", "Counting attribute", self.choice(body, "each_attribute", self.attribute_names(),
                                                                  self.attribute_icon))
 
@@ -581,8 +596,7 @@ class EffectDialog(FormDialog):
                                                    values=list(fx.MODIFIER_LABELS), state="readonly", width=48))
         line("modifier_reset", "Resets", ttk.Combobox(body, textvariable=self.vars["modifier_reset"],
                                                       values=list(fx.RESET_LABELS), state="readonly", width=48))
-        line("attacker_type", "Attacker type", self.choice(body, "attacker_type", [ANY] + TYPE_NAMES[:TYPE_MAGIC],
-                                                           lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else None))
+        line("attacker_type", "Attacker type", self.choice(body, "attacker_type", [ANY] + attacker_types, type_icon))
         line("attacker_attribute", "Attacker attribute", self.choice(body, "attacker_attribute", self.attribute_names(),
                                                                      self.attribute_icon))
         line("attacker_stat", "Attacker stat", ttk.Combobox(body, textvariable=self.vars["attacker_stat"],
@@ -1014,7 +1028,7 @@ class EffectDialog(FormDialog):
                 if mode != "all":
                     effect["condition_mode"] = mode
 
-        effect = fx.normalize(effect, self.project.resolve, self.attribute_choice)
+        effect = fx.normalize(effect, self.project.resolve, self.attribute_choice, self.project.type_names)
         if effect is None:
             return "The game cannot do that."
         self.result = effect

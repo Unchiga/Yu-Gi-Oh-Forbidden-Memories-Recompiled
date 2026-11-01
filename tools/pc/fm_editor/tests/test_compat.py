@@ -171,15 +171,32 @@ class FeatureTest(unittest.TestCase):
     def test_monster_effect_filter_on_a_custom_type(self):
         # monster_effects.c filter(): a declared monster type filters, 255
         # (the filter's "any" byte) and an undeclared id do not.
+        # MonsterCondition.card_type and MonsterEffectEx.attacker_type are
+        # signed short (-1 = any), so custom types 128-255 (including 255) work.
         p = Project(fixture().game())
         manifest.apply(p, {"card_types": {"types": [{"id": 200, "name": "Titan"}, {"id": 255, "name": "Omega"}]}})
         boost = {"when": "face_up", "do": "boost", "attack": 100}
+        imm = {"when": "face_up", "do": "battle_immunity"}
+        pierce = {"when": "face_up", "do": "piercing"}
         for ok in ({**boost, "type": "Titan"}, {**boost, "type": 200}, {**boost, "type": "Dragon"},
-                   {**boost, "for_each": {"type": "titan"}}):
+                   {**boost, "for_each": {"type": "titan"}},
+                   {**imm, "conditions": [{"type": "control_type", "card_type": 200}]},
+                   {**imm, "conditions": [{"type": "control_type", "card_type": 255}]},
+                   {**imm, "modifier": "attacked_by_type", "attacker_type": 200},
+                   {**imm, "modifier": "attacked_by_type", "attacker_type": "Omega"},
+                   {**imm, "modifier": "attacked_by_monster", "attacker_type": 200},
+                   {**pierce, "modifier": "attacks_type", "defender_type": 200},
+                   {**pierce, "modifier": "attacks_monster", "defender_type": "Omega"}):
             with self.subTest(effect=ok):
                 self.assertEqual(monster_effects.problems([ok], p.resolve, type_names=p.type_names), [])
         self.assertEqual(monster_effects.normalize({**boost, "type": 200}, p.resolve, type_names=p.type_names)["type"], "Titan")
-        for bad in ({**boost, "type": "Omega"}, {**boost, "type": 201}, {**boost, "type": "Magic"}):
+        self.assertEqual(monster_effects.normalize_condition({"type": "control_type", "card_type": 200}, p.resolve, type_names=p.type_names)["card_type"], "Titan")
+        self.assertEqual(monster_effects.normalize({**imm, "modifier": "attacked_by_type", "attacker_type": 200}, p.resolve, type_names=p.type_names)["attacker_type"], "Titan")
+        self.assertEqual(monster_effects.normalize({**pierce, "modifier": "attacks_type", "defender_type": 200}, p.resolve, type_names=p.type_names)["defender_type"], "Titan")
+        for bad in ({**boost, "type": "Omega"}, {**boost, "type": 201}, {**boost, "type": "Magic"},
+                    {**imm, "conditions": [{"type": "control_type", "card_type": 201}]},
+                    {**imm, "modifier": "attacked_by_type", "attacker_type": 201},
+                    {**pierce, "modifier": "attacks_type", "defender_type": 201}):
             with self.subTest(effect=bad):
                 self.assertTrue(monster_effects.problems([bad], p.resolve, type_names=p.type_names))
 

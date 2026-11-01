@@ -1028,7 +1028,7 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
                 if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN) continue;
                 card_id = D_801A7AD8[r].card_id;
                 total_monsters++;
-                if (cond->card_type < 0 || Cards_Type(card_id) == (unsigned char)cond->card_type)
+                if (cond->card_type < 0 || Cards_Type(card_id) == cond->card_type)
                     type_monsters++;
             }
             if (cond->type_mode == MONSTER_COND_TYPE_ONLY)
@@ -1187,11 +1187,11 @@ int MonsterEffects_HasBattleImmunity(int record)
                         continue;
                 } else if (ex->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER) {
                     /* Combined criteria: check each criteria if configured */
-                    if (ex->attacker_type >= 0 && (unsigned char)ex->attacker_type != 0xFF) {
+                    if (ex->attacker_type >= 0) {
                         int t = Cards_Type(att_card);
                         if (t != ex->attacker_type) continue;
                     }
-                    if (ex->attacker_attribute >= 0 && (unsigned char)ex->attacker_attribute != 0xFF) {
+                    if (ex->attacker_attribute >= 0) {
                         int a = Cards_Attribute(att_card);
                         if (a != ex->attacker_attribute) continue;
                     }
@@ -1270,11 +1270,11 @@ int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
                     continue;
             } else if (ex->battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_MONSTER) {
                 /* Combined criteria: check each criteria if configured */
-                if (ex->attacker_type >= 0 && (unsigned char)ex->attacker_type != 0xFF) {
+                if (ex->attacker_type >= 0) {
                     int t = Cards_Type(def_card);
                     if (t != ex->attacker_type) continue;
                 }
-                if (ex->attacker_attribute >= 0 && (unsigned char)ex->attacker_attribute != 0xFF) {
+                if (ex->attacker_attribute >= 0) {
                     int a = Cards_Attribute(def_card);
                     if (a != ex->attacker_attribute) continue;
                 }

@@ -165,7 +165,7 @@ typedef struct MonsterCondition {
     unsigned char op;               /* MONSTER_OP_* */
     short value;                    /* stat threshold number or level */
     unsigned char presence;         /* 1 = control / active (default), 0 = do not control / not active */
-    signed char card_type;          /* monster type: -1 any, or type id */
+    signed short card_type;         /* monster type: -1 any, or type id 0..255 */
     signed short attribute;         /* attribute id: -1 any */
     unsigned char type_mode;        /* 0 = at least one (default), 1 = only control this type */
     unsigned char scope;            /* 0 = all own (default), 1 = other monsters (exclude self) */
@@ -193,7 +193,7 @@ typedef struct MonsterEffectEx {
     /* Battle immunity & piercing modifiers (when action == MONSTER_DO_BATTLE_IMMUNITY or MONSTER_DO_PIERCING) */
     unsigned char battle_modifier;   /* MONSTER_BATTLE_MOD_* or MONSTER_PIERCING_MOD_* */
     unsigned char battle_reset;      /* MONSTER_RESET_* */
-    signed char attacker_type;       /* -1 = any */
+    signed short attacker_type;      /* -1 = any, or monster type 0..255 */
     signed short attacker_attribute; /* -1 = any */
     unsigned char attacker_stat;     /* 0 = none, 1 = ATK, 2 = DEF */
     unsigned char attacker_stat_op;  /* MONSTER_OP_*: comparison (<, <=, >, >=, ==) */
