@@ -296,11 +296,73 @@ int HERE(Platform_OpenFolder)(const char *path)
     return SDL_OpenURL(path) ? 0 : -1;
 }
 int HERE(Platform_OpenUrl)(const char *url) { return SDL_OpenURL(url) ? 0 : -1; }
+
+#ifndef SDL_PLATFORM_ANDROID
+/* The Mods window's Mods folder... (mods_window.c, ModsWindow_SetFolderPicker):
+ * the system's folder dialog. It answers on a thread of its own, and the
+ * window asks for the answer once per pump, so the game and the window go on
+ * meanwhile. MEMORIES_PICK_FOLDER=<path> takes that folder instead of opening
+ * the dialog (tests, scripted runs). */
+static struct {
+    SDL_AtomicInt done;
+    int result; /* 1 chosen, 0 none, -1 the dialog failed */
+    char path[1024], error[256];
+} folder_pick;
+static int folder_picking;
+static void SDLCALL folder_selected(void *userdata, const char *const *list, int filter)
+{
+    (void)userdata;
+    (void)filter;
+    if (!list) {
+        snprintf(folder_pick.error, sizeof(folder_pick.error), "%s", SDL_GetError());
+        folder_pick.result = -1;
+    } else if (list[0] && strlen(list[0]) < sizeof(folder_pick.path)) {
+        snprintf(folder_pick.path, sizeof(folder_pick.path), "%s", list[0]);
+        folder_pick.result = 1;
+    } else if (list[0]) {
+        snprintf(folder_pick.error, sizeof(folder_pick.error), "That folder's name is too long.");
+        folder_pick.result = -1;
+    }
+    SDL_SetAtomicInt(&folder_pick.done, 1); /* last: the thread that asks reads the rest after it */
+}
+static int pick_folder(char *why, size_t why_size)
+{
+    const char *test = getenv("MEMORIES_PICK_FOLDER");
+    (void)why;
+    (void)why_size;
+    if (folder_picking) return 0;
+    memset(&folder_pick, 0, sizeof(folder_pick));
+    folder_picking = 1;
+    if (test && *test) {
+        snprintf(folder_pick.path, sizeof(folder_pick.path), "%s", test);
+        folder_pick.result = 1;
+        SDL_SetAtomicInt(&folder_pick.done, 1);
+        return 0;
+    }
+    SDL_ShowOpenFolderDialog(folder_selected, NULL, mods_window ? mods_window : window, NULL, false);
+    return 0;
+}
+static int picked_folder(char *path, size_t size, char *why, size_t why_size)
+{
+    if (!folder_picking || !SDL_GetAtomicInt(&folder_pick.done)) return 0;
+    folder_picking = 0;
+    if (folder_pick.result < 0) {
+        snprintf(why, why_size, "Could not open the folder picker: %s", folder_pick.error);
+        return -2;
+    }
+    if (!folder_pick.result) return -1;
+    snprintf(path, size, "%s", folder_pick.path);
+    return 1;
+}
+#endif
 static int panel_overlay(void);
 static void open_panel(int kind);
 void HERE(Platform_OpenMods)(void)
 {
     sigset_t previous;
+#ifndef SDL_PLATFORM_ANDROID
+    ModsWindow_SetFolderPicker(pick_folder, picked_folder);
+#endif
     if (panel_overlay()) { open_panel(PANEL_MODS); return; }
     if (mods_window) { SDL_RaiseWindow(mods_window); return; }
     ModsWindow_Init();
@@ -2161,6 +2223,7 @@ static void pump(void)
         default: break;
         }
     }
+    if (mods_window && ModsWindow_Tick()) mods_dirty = 1; /* the folder picker's answer */
     if (mods_window && mods_dirty) draw_mods();
     mods_dirty = 0;
     if (TouchPad_SetMode(Settings_Get(SET_TOUCH_PAD))) menu_dirty = 1;

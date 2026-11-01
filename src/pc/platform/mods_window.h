@@ -31,6 +31,7 @@ enum {
     MODS_UI_CHECK_SELECTED, MODS_UI_CHECK_FIRST, /* a row's [x], which switches its mod on or off */
     MODS_UI_HD,         /* HD pack... (where the platform can download it, hd_pack.h) */
     MODS_UI_REMOVE,     /* Remove, beside Import mod... (the selected mod's folder goes) */
+    MODS_UI_MODSDIR,    /* Mods folder... (where the platform has a folder picker); while its question is up, Use no folder */
     MODS_UI_TAB = 20,   /* + 0 About, 1 Settings, 2 Compatibility */
     MODS_UI_ORDER = 30, /* + 0 -, 1 + */
     MODS_UI_OPTION = 100
@@ -49,6 +50,17 @@ int ModsWindow_Locate(int id, int *x, int *y);
  * so it deletes the selected mod's folder itself, after a question. */
 void ModsWindow_SetImport(int (*pick)(char *why, size_t why_size), int (*picked)(char *why, size_t why_size),
                           int (*fetch)(char *path, size_t size, char *why, size_t why_size));
+/* Mods folder...: `pick` opens the system's folder picker and returns at
+ * once (0, or -1 with the reason); `picked`, asked once per ModsWindow_Tick
+ * while it is open, says 0 while it is, 1 once a folder was chosen (its full
+ * path in `path`), -1 when none was and -2 on a failure (why). The window
+ * saves the choice (Mods_SetFolder), says why when that is refused, and
+ * offers Apply & restart, since the folder is read at the next launch. It
+ * shows the folder and why it was not read (Mods_FolderProblem), and can
+ * choose none. Without them (NULL, the default: the developer window) there
+ * is no such button. */
+void ModsWindow_SetFolderPicker(int (*pick)(char *why, size_t why_size),
+                                int (*picked)(char *path, size_t size, char *why, size_t why_size));
 /* Once per pump while the panel shows: an import's next step. 1 when the
  * window must be drawn again. */
 int ModsWindow_Tick(void);

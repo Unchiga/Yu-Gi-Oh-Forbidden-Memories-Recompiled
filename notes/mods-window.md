@@ -51,6 +51,26 @@ folder the player chose (`mods-folder.txt`, [Mods](modding.md#your-own-mods-fold
 is read as well but is not where mods go: imports and the HD pack still go to
 the user folder, and a mod found in the chosen folder has the origin `folder`.
 
+**Mods folder...** (beside Open mods folder; `ModsWindow_SetFolderPicker`, which
+`sdl.c` gives the window on the desktop, so the developer X11 window has no
+such button) chooses that folder. It asks first (`Mods folder: <path>` and why
+it was not read this launch, `Mods_FolderProblem`, or `none`), with **Choose
+folder...** (the Apply button's place), **Use no folder** (the button's own,
+shown only when a folder is chosen) and Cancel. Choose folder... opens the
+system's folder dialog (`SDL_ShowOpenFolderDialog`); it answers on a thread of
+its own and the window takes the answer at its ticks (`ModsWindow_Tick`, also
+called from the desktop window's pump), so the game goes on meanwhile.
+`MEMORIES_PICK_FOLDER=<path>` answers for it, for tests and scripted runs. The
+folder is saved at once (`Mods_SetFolder`; a refusal, or the note that
+`MEMORIES_MODS_DIR` overrides it, is said as it is) and read at the next
+launch, so Apply offers a restart (Apply changes, then Apply & restart, as for
+a change that needs one) whenever the choice is not the one the game started
+with; choosing that one again, or running with `MEMORIES_MODS_DIR`, needs
+none. This is not a staged change: Close does not ask to discard it. The
+details line of a mod from that folder reads "from your mods folder". When a
+chosen folder could not be read this launch, the window opens with the reason
+in the message line.
+
 The profile field accepts a name (letters, digits, spaces, `_`, `-`). Save writes
 the currently applied preferences to `mod-profiles/<name>.txt` in the user
 directory. Load stages that profile for inspection; it does not change the

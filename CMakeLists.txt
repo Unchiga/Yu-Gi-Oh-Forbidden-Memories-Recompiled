@@ -814,6 +814,8 @@ if(BUILD_TESTING)
         target_compile_options(memories_mods_window_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mods_window COMMAND memories_mods_window_test)
+    # Mods folder...: the run where MEMORIES_MODS_DIR is not set.
+    add_test(NAME pc_mods_window_folder COMMAND memories_mods_window_test folder)
     # The same with no code mod loader (MEMORIES_NO_CODE_MODS, which no game
     # build sets now): what an import says about a code mod there.
     add_executable(memories_mods_window_no_code_test tests/pc/mods_window_test.c src/pc/platform/mods_window.c
