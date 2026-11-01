@@ -923,6 +923,19 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME pc_card_plate COMMAND memories_card_plate_test)
         set_tests_properties(pc_card_plate PROPERTIES SKIP_RETURN_CODE 77)
+        # The records art.c makes of a PNG, byte for byte (card picture,
+        # thumbnail, field cutout, portrait) against hashes held.
+        add_executable(memories_card_art_test tests/pc/card_art_test.c src/pc/cards/art.c)
+        target_include_directories(memories_card_art_test PRIVATE src ${MEMORIES_FREETYPE_INCLUDE})
+        target_link_libraries(memories_card_art_test PRIVATE ${MEMORIES_FREETYPE_LIBRARY} ${memories_plate_fonts}
+            PNG::PNG)
+        if(WIN32)
+            target_link_libraries(memories_card_art_test PRIVATE memories_pc_fs)
+        endif()
+        if(NOT MSVC)
+            target_compile_options(memories_card_art_test PRIVATE -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME pc_card_art COMMAND memories_card_art_test "${CMAKE_CURRENT_BINARY_DIR}/card-art-test")
         # What a duelist's bust costs the start (busts.c Busts_Make with the
         # real art.c): the biggest bust and a typical one, drawn at runtime.
         add_executable(memories_busts_make_test tests/pc/busts_make_test.c src/pc/cards/art.c src/pc/mods/json.c)

@@ -252,6 +252,43 @@ static int nearest(const Weighted *c, const Rgb *palette, const int *by_green, i
     return best;
 }
 
+/* The memory one quantize works in. The cuts used to take a block of their
+ * own each (a malloc per box, a realloc per split), a few hundred allocations
+ * for every picture; where the game's allocator registers each one (the
+ * translated build, whose registry is searched in a line) that was nearly all
+ * of the time a card's picture took. Here the memory comes from a few chunks,
+ * handed out in order and all freed at once. Each chunk is at least twice the
+ * last, so the sixteen places for them are never used up. */
+#define ARENA_CHUNKS 16
+
+typedef struct {
+    unsigned char *chunks[ARENA_CHUNKS];
+    int count;
+    size_t used, size;      /* of the last chunk; before the first, the size it is to have */
+} Arena;
+
+static void *arena_get(Arena *arena, size_t bytes)
+{
+    bytes = (bytes + 15u) & ~(size_t)15u;
+    if (!arena->count || bytes > arena->size - arena->used) {
+        size_t size = arena->count ? arena->size * 2 : arena->size;
+        if (size < bytes) size = bytes;
+        if (arena->count == ARENA_CHUNKS) return NULL;
+        arena->chunks[arena->count] = malloc(size);
+        if (!arena->chunks[arena->count]) return NULL;
+        arena->count++;
+        arena->used = 0;
+        arena->size = size;
+    }
+    arena->used += bytes;
+    return arena->chunks[arena->count - 1] + arena->used - bytes;
+}
+
+static void arena_free(Arena *arena)
+{
+    while (arena->count) free(arena->chunks[--arena->count]);
+}
+
 /* Median cut of the pixels to `colors` entries, written to `clut` from
  * entry 1 on, and each pixel's entry to `indices`: the widest box (on one
  * channel) split in two at its median pixel in order of that channel, then
@@ -265,23 +302,28 @@ static int nearest(const Weighted *c, const Rgb *palette, const int *by_green, i
  * (busts.c). */
 static void quantize(const Rgb *pixels, int count, int colors, unsigned short *clut, unsigned char *indices)
 {
-    Rgb *sorted = malloc((size_t)count * sizeof(*sorted)), *spare = malloc((size_t)count * sizeof(*spare)), palette[256];
+    Arena arena = {{NULL}, 0, 0, 0};
+    Rgb *sorted, *spare, palette[256];
     Weighted *unique = NULL, *scratch = NULL;
     unsigned char *entry = NULL, *table = NULL;
     Box boxes[256];
     int box_count = 1, i, k, n = 0, by_green[256];
     boxes[0].colors = NULL;
-    if (!sorted || !spare || count < 1) goto done;
+    if (count < 1) return;
+    /* A chunk that holds a picture of all-different colors and its cuts, in
+     * the usual case; a bigger one is a chunk more. */
+    arena.size = (size_t)count * 64;
+    sorted = arena_get(&arena, (size_t)count * sizeof(*sorted));
+    spare = arena_get(&arena, (size_t)count * sizeof(*spare));
+    if (!sorted || !spare) goto done;
     /* The colors, in order, and how many of each. */
     memcpy(sorted, pixels, (size_t)count * sizeof(*sorted));
     sort_pixels(sorted, count, spare);
-    free(sorted);
-    sorted = NULL;
     for (k = 0; k < count; k++) {
         if (!k || spare[k].r != spare[k - 1].r || spare[k].g != spare[k - 1].g || spare[k].b != spare[k - 1].b) n++;
     }
-    unique = malloc((size_t)n * sizeof(*unique));
-    scratch = malloc((size_t)n * sizeof(*scratch));
+    unique = arena_get(&arena, (size_t)n * sizeof(*unique));
+    scratch = arena_get(&arena, (size_t)n * sizeof(*scratch));
     if (!unique || !scratch) goto done;
     for (k = 0, n = 0; k < count; k++) {
         const Rgb *c = &spare[k];
@@ -295,9 +337,7 @@ static void quantize(const Rgb *pixels, int count, int colors, unsigned short *c
         unique[n].count = 1;
         n++;
     }
-    free(spare);
-    spare = NULL;
-    boxes[0].colors = malloc((size_t)n * sizeof(Weighted));
+    boxes[0].colors = arena_get(&arena, (size_t)n * sizeof(Weighted));
     if (!boxes[0].colors) goto done;
     memcpy(boxes[0].colors, unique, (size_t)n * sizeof(Weighted));
     boxes[0].n = n;
@@ -327,7 +367,7 @@ static void quantize(const Rgb *pixels, int count, int colors, unsigned short *c
         part = half - before;                 /* color j's pixels in the first */
         next->n = box->n - j;
         next->count = box->count - half;
-        next->colors = malloc((size_t)next->n * sizeof(Weighted));
+        next->colors = arena_get(&arena, (size_t)next->n * sizeof(Weighted));
         if (!next->colors) break;
         memcpy(next->colors, box->colors + j, (size_t)next->n * sizeof(Weighted));
         if (part) {
@@ -336,11 +376,6 @@ static void quantize(const Rgb *pixels, int count, int colors, unsigned short *c
             box->n = j + 1;
         } else {
             box->n = j;
-        }
-        {   /* The first keeps only its own colors: what the boxes hold stays
-             * about the colors' count, however deep the splits. */
-            Weighted *kept = box->n ? realloc(box->colors, (size_t)box->n * sizeof(Weighted)) : NULL;
-            if (kept) box->colors = kept;
         }
         box->count = half;
         measure(box);
@@ -371,7 +406,7 @@ static void quantize(const Rgb *pixels, int count, int colors, unsigned short *c
         for (k = i; k > 0 && palette[by_green[k - 1]].g > palette[v].g; k--) by_green[k] = by_green[k - 1];
         by_green[k] = v;
     }
-    entry = malloc((size_t)n);
+    entry = arena_get(&arena, (size_t)n);
     if (!entry) goto done;
     for (k = 0; k < n; k++)
         entry[k] = (unsigned char)(nearest(&unique[k], palette, by_green, box_count, k ? entry[k - 1] - 1 : 0) + 1);
@@ -394,12 +429,7 @@ static void quantize(const Rgb *pixels, int count, int colors, unsigned short *c
         }
     }
 done:
-    for (i = 0; i < box_count; i++) free(boxes[i].colors);
-    free(sorted);
-    free(spare);
-    free(unique);
-    free(scratch);
-    free(entry);
+    arena_free(&arena);
     free(table);
 }
 
