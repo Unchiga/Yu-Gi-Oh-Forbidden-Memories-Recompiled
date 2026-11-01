@@ -621,7 +621,7 @@ void LibDs_State(MemoriesState *state)
 /* Bulk reads for the native extras (src/pc/mods), beside the drive model
  * rather than through it: the game's own streaming keeps its queue, its head
  * and its callbacks while a whole MODEL.MRG record is fetched in one call. */
-int Memories_DiscReadSectors(int lba, int sectors, void *out)
+static int read_sectors(int lba, int sectors, void *out, int delivered)
 {
     u8 raw[RAW_SECTOR];
     int i;
@@ -635,10 +635,13 @@ int Memories_DiscReadSectors(int lba, int sectors, void *out)
             break;
         }
         memcpy((u8 *)out + (size_t)i * 2048, raw + USER_DATA, 2048);
-        TextureDump_Delivered((u8 *)out + (size_t)i * 2048, 2048, Mods_DiscOrigin(lba + i), 0);
+        if (delivered) TextureDump_Delivered((u8 *)out + (size_t)i * 2048, 2048, Mods_DiscOrigin(lba + i), 0);
     }
     return i;
 }
+
+int Memories_DiscReadSectors(int lba, int sectors, void *out) { return read_sectors(lba, sectors, out, 1); }
+int Memories_DiscReadSectorsUntracked(int lba, int sectors, void *out) { return read_sectors(lba, sectors, out, 0); }
 
 int Memories_DiscFileInfo(const char *path, int *lba, unsigned *size)
 {
