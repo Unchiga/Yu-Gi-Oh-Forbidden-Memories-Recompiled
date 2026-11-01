@@ -23,6 +23,7 @@
  * the game's lookups of the retail ones (Text_Resolve) then give. */
 #include "game/card_constants.h"
 struct MonsterEffect;
+struct MonsterEffectEx;
 
 /* The number of cards this run has: CARD_COUNT without a card mod. */
 extern int gCard_nCount;
@@ -71,6 +72,7 @@ int Cards_EffectId(int id);
 /* Data-defined effects for a Magic or Trap card.  "card_effects" either
  * supplements its retail/aliased effect or replaces it entirely. */
 int Cards_CardEffects(int id, const struct MonsterEffect **effects);
+int Cards_CardEffectsEx(int id, const struct MonsterEffectEx **effects_ex);
 int Cards_CardEffectsReplace(int id);
 /* The trap a card set on the field springs as: a trap card's effect (its
  * own, its base's or the one "effect" names), 0 for a card of another type,

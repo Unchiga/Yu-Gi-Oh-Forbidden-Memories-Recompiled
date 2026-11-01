@@ -234,7 +234,16 @@ def features(manifest: dict, project=None) -> list:
             add(18, "a card's own frame style (\"frame_style\")")
     for what in _frame_features(manifest.get("card_layout")):
         add(18, what)
-    # --- API 20 (19 is held for #391's monster effects) ---------------------
+    # --- API 19 -------------------------------------------------------------
+    for entry in _entries(manifest.get("cards")):
+        for effect in _entries(entry.get("monster_effects")):
+            if effect.get("do") == "battle_immunity":
+                add(19, "a monster effect's \"battle_immunity\"")
+            if effect.get("do") == "piercing":
+                add(19, "a monster effect's \"piercing\"")
+            if "conditions" in effect:
+                add(19, "a monster effect's \"conditions\"")
+    # --- API 20 -------------------------------------------------------------
     if "fields" in manifest:
         add(20, "mod-defined duel fields (\"fields\")")
     for entry in _entries(manifest.get("cards")):

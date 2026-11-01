@@ -28,6 +28,21 @@ static int spawned, released, original_calls, hidden_lookups, observed_visibilit
 static int deck_mode, hidden_mode, custom_window = 20, retail_hand = 1;
 static int terrain_override, terrain_points, star_points;
 static int ai_card, ai_value;
+static int immunity_queries, immune_record = -999, immune_attacker = -999, immune_return;
+static int pierce_record = -999, pierce_defender = -999;
+
+int MonsterEffects_BattleImmunity(int attacker_record, int defender_record)
+{
+    if (defender_record == 5) immunity_queries++;
+    if (defender_record == immune_record && (immune_attacker == -999 || attacker_record == immune_attacker))
+        return immune_return;
+    return 0;
+}
+int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
+{
+    if (attacker_record == 5 || defender_record == 5) immunity_queries++;
+    return attacker_record == pierce_record && (pierce_defender == -999 || defender_record == pierce_defender);
+}
 
 int Cards_Valid(int id) { return id > 0 && id < 1024; }
 int Cards_EffectId(int id) { if (id == 999) hidden_lookups++; return id; }
@@ -120,7 +135,9 @@ static void reset(void)
         objects[i].out_x = i*20; objects[i].out_y = 100;
         D_800907CC[i+5] = i+15;
     }
-    spawned = released = original_calls = hidden_lookups = 0;
+    spawned = released = original_calls = hidden_lookups = immunity_queries = 0;
+    immune_record = immune_attacker = pierce_record = pierce_defender = -999;
+    immune_return = 0;
     ai_card = ai_value = 0;
     hidden_mode = deck_mode = 0; retail_hand = 1;
     initialize(D_801A8000);
@@ -205,10 +222,28 @@ int main(void)
     assert(gDuel_aDeckCardRecords[44].id == 52 && spawned == 2 && released == 2);
     assert(((DuelCardDisplayObject *)D_800EA030[2].object)->out_x == 40);
 
+    /* Hidden face-down enemy monsters must not leak battle immunity or piercing
+     * when sees_hidden() is false; visible or revealed slots populate board masks. */
+    reset(); hidden_mode = 1;
+    immune_record = 5; immune_attacker = -999; immune_return = -1;
+    pierce_record = 20; pierce_defender = 5;
+    gDuel_aActiveCards[1] = (AiActiveCard){10,2000,1500,0,0,1,0,0};
+    gDuel_aActiveCards[56] = (AiActiveCard){999,1000,1500,HM_DOWN | HM_DEFENSE,0,8,9,0};
+    o = options(); b = board(&o);
+    assert(b.enemy[0].id == -1 && !(b.enemy[0].flags & HM_IMMUNE) && !b.enemy_immune[0] && !b.own_pierce[0]);
+    assert(immunity_queries == 0);
+    hidden_mode = 2; b = board(&o);
+    assert(b.enemy[0].id == 999 && (b.enemy[0].flags & HM_IMMUNE) && (b.enemy_immune[0] & 1) && (b.own_pierce[0] & 1));
+    assert(immunity_queries > 0);
+    immune_return = 2; b = board(&o);
+    assert(!(b.enemy[0].flags & HM_IMMUNE) && b.enemy_shields[0] == 2);
+    immune_record = -10; immune_return = -1; pierce_record = -10; pierce_defender = -1;
+    assert((card_info(10).flags & (HM_IMMUNE | HM_PIERCE)) == (HM_IMMUNE | HM_PIERCE));
+
     reset(); gDuel_aActiveCards[11].card_id = 10;
     assert(run() == 1 && D_800EAE88[0] == 11 && !original_calls);
     retail_hand = 0; assert(run() == 1 && original_calls == 1);
     D_8009B360[1] = -1; assert(run() == 1 && original_calls == 2);
-    puts("AI hard mode adapter: hand windows, redaction, Swords, retail fallback and real deck swaps passed");
+    puts("AI hard mode adapter: hand windows, redaction, Swords, immunity/piercing, retail fallback and real deck swaps passed");
     return 0;
 }

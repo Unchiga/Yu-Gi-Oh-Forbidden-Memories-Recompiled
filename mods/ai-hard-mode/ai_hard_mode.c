@@ -22,6 +22,7 @@
 #include "game/func_80018004.h"
 #include "game/display_object_core.h"
 #include "pc/cards/cards.h"
+#include "pc/cards/monster_effects_duel.h"
 #include "pc/cards/tables.h"
 #include "pc/mods/modapi.h"
 #include <string.h>
@@ -126,6 +127,10 @@ static HmCard card_info(int id)
     c.defense = ((stats >> CARD_STAT_DEFENSE_SHIFT) & CARD_STAT_VALUE_MASK) * CARD_STAT_SCALE;
     c.star = (stats >> CARD_STAT_GUARDIAN_STAR_1_SHIFT) & 15;
     c.star2 = (stats >> CARD_STAT_GUARDIAN_STAR_2_SHIFT) & 15;
+    if (c.type < CARD_TYPE_MAGIC) {
+        if (MonsterEffects_BattleImmunity(-1, -id)) c.flags |= HM_IMMUNE;
+        if (MonsterEffects_HasPiercingDamage(-id, -1)) c.flags |= HM_PIERCE;
+    }
     return c;
 }
 static int terrain(int type, int field)
@@ -177,6 +182,34 @@ static HmBoard board(const HmOptions *o)
         b.enemy[i] = snapshot(56 + i, o->effective, 1);
         b.back[i] = snapshot(6 + i, o->effective, 0);
         b.enemy_back[i] = snapshot(61 + i, o->effective, 1);
+    }
+    for (i = 0; i < 5; i++) {
+        int j, own_rec = side * 15 + 5 + i, enemy_rec = (side ^ 1) * 15 + 5 + i;
+        if (b.own[i].id > 0) {
+            int imm = MonsterEffects_BattleImmunity(-1, own_rec);
+            if (imm < 0) b.own[i].flags |= HM_IMMUNE;
+            else if (imm > 0) b.own_shields[i] = (unsigned char)imm;
+            if (MonsterEffects_HasPiercingDamage(own_rec, -1)) b.own[i].flags |= HM_PIERCE;
+        }
+        if (b.enemy[i].id > 0) {
+            int imm = MonsterEffects_BattleImmunity(-1, enemy_rec);
+            if (imm < 0) b.enemy[i].flags |= HM_IMMUNE;
+            else if (imm > 0) b.enemy_shields[i] = (unsigned char)imm;
+            if (MonsterEffects_HasPiercingDamage(enemy_rec, -1)) b.enemy[i].flags |= HM_PIERCE;
+        }
+        for (j = 0; j < 5; j++) {
+            int e_rec = (side ^ 1) * 15 + 5 + j;
+            if (b.own[i].id > 0 && b.enemy[j].id > 0) {
+                if (MonsterEffects_BattleImmunity(own_rec, e_rec) < 0)
+                    b.enemy_immune[j] |= (unsigned char)(1u << i);
+                if (MonsterEffects_HasPiercingDamage(own_rec, e_rec))
+                    b.own_pierce[i] |= (unsigned char)(1u << j);
+                if (MonsterEffects_BattleImmunity(e_rec, own_rec) < 0)
+                    b.own_immune[i] |= (unsigned char)(1u << j);
+                if (MonsterEffects_HasPiercingDamage(e_rec, own_rec))
+                    b.enemy_pierce[j] |= (unsigned char)(1u << i);
+            }
+        }
     }
     for (i = 0; i < b.hand_count; i++) b.hand[i] = card_info(gDuel_aActiveCards[11+i].card_id);
     return b;

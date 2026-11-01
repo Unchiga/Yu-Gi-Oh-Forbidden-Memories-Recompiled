@@ -15,8 +15,8 @@ Mods window and apply to subsequent decisions.
 | Plan hand plays | Score single cards, field upgrades, fusion chains and useful spell plays. Off uses the original hand script. |
 | Search fusion chains | Include fusion and equip chains in planned hand plays. Requires Plan hand plays. |
 | Choose guardian stars | Compare both stars for new monster plays, including when using the original hand script. |
-| Plan attack sequences | Search attack orders, preserving stronger attackers when an economical attacker suffices. An attack costs what the attacker risks left in attack position through the opponent's turn (against what it can see and one more 1800 ATK monster), so a wall does not trade its defense for a few points; a direct attack for 0 is never made. Check winning sequences before fixed wall-card defense. |
-| Situational defense | Compare the predicted damage and loss in attack versus defense; when they are equal (nothing visible can hurt it, or Swords of Revealing Light holds the opponent through its next turn) a monster with more DEF than ATK takes defense. Off retains the original wall/position policy. |
+| Plan attack sequences | Search attack orders, preserving stronger attackers when an economical attacker suffices. An attack costs what the attacker risks left in attack position through the opponent's turn (against what it can see and one more 1800 ATK monster), so a wall does not trade its defense for a few points; a direct attack for 0 is never made. Avoids futile 0-damage attacks into battle-immune monsters, counts piercing damage against defense targets, and chains attackers when needed to break N-hit battle immunity (`first_attacked`, `destroyed_after_2_attacks`, `destroyed_after_3_attacks`). Check winning sequences before fixed wall-card defense. |
+| Situational defense | Compare the predicted damage and loss in attack versus defense, accounting for own battle immunity and enemy piercing damage; when they are equal (nothing visible can hurt it, or Swords of Revealing Light holds the opponent through its next turn) a monster with more DEF than ATK takes defense. Off retains the original wall/position policy. |
 | Smarter spell timing | Evaluate burn, healing, removal, equips, terrain, Swords, reveal, Stop Defense and available rituals. An equip, Stop Defense, Shadow Spell or Spellbinding Circle that makes the attacks better is played before them; the last two are weighed by the fights and threats their cuts change (two levels and one level, or what a mod's `limits` set), and Swords of Revealing Light by the threat it stops, a losing next turn above all, so it is kept while nothing threatens. An equip does not go first on a turn the attacks already win. Unknown effects stay set. |
 | Use effective stats | Use current field modifiers and project terrain onto candidate monsters. Off scores field cards using their printed stats. |
 | Allow equal-power trades | Include equal-ATK trades when the sequence is valuable. A trade that takes the last monster, when it could have held, also counts the direct attack it opens the field to. |
@@ -61,8 +61,9 @@ exhaustive solver or a search across future turns. Hand scoring also values
 immediate matchups and survival; it does not run a full attack search for
 every fusion candidate. No win-rate improvement has yet been measured.
 
-Card definitions, fusion recipes and equip compatibility use the running
-game's rules, including table/card mods. Effect evaluation models the retail
+Card definitions, fusion recipes, equip compatibility, and face-up
+`battle_immunity` / `piercing` monster effects use the running game's rules,
+including table/card mods. Spell/trap effect evaluation models the retail
 effects identified by `Cards_EffectId`. Arbitrary replacement effects, damage
 multipliers and stateful fusion/equip callbacks cannot be fully predicted.
 Compatibility callbacks may be queried repeatedly during planning and should

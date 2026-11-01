@@ -80,7 +80,7 @@ void Mods_Note(const char *id, const char *format, ...)
     fprintf(stderr, "note: %s: %s\n", id, note);
     if (id[0] >= 'a' && id[0] <= 'h' && !id[1] && (id[0] != 'h' || !strstr(note, "is replaced by")))
         notes[id[0] - 'a']++;
-    if (strstr(note, "monster_effects")) effect_notes++;
+    if (strstr(note, "monster_effects") || strstr(note, "card_effects")) effect_notes++;
 }
 
 /* What cards.c and stars.c reach that these checks never get to. */
@@ -444,6 +444,233 @@ static void monster_effect_for_each(void)
     assert(!MonsterEffect_EachAllowed(MONSTER_DO_MAGIC) && !MonsterEffect_EachAllowed(MONSTER_DO_DESTROY));
 }
 
+/* API 19: battle immunity and conditions system */
+static void monster_effect_conditions_and_battle_immunity(void)
+{
+    BuildContext context = {0};
+    char error[128];
+    const JsonValue *entry;
+    const MonsterEffect *effects;
+    const MonsterEffectEx *effects_ex;
+    int i, before = effect_notes;
+    JsonDocument *doc = Json_Parse("[{\"replace\":26,\"monster_effects\":["
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                   "   \"conditions\":["
+                                   "     {\"type\":\"named_card\",\"card\":1,\"whose\":\"own\"},"
+                                   "     {\"type\":\"fewer_monsters\"},"
+                                   "     {\"type\":\"stat_threshold\",\"stat\":\"def\",\"op\":\"<=\",\"value\":2000},"
+                                   "     {\"type\":\"lowest_atk\"}],"
+                                   "   \"condition_mode\":\"any\"},"
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                   "   \"conditions\":["
+                                   "     {\"type\":\"named_card\",\"card\":1,\"whose\":\"own\"},"
+                                   "     {\"type\":\"fewer_monsters\"},"
+                                   "     {\"type\":\"stat_threshold\",\"stat\":\"def\",\"op\":\"<=\",\"value\":2000},"
+                                   "     {\"type\":\"lowest_atk\"},"
+                                   "     {\"type\":\"highest_atk\"}],"
+                                   "   \"condition_mode\":\"any\"},"
+                                   "  {\"when\":\"face_up\",\"do\":\"boost\",\"attack\":500,"
+                                   "   \"conditions\":[{\"type\":\"stat_threshold\",\"stat\":\"atk\",\"op\":\">\",\"value\":1500}]},"
+                                   "  {\"when\":\"combat\",\"do\":\"battle_immunity\"},"
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\",\"conditions\":[{\"type\":\"unknown_cond\"}]},"
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\",\"modifier\":\"attacked_by_stat\",\"attacker_amount\":10000},"
+                                   "  {\"when\":\"face_up\",\"do\":\"battle_immunity\",\"modifier\":\"attacked_by_stat\",\"attacker_amount\":-1},"
+                                   "  {\"when\":\"face_up\",\"do\":\"piercing\",\"modifier\":\"attacks_stat\",\"defender_amount\":\"bad\"},"
+                                   "  {\"when\":\"face_up\",\"do\":\"piercing\",\"modifier\":\"attacks_level\",\"defender_level\":\"bad\"}]}]",
+                                   error, sizeof(error));
+    assert(doc);
+    for (i = 0, entry = Json_At(Json_Root(doc), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(26, &effects) == 2);
+    assert(Cards_MonsterEffectsEx(26, &effects_ex) == 2);
+    /* Effect 0: battle immunity with 4 conditions (5-condition effect is rejected) */
+    assert(effects[0].when == MONSTER_WHEN_FACE_UP);
+    assert(effects[0].action == MONSTER_DO_BATTLE_IMMUNITY);
+    assert(effects[0].target == MONSTER_TARGET_SELF);
+    assert(effects_ex[0].cond_mode == MONSTER_COND_MODE_ANY);
+    assert(effects_ex[0].cond_count == 4);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_NAMED_CARD);
+    assert(effects_ex[0].conditions[0].card == 1);
+    assert(effects_ex[0].conditions[0].whose == MONSTER_EACH_OWN);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_FEWER_MONSTERS);
+    assert(effects_ex[0].conditions[2].type == MONSTER_COND_STAT_THRESHOLD);
+    assert(effects_ex[0].conditions[2].stat == MONSTER_STAT_DEF);
+    assert(effects_ex[0].conditions[2].op == MONSTER_OP_LE);
+    assert(effects_ex[0].conditions[2].value == 2000);
+    assert(effects_ex[0].conditions[3].type == MONSTER_COND_LOWEST_ATK);
+    /* Effect 1: boost with single condition */
+    assert(effects[1].when == MONSTER_WHEN_FACE_UP);
+    assert(effects[1].action == MONSTER_DO_BOOST);
+    assert(effects[1].attack == 500);
+    assert(effects_ex[1].cond_mode == MONSTER_COND_MODE_ALL);
+    assert(effects_ex[1].cond_count == 1);
+    assert(effects_ex[1].conditions[0].type == MONSTER_COND_STAT_THRESHOLD);
+    assert(effects_ex[1].conditions[0].stat == MONSTER_STAT_ATK);
+    assert(effects_ex[1].conditions[0].op == MONSTER_OP_GT);
+    assert(effects_ex[1].conditions[0].value == 1500);
+    /* 5-condition effect, combat battle_immunity, unknown condition, and 4 invalid amount/level effects rejected */
+    assert(effect_notes == before + 7);
+
+    /* Attack counts are battle immunity modifiers, not conditions. */
+    JsonDocument *doc2 = Json_Parse("[{\"replace\":27,\"monster_effects\":["
+                                    "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                    "   \"modifier\":\"destroyed_after_2_attacks\",\"reset\":\"copy\"},"
+                                    "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                    "   \"modifier\":\"destroyed_after_3_attacks\",\"reset\":\"turn\"},"
+                                    "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                    "   \"modifier\":\"first_attacked\",\"reset\":\"duel\"},"
+                                    "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                    "   \"conditions\":[{\"type\":\"first_attacked\"}]}]}]",
+                                    error, sizeof(error));
+    assert(doc2);
+    before = effect_notes;
+    for (i = 0, entry = Json_At(Json_Root(doc2), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(27, &effects) == 3);
+    assert(Cards_MonsterEffectsEx(27, &effects_ex) == 3);
+    assert(effects_ex[0].cond_count == 0);
+    assert(effects_ex[0].battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS);
+    assert(effects_ex[0].battle_reset == MONSTER_RESET_COPY);
+    assert(effects_ex[1].battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS);
+    assert(effects_ex[1].battle_reset == MONSTER_RESET_TURN);
+    assert(effects_ex[2].battle_modifier == MONSTER_BATTLE_MOD_FIRST_ATTACKED);
+    assert(effects_ex[2].battle_reset == MONSTER_RESET_DUEL);
+    /* the old condition spelling is noted and left out */
+    assert(effect_notes > before);
+    /* Test fewer_monsters and more_monsters conditions */
+    JsonDocument *doc3 = Json_Parse("[{\"replace\":29,\"monster_effects\":["
+                                    "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                    "   \"conditions\":["
+                                    "     {\"type\":\"fewer_monsters\"},"
+                                    "     {\"type\":\"more_monsters\"},"
+                                    "     {\"type\":\"lower_lp\"},"
+                                    "     {\"type\":\"higher_lp\"}]}]}]",
+                                    error, sizeof(error));
+    assert(doc3);
+    for (i = 0, entry = Json_At(Json_Root(doc3), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(29, &effects) == 1);
+    assert(Cards_MonsterEffectsEx(29, &effects_ex) == 1);
+    assert(effects_ex[0].cond_count == 4);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_FEWER_MONSTERS);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_MORE_MONSTERS);
+    assert(effects_ex[0].conditions[2].type == MONSTER_COND_LOWER_LP);
+    assert(effects_ex[0].conditions[3].type == MONSTER_COND_HIGHER_LP);
+
+    /* Test pruned aliases emit notes and are rejected */
+    before = effect_notes;
+    JsonDocument *doc_alias = Json_Parse("[{\"replace\":29,\"monster_effects\":["
+                                         "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                         "   \"conditions\":[{\"type\":\"fewer_monsters_than_opponent\"}]},"
+                                         "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                         "   \"conditions\":[{\"type\":\"stat_threshold\",\"stat\":\"defense\",\"op\":\"<=\",\"value\":1000}]},"
+                                         "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                         "   \"conditions\":[{\"type\":\"stat_threshold\",\"stat\":\"def\",\"op\":\"lower\",\"value\":1000}]}]}]",
+                                         error, sizeof(error));
+    assert(doc_alias);
+    for (i = 0, entry = Json_At(Json_Root(doc_alias), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(effect_notes >= before + 3);
+
+    /* Test field_spell condition: valid fields vs typo emitting note */
+    JsonDocument *doc_field = Json_Parse("[{\"replace\":30,\"monster_effects\":["
+                                         "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                         "   \"conditions\":["
+                                         "     {\"type\":\"field_spell\",\"field\":\"mountain\"},"
+                                         "     {\"type\":\"field_spell\",\"field\":\"mountian\"}]}]}]",
+                                         error, sizeof(error));
+    assert(doc_field);
+    before = effect_notes;
+    for (i = 0, entry = Json_At(Json_Root(doc_field), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    /* The effect containing typo "mountian" was rejected, so card 30 has 0 effects */
+    assert(Cards_MonsterEffects(30, &effects) == 0);
+    /* A note was emitted for "mountian" */
+    assert(effect_notes > before);
+
+    /* Valid field spell parses into MONSTER_FIELD_MOUNTAIN */
+    JsonDocument *doc_field_ok = Json_Parse("[{\"replace\":30,\"monster_effects\":["
+                                            "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+                                            "   \"conditions\":["
+                                            "     {\"type\":\"field_spell\",\"field\":\"mountain\"},"
+                                            "     {\"type\":\"field_spell\",\"field\":\"any\"}]}]}]",
+                                            error, sizeof(error));
+    assert(doc_field_ok);
+    for (i = 0, entry = Json_At(Json_Root(doc_field_ok), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(30, &effects) == 1);
+    assert(Cards_MonsterEffectsEx(30, &effects_ex) == 1);
+    assert(effects_ex[0].cond_count == 2);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_FIELD_SPELL);
+    assert(effects_ex[0].conditions[0].field_spell == MONSTER_FIELD_MOUNTAIN);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_FIELD_SPELL);
+    assert(effects_ex[0].conditions[1].field_spell == MONSTER_FIELD_ANY);
+
+    /* Test conditions rejected on card_effects and non-face-up monster_effects */
+    before = effect_notes;
+    JsonDocument *doc_non_faceup = Json_Parse(
+        "[{\"replace\":31,\"monster_effects\":["
+        "  {\"when\":\"summon\",\"do\":\"boost\",\"target\":\"self\",\"attack\":100,"
+        "   \"conditions\":[{\"type\":\"lowest_atk\"}]}]},"
+        " {\"replace\":32,\"monster_effects\":["
+        "  {\"when\":\"combat\",\"do\":\"boost\",\"target\":\"self\",\"attack\":100,"
+        "   \"condition_mode\":\"all\"}]},"
+        " {\"replace\":607,\"card_effects\":["
+        "  {\"do\":\"damage\",\"amount\":500,\"target\":\"opponent\","
+        "   \"conditions\":[{\"type\":\"lowest_atk\"}]}]},"
+        " {\"replace\":608,\"card_effects\":["
+        "  {\"do\":\"heal\",\"amount\":500,\"target\":\"own\","
+        "   \"condition_mode\":\"any\"}]}]",
+        error, sizeof(error));
+    assert(doc_non_faceup);
+    for (i = 0, entry = Json_At(Json_Root(doc_non_faceup), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(31, &effects) == 0);
+    assert(Cards_MonsterEffects(32, &effects) == 0);
+    assert(Cards_CardEffects(607, &effects) == 0);
+    assert(Cards_CardEffects(608, &effects) == 0);
+    assert(effect_notes >= before + 4);
+
+    /* Custom monster types 128-255 (e.g. 130 "Cyberse" and 255 "Omega") in control_type,
+     * attacked_by_type, attacked_by_monster, attacks_type, and attacks_monster. */
+    type_names[130] = "Cyberse";
+    type_names[255] = "Omega";
+    JsonDocument *doc_custom_type = Json_Parse(
+        "[{\"replace\":33,\"monster_effects\":["
+        "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+        "   \"modifier\":\"attacked_by_type\",\"attacker_type\":130,"
+        "   \"conditions\":["
+        "     {\"type\":\"control_type\",\"card_type\":130},"
+        "     {\"type\":\"control_type\",\"card_type\":\"Omega\"}]},"
+        "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+        "   \"modifier\":\"attacked_by_monster\",\"attacker_type\":\"Cyberse\"},"
+        "  {\"when\":\"face_up\",\"do\":\"piercing\","
+        "   \"modifier\":\"attacks_type\",\"defender_type\":130},"
+        "  {\"when\":\"face_up\",\"do\":\"piercing\","
+        "   \"modifier\":\"attacks_monster\",\"defender_type\":\"Omega\"}]}]",
+        error, sizeof(error));
+    assert(doc_custom_type);
+    for (i = 0, entry = Json_At(Json_Root(doc_custom_type), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(33, &effects) == 4);
+    assert(Cards_MonsterEffectsEx(33, &effects_ex) == 4);
+    assert(effects_ex[0].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE);
+    assert(effects_ex[0].attacker_type == 130);
+    assert(effects_ex[0].cond_count == 2);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_CONTROL_TYPE);
+    assert(effects_ex[0].conditions[0].card_type == 130);
+    assert(effects_ex[0].conditions[1].type == MONSTER_COND_CONTROL_TYPE);
+    assert(effects_ex[0].conditions[1].card_type == 255);
+    assert(effects_ex[1].battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER);
+    assert(effects_ex[1].attacker_type == 130);
+    assert(effects_ex[2].battle_modifier == MONSTER_PIERCING_MOD_TYPE);
+    assert(effects_ex[2].attacker_type == 130);
+    assert(effects_ex[3].battle_modifier == MONSTER_PIERCING_MOD_MONSTER);
+    assert(effects_ex[3].attacker_type == 255);
+    type_names[130] = NULL;
+    type_names[255] = NULL;
+}
+
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's
  * long before narrowing to int: 2^32 must be rejected as out of range, not
  * silently narrowed first and read back as the valid type 0. */
@@ -787,6 +1014,7 @@ int main(void)
     mod_models();
     monster_effect_entries();
     monster_effect_for_each();
+    monster_effect_conditions_and_battle_immunity();
     if (LONG_MAX > INT_MAX) monster_effect_type_overflow();
     if (LONG_MAX > INT_MAX) reference_overflow();
     if (LONG_MAX > INT_MAX) copy_id_overflow();

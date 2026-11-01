@@ -122,11 +122,18 @@ accept v0.3.0 record MonsterEffect widened attribute and each_attribute into the
 # no mod parses control lines or receives one.
 accept v0.3.0 record ControlCommand grew by symbol and offset at its end
 
-# PR #394 (mod-defined fields): MonsterEffect_DoNames gained "change_field"
-# after the five it had. The array only grew at its end: a v0.3.0 mod reads
-# entries 0-4 (its own MONSTER_DO_COUNT) at the same places with the same
-# names, and never writes the const table.
-accept v0.3.0 variable MonsterEffect_DoNames grew by change_field at its end
+# PR #394 (mod-defined fields) and PR #391 (API 19 monster effects):
+# MonsterEffect_DoNames grew from 5 to 8 at its end ("change_field",
+# "battle_immunity" and "piercing"). A v0.3.0 mod reads entries 0-4 (its own
+# MONSTER_DO_COUNT) at the same places with the same names, and never writes
+# the const table.
+accept v0.3.0 variable MonsterEffect_DoNames grew from 5 to 8 to add change_field, battle_immunity and piercing at its end
+
+# API 19 (Monster effects system): MonsterEffectsState grew at its end to
+# track attack counts and piercing damage. It is a single engine global
+# (gMonsterEffects) never allocated by mods; all earlier fields keep their
+# offsets and types.
+accept v0.3.0 record MonsterEffectsState grew by attack counts and piercing damage at its end
 
 # PR #398 (battle models a mod adds): AnimatedBattleModelProperties's
 # model_id is u16 where it was s16, as a mod's model is 0x8000 and up

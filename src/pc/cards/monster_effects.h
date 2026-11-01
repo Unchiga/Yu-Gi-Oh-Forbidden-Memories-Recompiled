@@ -33,6 +33,8 @@ enum {
     MONSTER_DO_DESTROY,      /* the other side's monsters (or the one it battles) destroyed, as Warrior
                               * Elimination destroys */
     MONSTER_DO_CHANGE_FIELD, /* make the selected declared field active */
+    MONSTER_DO_BATTLE_IMMUNITY, /* cannot be destroyed by battle (API 19) */
+    MONSTER_DO_PIERCING,     /* inflicts piercing battle damage when attacking defense monsters (API 19) */
     MONSTER_DO_COUNT
 };
 enum {
@@ -53,6 +55,123 @@ enum {
     MONSTER_EACH_ALL,        /* both sides' */
     MONSTER_EACH_COUNT
 };
+
+/* Conditions (API 19): required state for a while-face-up effect to apply */
+enum {
+    MONSTER_COND_NONE,
+    MONSTER_COND_NAMED_CARD,        /* specific card is face up on field */
+    MONSTER_COND_STAT_THRESHOLD,   /* this monster's ATK or DEF satisfies comparison */
+    MONSTER_COND_LOWEST_ATK,       /* this monster has lowest ATK among all face-up monsters */
+    MONSTER_COND_HIGHEST_ATK,      /* this monster has highest ATK among all face-up monsters */
+    MONSTER_COND_FEWER_MONSTERS,   /* you control strictly fewer monsters than opponent */
+    MONSTER_COND_MORE_MONSTERS,    /* you control strictly more monsters than opponent */
+    MONSTER_COND_CONTROL_STAT,     /* you control monster meeting ATK/DEF threshold */
+    MONSTER_COND_CONTROL_LEVEL,    /* you control monster meeting Level comparison */
+    MONSTER_COND_CONTROL_TYPE,     /* monster of specified type is present on designated field */
+    MONSTER_COND_CONTROL_ATTRIBUTE,/* monster of specified attribute is present on designated field */
+    MONSTER_COND_FIELD_SPELL,      /* active field spell condition */
+    MONSTER_COND_LOWER_LP,         /* your LP strictly lower than opponent's LP */
+    MONSTER_COND_HIGHER_LP,        /* your LP strictly higher than opponent's LP */
+    MONSTER_COND_COUNT
+};
+
+#define MONSTER_COND_LP_LOWER MONSTER_COND_LOWER_LP
+#define MONSTER_COND_LP_HIGHER MONSTER_COND_HIGHER_LP
+
+/* Field spell options (API 19): for MONSTER_COND_FIELD_SPELL */
+enum {
+    MONSTER_FIELD_ANY,       /* 0: any field spell active (gDuel_bTerrain != 0) */
+    MONSTER_FIELD_FOREST,    /* 1: Forest (card 330) */
+    MONSTER_FIELD_WASTELAND, /* 2: Wasteland (card 331) */
+    MONSTER_FIELD_MOUNTAIN,  /* 3: Mountain (card 332) */
+    MONSTER_FIELD_SOGEN,     /* 4: Sogen / Meadow (card 333) */
+    MONSTER_FIELD_UMI,       /* 5: Umi / Sea (card 334) */
+    MONSTER_FIELD_YAMI,      /* 6: Yami / Dark (card 335) */
+    MONSTER_FIELD_COUNT
+};
+
+/* Battle immunity modifiers (API 19): specific to MONSTER_DO_BATTLE_IMMUNITY */
+enum {
+    MONSTER_BATTLE_MOD_ALWAYS,          /* always immune to battle destruction (default) */
+    MONSTER_BATTLE_MOD_FIRST_ATTACKED,  /* the first time it is attacked */
+    MONSTER_BATTLE_MOD_AFTER_2_ATTACKS, /* can only be destroyed after two attacks */
+    MONSTER_BATTLE_MOD_AFTER_3_ATTACKS, /* can only be destroyed after three attacks */
+    MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE,      /* if attacked by monster of specific type */
+    MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE, /* if attacked by monster of specific attribute */
+    MONSTER_BATTLE_MOD_ATTACKED_BY_STAT,      /* if attacked by monster with higher ATK or DEF */
+    MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL,     /* if attacked by monster with higher level */
+    MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER,   /* if attacked by monster matching criteria */
+    MONSTER_BATTLE_MOD_COUNT
+};
+
+#define MONSTER_BATTLE_MOD_DESTROYED_AFTER_2_ATTACKS MONSTER_BATTLE_MOD_AFTER_2_ATTACKS
+#define MONSTER_BATTLE_MOD_DESTROYED_AFTER_3_ATTACKS MONSTER_BATTLE_MOD_AFTER_3_ATTACKS
+#define MONSTER_BATTLE_MOD_SECOND_ATTACKED MONSTER_BATTLE_MOD_AFTER_2_ATTACKS
+#define MONSTER_BATTLE_MOD_THIRD_ATTACKED MONSTER_BATTLE_MOD_AFTER_3_ATTACKS
+
+/* Piercing damage modifiers (API 19): specific to MONSTER_DO_PIERCING */
+enum {
+    MONSTER_PIERCING_MOD_ALWAYS = 0,
+    MONSTER_PIERCING_MOD_ATTACKS_TYPE = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE,
+    MONSTER_PIERCING_MOD_ATTACKS_ATTRIBUTE = MONSTER_BATTLE_MOD_ATTACKED_BY_ATTRIBUTE,
+    MONSTER_PIERCING_MOD_ATTACKS_STAT = MONSTER_BATTLE_MOD_ATTACKED_BY_STAT,
+    MONSTER_PIERCING_MOD_ATTACKS_LEVEL = MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL,
+    MONSTER_PIERCING_MOD_ATTACKS_MONSTER = MONSTER_BATTLE_MOD_ATTACKED_BY_MONSTER
+};
+#define MONSTER_PIERCING_MOD_TYPE MONSTER_PIERCING_MOD_ATTACKS_TYPE
+#define MONSTER_PIERCING_MOD_ATTRIBUTE MONSTER_PIERCING_MOD_ATTACKS_ATTRIBUTE
+#define MONSTER_PIERCING_MOD_STAT MONSTER_PIERCING_MOD_ATTACKS_STAT
+#define MONSTER_PIERCING_MOD_LEVEL MONSTER_PIERCING_MOD_ATTACKS_LEVEL
+#define MONSTER_PIERCING_MOD_MONSTER MONSTER_PIERCING_MOD_ATTACKS_MONSTER
+
+enum {
+    MONSTER_OP_LT,           /* < strictly lower */
+    MONSTER_OP_LE,           /* <= lower or equal */
+    MONSTER_OP_GT,           /* > strictly higher */
+    MONSTER_OP_GE,           /* >= higher or equal */
+    MONSTER_OP_EQ,           /* == equal to */
+    MONSTER_OP_COUNT
+};
+enum {
+    MONSTER_RESET_COPY,      /* this card copy (resets when placed/summoned on field) */
+    MONSTER_RESET_SUMMON = MONSTER_RESET_COPY,
+    MONSTER_RESET_DUEL,      /* once per duel */
+    MONSTER_RESET_TURN,      /* resets each turn */
+    MONSTER_RESET_COUNT
+};
+enum {
+    MONSTER_STAT_ATK,
+    MONSTER_STAT_DEF,
+    MONSTER_STAT_COUNT
+};
+enum {
+    MONSTER_COND_MODE_ALL,   /* all conditions must be met (logical AND) */
+    MONSTER_COND_MODE_ANY,   /* at least one condition must be met (logical OR) */
+    MONSTER_COND_MODE_COUNT
+};
+
+enum {
+    MONSTER_COND_TYPE_AT_LEAST_ONE, /* at least one monster of type (default) */
+    MONSTER_COND_TYPE_ONLY          /* only control this type */
+};
+
+#define MONSTER_CONDITIONS_MAX 4
+
+typedef struct MonsterCondition {
+    unsigned char type;             /* MONSTER_COND_* */
+    unsigned char whose;            /* MONSTER_EACH_*: own, opponent, all (for named card) */
+    unsigned short card;            /* named card id */
+    unsigned char stat;             /* MONSTER_STAT_ATK or MONSTER_STAT_DEF */
+    unsigned char op;               /* MONSTER_OP_* */
+    short value;                    /* stat threshold number or level */
+    unsigned char presence;         /* 1 = control / active (default), 0 = do not control / not active */
+    signed short card_type;         /* monster type: -1 any, or type id 0..255 */
+    signed short attribute;         /* attribute id: -1 any */
+    unsigned char type_mode;        /* 0 = at least one (default), 1 = only control this type */
+    unsigned char scope;            /* 0 = all own (default), 1 = other monsters (exclude self) */
+    unsigned char field_spell;      /* MONSTER_FIELD_*: 0 any, 1 Forest ... 6 Yami */
+} MonsterCondition;
+
 #define MONSTER_EFFECTS_MAX 8
 
 typedef struct MonsterEffect {
@@ -68,10 +187,36 @@ typedef struct MonsterEffect {
     signed short each_attribute;     /* what is counted: -1 any */
 } MonsterEffect;
 
+/* Extended effect data (API 19): stored in a parallel table indexed the
+ * same way as MonsterEffect, with its own accessor Cards_MonsterEffectsEx. */
+typedef struct MonsterEffectEx {
+    /* Battle immunity & piercing modifiers (when action == MONSTER_DO_BATTLE_IMMUNITY or MONSTER_DO_PIERCING) */
+    unsigned char battle_modifier;   /* MONSTER_BATTLE_MOD_* or MONSTER_PIERCING_MOD_* */
+    unsigned char battle_reset;      /* MONSTER_RESET_* */
+    signed short attacker_type;      /* -1 = any, or monster type 0..255 */
+    signed short attacker_attribute; /* -1 = any */
+    unsigned char attacker_stat;     /* 0 = none, 1 = ATK, 2 = DEF */
+    unsigned char attacker_stat_op;  /* MONSTER_OP_*: comparison (<, <=, >, >=, ==) */
+    short attacker_amount;           /* threshold for ATK/DEF */
+    unsigned char attacker_level;    /* 0 = none, 1..12 = level */
+    unsigned char attacker_level_op; /* MONSTER_OP_*: comparison (<, <=, >, >=, ==) */
+    /* Conditions */
+    unsigned char cond_count;
+    unsigned char cond_mode;         /* MONSTER_COND_MODE_ALL or MONSTER_COND_MODE_ANY */
+    MonsterCondition conditions[MONSTER_CONDITIONS_MAX];
+} MonsterEffectEx;
+
 extern const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT];
 extern const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT];
 extern const char *const MonsterEffect_TargetNames[MONSTER_TARGET_COUNT];
 extern const char *const MonsterEffect_EachNames[MONSTER_EACH_COUNT];
+extern const char *const MonsterEffect_CondNames[MONSTER_COND_COUNT];
+extern const char *const MonsterEffect_BattleModNames[MONSTER_BATTLE_MOD_COUNT];
+extern const char *const MonsterEffect_OpNames[MONSTER_OP_COUNT];
+extern const char *const MonsterEffect_ResetNames[MONSTER_RESET_COUNT];
+extern const char *const MonsterEffect_StatNames[MONSTER_STAT_COUNT];
+extern const char *const MonsterEffect_CondModeNames[MONSTER_COND_MODE_COUNT];
+extern const char *const MonsterEffect_FieldNames[MONSTER_FIELD_COUNT];
 
 /* Whether `card` is a retail magic card whose effect a monster may use: a
  * Magic card of the disc with play-time work that asks the player nothing
@@ -89,13 +234,18 @@ int MonsterEffect_DefaultTarget(int when, int action);
  * MONSTER_EFFECTS_MAX), its length returned; -1 when the entry has none.
  * What is wrong is noted for the mod and left out. */
 int MonsterEffects_Read(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out);
+int MonsterEffects_ReadEx(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out,
+                          MonsterEffectEx *out_ex);
 
 /* The actions available to a spell or trap card's "card_effects" are the
  * same as a monster effect's actions, but they happen when the card is
  * played (or springs), rather than at one of a monster's field events. */
 int CardEffects_Read(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out);
+int CardEffects_ReadEx(const char *mod, int index, const struct JsonValue *list, MonsterEffect *out,
+                       MonsterEffectEx *out_ex);
 
 /* A card's effects (cards.c): the list and its length, 0 for none. */
 int Cards_MonsterEffects(int id, const MonsterEffect **effects);
+int Cards_MonsterEffectsEx(int id, const MonsterEffectEx **effects_ex);
 
 #endif

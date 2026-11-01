@@ -83,6 +83,18 @@ if(BUILD_TESTING)
             target_compile_options(memories_trap_effects_test PRIVATE -mno-ms-bitfields)
         endif()
         add_test(NAME pc_trap_effects COMMAND memories_trap_effects_test)
+        # API 19 monster effect conditions, battle immunity and piercing on a
+        # stand-in duel (monster_effects_duel.c against mocked game globals).
+        add_executable(memories_monster_attacked_conditions_test tests/pc/monster_attacked_conditions_test.c
+                       src/pc/cards/monster_effects_duel.c)
+        target_include_directories(memories_monster_attacked_conditions_test PRIVATE src)
+        target_compile_definitions(memories_monster_attacked_conditions_test PRIVATE MEMORIES_PC)
+        target_compile_options(memories_monster_attacked_conditions_test PRIVATE -m32)
+        target_link_options(memories_monster_attacked_conditions_test PRIVATE -m32)
+        if(WIN32)
+            target_compile_options(memories_monster_attacked_conditions_test PRIVATE -mno-ms-bitfields)
+        endif()
+        add_test(NAME pc_monster_attacked_conditions COMMAND memories_monster_attacked_conditions_test)
         # Not "dispatch": Windows takes an unmanifested exe whose name has
         # "patch" in it for an installer and asks to elevate it.
         add_executable(memories_card_effects_start_test tests/pc/card_effects_start_test.c)

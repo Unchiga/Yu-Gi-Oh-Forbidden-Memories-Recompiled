@@ -2613,7 +2613,7 @@ class MonsterEffectsGuiTest(GuiCase):
         # Combat offers no magic; face up only boosts.
         self.assertNotIn("Magic card effect", dialog.do_box.cget("values"))
         dialog.vars["when"].set("While face up")
-        self.assertEqual(list(dialog.do_box.cget("values")), ["Boost ATK/DEF"])
+        self.assertEqual(list(dialog.do_box.cget("values")), ["Boost ATK/DEF", "Cannot be destroyed by battle", "Piercing damage"])
         self.assertNotIn("The monster it battles", dialog.target_box.cget("values"))
         dialog.vars["type"].set("Dragon")
         dialog.ok()
@@ -2654,6 +2654,320 @@ class MonsterEffectsGuiTest(GuiCase):
         self.assertFalse(dialog.rows["each"][1].winfo_manager())
         dialog.ok()
         self.assertEqual(dialog.result, {"when": "summon", "do": "destroy", "target": "opponent"})
+
+    def test_condition_dialog(self):
+        from fm_editor.monster_effects_ui import ConditionDialog
+        from fm_editor import monster_effects as fx
+        app = self.app
+        # 1. Open with stat_threshold atk
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "op": ">=", "value": 1500}, str)
+        self.assertEqual(dialog.vars["stat"].get(), "ATK")
+        self.assertEqual(dialog.vars["value"].get(), "1500")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "atk", "op": ">=", "value": 1500})
+
+        # 2. Switch to DEF
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "op": "<=", "value": 1500}, str)
+        dialog.vars["stat"].set("DEF")
+        dialog.vars["value"].set("2000")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "stat_threshold", "stat": "def", "op": "<=", "value": 2000})
+
+        # 3. Invalid value validation
+        dialog = ConditionDialog(app, app.project, {"type": "stat_threshold", "stat": "atk", "value": 1500}, str)
+        dialog.vars["value"].set("-5")
+        err = dialog.read(dialog)
+        self.assertEqual(err, f"Threshold must be 0 to {fx.AMOUNT_MAX}.")
+
+        # 4. Attack conditions are not in ConditionDialog
+        dialog = ConditionDialog(app, app.project, None, str)
+        self.assertNotIn("The first time it is attacked", dialog.cond_labels)
+        self.assertNotIn("first_attacked", dialog.cond_types)
+
+        # 5. Fewer and more monsters conditions
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set("If you control fewer monsters than opponent")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "fewer_monsters"})
+
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set("If you control more monsters than your opponent")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "more_monsters"})
+
+        # 6. Control stat condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_stat")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
+        dialog.vars["scope"].set(fx.SCOPE_LABELS[1])
+        dialog.vars["stat"].set("DEF")
+        dialog.vars["op"].set(fx.OP_LABELS[fx.OPS.index("<=")])
+        dialog.vars["value"].set("1500")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_stat", "presence": "not_control", "scope": "other", "stat": "def", "op": "<=", "value": 1500})
+
+        # 7. Control level condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_level")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[0])
+        dialog.vars["scope"].set(fx.SCOPE_LABELS[0])
+        dialog.vars["op"].set(fx.OP_LABELS[fx.OPS.index(">=")])
+        dialog.vars["level"].set("7")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_level", "op": ">=", "level": 7})
+
+        # 8. Control type condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_type")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[0])
+        dialog.vars["type_mode"].set(fx.TYPE_MODE_LABELS[1])
+        dialog.vars["card_type"].set("Dragon")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_type", "mode": "only", "card_type": "Dragon"})
+
+        # 9. Control attribute condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_attribute")])
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
+        dialog.vars["scope"].set(fx.SCOPE_LABELS[1])
+        dialog.vars["attribute"].set("LIGHT")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_attribute", "presence": "not_control", "scope": "other", "attribute": "LIGHT"})
+
+        # 10. Field spell condition
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("field_spell")])
+        dialog.vars["field"].set("Forest")
+        dialog.vars["field_status"].set("Is not active")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "field_spell", "field": "forest", "presence": "not_active"})
+
+        # 11. LP lower than opponent
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("lower_lp")])
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "lower_lp"})
+
+        # 12. LP higher than opponent
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("higher_lp")])
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "higher_lp"})
+
+        # 13. Type present on opponent's field
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_type")])
+        dialog.vars["whose"].set(fx.EACH_LABELS[1])  # On the opponent's field
+        dialog.vars["card_type"].set("Spellcaster")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_type", "whose": "opponent", "card_type": "Spellcaster"})
+
+        # 14. Attribute not present on whole field
+        dialog = ConditionDialog(app, app.project, None, str)
+        dialog.vars["type"].set(fx.CONDITION_LABELS[fx.CONDITIONS.index("control_attribute")])
+        dialog.vars["whose"].set(fx.EACH_LABELS[2])  # On the whole field
+        dialog.vars["presence"].set(fx.PRESENCE_LABELS[1])
+        dialog.vars["attribute"].set("DARK")
+        dialog.ok()
+        self.assertEqual(dialog.result, {"type": "control_attribute", "whose": "all", "presence": "not_control", "attribute": "DARK"})
+
+    def test_effect_dialog_modifiers(self):
+        from fm_editor.monster_effects_ui import EffectDialog
+        from fm_editor import monster_effects as fx
+        app = self.app
+
+        # 1. Battle immunity defaults to "Always" and "In a turn", modifier row shown, reset hidden
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        self.assertEqual(dialog.vars["modifier"].get(), "Always")
+        self.assertEqual(dialog.vars["modifier_reset"].get(), "In a turn")
+        self.assertTrue(dialog.rows["modifier"][1].winfo_manager())
+        self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {"when": "face_up", "do": "battle_immunity", "target": "self"})
+
+        # 2. Select "The first time it is attacked" -> Resets dropdown appears, defaults to "In a turn"
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("The first time it is attacked")
+        self.assertTrue(dialog.rows["modifier_reset"][1].winfo_manager())
+        self.assertEqual(dialog.vars["modifier_reset"].get(), "In a turn")
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up",
+            "do": "battle_immunity",
+            "target": "self",
+            "modifier": "first_attacked",
+            "reset": "turn",
+        })
+
+        # 3. Re-open effect with modifier: cleanly unpacked into Modifiers and Resets, not in tree
+        dialog = EffectDialog(app, app.project, dialog.result, str)
+        self.assertEqual(dialog.vars["modifier"].get(), "The first time it is attacked")
+        self.assertEqual(dialog.vars["modifier_reset"].get(), "In a turn")
+        self.assertEqual(len(dialog.conditions), 0)
+        # Change reset to "This card copy" and modifier to "Can only be destroyed after two attacks"
+        dialog.vars["modifier"].set("Can only be destroyed after two attacks")
+        dialog.vars["modifier_reset"].set("This card copy")
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up",
+            "do": "battle_immunity",
+            "target": "self",
+            "modifier": "destroyed_after_2_attacks",
+            "reset": "copy",
+        })
+
+        # 4. Modifiers and reset are hidden for other effects like "boost"
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "boost", "target": "self", "attack": 500}, str)
+        self.assertFalse(dialog.rows["modifier"][1].winfo_manager())
+        self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
+
+        # 5. Enforcement: monster cannot have more than 1 attack count modifier across its effects
+        existing_effect = {"when": "face_up", "do": "battle_immunity", "target": "self",
+                           "modifier": "first_attacked", "reset": "turn"}
+        dialog = EffectDialog(app, app.project, None, str, effects=[existing_effect], index=None)
+        dialog.vars["when"].set("While face up")
+        dialog.vars["do"].set("Cannot be destroyed by battle")
+        dialog.vars["modifier"].set("Can only be destroyed after two attacks")
+        err = dialog.read(dialog)
+        self.assertEqual(err, "A monster can only have one condition related to a number of attacks.")
+
+        # 6. Attacker criteria modifiers do NOT conflict with attack count modifier
+        dialog.vars["modifier"].set("If attacked by monster of Type")
+        dialog.vars["attacker_type"].set("Dragon")
+        self.assertTrue(dialog.rows["attacker_type"][1].winfo_manager())
+        self.assertFalse(dialog.rows["modifier_reset"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_type", "attacker_type": "Dragon"
+        })
+
+        # 7. Attacked by Attribute
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by monster of Attribute")
+        dialog.vars["attacker_attribute"].set("LIGHT")
+        self.assertTrue(dialog.rows["attacker_attribute"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_attribute", "attacker_attribute": "Light"
+        })
+
+        # 8. Attacked by Stat
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by a monster with higher / lower ATK or DEF")
+        dialog.vars["attacker_stat"].set("ATK")
+        dialog.vars["attacker_stat_op"].set("Lower than (<)")
+        dialog.vars["attacker_amount"].set("2500")
+        self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat_op"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_stat", "attacker_stat": "atk",
+            "attacker_stat_op": "<", "attacker_amount": 2500
+        })
+
+        # 9. Attacked by Level
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by a monster with higher/lower level")
+        dialog.vars["attacker_level_op"].set("Lower or equal (<=)")
+        dialog.vars["attacker_level"].set("7")
+        self.assertTrue(dialog.rows["attacker_level_op"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_level"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_level", "attacker_level_op": "<=", "attacker_level": 7
+        })
+
+        # 10. Attacked by monster (combined criteria)
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "battle_immunity"}, str)
+        dialog.vars["modifier"].set("If attacked by monster (combined criteria)")
+        dialog.vars["attacker_type"].set("Dragon")
+        dialog.vars["attacker_attribute"].set("LIGHT")
+        dialog.vars["attacker_stat"].set("DEF")
+        dialog.vars["attacker_stat_op"].set("Higher than (>)")
+        dialog.vars["attacker_amount"].set("2000")
+        dialog.vars["attacker_level_op"].set("Higher than (>)")
+        dialog.vars["attacker_level"].set("8")
+        self.assertTrue(dialog.rows["attacker_type"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_attribute"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat_op"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_level_op"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_level"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "battle_immunity", "target": "self",
+            "modifier": "attacked_by_monster", "attacker_type": "Dragon",
+            "attacker_attribute": "Light", "attacker_stat": "def",
+            "attacker_stat_op": ">", "attacker_amount": 2000,
+            "attacker_level_op": ">", "attacker_level": 8
+        })
+
+    def test_effect_dialog_piercing_damage(self):
+        from fm_editor.monster_effects_ui import EffectDialog
+        app = self.app
+
+        # 1. Default Piercing Damage ("Always")
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        self.assertEqual(dialog.vars["do"].get(), "Piercing damage")
+        self.assertEqual(dialog.vars["modifier"].get(), "Always")
+        self.assertTrue(dialog.cond_frame.winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {"when": "face_up", "do": "piercing", "target": "self"})
+
+        # 2. Attacks monster of Type
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        dialog.vars["modifier"].set("If it attacks a monster of Type")
+        dialog.vars["attacker_type"].set("Dragon")
+        self.assertTrue(dialog.rows["attacker_type"][1].winfo_manager())
+        self.assertEqual(dialog.rows["attacker_type"][0].cget("text"), "Defender type")
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "piercing", "target": "self",
+            "modifier": "attacks_type", "defender_type": "Dragon"
+        })
+
+        # 3. Attacks monster with higher / lower ATK or DEF
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        dialog.vars["modifier"].set("If it attacks a monster with higher / lower ATK or DEF")
+        dialog.vars["attacker_stat"].set("DEF")
+        dialog.vars["attacker_stat_op"].set("Lower than (<)")
+        dialog.vars["attacker_amount"].set("1500")
+        self.assertTrue(dialog.rows["attacker_stat"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_stat_op"][1].winfo_manager())
+        self.assertTrue(dialog.rows["attacker_amount"][1].winfo_manager())
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "piercing", "target": "self",
+            "modifier": "attacks_stat", "defender_stat": "def",
+            "defender_stat_op": "<", "defender_amount": 1500
+        })
+
+        # 4. Attacks monster (combined criteria) with conditions
+        dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "piercing"}, str)
+        dialog.vars["modifier"].set("If it attacks a monster (combined criteria)")
+        dialog.vars["attacker_type"].set("Dragon")
+        dialog.vars["attacker_attribute"].set("LIGHT")
+        dialog.vars["attacker_stat"].set("DEF")
+        dialog.vars["attacker_stat_op"].set("Lower than (<)")
+        dialog.vars["attacker_amount"].set("2000")
+        dialog.vars["attacker_level_op"].set("Lower or equal (<=)")
+        dialog.vars["attacker_level"].set("8")
+        dialog.conditions.append({"type": "field_spell", "field": "umi", "presence": "active"})
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up", "do": "piercing", "target": "self",
+            "modifier": "attacks_monster", "defender_type": "Dragon",
+            "defender_attribute": "Light", "defender_stat": "def",
+            "defender_stat_op": "<", "defender_amount": 2000,
+            "defender_level_op": "<=", "defender_level": 8,
+            "conditions": [{"type": "field_spell", "field": "umi", "presence": "active"}]
+        })
 
     def test_text_menu(self):
         from fm_editor import text_menu
@@ -2760,6 +3074,19 @@ class ColumnWidthTest(GuiCase):
         app.update()
         self.assertEqual(tree.column("name", "width"), 150)
         app.withdraw()
+
+    def test_horizontal_scrolled_tree(self):
+        from fm_editor import widgets
+        from tkinter import ttk
+        container = ttk.Frame(self.app)
+        frame, tree = widgets.scrolled_tree(container, [("a", "Col A"), ("b", "Col B")], [150, 400], 4, horizontal=True)
+        self.assertIsNotNone(tree)
+        self.assertIsNotNone(frame)
+        self.assertFalse(tree.column("a", "stretch"))
+        self.assertFalse(tree.column("b", "stretch"))
+        scrollbars = [w for w in frame.winfo_children() if isinstance(w, ttk.Scrollbar)]
+        self.assertEqual(len(scrollbars), 2)
+        container.destroy()
 
 
 class CardViewPreviewTest(GuiCase):

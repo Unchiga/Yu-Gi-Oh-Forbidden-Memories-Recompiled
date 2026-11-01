@@ -285,9 +285,106 @@ static void bounded_fixtures(void)
     }
 }
 
+static void immunity_and_piercing_cases(void)
+{
+    HmBoard b = empty(); HmOptions o = opts(); HmDecision d;
+    /* Do not waste a 0-damage attack on a defense-position immune monster. */
+    b.own[0] = monster(1, 2500, 2000);
+    b.enemy[0] = monster(2, 1000, 1500); b.enemy[0].flags = HM_DEFENSE | HM_IMMUNE;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[10] == 0);
+
+    /* A piercing attacker still damages a defense-position immune monster. */
+    b.own[0].flags |= HM_PIERCE; b.enemy_lp = 1000;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[10] == 56 && d.score >= HM_WIN);
+
+    /* Prefer the piercing attacker against a defense target so the other can attack directly. */
+    b = empty();
+    b.own[0] = monster(1, 2000, 1500);
+    b.own[1] = monster(3, 2000, 1500); b.own[1].flags = HM_PIERCE;
+    b.enemy[0] = monster(2, 1000, 1000); b.enemy[0].flags = HM_DEFENSE;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 2 && d.selection[10] == 56);
+
+    /* Attack-position immune monster: attack for LP damage, but do not assume
+     * it leaves the field to open a direct attack. */
+    b = empty(); b.enemy_lp = 2000;
+    b.own[0] = monster(1, 2500, 2000); b.own[1] = monster(3, 1200, 1000);
+    b.enemy[0] = monster(2, 1500, 1000); b.enemy[0].flags = HM_IMMUNE;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[10] == 56 && d.score < HM_WIN);
+
+    /* N-hit battle immunity (first_attacked / destroyed_after_2_attacks):
+     * a single attacker holds back, while two attackers chain to break a
+     * 1-hit shield, leading with the economical attacker. */
+    b = empty();
+    b.own[0] = monster(1, 3000, 2500);
+    b.enemy[0] = monster(2, 1000, 1500); b.enemy[0].flags = HM_DEFENSE;
+    b.enemy_shields[0] = 1;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[10] == 0);
+    b.own[1] = monster(3, 1800, 1500);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 2 && d.selection[10] == 56);
+    b.enemy_shields[0] = 2;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[10] == 0);
+    b.own[2] = monster(4, 1900, 1500);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 2 && d.selection[10] == 56);
+
+    /* Attacker-specific immunity: skip the blocked attacker and clear the
+     * target with the unblocked one. */
+    b = empty();
+    b.own[0] = monster(1, 3000, 2500);
+    b.enemy[0] = monster(2, 1000, 1500); b.enemy[0].flags = HM_DEFENSE;
+    b.enemy_immune[0] = 1u << 0;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[10] == 0);
+    b.own[1] = monster(3, 1800, 1500);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 2 && d.selection[10] == 56);
+
+    /* Enemy piercing makes a lower-DEF defense stance take more damage than
+     * staying in attack position; own immunity holds without burning Swords. */
+    b = empty();
+    b.own[0] = monster(1, 2000, 1500);
+    b.enemy[0] = monster(2, 2200, 1000);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[11] == 1);
+    b.enemy[0].flags = HM_PIERCE;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[11] == 0);
+
+    b = empty();
+    b.own[0] = monster(1, 1000, 800); b.own[0].flags = HM_USED | HM_DEFENSE | HM_IMMUNE;
+    b.enemy[0] = monster(2, 2500, 2000); b.back[0] = magic(348, 20);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] != 6);
+
+    /* Stop Defense turns a high-DEF immune wall into an attack-position LP target. */
+    b = empty();
+    b.own[0] = monster(1, 2000, 1500);
+    b.enemy[0] = monster(2, 1000, 2500); b.enemy[0].flags = HM_DEFENSE | HM_IMMUNE;
+    b.back[0] = magic(320, 20);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 6);
+
+    /* Hand planning recognizes a lethal piercing play against a defense monster. */
+    b = empty(); b.enemy_lp = 800;
+    b.enemy[0] = monster(2, 1000, 1000); b.enemy[0].flags = HM_DEFENSE;
+    b.hand[0] = monster(10, 2000, 1500);
+    b.hand[1] = monster(11, 1900, 1500); b.hand[1].flags = HM_PIERCE;
+    b.hand_count = 2; o.fusion = 0;
+    d = Hm_PlanHand(&b, &o, &rules);
+    assert(d.selection[0] == 12 && d.score >= HM_WIN);
+}
+
 int main(void)
 {
-    tactical_cases(); spell_cases(); hand_cases(); retail_cases(); bounded_fixtures();
-    puts("AI hard mode: tactical, spell, fusion and 500 bounded fixtures passed");
+    tactical_cases(); spell_cases(); hand_cases(); retail_cases();
+    immunity_and_piercing_cases(); bounded_fixtures();
+    puts("AI hard mode: tactical, spell, fusion, immunity/piercing and 500 bounded fixtures passed");
     return 0;
 }
