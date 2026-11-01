@@ -4153,6 +4153,55 @@ the program directory's `game/` (`files/program/game/` in the internal
 files folder), which `game_files.c` searches first.
 Screenshots of the device, never the host: `adb exec-out screencap -p`.
 
+### A mods folder on the phone's storage
+
+The Mods panel's **Mods folder...** (mods_window.c, [Mods window](mods-window.md))
+lets the player point the game at a folder such as `Download/MyMods`, one more
+folder it reads ([Mods](modding.md#your-own-mods-folder)). The game reads mods
+with plain file calls (`fopen`, `opendir`, the object loader's `fread` into
+anonymous memory), so on Android it needs a path and the right to read it:
+
+- **The path.** SDL has no folder dialog on Android (`SDL_ShowOpenFolderDialog`
+  is unsupported there), so `ModsFolderPicker.java` asks for
+  `ACTION_OPEN_DOCUMENT_TREE` (opening in Download) and turns the tree URI of
+  the external storage provider into a path: `primary:Download/MyMods` is
+  `/storage/emulated/0/Download/MyMods`, `home:` is Documents, and
+  `1234-ABCD:Mods` is `/storage/1234-ABCD/Mods` (an SD card; not tried on a
+  device). Any other provider (a cloud drive, another app's files) has no path:
+  the picker says so, in the panel. No lasting URI right is taken; only the
+  path is kept, in `mods-folder.txt` like on the desktop. Android 11 and later
+  will not hand back `Download` itself or the storage root: the player picks a
+  folder inside it.
+- **The right.** `MANAGE_EXTERNAL_STORAGE` ("All files access", Android 11 and
+  later; `READ_EXTERNAL_STORAGE` with `maxSdkVersion` 29 before, asked as a
+  runtime permission, not tried on a device), both in the manifest
+  (`package_android.py`). It is asked for only after a folder is chosen and
+  saved (`Mods_SetFolder` accepts a folder that cannot be read yet), and only
+  after the panel says why in a sentence and the player taps Allow;
+  `ModsFolderAccess.java` then opens `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`
+  for the app, else the list of apps, else the app's details, and answers
+  "granted" or "refused" when the player comes back. Refused, the folder stays
+  chosen and the panel says how to allow it (`Mods_FolderProblem` is a fact
+  about the launch, so the panel composes this text itself; the next launch's
+  log says `could not be read: Permission denied`). `Platform_ModsFolderAccess`
+  (`ModsFolderAccess.has`, through JNI) is what the panel asks to know whether
+  to say it, whenever it opens with a folder chosen; an allowance given in
+  Settings later is a restart too.
+- **The answers** reach C as DiscPicker's do: a record file in the internal
+  files folder, `mods-folder.txt` (`ModsFolderBase.java`), one request id per
+  question, read by `take_pick` and polled with the panel's ticks
+  (`Platform_PickedModsFolder`, `Platform_AskedModsFolderAccess`).
+  `MEMORIES_PICK_FOLDER=<path>` stands in for the picker (and counts access as
+  held) in scripted runs.
+- **Code mods** load from there as from the app's own folder: the object loader
+  never maps a file, only anonymous memory.
+- **Google Play** restricts `MANAGE_EXTERNAL_STORAGE` to file managers and
+  similar apps, so a store build has to drop the permission and the Mods
+  folder... button; the sideloaded APK keeps both.
+- Reading `Download/...` goes through the system's file provider, not the app's
+  own `Android/data` folder; the first launches with a large pack there should
+  be timed before they are promised to be as fast.
+
 ### Crash reports on Android
 
 A crash writes its report as on Linux (`crash.c`, in the process: there is

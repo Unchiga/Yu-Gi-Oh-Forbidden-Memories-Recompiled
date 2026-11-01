@@ -26,6 +26,23 @@ void Platform_OpenMods(void);
 int Platform_PickModZip(char *why, size_t why_size);
 int Platform_PickedModZip(char *why, size_t why_size);
 int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size);
+/* Android only (android.c; sdl.c hands them to ModsWindow_SetFolderPicker and
+ * ModsWindow_SetFolderAccess there): the Mods panel's Mods folder... The
+ * system's folder picker (SDL has none there) answers with the folder's path
+ * on the phone's storage: Platform_PickModsFolder opens it and returns at
+ * once (0, or -1 with why); Platform_PickedModsFolder is 0 while it is open,
+ * 1 with the path, -1 when none was chosen, -2 on a failure (why). The game
+ * reads the folder with plain file calls, which needs All files access:
+ * Platform_ModsFolderAccess says whether it is held (1) or not (0), and
+ * Platform_AskModsFolderAccess opens the system's page for it (0, or -1 with
+ * why), answered by Platform_AskedModsFolderAccess: 0 while it is up, 1
+ * granted, -1 refused, -2 failed (why). MEMORIES_PICK_FOLDER=<path> takes that
+ * folder instead of opening the picker, and counts access as held (tests). */
+int Platform_PickModsFolder(char *why, size_t why_size);
+int Platform_PickedModsFolder(char *path, size_t size, char *why, size_t why_size);
+int Platform_ModsFolderAccess(void);
+int Platform_AskModsFolderAccess(char *why, size_t why_size);
+int Platform_AskedModsFolderAccess(char *why, size_t why_size);
 /* Android only (android.c; sdl.c hands it to HdPack_SetNet there): the
  * network for the Mods panel's HD pack... (src/pc/mods/hd_pack.h), Java's
  * HttpURLConnection on the download's own thread. */

@@ -525,6 +525,10 @@ static void open_panel(int kind)
         /* and HD pack... downloads the release's HD pack into it */
         HdPack_SetNet(Platform_HdNet());
         ModsWindow_SetImport(Platform_PickModZip, Platform_PickedModZip, Platform_FetchModZip);
+        /* and Mods folder... takes a folder of the phone's storage */
+        ModsWindow_SetFolderPicker(Platform_PickModsFolder, Platform_PickedModsFolder);
+        ModsWindow_SetFolderAccess(Platform_ModsFolderAccess, Platform_AskModsFolderAccess,
+                                   Platform_AskedModsFolderAccess);
     }
 #endif
     if (!Panel_Open(kind)) return;

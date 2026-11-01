@@ -807,6 +807,145 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size)
     return 1;
 }
 
+/* --- a mods folder of the phone's storage (the Mods panel's Mods folder...) --- */
+
+/* ModsFolderPicker.java and ModsFolderAccess.java ask the system and write
+ * the answer to mods-folder.txt in the internal files folder (ModsFolderBase,
+ * read with take_pick as DiscPicker's is): the folder's path, then whether
+ * the game may read it ("All files access"). Both are asynchronous: the panel
+ * asks for the answer once per pump (mods_window.c, ModsWindow_SetFolderPicker
+ * and ModsWindow_SetFolderAccess). */
+static char folder_request[32];
+static int folder_asking;
+
+static int folder_record(char *path, size_t size)
+{
+    const char *internal = SDL_GetAndroidInternalStoragePath();
+    return internal && *internal && snprintf(path, size, "%s/mods-folder.txt", internal) < (int)size;
+}
+
+/* Starts activity `name` for a new request: any earlier answer is stale. */
+static int folder_start(const char *name, char *why, size_t why_size)
+{
+    char record[1024];
+    static int serial;
+    if (!folder_record(record, sizeof(record))) {
+        snprintf(why, why_size, "Android gave the app no internal folder.");
+        return -1;
+    }
+    remove(record);
+    snprintf(folder_request, sizeof(folder_request), "mf%d", ++serial);
+    /* a task of its own, any earlier one of it cleared: NEW_TASK | CLEAR_TASK */
+    if (!start_app_activity(name, 0, folder_request, 0x10000000 | 0x00008000)) {
+        snprintf(why, why_size, "The system would not open its screen for that.");
+        return -1;
+    }
+    folder_asking = 1;
+    return 0;
+}
+
+/* The answer: 0 while there is none, else the kind (PICK_*) with its text. */
+static int folder_answer(char *text, size_t size)
+{
+    char record[1024], *taken = NULL;
+    int what;
+    if (!folder_asking || !folder_record(record, sizeof(record))) return PICK_NONE;
+    what = take_pick(record, folder_request, &taken);
+    if (what == PICK_NONE) return PICK_NONE;
+    folder_asking = 0;
+    snprintf(text, size, "%s", taken ? taken : "");
+    free(taken);
+    return what;
+}
+
+int Platform_PickModsFolder(char *why, size_t why_size)
+{
+    const char *test = getenv("MEMORIES_PICK_FOLDER");
+    if (test && *test) { /* scripted runs: this folder, without the picker */
+        folder_asking = 2;
+        return 0;
+    }
+    return folder_start("org.yfmredecomp.game.ModsFolderPicker", why, why_size);
+}
+
+int Platform_PickedModsFolder(char *path, size_t size, char *why, size_t why_size)
+{
+    int what;
+    if (folder_asking == 2) {
+        folder_asking = 0;
+        snprintf(path, size, "%s", getenv("MEMORIES_PICK_FOLDER"));
+        return 1;
+    }
+    what = folder_answer(why, why_size);
+    if (what == PICK_NONE) return 0;
+    if (what == PICK_CHOSEN) {
+        snprintf(path, size, "%s", why);
+        why[0] = '\0';
+        return 1;
+    }
+    if (what == PICK_CANCELLED) return -1;
+    if (!*why) snprintf(why, why_size, "The folder picker failed.");
+    return -2;
+}
+
+/* ModsFolderAccess.has, through JNI (the host stack: callers are the panel's
+ * handlers, which run in the pump). 1 when the game may read shared storage. */
+static void folder_has_java(void *argument)
+{
+    int *result = argument;
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject activity = env ? (jobject)SDL_GetAndroidActivity() : NULL;
+    jclass activity_class = NULL, loader_class = NULL, found = NULL;
+    jmethodID get_loader = NULL, load = NULL, method = NULL;
+    jobject loader = NULL;
+    jstring name = NULL;
+    *result = 1; /* what cannot be found out is not asked about */
+    if (!activity) return;
+    if ((*env)->PushLocalFrame(env, 16) < 0) {
+        java_failed(env);
+        (*env)->DeleteLocalRef(env, activity);
+        return;
+    }
+#define CHECKED(value) java_ok(env, (const void *)(value))
+    if (CHECKED(activity_class = (*env)->GetObjectClass(env, activity)) &&
+        CHECKED(get_loader = (*env)->GetMethodID(env, activity_class, "getClassLoader", "()Ljava/lang/ClassLoader;")) &&
+        CHECKED(loader = (*env)->CallObjectMethod(env, activity, get_loader)) &&
+        CHECKED(loader_class = (*env)->GetObjectClass(env, loader)) &&
+        CHECKED(load = (*env)->GetMethodID(env, loader_class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;")) &&
+        CHECKED(name = (*env)->NewStringUTF(env, "org.yfmredecomp.game.ModsFolderAccess")) &&
+        CHECKED(found = (jclass)(*env)->CallObjectMethod(env, loader, load, name)) &&
+        CHECKED(method = (*env)->GetStaticMethodID(env, found, "has", "(Landroid/content/Context;)Z"))) {
+        jboolean has = (*env)->CallStaticBooleanMethod(env, found, method, activity);
+        if (!java_failed(env)) *result = has ? 1 : 0;
+    }
+#undef CHECKED
+    (*env)->PopLocalFrame(env, NULL);
+    (*env)->DeleteLocalRef(env, activity);
+}
+
+int Platform_ModsFolderAccess(void)
+{
+    int result = 1;
+    if (getenv("MEMORIES_PICK_FOLDER")) return 1; /* scripted runs */
+    Memories_OnHostStack(folder_has_java, &result);
+    return result;
+}
+
+int Platform_AskModsFolderAccess(char *why, size_t why_size)
+{
+    return folder_start("org.yfmredecomp.game.ModsFolderAccess", why, why_size);
+}
+
+int Platform_AskedModsFolderAccess(char *why, size_t why_size)
+{
+    int what = folder_answer(why, why_size);
+    if (what == PICK_NONE) return 0;
+    if (what == PICK_CHOSEN) return 1;
+    if (what == PICK_CANCELLED) return -1;
+    if (!*why) snprintf(why, why_size, "Android would not show its All files access page.");
+    return -2;
+}
+
 #ifndef __LP64__
 /* The game's memory sits at fixed addresses up to 0xB0800000 (image.c).
  * A 32-bit process has 4 GB to place them in on a 64-bit kernel (phones

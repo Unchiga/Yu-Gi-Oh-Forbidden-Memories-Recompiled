@@ -93,6 +93,16 @@ MANIFEST = f"""<?xml version="1.0" encoding="utf-8"?>
     <!-- The Mods panel's HD pack... (hd_pack.h): granted at install, no
          prompt; nothing is contacted until the player taps it. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The Mods panel's Mods folder... (ModsFolderAccess.java): the player
+         names a folder of the phone's shared storage and the game reads it
+         with plain file calls, which Android 11 and later allow an app that
+         holds All files access (a switch in the app's settings page, asked
+         for only when the player agrees to it in the panel; the game works
+         without it), and before that the read permission. Google Play
+         restricts this permission, so a build for the store has to drop it
+         and the Mods folder... button (the sideloaded APK keeps both). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-feature android:glEsVersion="0x00020000" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
@@ -118,6 +128,17 @@ MANIFEST = f"""<?xml version="1.0" encoding="utf-8"?>
              recent apps (the game's entry is the one to come back to). -->
         <activity android:name="org.yfmredecomp.game.DiscPicker" android:exported="false"
             android:taskAffinity="{PACKAGE}.disc" android:excludeFromRecents="true"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- Mods folder... (ModsFolderPicker.java, ModsFolderAccess.java): the
+             system's folder picker and its All files access page, each in a
+             task of its own like DiscPicker's. -->
+        <activity android:name="org.yfmredecomp.game.ModsFolderPicker" android:exported="false"
+            android:taskAffinity="{PACKAGE}.modsfolder" android:excludeFromRecents="true"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity android:name="org.yfmredecomp.game.ModsFolderAccess" android:exported="false"
+            android:taskAffinity="{PACKAGE}.modsfolder" android:excludeFromRecents="true"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <provider android:name="org.yfmredecomp.game.ReportProvider"

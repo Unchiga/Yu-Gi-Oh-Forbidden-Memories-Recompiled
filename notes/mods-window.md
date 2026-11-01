@@ -71,6 +71,21 @@ details line of a mod from that folder reads "from your mods folder". When a
 chosen folder could not be read this launch, the window opens with the reason
 in the message line.
 
+On a phone (`ModsWindow_SetFolderPicker` and `ModsWindow_SetFolderAccess`, which
+`sdl.c` gives the panel on Android) the button is the leftmost of the list
+page's footer buttons (when the message keeps 200 pixels of room beside them),
+the picker is Android's, and a chosen folder that the game may not read yet
+asks for the right first ([A mods folder on the phone's storage](pc-build.md#a-mods-folder-on-the-phones-storage)):
+"To read <folder> the game needs Android's All files access, which you allow on
+the next screen. Allow it?", with Allow (the Apply button's place) and Cancel.
+Allow opens Android's page; coming back with the right, the message says so and
+that the game reads the folder after a restart. Cancel, or coming back
+without it, keeps the folder chosen and says how to allow it later ("Without
+All files access the game cannot read it. Allow it in Android's Settings ...");
+the panel opens with that message whenever a folder is chosen and the right is
+missing. Remove on a mod from that folder answers that it is in the player's
+own mods folder.
+
 The profile field accepts a name (letters, digits, spaces, `_`, `-`). Save writes
 the currently applied preferences to `mod-profiles/<name>.txt` in the user
 directory. Load stages that profile for inspection; it does not change the

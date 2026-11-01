@@ -1022,6 +1022,90 @@ static void folder_choices(int touch)
     ModsWindow_SetFolderPicker(NULL, NULL);
     test_touch = 0;
 }
+/* A phone: a folder chosen without the right to read it asks for the right,
+ * in a sentence first; refused, it stays chosen and the window says how to
+ * give the right; given, a restart is due even if the folder is the one the
+ * game started with (which it could not read). */
+static int access_held, access_asks, access_answer;
+static char access_failure[200];
+static int fake_have(void) { return access_held; }
+static int fake_ask(char *why, size_t size)
+{
+    (void)why;
+    (void)size;
+    access_asks++;
+    return 0;
+}
+static int fake_asked(char *why, size_t size)
+{
+    snprintf(why, size, "%s", access_failure);
+    return access_answer;
+}
+static void folder_access_case(void)
+{
+    char path[1024], second[1024];
+    const char *said;
+    int x, y, before = restarts;
+    snprintf(second, sizeof(second), "%s/second", root);
+    test_touch = 48;
+    ModsWindow_SetFolderPicker(fake_folder_pick, fake_folder_picked);
+    ModsWindow_SetFolderAccess(fake_have, fake_ask, fake_asked);
+    access_held = 0;
+    ModsWindow_Init();
+    ModsWindow_Resize(1600, 900);
+    /* Refused: the folder stays chosen, and the way to give the right is said. */
+    choose_folder(1, second);
+    said = on_screen(1600, 900);
+    assert(strstr(said, "needs Android's All files access") && strstr(said, "Allow it?") && !access_asks);
+    assert(strstr(said, "Allow") && strstr(said, "Cancel"));
+    assert(Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, second)); /* saved before it was asked */
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    said = on_screen(1600, 900);
+    assert(strstr(said, "Without All files access the game cannot read it.") && !access_asks);
+    ModsWindow_Init(); /* shown again whenever the folder is */
+    assert(strstr(on_screen(1600, 900), second) && strstr(drawn, "cannot read it"));
+    /* Allowed on Android's page. */
+    choose_folder(1, second);
+    tap_widget(MODS_UI_APPLY); /* Allow */
+    assert(access_asks == 1);
+    access_answer = 0;
+    ModsWindow_Tick();
+    assert(strstr(on_screen(1600, 900), "Allow All files access for the game"));
+    access_answer = 1;
+    access_held = 1;
+    assert(ModsWindow_Tick());
+    said = on_screen(1600, 900);
+    assert(strstr(said, "All files access is on.") && strstr(said, "after a restart: Apply changes."));
+    tap_widget(MODS_UI_APPLY);
+    assert(strstr(on_screen(1600, 900), "restarts the game"));
+    tap_widget(MODS_UI_CLOSE);
+    /* Not on Android's page: the page's own refusal, or none to show. */
+    access_held = 0;
+    access_answer = -1;
+    choose_folder(1, second);
+    tap_widget(MODS_UI_APPLY);
+    ModsWindow_Tick();
+    assert(strstr(on_screen(1600, 900), "Without All files access the game cannot read it."));
+    access_answer = -2;
+    snprintf(access_failure, sizeof(access_failure), "This phone has no settings page for All files access.");
+    choose_folder(1, second);
+    tap_widget(MODS_UI_APPLY);
+    ModsWindow_Tick();
+    said = on_screen(1600, 900);
+    assert(strstr(said, "This phone has no settings page") && strstr(said, "Without All files access"));
+    /* The start's own folder, unread then and readable now: a restart reads it. */
+    {
+        char chosen[1024];
+        snprintf(chosen, sizeof(chosen), "%s/chosen", root);
+        access_held = 1;
+        choose_folder(1, chosen);
+        assert(ModsWindow_Locate(MODS_UI_APPLY, &x, &y));
+    }
+    assert(restarts == before);
+    ModsWindow_SetFolderAccess(NULL, NULL, NULL);
+    ModsWindow_SetFolderPicker(NULL, NULL);
+    test_touch = 0;
+}
 static int folder_main(void)
 {
     char path[1024];
@@ -1057,6 +1141,7 @@ static int folder_main(void)
     assert(Mods_Count() == 2);
     folder_choices(0);
     folder_choices(48);
+    folder_access_case();
     return 0;
 }
 int main(int argc, char **argv)
