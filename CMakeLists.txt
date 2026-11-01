@@ -467,6 +467,8 @@ if(BUILD_TESTING)
     foreach(mods_folder_case file precedence missing notfolder owned owned-up owned-user env envempty exclusive)
         add_test(NAME pc_mods_folder_${mods_folder_case} COMMAND memories_mods_folder_test ${mods_folder_case})
     endforeach()
+    # envempty has nothing to test on Windows, which removes a variable set to nothing: it exits 77 there.
+    set_tests_properties(pc_mods_folder_envempty PROPERTIES SKIP_RETURN_CODE 77)
     # What enabled mods change in common (src/pc/mods/overlap.c): the mods in
     # tests/pc/mod_overlaps, whose lines the FM Editor's check must find too.
     add_executable(memories_mods_overlap_test tests/pc/mods_overlap_test.c src/pc/mods/overlap.c src/pc/mods/json.c

@@ -374,7 +374,7 @@ static void env_case(int empty)
 #ifdef _WIN32
     if (empty) {   /* a variable set to nothing is removed on Windows: there is no such state to test */
         puts("envempty: skipped on Windows");
-        return;
+        exit(77);   /* CTest's skip code, set on the test in CMakeLists.txt */
     }
 #endif
     mod_at("chosen/from-file", "{\"id\":\"from-file\"}");
