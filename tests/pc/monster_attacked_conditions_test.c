@@ -1343,10 +1343,12 @@ static void test_piercing_damage(void)
     D_8009B174 = 4;
     s_mock_last_damage_amount = 0;
     D_8009B1A4[1] = 0;
+    D_8009B1C8->rank.effective_attacks = 0;
     MonsterEffects_Update();
     assert(s_mock_last_damaged_side == 1);     /* Opponent takes damage */
     assert(s_mock_last_damage_amount == 1000); /* 2500 ATK - 1500 DEF = 1000 */
     assert(D_8009B1A4[1] == 1000);             /* Popup set for retail battle state 8 */
+    assert(D_8009B1C8->rank.effective_attacks == 0); /* Piercing does not count as an effective_attacks rank penalty */
 
     /* Subsequent frames in the same battle do NOT re-inflict LP damage */
     s_mock_last_damage_amount = 0;
@@ -1386,6 +1388,27 @@ static void test_piercing_damage(void)
     assert(gMonsterEffects.piercing_damage == 0);
     assert(s_mock_last_damage_amount == 0);
     assert(D_8009B1C8->rank.effective_attacks == eff_attacks_before);
+
+    /* Case D: Attack trap removes the attacker (S.battle_abort set): piercing must not apply from stale zone data */
+    gDuel_wSceneStateFlags = PHASE_BATTLE;
+    gMonsterEffects.trap_battle_record[0] = 5;
+    gMonsterEffects.trap_battle_record[1] = 20;
+    gMonsterEffects.piercing_applied = 0;
+    gMonsterEffects.piercing_damage = 0;
+    gMonsterEffects.trap_pending = 1;
+    MonsterEffects_Removed(5);
+    assert(gMonsterEffects.battle_abort == 1);
+    gMonsterEffects.trap_pending = 0;
+    D_8009B174 = 4;
+    D_8009B1A4[1] = 0;
+    s_mock_last_damage_amount = 0;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+    MonsterEffects_Update();
+    assert(s_mock_last_damage_amount == 0);
+    assert(D_8009B1A4[1] == 0);
+    assert(gMonsterEffects.piercing_applied == 0);
+    assert(MonsterEffects_BattleAbortMask() == 1);
+    assert(gMonsterEffects.battle_abort == 0);
 
     /* --- Test 2: MONSTER_PIERCING_MOD_TYPE --- */
     memset(&eff_ex, 0, sizeof(eff_ex));

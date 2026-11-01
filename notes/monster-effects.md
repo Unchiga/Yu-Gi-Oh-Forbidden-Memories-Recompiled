@@ -144,7 +144,6 @@ Configured under continuous static field state:
 - **Calculation**: If `attacker_atk > defender_def`:
   - `diff = attacker_atk - defender_def` is inflicted directly to the defending player's Life Points via `Mods_DamageLife()`.
   - Floating battle damage popup is populated via `D_8009B1A4[1] = diff`.
-  - Player duel rank statistics are updated (`rank.effective_attacks++`).
   - If `attacker_atk <= defender_def`, standard defense recoil damage applies and piercing does not trigger.
 
 ### 2D Battle Presentation: Visual Slash & Damage Popup

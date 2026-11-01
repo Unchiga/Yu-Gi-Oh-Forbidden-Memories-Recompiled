@@ -648,7 +648,7 @@ int MonsterEffects_Update(void)
         }
 
         int battle_step = D_8009B174 & 0xF;
-        if (monster_zone(att_rec) && monster_zone(def_rec) && !S.piercing_applied &&
+        if (!S.battle_abort && monster_zone(att_rec) && monster_zone(def_rec) && !S.piercing_applied &&
             ((D_8009B178[1] & 0x800) || (D_801A7AD8[def_rec].flags & DUEL_CARD_FLAG_DEFENSE_POSITION)) &&
             battle_step >= 4 && battle_step <= 8) {
             if (MonsterEffects_HasPiercingDamage(att_rec, def_rec)) {
@@ -669,7 +669,6 @@ int MonsterEffects_Update(void)
                     opp_state->life_points.signed_value = (short)life;
                     D_8009B1A4[1] = (short)diff;
                     S.piercing_damage = (short)diff;
-                    D_8009B1C8->rank.effective_attacks++;
                 }
             }
             S.piercing_applied = 1;
@@ -1227,6 +1226,7 @@ int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
     const MonsterEffect *effects;
     const MonsterEffectEx *effects_ex = NULL;
     int n, e;
+    if (S.battle_abort) return 0;
     if (!monster_zone(attacker_record) || !S.card[attacker_record] ||
         !S.face_up[attacker_record])
         return 0;
