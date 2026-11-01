@@ -194,18 +194,20 @@ int Mods_Folder(char *out, size_t size);
 /* Choose the mods folder (writes mods-folder.txt, atomically); NULL or ""
  * chooses none (the file goes). Double quotes around the path (Explorer's
  * "Copy as path") are dropped. The folder need not exist or be readable yet,
- * as when the permission for it is asked for after. 0: saved. 1: saved, but
- * MEMORIES_MODS_FOLDER or MEMORIES_MODS_DIR is set and overrides it this run
- * and the next ones until it is unset; `why` says so, for the window to show.
+ * as when the permission for it is asked for after. 0: saved (or cleared);
+ * `why` may then still say that MEMORIES_MODS_FOLDER or MEMORIES_MODS_DIR is
+ * set and overrides it, now and until it is unset, for the window to show.
  * -1, with the reason in `why`: the file could not be written, the name holds
- * a line break or is too long, or the folder is one of the game's own: the
- * release's mods/, MEMORIES_MODS_DIR, the user directory or a folder in one
- * (the user directory is where the game writes), compared after taking out
- * "." and ".." and following links where the folder exists (a junction on
- * Windows is not followed). Does not change this launch's list. */
+ * a line break, is too long, is a drive's current folder ("C:", "C:foo": the
+ * full path is needed), or is a folder the game reads or writes already: the
+ * release's mods/, MEMORIES_MODS_DIR, the user directory (where the game
+ * keeps its mods, saves and downloads) or a folder in one. Folders are
+ * compared after taking out "." and ".." and following links where the folder
+ * exists (a junction on Windows is not followed). Does not change this
+ * launch's list. */
 int Mods_SetFolder(const char *path, char *why, size_t why_size);
 /* Why this launch did not read the folder of Mods_Folder (it is gone, is not a
- * folder, cannot be read, is one the game reads already, or MEMORIES_MODS_DIR
+ * folder, cannot be read, is a folder the game reads or writes already, or MEMORIES_MODS_DIR
  * is set); "" when it was read or there is none, and before Mods_Load. Said in
  * the log only, never as a notice: for the Mods window to show. Borrowed. */
 const char *Mods_FolderProblem(void);

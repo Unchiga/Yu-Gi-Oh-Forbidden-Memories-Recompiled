@@ -2146,23 +2146,34 @@ static void flatten_folder(char *path)
 
 #ifdef _WIN32
 __declspec(dllimport) unsigned long __stdcall GetFullPathNameW(const wchar_t *, unsigned long, wchar_t *, wchar_t **);
+__declspec(dllimport) unsigned long __stdcall GetLongPathNameW(const wchar_t *, wchar_t *, unsigned long);
 #endif
 
 /* The folder `path` names, spelled one way: absolute, without "." and ".."
  * (from the current directory if it is not absolute), and, where it exists,
- * with its links followed (realpath; Windows' GetFullPathNameW does not follow
- * a junction or a link). For comparing two folders. -1 if it does not fit. */
+ * with its links followed (realpath). On Windows: without the prefix of a
+ * "\\?\" or "\\.\" path, with "\\?\UNC\" as "\\", and, where it exists, with
+ * its long names (GetLongPathNameW, for an 8.3 short one); a junction or a
+ * link is not followed there, nor is a difference in the case of a non-ASCII
+ * letter. For comparing two folders. -1 if it does not fit or is not a name. */
 static int canon_folder(const char *path, char *out, size_t size)
 {
     char work[PATH_MAX_];
 #ifdef _WIN32
-    wchar_t *wide = Memories_Utf8ToWide(path), full[PATH_MAX_];
-    char *narrow;
+    wchar_t *wide, full[PATH_MAX_], longer[PATH_MAX_];
+    char plain[PATH_MAX_], *narrow;
     unsigned long length;
-    if (!wide) return -1;
+    if (snprintf(plain, sizeof(plain), "%s", path) >= (int)sizeof(plain)) return -1;
+    tidy_folder(plain);   /* '/' for '\' */
+    if (!strncmp(plain, "//?/UNC/", 8)) memmove(plain + 2, plain + 8, strlen(plain + 8) + 1);
+    else if (!strncmp(plain, "//?/", 4) || !strncmp(plain, "//./", 4)) memmove(plain, plain + 4, strlen(plain + 4) + 1);
+    if (!(wide = Memories_Utf8ToWide(plain))) return -1;
     length = GetFullPathNameW(wide, PATH_MAX_, full, NULL);
     free(wide);
-    if (!length || length >= PATH_MAX_ || !(narrow = Memories_WideToUtf8(full))) return -1;
+    if (!length || length >= PATH_MAX_) return -1;
+    length = GetLongPathNameW(full, longer, PATH_MAX_);
+    if (length && length < PATH_MAX_) memcpy(full, longer, ((size_t)length + 1) * sizeof(wchar_t));
+    if (!(narrow = Memories_WideToUtf8(full))) return -1;
     length = (unsigned long)snprintf(work, sizeof(work), "%s", narrow);
     free(narrow);
     if (length >= sizeof(work)) return -1;
@@ -2196,16 +2207,17 @@ static int canon_folder(const char *path, char *out, size_t size)
     return (size_t)snprintf(out, size, "%s", work) >= size ? -1 : 0;
 }
 
-/* Whether the game reads or writes `path` already, as one of its own folders:
+/* 1 when the game reads or writes `path` already, as one of its own folders (0
+ * when not, -1 when it cannot be told: the name does not fit or is not text):
  * the release's mods/, MEMORIES_MODS_DIR, the user directory (its mods/, the
  * downloads and everything else the game keeps there) or a folder in one.
  * `path` is as the game would open it (absolute_folder's). Links are followed
  * where the folder exists. */
-static int folder_is_scanned(const char *path)
+static int folder_is_own(const char *path)
 {
     char own[PATH_MAX_], root[PATH_MAX_], canon[PATH_MAX_];
     const char *named = getenv("MEMORIES_MODS_DIR");
-    if (canon_folder(path, canon, sizeof(canon))) return 1;   /* cannot tell: not a folder to take */
+    if (canon_folder(path, canon, sizeof(canon))) return -1;
     if (!Paths_Program(own, sizeof(own), "mods") && !canon_folder(own, root, sizeof(root)) && folder_inside(canon, root))
         return 1;
     if (named && *named && snprintf(own, sizeof(own), "%s", named) < (int)sizeof(own)) {
@@ -2253,18 +2265,18 @@ int Mods_Folder(char *out, size_t size)
     return 0;
 }
 
-/* What a saved choice does this run, if not what it says: 1 with the reason in
- * `why` when MEMORIES_MODS_FOLDER or MEMORIES_MODS_DIR overrides it, else 0. */
-static int overridden(char *why, size_t why_size)
+/* A choice saved (or cleared) is not what this run does while MEMORIES_MODS_FOLDER
+ * or MEMORIES_MODS_DIR is set: `why` says so, and the call still succeeds (0). */
+static int overridden(char *why, size_t why_size, int cleared)
 {
     const char *dir = getenv("MEMORIES_MODS_DIR");
+    const char *did = cleared ? "Cleared" : "Saved";
     if (dir && *dir)
-        snprintf(why, why_size, "Saved, but MEMORIES_MODS_DIR is set, so no other mods folder is read until it is unset.");
+        snprintf(why, why_size, "%s, but MEMORIES_MODS_DIR is set, so no other mods folder is read until it is unset.", did);
     else if (getenv("MEMORIES_MODS_FOLDER"))
-        snprintf(why, why_size, "Saved, but MEMORIES_MODS_FOLDER is set, so it is used instead until it is unset.");
-    else
-        return 0;
-    return 1;
+        snprintf(why, why_size, "%s, but MEMORIES_MODS_FOLDER is set, so it is used %s until it is unset.", did,
+                 cleared ? "all the same" : "instead");
+    return 0;
 }
 
 int Mods_SetFolder(const char *path, char *why, size_t why_size)
@@ -2272,7 +2284,7 @@ int Mods_SetFolder(const char *path, char *why, size_t why_size)
     char saved[PATH_MAX_], temporary[PATH_MAX_], text[PATH_MAX_], resolved[PATH_MAX_], reason[1200];
     FILE *file;
     size_t length;
-    int written;
+    int written, own;
     if (why_size) why[0] = '\0';
     if (snprintf(text, sizeof(text), "%s", path ? path : "") >= (int)sizeof(text)) {
         snprintf(why, why_size, "That folder's name is too long.");
@@ -2283,13 +2295,20 @@ int Mods_SetFolder(const char *path, char *why, size_t why_size)
         snprintf(why, why_size, "A folder's name cannot hold a line break.");
         return -1;
     }
+    if (isalpha((unsigned char)text[0]) && text[1] == ':' && text[2] != '/' && text[2] != '\\') {
+        snprintf(why, why_size, "Give the folder's full path, such as C:\\Mods.");   /* "C:" and "C:foo" are the drive's current folder */
+        return -1;
+    }
     if (text[0] && absolute_folder(text, resolved, sizeof(resolved))) {
         snprintf(why, why_size, "That folder's name is too long.");
         return -1;
     }
-    if (text[0] && folder_is_scanned(resolved)) {
-        snprintf(why, why_size, "That is one of the game's own folders (the release's mods, or your user folder "
-                 "with the mods, saves and downloads in it), which the game reads or writes already. Choose another.");
+    if (text[0] && (own = folder_is_own(resolved))) {
+        if (own < 0)
+            snprintf(why, why_size, "That folder's name cannot be used as a path (it is too long, or not valid text).");
+        else
+            snprintf(why, why_size, "That is one of the game's own folders (the release's mods, or your user folder "
+                     "with the mods, saves and downloads in it), which the game reads or writes already. Choose another.");
         return -1;
     }
     Paths_WriteBegin();
@@ -2304,7 +2323,7 @@ int Mods_SetFolder(const char *path, char *why, size_t why_size)
                      Paths_WriteError(reason, sizeof(reason), saved));
             return -1;
         }
-        return overridden(why, why_size);
+        return overridden(why, why_size, 1);
     }
     length = strlen(text);
     if (!(file = fopen(temporary, "wb"))) {
@@ -2319,7 +2338,7 @@ int Mods_SetFolder(const char *path, char *why, size_t why_size)
         snprintf(why, why_size, "Could not save your mods folder to %s", reason);
         return -1;
     }
-    return overridden(why, why_size);
+    return overridden(why, why_size, 0);
 }
 
 const char *Mods_FolderProblem(void) { return folder_problem; }
@@ -2335,9 +2354,11 @@ static void scan_folder(int ignored)
     if (ignored) {
         snprintf(folder_problem, sizeof(folder_problem), "MEMORIES_MODS_DIR is set, so the mods folder %s is not read.",
                  path);
-    } else if (folder_is_scanned(path)) {
+    } else if (folder_is_own(path)) {
         snprintf(folder_problem, sizeof(folder_problem),
-                 "%s is one of the game's own mods folders, which it reads already.", path);
+                 folder_is_own(path) < 0 ? "%s cannot be used as a path (it is too long, or not valid text)."
+                                         : "%s is one of the game's own folders, which it reads or writes already.",
+                 path);
     } else if (scan(path, "folder")) {
         int error = errno;
         if (error == ENOENT) snprintf(folder_problem, sizeof(folder_problem), "%s does not exist.", path);

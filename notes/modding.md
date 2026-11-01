@@ -60,9 +60,12 @@ where the folder exists, its links are followed (`realpath`; on Windows
 `GetFullPathNameW`, which does not follow a junction or a link, so a link
 into the user directory is not caught there). `Mods_SetFolder` also drops double
 quotes around the path (Explorer's "Copy as path") and refuses a name with a
-line break. If `MEMORIES_MODS_FOLDER` or `MEMORIES_MODS_DIR` is set, the choice
-is saved all the same and `Mods_SetFolder` returns 1 with a reason that says it
-is overridden.
+line break, and a drive's current folder (`C:`, `C:foo`: give the full path).
+If `MEMORIES_MODS_FOLDER` or `MEMORIES_MODS_DIR` is set, the choice is saved (or
+cleared) all the same: `Mods_SetFolder` returns 0 and its `why` says that it is
+overridden ("Saved, but ..."), for the window to show. On Windows a `\?\` or
+`\.\` prefix is taken off and 8.3 short names are made long before folders
+are compared.
 
 | Variable | Effect |
 |---|---|

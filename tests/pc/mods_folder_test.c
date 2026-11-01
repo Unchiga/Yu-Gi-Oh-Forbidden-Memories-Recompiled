@@ -179,16 +179,25 @@ static void file_case(void)
     assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
     /* Saved all the same, but it says that MEMORIES_MODS_DIR overrides it. */
     snprintf(expected, sizeof(expected), "%s/chosen", root);
-    assert(Mods_SetFolder(expected, why, sizeof(why)) == 1 && strstr(why, "MEMORIES_MODS_DIR"));
-    assert(Mods_SetFolder("", why, sizeof(why)) == 1 && Mods_Folder(out, sizeof(out)) == -1);
+    assert(!Mods_SetFolder(expected, why, sizeof(why)) && !strncmp(why, "Saved, but MEMORIES_MODS_DIR", 28));
+    assert(!Mods_SetFolder("", why, sizeof(why)) && !strncmp(why, "Cleared, but MEMORIES_MODS_DIR", 30));
+    assert(Mods_Folder(out, sizeof(out)) == -1);
     unsetenv("MEMORIES_MODS_DIR");
     /* And MEMORIES_MODS_FOLDER: the file is written, the variable is what is used. */
     assert(!setenv("MEMORIES_MODS_FOLDER", "/from/env", 1));
-    assert(Mods_SetFolder(expected, why, sizeof(why)) == 1 && strstr(why, "MEMORIES_MODS_FOLDER"));
+    assert(!Mods_SetFolder(expected, why, sizeof(why)) && !strncmp(why, "Saved, but MEMORIES_MODS_FOLDER", 31));
     assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, "/from/env"));
+    assert(!Mods_SetFolder("", why, sizeof(why)) && !strncmp(why, "Cleared, but MEMORIES_MODS_FOLDER", 33));
+    assert(!Mods_SetFolder(expected, why, sizeof(why)) && why[0]);
     unsetenv("MEMORIES_MODS_FOLDER");
     assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
-    assert(Mods_SetFolder("", why, sizeof(why)) == 0 && Mods_Folder(out, sizeof(out)) == -1);
+    /* Nothing overrides it: no note. */
+    assert(!Mods_SetFolder("", why, sizeof(why)) && !why[0] && Mods_Folder(out, sizeof(out)) == -1);
+    /* A drive's current folder is not a full path (Windows' "C:" and "C:foo"); neither is a
+     * name that cannot be made one. */
+    assert(Mods_SetFolder("C:", why, sizeof(why)) == -1 && strstr(why, "full path, such as C:"));
+    assert(Mods_SetFolder("C:foo", why, sizeof(why)) == -1 && strstr(why, "full path"));
+    assert(Mods_SetFolder("d:mods/pack", why, sizeof(why)) == -1);
     /* Not a name: nothing written. */
     assert(Mods_SetFolder(NULL, why, sizeof(why)) == 0 && Mods_Folder(out, sizeof(out)) == -1);
     assert(Mods_SetFolder("   ", why, sizeof(why)) == 0 && Mods_Folder(out, sizeof(out)) == -1);
@@ -345,13 +354,17 @@ static void missing_case(const char *place, int file)
  * game's own folder is not scanned again as the player's (origin "folder"). */
 static void owned_case(const char *spelling)
 {
-    char line[1100];
+    char line[1100], expected[1400];
     mod_at("prog/mods/shipped-only", "{\"id\":\"shipped-only\"}");
     snprintf(line, sizeof(line), "%s/%s\n", root, spelling);
     write_text("user/mods-folder.txt", line);
     load();
     assert(Mods_Count() == 1 && !strcmp(Mods_Origin(find("shipped-only")), "shipped"));
-    assert(strstr(Mods_FolderProblem(), "own"));
+    /* The path as the file spells it (a trailing separator is not part of it). */
+    snprintf(line, sizeof(line), "%s/%s", root, spelling);
+    if (line[strlen(line) - 1] == '/') line[strlen(line) - 1] = '\0';
+    snprintf(expected, sizeof(expected), "%s is one of the game's own folders, which it reads or writes already.", line);
+    assert(!strcmp(Mods_FolderProblem(), expected));
 }
 
 static void env_case(int empty)
