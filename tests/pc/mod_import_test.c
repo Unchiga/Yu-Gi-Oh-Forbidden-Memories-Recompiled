@@ -134,6 +134,15 @@ static int import(const ZipItem *items, int n, int *count, char *why, size_t siz
 
 static const char *const MANIFEST_A = "{\"id\": \"alpha\", \"name\": \"Alpha mod\"}";
 
+/* Mods_ImportStepped's hook: the chunk count, and a cancel at one of them. */
+
+static int *step_cancel, step_calls, step_cancel_at;
+static void step(void)
+{
+    if (++step_calls == step_cancel_at)
+        __atomic_store_n(step_cancel, 1, __ATOMIC_RELEASE);
+}
+
 int main(void)
 {
     char why[512];
@@ -419,6 +428,47 @@ int main(void)
             Mods_ImportWatch(imp, &done, &cancel);
             CHECK(!Mods_ImportInstall(imp, mods, why, sizeof(why)));
             CHECK(!strcmp(why, "Cancelled.") && done == 0);
+            CHECK(!strcmp(listing("mods"), ""));
+            Mods_ImportClose(imp);
+        }
+    }
+    /* The progress is the bytes written chunk by chunk, and a cancel stops in
+     * the middle of a big file (Mods_ImportStepped: the test's hook sees
+     * each chunk): the chunks before it are counted, the half-written file
+     * and its folder are gone. */
+    reset();
+    {
+        static char body[300001];
+        ZipItem items[] = {{"alpha/mod.json", MANIFEST_A, 0, 0, 0, 0, 0, 0}, {"alpha/big.bin", body, 0, 0, 0, 0, 0, 0}};
+        unsigned done = 0;
+        int cancel = 0;
+        ModsImport *imp;
+        memset(body, 'B', sizeof(body) - 1);
+        write_zip(zip, items, 2);
+        imp = Mods_ImportOpen(zip, why, sizeof(why));
+        CHECK(imp != NULL);
+        if (imp) {
+            step_cancel = &cancel;
+            step_calls = 0;
+            step_cancel_at = 1000;
+            Mods_ImportWatch(imp, &done, &cancel);
+            Mods_ImportStepped(imp, step);
+            CHECK(Mods_ImportInstall(imp, mods, why, sizeof(why)));
+            CHECK(step_calls == 1 + 5 && done == Mods_ImportBytes(imp)); /* the manifest, and 300000 bytes in 5 chunks */
+            Mods_ImportClose(imp);
+        }
+        reset();
+        imp = Mods_ImportOpen(zip, why, sizeof(why));
+        CHECK(imp != NULL);
+        if (imp) {
+            done = 0;
+            cancel = 0;
+            step_calls = 0;
+            step_cancel_at = 4; /* the manifest, then the big file's third chunk */
+            Mods_ImportWatch(imp, &done, &cancel);
+            Mods_ImportStepped(imp, step);
+            CHECK(!Mods_ImportInstall(imp, mods, why, sizeof(why)));
+            CHECK(!strcmp(why, "Cancelled.") && step_calls == 4 && done == strlen(MANIFEST_A) + 3 * 65536);
             CHECK(!strcmp(listing("mods"), ""));
             Mods_ImportClose(imp);
         }

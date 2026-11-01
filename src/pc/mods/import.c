@@ -46,7 +46,8 @@ struct ModsImport {
     ModsImportMod mods[MODS_IMPORT_MAX];
     int mod_count;
     unsigned *done;     /* Mods_ImportWatch: bytes unpacked so far (atomic), or NULL */
-    const int *cancel;  /* and nonzero (atomic) to stop between files */
+    const int *cancel;  /* and nonzero (atomic) to stop, at the next chunk */
+    void (*stepped)(void); /* Mods_ImportStepped: called after each chunk written */
 };
 
 static unsigned le16(const unsigned char *p) { return p[0] | (unsigned)p[1] << 8; }
@@ -175,6 +176,8 @@ typedef struct {
     FILE *out;
     unsigned char *memory;
     unsigned long written, size, crc;
+    unsigned *progress; /* bytes written so far (atomic, added to as they are), or NULL */
+    void (*stepped)(void); /* Mods_ImportStepped, or NULL */
 } Sink;
 static int emit(Sink *sink, const unsigned char *bytes, size_t n)
 {
@@ -184,16 +187,22 @@ static int emit(Sink *sink, const unsigned char *bytes, size_t n)
     if (sink->out ? fwrite(bytes, 1, n, sink->out) != n : (memcpy(sink->memory + sink->written, bytes, n), 0))
         return 0;
     sink->written += (unsigned long)n;
+    if (sink->progress)
+        __atomic_add_fetch(sink->progress, (unsigned)n, __ATOMIC_RELEASE);
+    if (sink->stepped)
+        sink->stepped();
     return 1;
 }
 static int unpack(ModsImport *import, const Entry *e, FILE *out, unsigned char *memory, char *why, size_t why_size)
 {
     unsigned char header[30], *in = NULL, *buffer = NULL;
     unsigned long data, left = e->packed;
-    Sink sink = {out, memory, 0, e->size, 0};
+    Sink sink = {out, memory, 0, e->size, 0, NULL, NULL};
     z_stream stream;
     int ok = 0, started = 0, status = Z_OK, wrote;
     sink.crc = crc32(0L, Z_NULL, 0);
+    sink.progress = out ? import->done : NULL;
+    sink.stepped = out ? import->stepped : NULL;
     if (!read_at(import->file, e->offset, header, sizeof(header)) || le32(header) != 0x04034b50u) {
         snprintf(why, why_size, "The .zip is damaged (%s).", e->name);
         return 0;
@@ -222,6 +231,10 @@ static int unpack(ModsImport *import, const Entry *e, FILE *out, unsigned char *
     }
     for (;;) {
         size_t got = 0;
+        if (import->cancel && __atomic_load_n(import->cancel, __ATOMIC_ACQUIRE)) { /* a big file stops too */
+            snprintf(why, why_size, "Cancelled.");
+            goto done;
+        }
         if (left) {
             got = fread(in, 1, left < CHUNK ? left : CHUNK, import->file);
             if (!got) {
@@ -607,6 +620,11 @@ void Mods_ImportWatch(ModsImport *import, unsigned *done, const int *cancel)
     import->done = done;
     import->cancel = cancel;
 }
+void Mods_ImportStepped(ModsImport *import, void (*stepped)(void))
+{
+    if (import)
+        import->stepped = stepped;
+}
 ModsImportMod *Mods_ImportMod(ModsImport *import, int index)
 {
     return import && index >= 0 && index < import->mod_count ? &import->mods[index] : NULL;
@@ -835,8 +853,6 @@ int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t w
             }
             if (!written)
                 goto done;
-            if (import->done)
-                __atomic_add_fetch(import->done, e->size, __ATOMIC_RELEASE);
         }
     }
     if (import->cancel && __atomic_load_n(import->cancel, __ATOMIC_ACQUIRE)) {

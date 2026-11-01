@@ -57,12 +57,17 @@ ModsImportMod *Mods_ImportMod(ModsImport *import, int index);
 int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t why_size);
 /* The bytes its mods take unpacked (what Mods_ImportInstall writes). */
 unsigned long long Mods_ImportBytes(const ModsImport *import);
-/* For Mods_ImportInstall on a thread of its own (the HD pack's download,
- * hd_pack.h): it adds each file's size to *done as it is written, and a
- * nonzero *cancel stops it before the next file (0, "Cancelled.", the mods
- * folder as it was). Both are read and written with atomic operations;
+/* For Mods_ImportInstall on a thread of its own (the HD pack's unpacking,
+ * hd_pack.h; Import mod...'s, import_job.h): it adds the bytes it writes to
+ * *done as it writes them, and a nonzero *cancel stops it at the next chunk
+ * of a file (64 KB), even in the middle of a big one (0, "Cancelled.", the
+ * mods folder as it was). Both are read and written with atomic operations;
  * NULL for neither. */
 void Mods_ImportWatch(ModsImport *import, unsigned *done, const int *cancel);
+/* `stepped` is called by Mods_ImportInstall after each chunk of a file it
+ * wrote (64 KB at most), on its thread: the tests pause or stop an
+ * unpacking in the middle of a file, at a chunk they know. */
+void Mods_ImportStepped(ModsImport *import, void (*stepped)(void));
 void Mods_ImportClose(ModsImport *import);
 /* Whether `mods`/`folder` is taken (a folder or a file is there); its
  * path in `path` either way. */

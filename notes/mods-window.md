@@ -89,9 +89,35 @@ refused before the copy), read
 list, off, without a restart (`Mods_Discover`): the first one is selected,
 and the message line says "Imported <name>." (or "Imported 3 mods: A, B and
 C."). Turning one on is then like any other mod's change (Apply, a restart
-when the mod needs one). The copy, the reading and the unpacking run on the
-game's thread, so the panel waits through them without a progress bar: a
-few seconds for a usual mod, minutes for a pack of gigabytes.
+when the mod needs one). The copy, the reading and the unpacking run on a
+thread of their own (`src/pc/mods/import_job.c`), so the panel keeps
+drawing, says how far the step is ("Copying the .zip: 40% of 1200 MB.", then
+"Unpacking the mod: 40% of 3000 MB.", or only the megabytes so far when the
+provider gives no size) and Import mod... becomes **Stop** while the import
+runs, as the HD pack's button does. A pack of gigabytes takes minutes, with
+the panel usable meanwhile.
+
+- **Threads and Stop**: the job has two steps with the game thread's
+  questions between them, because the questions read the mod list, which
+  only the game thread may. Step 1 (thread): `Platform_FetchModZip` (the
+  copy; on Android SDL attaches the thread to Java by itself, so there is no
+  JNI call on the game's thread) and `Mods_ImportOpen`. Then, on the game
+  thread, the free names, "Is in use", the mod limit and, when a mod is
+  installed already, the Replace question. Step 2 (thread):
+  `Mods_ImportInstall`, then the list (`Mods_Discover`) and "Imported X." on
+  the game thread. The thread publishes the end of a step in an atomic state
+  and the game thread reads the rest only after it, the HD pack's handoff;
+  the byte counts (`Mods_ImportWatch`, the copy's) are atomics. **Stop**
+  sets an atomic that the copy and the unpacking read between chunks of 64
+  KB, even in the middle of a big file: the copy is removed and the hidden
+  `.import-XXXXXX` folder with what was unpacked in it, so nothing is left in
+  `mods/` ("The import was stopped. Nothing was imported."). A Stop that
+  comes as the reading ends imports nothing; one that comes after the
+  unpacking ended changes nothing, the mods are in. A failure on the thread
+  says what it said when the game's thread did the work. Apply and Remove
+  wait for the import (Apply says so). Closing the panel lets the import go
+  on; the step after it (the question, the final message) runs when the
+  panel opens again, as with the HD pack.
 
 - **What counts as a mod in it**: every folder with a `mod.json` at the
   `.zip`'s root (the whole `.zip` is then the mod, in a folder named by the
@@ -150,7 +176,14 @@ few seconds for a usual mod, minutes for a pack of gigabytes.
 - **Testing**: `MEMORIES_IMPORT_ZIP=<file>` (in `environment.txt`) makes
   Import mod... take that file instead of opening the picker.
   `pc_mod_import` checks the reader and the installer on `.zip` files it
-  writes; `pc_mods_window` drives the panel's import with a fake picker.
+  writes (the progress chunk by chunk, a cancel in the middle of a file);
+  `pc_mods_window` drives the panel's import with a fake picker and a fake
+  copy that waits at a known piece (`import_pump`, `test_import_job`): the
+  share said, Stop in the copy and in the middle of a file of the
+  unpacking, nothing left in `mods/`, the panel closed and opened again
+  meanwhile, a failure of the copy and of the unpacking.
+  `ImportJob_SetStepHook` is the test seam that pauses the unpacking at a
+  chunk.
 
 **Remove** (Android; it comes with `ModsWindow_SetImport`, so no desktop
 panel has it either): a mod that is off, or does not load (an old code mod
