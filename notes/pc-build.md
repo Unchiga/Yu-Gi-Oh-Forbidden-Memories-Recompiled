@@ -4182,8 +4182,9 @@ anonymous memory), so on Android it needs a path and the right to read it:
   for the app, else the list of apps, else the app's details, and answers
   "granted" or "refused" when the player comes back. Refused, the folder stays
   chosen and the panel says how to allow it (`Mods_FolderProblem` is a fact
-  about the launch, so the panel composes this text itself; the next launch's
-  log says `could not be read: Permission denied`). `Platform_ModsFolderAccess`
+  about the launch, so the panel composes this text itself; on the A22, Android
+  13, a folder of Download that the game may not read lists as empty rather
+  than failing, so the launch log has no reason to give). `Platform_ModsFolderAccess`
   (`ModsFolderAccess.has`, through JNI) is what the panel asks to know whether
   to say it, whenever it opens with a folder chosen; an allowance given in
   Settings later is a restart too.

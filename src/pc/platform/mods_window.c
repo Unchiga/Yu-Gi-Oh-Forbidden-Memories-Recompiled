@@ -80,7 +80,7 @@ static char launch_folder[1024];
  * given since, is a restart too), and the question that asks for it (pending
  * 7; folder_step 2 while the system's page is up). */
 static int (*access_have)(void), (*access_ask)(char *, size_t), (*access_asked)(char *, size_t);
-static int access_now = 1, launch_unread;
+static int access_now = 1, launch_unread, launch_access = -1;
 static int folder_restart(void);
 static void folder_launch(void);
 static const char *access_hint(void);
@@ -164,12 +164,12 @@ static void layout_touch(Layout *l)
     }
     /* Mods folder..., where the platform has a folder picker for it: the
      * leftmost of the footer's buttons on the list's page, if the message
-     * keeps room beside them. */
+     * keeps room beside them (a few words: counts or a line that wraps). */
     l->modsdir = none();
-    if (folder_pick && (!compact || page == 0)) {
+    if (folder_pick && pending != 7 && (!compact || page == 0)) {
         int w = max(130 * unit, width_text("Mods folder...") + 24 * unit);
         int edge = l->remove.w ? l->remove.x : l->folder.w ? l->folder.x : l->close.x;
-        if (edge - g - w >= 200 * unit)
+        if (edge - g - w >= 140 * unit)
             l->modsdir = rect(edge - g - w, footer, w, t);
     }
     {   /* A message of two to four lines beside the buttons (a refusal, a
@@ -1473,7 +1473,8 @@ static int folder_restart(void)
         return 0;
     if (Mods_Folder(now, sizeof(now)))
         now[0] = 0;
-    return strcmp(now, launch_folder) != 0 || (launch_unread && access_have && access_now);
+    return strcmp(now, launch_folder) != 0 ||
+           (launch_folder[0] && (launch_unread || launch_access == 0) && access_have && access_now);
 }
 /* Note which folder the game started with: at the first showing, after the
  * mods were scanned. */
@@ -1493,13 +1494,15 @@ void ModsWindow_SetFolderAccess(int (*have)(void), int (*ask)(char *why, size_t 
     access_ask = ask;
     access_asked = asked;
     access_now = have ? have() : 1;
+    if (have && launch_access < 0) /* the first showing: as the start scanned the folder, if the player gave no right since */
+        launch_access = access_now;
 }
 /* The folder is chosen, and the game cannot read it for want of the right:
  * what to do about it, for the message line. */
 static const char *access_hint(void)
 {
-    return "Without All files access the game cannot read it. Allow it in Android's Settings (Apps, this app, "
-           "Permissions, All files access), or tap Mods folder... and choose the folder again.";
+    return "Without All files access the game cannot read it. Allow it in Settings, Apps, this app, Permissions, "
+           "or choose the folder again.";
 }
 /* What the question says (pending 6): the folder, why it is not read if it
  * is not, and the choices. */
@@ -1508,8 +1511,7 @@ static void folder_ask(void)
     char path[1024];
     pending = 6;
     if (Mods_Folder(path, sizeof(path)))
-        put(status, sizeof(status), "Mods folder: none. The game reads the mods in a folder you choose as well as "
-            "its own. Imported mods and the HD pack still go in the game's own folder. Choose a folder?");
+        put(status, sizeof(status), "Mods folder: none. Choose a folder to read its mods as well as the game's own?");
     else
         put(status, sizeof(status), "Mods folder: %.300s %s Choose another folder, or use none?", path,
             !access_now ? access_hint() : *Mods_FolderProblem() ? Mods_FolderProblem() : "It is read when the game starts.");
@@ -1519,8 +1521,8 @@ static void folder_ask(void)
 static void folder_offer_access(const char *path)
 {
     pending = 7;
-    put(status, sizeof(status), "To read %.300s the game needs Android's All files access, which you allow on "
-        "the next screen. Allow it?", path);
+    put(status, sizeof(status), "To read %.300s the game needs All files access, which Android asks for on its "
+        "next screen. Allow it?", path);
 }
 /* Allow was answered yes: Android's page, and the answer at the next ticks. */
 static void folder_allow(void)

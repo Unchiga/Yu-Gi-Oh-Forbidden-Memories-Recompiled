@@ -999,7 +999,7 @@ static void folder_choices(int touch)
     /* The question with none chosen has one choice. */
     tap_widget(MODS_UI_MODSDIR);
     said = on_screen(1600, 900);
-    assert(strstr(said, "Mods folder: none. The game reads the mods in a folder you choose") &&
+    assert(strstr(said, "Mods folder: none. Choose a folder to read its mods") &&
            !strstr(said, "Use no folder"));
     assert(!ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y));
     tap_widget(MODS_UI_CLOSE);
@@ -1056,7 +1056,7 @@ static void folder_access_case(void)
     /* Refused: the folder stays chosen, and the way to give the right is said. */
     choose_folder(1, second);
     said = on_screen(1600, 900);
-    assert(strstr(said, "needs Android's All files access") && strstr(said, "Allow it?") && !access_asks);
+    assert(strstr(said, "needs All files access") && strstr(said, "Allow it?") && !access_asks);
     assert(strstr(said, "Allow") && strstr(said, "Cancel"));
     assert(Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, second)); /* saved before it was asked */
     tap_widget(MODS_UI_CLOSE); /* Cancel */
