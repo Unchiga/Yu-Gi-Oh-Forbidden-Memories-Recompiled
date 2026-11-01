@@ -462,7 +462,7 @@ class App(Editing, tk.Tk):
         if not self.need_game() or not self.confirm_discard():
             return
         folder = file_dialogs.askdirectory(parent=self, title="A mod folder (the one holding mod.json)",
-                                           initialdir=str(self.mods_dir()))
+                                           initialdir=str(self.open_dir()))
         if folder:
             self.load_mod(folder)
 
@@ -487,8 +487,23 @@ class App(Editing, tk.Tk):
         show_text(self, title, text, width=110, height=24)
 
     def mods_dir(self) -> Path:
+        """The user directory's mods folder: where Export puts a mod."""
         folder = disc.user_dir() / "mods"
         return folder if folder.is_dir() else Path.cwd()
+
+    def chosen_dir(self):
+        """The mods folder the player chose for the game (validate.chosen_folder),
+        when it is there; the game reads it, and Export never writes to it."""
+        folder = validate.chosen_folder()
+        try:
+            return folder if folder is not None and folder.is_dir() else None
+        except OSError:
+            return None
+
+    def open_dir(self) -> Path:
+        """Where Open starts: the player's chosen mods folder, where their own
+        mods are, else the user directory's."""
+        return self.chosen_dir() or self.mods_dir()
 
     def save(self, ask=False, export=False):
         """Save, Save as (ask) or Export mod (export: a folder named after

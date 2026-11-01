@@ -2588,7 +2588,7 @@ class ConflictsTab(Tab):
 
     def choose_folder(self):
         folder = file_dialogs.askdirectory(parent=self, title="A folder of mods to check this one against",
-                                           initialdir=self.other_folder or str(self.app.mods_dir()))
+                                           initialdir=self.other_folder or str(self.app.open_dir()))
         if folder:
             self.set_folder(folder)
 
