@@ -7,6 +7,11 @@
  * Returns 0 and the routine's v0 in *result, or -1 after printing why the
  * routine could not be run, in which case the caller falls back. */
 int Memories_MipsTry(uint32_t address, const uint32_t *args, unsigned count, uint32_t *result);
+/* MEMORIES_TRACE=frames: the identifier of the module the next
+ * Memories_MipsTry runs (model_modules.c), and the end of a game frame,
+ * which every `frames` frames (0: none) logs what the interpreter cost. */
+void Memories_MipsAttribute(uint32_t identifier);
+void Memories_MipsFrame(unsigned frames);
 /* As above with four arguments; a failure ends the process. */
 uint32_t Memories_MipsCall(uint32_t address, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3);
 /* Whether an address lies in a slot whose code is interpreted. */

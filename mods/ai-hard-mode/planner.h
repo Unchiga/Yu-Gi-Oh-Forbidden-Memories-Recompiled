@@ -11,10 +11,12 @@
 
 typedef struct {
     int id, effect, type, attack, defense, star, star2, flags;
+    int worth; /* what a stat cut took off value(): a kill is worth as much */
 } HmCard;
 typedef struct {
     HmCard own[5], enemy[5], back[5], enemy_back[5], hand[HM_HAND];
     int hand_count, lp, max_lp, enemy_lp, pinned, enemy_pinned, terrain;
+    int spellbinding, shadow_spell; /* what each takes off ATK and DEF */
 } HmBoard;
 typedef struct {
     int hand, fusion, guardian, attacks, defense, spells, effective;

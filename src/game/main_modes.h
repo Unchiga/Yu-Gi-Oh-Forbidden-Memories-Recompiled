@@ -29,7 +29,11 @@ typedef void (*MainModeRunner)(void);
 /* One of the two 8-byte model-property records Main_RunAnimatedBattle passes
  * to Model_SetSlotProperties during scene initialization. */
 typedef struct {
+#ifdef MEMORIES_PC
+    u16 model_id; /* a mod's models are 0x8000 up (pc/cards/cards.h) */
+#else
     s16 model_id;
+#endif
     s16 field_02;
     s16 field_04;
     u8 field_06;

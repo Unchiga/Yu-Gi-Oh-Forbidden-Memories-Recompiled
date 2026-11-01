@@ -35,6 +35,37 @@ int TexturePack_LoadAssets(const char *directory, const struct JsonValue *assets
  * that image, so assets/monster_type/dragon.png is monster_type/dragon. */
 int TexturePack_LoadAssetFolder(const char *directory, unsigned rank, int (*part)(const char *, void *),
                                 void *context, char *problems, size_t size);
+/* A PNG directly associated with a data-defined game image. `archive` and
+ * offsets are relative to the disc archive; source is the rectangle to cut
+ * from the PNG before it is resampled to the addressed texels. */
+int TexturePack_AddDiscImage(const char *file, const char *archive, unsigned offset, int words, int rows, int bpp,
+                             unsigned clut_offset, int clut_entries, int stride, int crop_left, int crop_width,
+                             int source_x, int source_y, int source_w, int source_h, unsigned rank);
+/* As TexturePack_AddDiscImage, but the image belongs to a logical field-bank
+ * entry.  Group zero is always visible; one non-zero group may be selected
+ * in addition.  This lets several custom fields share a retail board upload
+ * without their images overwriting each other. */
+int TexturePack_AddDiscImageGroup(unsigned group, const char *file, const char *archive, unsigned offset, int words,
+                                  int rows, int bpp, unsigned clut_offset, int clut_entries, int stride,
+                                  int crop_left, int crop_width, int source_x, int source_y, int source_w,
+                                  int source_h, unsigned rank);
+/* A PNG's own pixel width and height, without decoding it. 0 when the file
+ * cannot be read as a PNG. For validating every crop several
+ * TexturePack_AddDiscImageGroup calls on one file will need before making
+ * any of them, catching the likeliest failure (a malformed or wrongly
+ * proportioned image) before any entry installs. */
+int TexturePack_ImageSize(const char *path, int *width, int *height);
+/* How many entries are registered right now, to remember
+ * (TexturePack_RemoveEntriesFrom) before adding several that must all
+ * succeed or leave none of them installed -- TexturePack_ImageSize does
+ * not rule out a later one failing for its own reason (out of memory). */
+unsigned TexturePack_EntryCount(void);
+/* Un-registers every entry added since `mark` (a prior TexturePack_EntryCount).
+ * Safe only while entries stay in the order they were added in, true until
+ * the pack first resolves its disc offsets (TexturePack_Service, "between
+ * frames, on the main thread") -- always after every mod's own loading. */
+void TexturePack_RemoveEntriesFrom(unsigned mark);
+void TexturePack_SelectGroup(unsigned group);
 void TexturePack_Unload(void);
 /* Once a frame, on the main thread: reads what uploads asked for (an
  * upload can come from the interrupt tick, where reading is not safe). */

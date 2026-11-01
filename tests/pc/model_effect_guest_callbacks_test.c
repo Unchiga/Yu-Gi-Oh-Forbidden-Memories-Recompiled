@@ -8,6 +8,7 @@ extern void func_8004EB00(void);
 static unsigned called;
 static unsigned updates;
 void func_8005A188(s32 index) { assert(index == 1); updates++; }
+int Cards_ModelStatsIndex(int model) { assert(model == 1); return model; }
 static s32 first(s32 data, s32 mode) { assert(data == 0x801b0000 && mode == -1); called=1; return 0; }
 static s32 middle(s32 data, s32 mode) { abort(); }
 static s32 last(s32 data, s32 mode) { assert(data == 0x801b0000 && mode == -1); called=4; return 0; }

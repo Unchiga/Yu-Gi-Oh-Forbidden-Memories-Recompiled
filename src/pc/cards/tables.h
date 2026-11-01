@@ -237,14 +237,13 @@ int Tables_CardDropsLock(const char **mod);
  * sets them, any other tag itself. */
 int Tables_RankAdjustment(int tag);
 
-/* A mod's "terrain_bonus" for a monster of `type` (0-19) on `terrain`
- * (gDuel_bTerrain: 1 Forest to 6 Yami): 1 with the points, signed, in
+/* A mod's "terrain_bonus" for a monster of `type` on a declared `terrain`
+ * (gDuel_bTerrain's field id): 1 with the points, signed, in
  * *bonus; 0 when no mod lists the pair (nor replaced the table), and the
  * disc's table decides. */
 int Tables_TerrainBonus(int terrain, int type, int *bonus);
-/* A terrain as a mod writes one: 1-6 or its name (Forest, Wasteland,
- * Mountain, Sogen or Meadow, Umi or Sea, Yami or Dark, any case); -1 for
- * none of them. "terrain_bonus" and a tower's floors (tower.h) read it. */
+/* A declared field as a mod writes one: its id or name, any case; -1 when it
+ * is unknown. "terrain_bonus" and a tower's floors (tower.h) read it. */
 int Tables_TerrainNamed(const char *text);
 
 /* The attack, in points, at or under which attack trap `trap` springs (0

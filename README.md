@@ -5,7 +5,7 @@ native PC game for Windows and Linux, with a macOS ARM64 source build. Bring you
 included but the text of the European translations (below).
 
 This is not a static recompilation: the game code was decompiled
-by hand into C that matches the original byte for byte, then ported to PC.
+by hand and AI that matches the original byte for byte, then ported to PC.
 
 ![Your field at 4x resolution with 3D Monsters](docs/screenshots/field.jpg)
 
@@ -112,7 +112,7 @@ _Generated from `config/slus_01411/functions.csv` and `config/slus_01411/overlay
 
 ## Community
 
-Join the [Discord](https://discord.gg/Gn6Mag52q) to follow development, ask questions
+Join the [Discord](https://discord.gg/7DbsjUtsEQ)to follow development, ask questions
 and report issues.
 
 ## License

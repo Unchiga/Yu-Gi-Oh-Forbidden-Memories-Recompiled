@@ -45,10 +45,14 @@ u8 gDuel_bQuitDialogState = 0;
 u8 gDuel_bTerrain = 0;
 
 MonsterEffectsState gMonsterEffects = {0};
-const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {"magic",   "boost",           "heal",    "damage",
-                                                             "destroy", "battle_immunity", "piercing"};
+const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {"magic",   "boost",        "heal",            "damage",
+                                                             "destroy", "change_field", "battle_immunity", "piercing"};
 const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT] = {
     "summon", "flip", "draw", "combat", "destroyed", "destroy_opponent", "face_up"};
+
+int Fields_Declared(int field) { return field >= 1 && field <= 6; }
+int Fields_Carrier(int field) { return field; }
+void Fields_Activate(int field) { (void)field; }
 
 void SD_SEPlayFull(u32 sound) { (void)sound; }
 void DuelEffect_StartRetailCardEffect(int card, int param)

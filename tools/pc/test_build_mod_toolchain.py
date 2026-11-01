@@ -231,7 +231,11 @@ class Toolchain(unittest.TestCase):
             self.assertIsNone(self.with_pass([(apple, None)], 23))
             self.assertEqual(build_mod.pick_clang([(apple, None), (other, 21)], 21), other)   # the numbered one first
             self.assertEqual(build_mod.pick_clang([(apple, None), (other, 22)], 21), apple)
-            hint = build_mod.hint_for(apple, "pass")
+            # The pass named, an LLVM 21 one: not one built before in this
+            # checkout (tmp/pc/guest-compiler), nor the major left by with_pass.
+            self.pass_major = 21
+            with mock.patch.dict(os.environ, {"MEMORIES_GUEST_IR": self.program("memories-guest-ir")}):
+                hint = build_mod.hint_for(apple, "pass")
             self.assertIn("Apple's clang", hint)
             self.assertIn("LLVM 21", hint)
             self.assertIn("brew install llvm", hint)

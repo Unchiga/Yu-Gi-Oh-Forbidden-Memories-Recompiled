@@ -32,6 +32,7 @@ enum {
     MONSTER_DO_DAMAGE,       /* the other side's LP down */
     MONSTER_DO_DESTROY,      /* the other side's monsters (or the one it battles) destroyed, as Warrior
                               * Elimination destroys */
+    MONSTER_DO_CHANGE_FIELD, /* make the selected declared field active */
     MONSTER_DO_BATTLE_IMMUNITY, /* cannot be destroyed by battle (API 19) */
     MONSTER_DO_PIERCING,     /* inflicts piercing battle damage when attacking defense monsters (API 19) */
     MONSTER_DO_COUNT
@@ -178,7 +179,7 @@ typedef struct MonsterEffect {
     signed char type;                /* a boost's or destroy's type filter: -1 any; read as an
                                         unsigned char, so a custom type 128-254 is stored negative */
     signed short attribute;          /* attribute-bank id, -1 any */
-    unsigned short card;             /* MONSTER_DO_MAGIC: the retail magic card */
+    unsigned short card;             /* MONSTER_DO_MAGIC: retail magic; MONSTER_DO_CHANGE_FIELD: field id */
     short attack, defense;           /* MONSTER_DO_BOOST */
     int amount;                      /* MONSTER_DO_HEAL, MONSTER_DO_DAMAGE */
     unsigned char each;              /* MONSTER_EACH_*: a boost, heal or damage made once per monster counted */

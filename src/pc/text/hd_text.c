@@ -31,6 +31,7 @@
 #include "pc/render/soft_gpu.h"
 #include "pc/cards/art.h"
 #include "pc/cards/cards.h"
+#include "pc/cards/fields.h"
 #include "pc/cards/tables.h"
 #include "pc/cards/duel_ui.h"
 #include "pc/saves/save_slots.h"
@@ -968,6 +969,8 @@ static int make_ramp(const uint16_t *words, int clut_x, int clut_y, int from, in
     return n;
 }
 
+#define SHEET_WORDS 64 /* a row of the ten digits' words, at most */
+
 /* The sheets the duel draws numbers from: digit d is the cell at
  * u + d * step, v. Each is measured from its own ten digits: the outline
  * (the index round them), the fill (the commonest inside), the ramp between
@@ -982,6 +985,8 @@ typedef struct {
     int ok;
     signed char drawn[10];                     /* 1 drawn, -1 none, 0 not yet */
     Retail r;
+    uint16_t seen[CELL][SHEET_WORDS];          /* the words `sum` was taken from (sheet_unchanged) */
+    int seen_ok;
 } Sheet;
 
 /* The duel's sheet is read through six palette rows (the hand, the card
@@ -1011,6 +1016,29 @@ static uint32_t read_digit(const uint16_t *words, const Sheet *s, int d, unsigne
         }
     }
     return sum;
+}
+
+/* Whether VRAM holds the words the ten digits were last read from, so their
+ * sum is the same. It compares every word, a difference or not, and copies
+ * the ones that differ for the next time. HdText_Hud asks for every digit
+ * drawn, and comparing the words costs less than reading the texels. */
+static int sheet_unchanged(const uint16_t *words, Sheet *s)
+{
+    int shift = s->depth ? 1 : 2, first = s->u >> shift;
+    int count = ((s->u + 9 * s->step + s->width - 1) >> shift) - first + 1, same = s->seen_ok, x, y;
+    if (count > SHEET_WORDS || s->height > CELL) return 0;
+    for (y = 0; y < s->height; y++) {
+        const uint16_t *row = words + (size_t)((s->page_y + s->v + y) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH;
+        for (x = 0; x < count; x++) {
+            uint16_t word = row[(s->page_x + first + x) & (SOFT_GPU_WIDTH - 1)];
+            if (s->seen[y][x] != word) {
+                s->seen[y][x] = word;
+                same = 0;
+            }
+        }
+    }
+    s->seen_ok = 1;
+    return same;
 }
 
 static int measure_sheet(Sheet *s, const uint16_t *words)
@@ -1380,6 +1408,8 @@ typedef struct {
     int pieces, rect[2][4];                             /* u, v, w, h of each, left to right */
     int column, row;                                    /* the picture's first cell in the HUD rows */
     int lettering;                                      /* the labels it is lettered with, or NO_LETTERING */
+    int terrain;                                         /* one of the FIELD box's six terrain words */
+    char shown[32];                                      /* the word last drawn into it, when terrain */
     uint32_t sum;
     unsigned made;
     signed char drawn;
@@ -1432,14 +1462,24 @@ static void make_labels(void)
     /* The card kinds, beside the duel's digits (duel_card_frame_draw.c), in
      * the hand and on the card bar: the sheet's six palette rows. */
     for (i = 0; i < 4; i++) add_label(1, 896, 256, 256, 241, 246, kinds[i], 1, OUTLINE, 0, i * 32, 96, 32, 16, 0, 0, 0, 0, 4 + 2 * i, 2);
-    /* The FIELD box (duel HUD): its word, and the terrains' names. */
+    /* The FIELD box (duel HUD): its word, and the terrains' names. Each
+     * terrain word is marked `terrain` so HdText_Hud can show the active
+     * field's own name there instead (fields.h, Fields_HasCustomName),
+     * the same way HdText_TitleCard always asks Cards_NameUtf8 for a
+     * card's live name rather than keeping "Dark Magician" hardcoded. */
     add_label(0, 704, 0, 720, 252, 252, "FIELD", 0, CLEAR, 4, 24, 88, 40, 8, 0, 0, 0, 0, 18, 1);
     add_label(0, 704, 0, 720, 252, 252, "FOREST", 0, BOX, 0, 64, 112, 32, 16, 0, 0, 0, 0, 12, 2);
+    labels[label_count - 1].terrain = 1;
     add_label(0, 704, 0, 720, 252, 252, "WASTELAND", 0, BOX, 0, 96, 80, 32, 16, 112, 32, 16, 16, 14, 2);
+    labels[label_count - 1].terrain = 1;
     add_label(0, 704, 0, 720, 252, 252, "MOUNTAIN", 0, BOX, 0, 64, 96, 32, 16, 112, 96, 16, 16, 17, 2);
+    labels[label_count - 1].terrain = 1;
     add_label(0, 704, 0, 720, 252, 252, "MEADOW", 0, BOX, 0, 64, 80, 32, 16, 112, 48, 16, 16, 20, 2);
+    labels[label_count - 1].terrain = 1;
     add_label(0, 704, 0, 720, 252, 252, "SEA", 0, BOX, 0, 96, 112, 24, 16, 0, 0, 0, 0, 23, 2);
+    labels[label_count - 1].terrain = 1;
     add_label(0, 704, 0, 720, 252, 252, "DARK", 0, BOX, 0, 96, 96, 16, 16, 120, 112, 8, 16, 25, 2);
+    labels[label_count - 1].terrain = 1;
     /* The card view's ATK and DFD, and its digits, in the plates' inks
      * (func_80028B08): row 248 for ATK, 249 for DFD. */
     add_label(0, 960, 256, 496, 248, 249, "ATK", 1, CLEAR, 0, 0, 206, 24, 12, 0, 0, 0, 0, 14, 1);
@@ -1575,7 +1615,7 @@ static const Lettering *measure_lettering(const uint16_t *words, int which)
     return g;
 }
 
-static int make_label(const uint16_t *words, const Label *l, unsigned char texels[16][64], int width)
+static int make_label(const uint16_t *words, const Label *l, const char *text, unsigned char texels[16][64], int width)
 {
     int border[256] = {0}, all[256] = {0}, y, n, f = factor;
     int height = l->rect[0][3];
@@ -1584,7 +1624,7 @@ static int make_label(const uint16_t *words, const Label *l, unsigned char texel
     const Shape *shape = NULL;
     void *face = l->serif ? CardArt_SerifFace() : NULL;
     uint8_t *origin = atlas + (size_t)(HUD_TOP + l->row) * CELL * f * side + (size_t)l->column * CELL * f;
-    if (!face) face = Glyphs_Face((unsigned char)l->text[0]);
+    if (!face) face = Glyphs_Face((unsigned char)text[0]);
     if (l->lettering) {
         const Lettering *g = measure_lettering(words, l->lettering);
         if (!g) return 0;
@@ -1595,7 +1635,7 @@ static int make_label(const uint16_t *words, const Label *l, unsigned char texel
         if (!n) return 0;
     }
     for (y = 0; y < CELL * f; y++) memset(origin + (size_t)y * side, 0, (size_t)(width + 15) / 16 * CELL * f);
-    if (!set_text(face, &texels[0][0], 64, 0, 0, width, height, l->text, ramp, n, l->style == OUTLINE, l->shadow, 0,
+    if (!set_text(face, &texels[0][0], 64, 0, 0, width, height, text, ramp, n, l->style == OUTLINE, l->shadow, 0,
                   shape, origin)) {
         return 0;
     }
@@ -1778,6 +1818,75 @@ int HdText_HudEnabled(void)
     return HdText_Enabled();
 }
 
+/* The word a label shows: a terrain label's own word unless the active
+ * field has a name of its own for it (fields.h, Fields_HasCustomName). */
+static const char *field_label_text(const Label *l)
+{
+    int active = l->terrain ? Fields_Active() : -1;
+    return active >= 0 && Fields_HasCustomName(active) ? Fields_Name(active) : l->text;
+}
+
+/* The piece of `l` at u, v, w x h, measured and (when its word or its
+ * sprite's texels changed) set anew with `text`: where it is in the atlas.
+ * -1: no piece of `l` is there. 0: it is, but could not be drawn. */
+static int label_match(const uint16_t *words, Label *l, int u, int v, int w, int h, const char *text, int wanted,
+                       int *atlas_u, int *atlas_v)
+{
+    unsigned char texels[16][64];
+    int piece, at = 0, width;
+    uint32_t sum;
+    for (piece = 0; piece < l->pieces; piece++) {
+        if (u == l->rect[piece][0] && v == l->rect[piece][1] && w <= l->rect[piece][2] && h <= l->rect[piece][3]) break;
+        at += l->rect[piece][2];
+    }
+    if (piece == l->pieces) return -1;
+    if (wanted != factor && !make_atlas(wanted)) return 0;
+    sum = read_label(words, l, texels, &width);
+    if (sum != l->sum || l->made != generation || strncmp(l->shown, text, sizeof(l->shown) - 1) != 0) {
+        l->sum = sum;
+        l->made = generation;
+        snprintf(l->shown, sizeof(l->shown), "%s", text);
+        l->drawn = make_label(words, l, text, texels, width) ? 1 : -1;
+    }
+    if (l->drawn < 0) return 0;
+    *atlas_u = l->column * CELL + at;
+    *atlas_v = (HUD_TOP + l->row) * CELL;
+    return 1;
+}
+
+/* The active field's own name over the FIELD box's terrain word, the way
+ * HdText_TitleCard puts a card's live name over its plate: checked whether
+ * or not a texture pack has already painted that sprite, and winning over
+ * it when there is a name to show, since a field's name is data a mod's art
+ * cannot be allowed to leave wrong. Unlike HdText_Hud's own labels
+ * (gl_picture.c defers those to a texture pack on purpose), this returns 0
+ * at once when the active field has no name of its own to show, so a
+ * texture pack's FIELD box is untouched for every retail terrain and every
+ * field a mod did not rename. */
+int HdText_FieldWord(int depth, int page_x, int page_y, int clut_x, int clut_y, int u, int v, int w, int h,
+                     int wanted, int *atlas_u, int *atlas_v)
+{
+    const uint16_t *words = SoftGpu_Vram();
+    int active = Fields_Active();
+    unsigned i;
+    if (active < 0 || !Fields_HasCustomName(active) || wanted < 2 || wanted > MAX_FACTOR || !words || w < 1 || h < 1) {
+        return 0;
+    }
+    make_labels();
+    for (i = 0; i < (unsigned)label_count; i++) {
+        Label *l = &labels[i];
+        int result;
+        if (!l->terrain || depth != l->depth || page_x != l->page_x || page_y != l->page_y || clut_x != l->clut_x ||
+            clut_y < l->clut_y || clut_y > l->clut_y2) {
+            continue;
+        }
+        result = label_match(words, l, u, v, w, h, Fields_Name(active), wanted, atlas_u, atlas_v);
+        if (result < 0) continue;
+        return result;
+    }
+    return 0;
+}
+
 int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u, int v, int w, int h, int wanted,
                int *atlas_u, int *atlas_v)
 {
@@ -1811,29 +1920,14 @@ int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u,
     make_labels();
     for (i = 0; i < (unsigned)label_count; i++) {
         Label *l = &labels[i];
-        unsigned char texels[16][64];
-        int piece, at = 0, width;
-        uint32_t sum;
+        int result;
         if (depth != l->depth || page_x != l->page_x || page_y != l->page_y || clut_x != l->clut_x ||
             clut_y < l->clut_y || clut_y > l->clut_y2) {
             continue;
         }
-        for (piece = 0; piece < l->pieces; piece++) {
-            if (u == l->rect[piece][0] && v == l->rect[piece][1] && w <= l->rect[piece][2] && h <= l->rect[piece][3]) break;
-            at += l->rect[piece][2];
-        }
-        if (piece == l->pieces) continue;
-        if (wanted != factor && !make_atlas(wanted)) return 0;
-        sum = read_label(words, l, texels, &width);
-        if (sum != l->sum || l->made != generation) {
-            l->sum = sum;
-            l->made = generation;
-            l->drawn = make_label(words, l, texels, width) ? 1 : -1;
-        }
-        if (l->drawn < 0) return 0;
-        *atlas_u = l->column * CELL + at;
-        *atlas_v = (HUD_TOP + l->row) * CELL;
-        return 1;
+        result = label_match(words, l, u, v, w, h, field_label_text(l), wanted, atlas_u, atlas_v);
+        if (result < 0) continue;
+        return result;
     }
     for (i = 0; i < sizeof(sheets) / sizeof(sheets[0]); i++) {
         Sheet *s = &sheets[i];
@@ -1847,7 +1941,11 @@ int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u,
         d = (u - s->u) / s->step;
         if (d > 9 || u != s->u + d * s->step || w > s->width || h > s->height) return 0;
         if (wanted != factor && !make_atlas(wanted)) return 0;
-        for (d = 0; d < 10; d++) sum = read_digit(words, s, d, cell, sum);
+        if (sheet_unchanged(words, s)) {
+            sum = s->sum;
+        } else {
+            for (d = 0; d < 10; d++) sum = read_digit(words, s, d, cell, sum);
+        }
         d = (u - s->u) / s->step;
         if (sum != s->sum || s->made != generation) {
             /* Measured again when the sheet changes (another package). */

@@ -40,6 +40,36 @@ unsigned char gDuel_abCardLevelAttr[CARD_TABLE_ID_END];
 static int notes[8];     /* per mod, "a" to "h" (h: not counting a slot replaced twice) */
 static int effect_notes; /* of them, about "monster_effects" */
 
+/* The models mods add ("models"): mod_models() fills these. */
+static const char *model_names[2];
+static JsonDocument *model_bases[2];
+static int model_count_here;
+int Mods_ModelCount(void) { return model_count_here; }
+int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod)
+{
+    if (i < 0 || i >= model_count_here) return -1;
+    if (name) *name = model_names[i];
+    if (base) *base = model_bases[i] ? Json_At(Json_Root(model_bases[i]), 0) : NULL;
+    if (mod) *mod = 0;
+    return 0;
+}
+/* Model i's record as mods.c places it for host->disc_read, and the
+ * window a battle slot reads it through. */
+int Mods_ModelSector(int i) { return i >= 0 && i < model_count_here ? 0x1000000 + i * 0x114 : -1; }
+static int window_slot = -1, window_model = -1;
+int Mods_ModelWindow(int slot, int i)
+{
+    if (i < 0 || i >= model_count_here) return -1;
+    window_slot = slot;
+    window_model = i;
+    return 300000 + slot * 0x114;
+}
+int Mods_ModelPending(int slot) { (void)slot; return 0; }
+void Mods_ModelForget(int slot) { (void)slot; }
+void Mods_ModelParsed(int slot) { (void)slot; }
+unsigned char *Mods_ModelArena(int arena, unsigned *size) { (void)arena; (void)size; return 0; }
+int BattleModels_Check(int slot) { (void)slot; return 0; }
+
 void Mods_Note(const char *id, const char *format, ...)
 {
     char note[512];
@@ -97,12 +127,6 @@ int Glyphs_Code(uint32_t character) { return character < 0x80 ? (int)character :
 uint32_t Glyphs_NextCharacter(const char **text) { return (unsigned char)*(*text)++; }
 void Library_UpdateCardUsedFlag(int flag) { (void)flag; }
 int Memories_Rand(void) { return 0; }
-#ifdef MEMORIES_LOW_MEMORY
-/* Without the low region these are macros for malloc and free
- * (pc/guest/low_memory.h): defining them would define malloc itself. */
-void *Memories_LowAlloc(size_t size) { return malloc(size); }
-void Memories_LowFree(void *ptr) { free(ptr); }
-#endif
 void Mods_SetCardNotes(const char *(*which)(int id), int (*tag)(int id, const char *key, char *out, size_t size))
 {
     (void)which; (void)tag;
@@ -618,6 +642,52 @@ static void monster_effect_type_overflow(void)
     assert(effect_notes == before + 1);
 }
 
+/* "model" naming a mod's model (API 21): a replace's and a copy's, its
+ * sector and window, its base's stats for the game and its stars for a monster made
+ * from a magic card; an unknown name is refused, a disc monster still taken. */
+static void mod_models(void)
+{
+    BuildContext context = {0};
+    char error[256];
+    const JsonValue *entry;
+    int i, copy;
+    JsonDocument *doc;
+    model_names[0] = "pikachu";
+    test_stats[39] = STATS(1, MARS, SUN);    /* card 40, the base: a Spellcaster */
+    test_stats[349] = STATS(CARD_TYPE_MAGIC, 0, 0);   /* card 350, a magic card */
+    gDuel_adwCardStats[349] = (int)test_stats[349];
+    model_bases[0] = Json_Parse("[40]", error, sizeof(error));
+    model_names[1] = "bulbasaur";
+    model_bases[1] = NULL;
+    model_count_here = 2;
+    assert(Cards_ModelSector(CARDS_MODEL_MOD_FIRST + 1) == 0x1000000 + 0x114);
+    assert(Cards_ModelSector(CARDS_MODEL_MOD_FIRST + 2) == -1);
+    assert(Cards_ModelSector(0) == -1 && Cards_ModelSector(CARD_COUNT) == -1);
+    assert(Cards_ModelWindow(1, CARDS_MODEL_MOD_FIRST) == 300000 + 0x114 && window_slot == 1 && window_model == 0);
+    assert(Cards_ModelWindow(0, CARDS_MODEL_MOD_FIRST + 2) == -1 && Cards_ModelWindow(0, 40) == -1);
+    assert(Cards_ModelStatsIndex(CARDS_MODEL_MOD_FIRST) == 39);
+    assert(Cards_ModelStatsIndex(CARDS_MODEL_MOD_FIRST + 1) == 0);  /* no base */
+    assert(Cards_ModelStatsIndex(5) == 5);
+    doc = Json_Parse("[{\"replace\":20,\"model\":\"pikachu\"},"
+                     "{\"replace\":350,\"type\":\"Dragon\",\"model\":\"pikachu\"},"
+                     "{\"copy\":21,\"id\":\"bulba\",\"model\":\"bulbasaur\"},"
+                     "{\"replace\":22,\"model\":\"charmander\"},"
+                     "{\"replace\":23,\"model\":40}]", error, sizeof(error));
+    assert(doc);
+    copy = gCard_nCount + 1;
+    for (i = 0, entry = Json_At(Json_Root(doc), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("m", ".", i, entry, &context);
+    assert(Cards_ModelId(20) == CARDS_MODEL_MOD_FIRST + 1 && Cards_HasModel(20));
+    assert(Cards_ModelId(350) == CARDS_MODEL_MOD_FIRST + 1 && Cards_HasModel(350));
+    expect(350, MARS, SUN);                    /* the base's stars */
+    assert(Cards_ModelId(copy) == CARDS_MODEL_MOD_FIRST + 1 + 1 && Cards_HasModel(copy));
+    assert(Cards_ModelId(22) == 22);           /* "charmander": no such model, its own kept */
+    assert(Cards_ModelId(23) == 40);
+    model_count_here = 0;
+    assert(!Cards_HasModel(20));               /* a model no longer there has no record */
+    Json_Free(model_bases[0]);
+}
+
 /* Cards_Reference reads Json_Number's long before Cards_Valid's int: a
  * reference far past int range must not wrap into a valid card id (card 1,
  * from 2^32 + 1 narrowed to 1 on a typical 64-bit build). */
@@ -891,6 +961,7 @@ int main(void)
 
     magic_conversions();
     trap_conversions();
+    mod_models();
     monster_effect_entries();
     monster_effect_for_each();
     monster_effect_conditions_and_battle_immunity();

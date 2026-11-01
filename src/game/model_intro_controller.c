@@ -42,6 +42,9 @@
 #include "model_control_slot_animation.h"
 #include "func_8005106C.h"
 #include "model_effect_requests.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
+#endif
 #include "model_distance_queries.h"
 #include "model_update_view_metrics.h"
 #include "model_scene_states.h"
@@ -57,7 +60,12 @@ void func_8004EB00(void)
 
     *(ModelSlotS32Quad *)handlers = *(ModelSlotS32Quad *)D_800114E8;
     n = 1;
+#ifdef MEMORIES_PC
+    /* A mod's model is no card: its base's stats (pc/cards/cards.h). */
+    if (((gDuel_adwCardStats[Cards_ModelStatsIndex(D_800F2C40[1].field_DF8)] >> 0x1A) & 0x1F) == 1) {
+#else
     if (((gDuel_adwCardStats[D_800F2C40[1].field_DF8] >> 0x1A) & 0x1F) == 1) {
+#endif
         n = 2;
     }
     switch ((s8)(D_8009AF9A + 1)) {

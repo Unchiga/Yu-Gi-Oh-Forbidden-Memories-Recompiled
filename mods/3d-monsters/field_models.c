@@ -282,10 +282,20 @@ static u32 isqrt(u64 value)
     return (u32)root;
 }
 
-/* Model_LoadMonsterMerge's own arithmetic: the three id ranges with no record
- * are rejected and every id above one is biased down. */
-static int mrg_record(int model)
+/* The first sector of a model's record, as host->disc_read reads it, or -1.
+ * A mod's model is read from its own file (pc/cards/cards.h); one of the
+ * disc is in MODEL.MRG by Model_LoadMonsterMerge's own arithmetic: the three
+ * id ranges with no record are rejected and every id above one is biased
+ * down. */
+static int record_sector(int model)
 {
+    if (model >= CARDS_MODEL_MOD_FIRST) {
+        /* A mod's model, read from its file; one bigger than a record, or
+           whose file is gone or changed, has none: its base stands in, as
+           it fights in the battle. */
+        int sector = Cards_ModelSector(model);
+        return sector >= 0 ? sector : record_sector(Cards_ModelStatsIndex(model));
+    }
     if (model < 0 || model >= MODEL_MRG_ID_END ||
         (model >= MODEL_MRG_FIRST_GAP_START && model < MODEL_MRG_FIRST_GAP_END) ||
         (model >= MODEL_MRG_SECOND_GAP_START && model < MODEL_MRG_SECOND_GAP_END) ||
@@ -301,7 +311,11 @@ static int mrg_record(int model)
     if (model >= MODEL_MRG_FIRST_GAP_END) {
         model -= MODEL_MRG_GAP_SIZE;
     }
-    return model;
+    if (mrg_start == -2) {
+        mrg_start = host->disc_file_start(host, "\\DATA\\MODEL.MRG;1");
+        say("MODEL.MRG starts at sector %d\n", mrg_start);
+    }
+    return mrg_start < 0 ? -1 : mrg_start + model * RECORD_SECTORS;
 }
 
 static u16 scratch_pixels[BLOCK_W * BLOCK_H];
@@ -459,23 +473,16 @@ static int load_monster(Monster *monster, int card, int position)
     ModelSlot *slot = &D_800F2C40[0];
     static u8 staging[0x2000]; /* the loader's own scratch, put back after */
     u8 *payload_base;
-    int model = mrg_record(card - 1), sectors;
+    int first = record_sector(card - 1), sectors;
 
-    if (model < 0) {
-        return 0;
-    }
-    if (mrg_start == -2) {
-        mrg_start = host->disc_file_start(host, "\\DATA\\MODEL.MRG;1");
-        say("MODEL.MRG starts at sector %d\n", mrg_start);
-    }
-    if (mrg_start < 0) {
+    if (first < 0) {
         return 0;
     }
     started = host->now_us(host);
     if (!record && !(record = malloc(RECORD_SECTORS * SECTOR))) {
         return 0;
     }
-    sectors = host->disc_read(host, mrg_start + model * RECORD_SECTORS, RECORD_SECTORS, record);
+    sectors = host->disc_read(host, first, RECORD_SECTORS, record);
     if (sectors != RECORD_SECTORS) {
         say("card %d: read %d of %d sectors\n", card, sectors, RECORD_SECTORS);
         return 0;
@@ -1591,13 +1598,13 @@ static void sounds_begin(Monster *const fighters[DUEL_SIDE_COUNT])
     int side;
     for (side = 0; side < DUEL_SIDE_COUNT; side++) {
         const Monster *monster = fighters[side];
-        int model = monster ? mrg_record(monster->card - 1) : -1;
+        int first = monster ? record_sector(monster->card - 1) : -1;
         unsigned rows = 1u << ROW_WITHSTAND | 1u << ROW_HIT | 1u << ROW_GUARD;
         if (monster) {
             rows |= 1u << (monster->slot.field_DFE + 3);
         }
         FightSounds_Load(side,
-                         model >= 0 && mrg_start >= 0 && tunable("sounds", 1) ? mrg_start + model * RECORD_SECTORS : -1,
+                         first >= 0 && tunable("sounds", 1) ? first : -1,
                          monster ? monster->slot.sound_entries : NULL, rows);
     }
 }
@@ -2835,8 +2842,8 @@ static void draw_frame(void)
                 *(const s16 *)&card->pad_08[2] + BOARD_CARD_FEET > BOARD_PANEL_TOP) {
                 continue; /* its card has gone under the panel */
             }
-            /* A card a card mod added stands as the retail card it is a
-             * copy of: MODEL.MRG has the disc's monsters only. */
+            /* A card a card mod added stands as the model it names, else
+             * as the retail card it is a copy of. */
             if (!tunable("test", 0)) {
                 id = Cards_ModelId(id);
             }

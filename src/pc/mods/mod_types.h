@@ -1,9 +1,9 @@
 #ifndef MEMORIES_MOD_TYPES_H
 #define MEMORIES_MOD_TYPES_H
-#define MEMORIES_MOD_API 19
+#define MEMORIES_MOD_API 22
 /* API 19 expands monster effects (originally API 10): adds battle immunity
- * ("battle_immunity") and reusable field conditions ("conditions") for while
- * face-up effects. */
+ * ("battle_immunity"), piercing ("piercing") and reusable field conditions
+ * ("conditions") for while face-up effects. */
 /* API 15: card_types names the existing type ids and declares monster ids
  * 24-255, with optional per-custom-type icons. It has no host entry: cards
  * and gameplay tables resolve its names. */
@@ -19,7 +19,10 @@
  * tower story's "expression" by name; API 18 for the card frames' keys
  * (card_layout's default_styles, a frame style's hand, images, library_icon
  * and own parts, atk_label/dfd_label/type_label, a part's hide or color, and
- * a card's frame_style). */
+ * a card's frame_style). API 20 adds the named field registry ("fields")
+ * and its optional field pictures. API 21 adds battle models a mod brings
+ * ("models", read from the mod's own files) and a card's "model" naming
+ * one. */
 /* API 3: before hooks may alter arguments/result, or set handled to replace
  * the operation (including cancellation). Highest priority runs first;
  * equal priorities follow registration/load order. After hooks observe the

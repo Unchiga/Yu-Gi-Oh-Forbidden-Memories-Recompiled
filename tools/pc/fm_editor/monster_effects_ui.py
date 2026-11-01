@@ -529,7 +529,7 @@ class EffectDialog(FormDialog):
         dialog.resizable(True, False)
         body.columnconfigure(1, weight=1)
         e = self.start
-        self.vars = {k: tk.StringVar(dialog) for k in ("when", "do", "card", "target", "type", "attribute", "attack",
+        self.vars = {k: tk.StringVar(dialog) for k in ("when", "do", "card", "field", "target", "type", "attribute", "attack",
                                                  "defense", "amount", "each", "each_type", "each_attribute",
                                                  "cond_mode", "modifier", "modifier_reset",
                                                  "attacker_type", "attacker_attribute", "attacker_stat",
@@ -553,6 +553,7 @@ class EffectDialog(FormDialog):
         self.when_hint.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
         self.do_box = line("do", "Does", ttk.Combobox(body, textvariable=self.vars["do"], state="readonly", width=48))
+        self.field_box = line("field", "Field", ttk.Entry(body, textvariable=self.vars["field"], width=30))
         line("card", "Magic card", self.choice(body, "card", [self.magic_label(c) for c in fx.MAGIC], lambda v: 0x14))
         self.target_box = line("target", "Whose", ttk.Combobox(body, textvariable=self.vars["target"],
                                                                state="readonly", width=48))
@@ -623,6 +624,7 @@ class EffectDialog(FormDialog):
         self.vars["when"].set(fx.when_label(e["when"]))
         self.vars["do"].set(fx.DO_LABELS[fx.DO.index(e["do"])])
         self.vars["card"].set(self.magic_label(e.get("card", 337)))
+        self.vars["field"].set(e.get("field", ""))
         target = e.get("target", fx.default_target(e["when"], e["do"]))
         self.vars["target"].set(fx.TARGET_LABELS[fx.TARGET.index(target)])
         self.vars["type"].set(e.get("type", ANY))
@@ -746,7 +748,7 @@ class EffectDialog(FormDialog):
         self.target_box.configure(values=[fx.TARGET_LABELS[fx.TARGET.index(t)] for t in targets])
         if self.chosen("target", fx.TARGET, fx.TARGET_LABELS) not in targets:
             self.vars["target"].set(fx.TARGET_LABELS[fx.TARGET.index(targets[0])])
-        shown = {"when", "do"} | {"magic": {"card"}, "boost": {"target", "type", "attribute", "attack", "defense"},
+        shown = {"when", "do"} | {"magic": {"card"}, "change_field": {"field"}, "boost": {"target", "type", "attribute", "attack", "defense"},
                                   "heal": {"amount"}, "damage": {"amount"},
                                   "destroy": {"target", "type", "attribute"},
                                   "battle_immunity": set(),
@@ -968,6 +970,8 @@ class EffectDialog(FormDialog):
         elif do == "magic":
             text = self.vars["card"].get()
             effect["card"] = int(text.split(" ", 1)[0]) if text[:1].isdigit() else 0
+        elif do == "change_field":
+            effect["field"] = self.vars["field"].get().strip()
         elif do in fx.FILTERED:
             effect["target"] = self.chosen("target", fx.TARGET, fx.TARGET_LABELS)
             for key in ("attack", "defense") if do == "boost" else ():

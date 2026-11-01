@@ -31,6 +31,7 @@
 #include "pc/cards/cards.h"
 #include "pc/cards/disc_art.h"
 #include "pc/cards/tables.h"
+#include "pc/cards/fields.h"
 #include "pc/text/glyphs.h"
 #include "pc/text/text.h"
 #include "pc/debug/log.h"
@@ -954,7 +955,10 @@ static void step_duel(void)
     gTower.armed = (s16)(floor + 1);
     gTower.rules = (s16)one->rules;
     func_80024DC8(-1, one->duelist, 0x6000, 0x6000);
-    gDuel_bTerrain = (u8)one->terrain;
+    /* An added field (7-255) is drawn on the retail board it borrows; the
+       game's own code only knows terrains 0-6. */
+    gDuel_bTerrain = (u8)Fields_Carrier(one->terrain);
+    if (one->terrain > FIELDS_RETAIL) Fields_Start(one->terrain);
     D_8009B368 = TOWER_MODE;
     LOG(LOG_MODS, "tower: floor %d against %s (field %d, rules %d)", floor + 1, Duelists_Name(one->duelist),
         one->terrain, one->rules);

@@ -34,9 +34,12 @@ typedef struct Entry {
     int absolute; /* offset and clut_offset are the disc's (resolve) */
     unsigned rank; /* the pack's place in the mods' load order: a later pack's reading of the same words wins */
     int position;  /* and the entry's in its manifest, so the order never rests on qsort's */
-    int made;      /* the port made the words (TexturePack_AddMade): the image is this rectangle of the PNG */
+    int made;      /* the port made the words (TexturePack_AddMade) */
     int see_through; /* a made image that keeps the PNG's alpha (TexturePack_AddMadeSeeThrough) */
     int source_x, source_y, source_w, source_h;
+    int source_grid_w, source_grid_h; /* source coordinates' reference grid, or 0 for literal pixels */
+    unsigned group; /* 0 global, otherwise the selected logical field bank */
+    int kept;       /* a disc image a data mod declared, back after every reload (kept) */
     struct Decode *decode; /* the read whose image and texels these are (admit); NULL: its own */
 } Entry;
 static void entry_release(Entry *entry);
@@ -78,8 +81,11 @@ static unsigned generation, map_generation; /* of the entries, of the maps (text
 /* prepare's pick for the primitive: the head entry (index) whose words it
  * samples and the sibling read with its depth and palette. */
 static int chosen_head = -1, chosen = -1;
+static unsigned selected_group;
 
 static int per_word(int bpp) { return bpp == 4 ? 4 : bpp == 8 ? 2 : 1; }
+static int install(void);
+static void paint(int x, int y, int w, int h);
 
 /* Images the port makes (TexturePack_AddMade): the entries, kept apart so
  * that every reload of the packs gets them back, and the blocks of bytes
@@ -91,6 +97,11 @@ typedef struct Block {
 } Block;
 static Entry *made;
 static int made_count;
+/* Disc images a data mod declared (TexturePack_AddDiscImageGroup: a field's
+ * board picture), kept the same way: a reload of the packs (a texture-pack
+ * mod toggled, an HD pack setting changed) gets them back. */
+static Entry *kept;
+static int kept_count;
 static Block *blocks;
 static int block_count;
 static uint32_t made_next = TEXTURE_MADE_BASE;
@@ -472,7 +483,7 @@ unsigned TexturePack_BankGeneration(void) { return bank_generation; }
 static int sibling(const Entry *a, const Entry *b)
 {
     return a->offset == b->offset && a->words == b->words && a->rows == b->rows && a->stride == b->stride &&
-           !a->row_offsets && !b->row_offsets;
+           a->group == b->group && !a->row_offsets && !b->row_offsets;
 }
 
 static int head_of(int index)
@@ -521,6 +532,7 @@ static int compare(const void *a, const void *b)
     if (x->stride != y->stride) return x->stride < y->stride ? -1 : 1;
     if (x->bpp != y->bpp) return x->bpp < y->bpp ? -1 : 1;
     if (x->clut_offset != y->clut_offset) return x->clut_offset < y->clut_offset ? -1 : 1;
+    if (x->group != y->group) return x->group < y->group ? -1 : 1;
     if (x->rank != y->rank) return x->rank > y->rank ? -1 : 1;
     return x->position < y->position ? -1 : x->position > y->position;
 }
@@ -583,41 +595,126 @@ static int read_png(const char *path, unsigned char **rgba, unsigned *width, uns
     return 1;
 }
 
+/* floor(value / n) as a multiply and a shift, for value < 2^24 and
+ * 1 <= n < RESAMPLE_EXACT: m = ceil(2^(24+l) / n) with 2^l >= n, so that
+ * m*n - 2^(24+l) < n <= 2^l, which is what makes it exact for every value
+ * below 2^24 (Granlund and Montgomery, "Division by invariant integers using
+ * multiplication", 1994, theorem 4.2). */
+typedef struct {
+    uint64_t m;
+    int shift;
+} Reciprocal;
+
+#define RESAMPLE_EXACT 65536u /* a texel's sum of 255s stays under 2^24 */
+#define RESAMPLE_WIDTHS 64    /* the column widths a row keeps a reciprocal for */
+
+static Reciprocal reciprocal(unsigned n)
+{
+    Reciprocal r;
+    int l = 0;
+    while ((1u << l) < n) l++;
+    r.shift = 24 + l;
+    r.m = (((uint64_t)1 << r.shift) + n - 1) / n;
+    return r;
+}
+
 /* The PNG, as the texture's own grid of 15-bit colors (words x rows at
  * bpp, the crop's columns): each texel takes the average of the image
  * pixels that fall on it (a pack image is any size), alpha below half is
- * the transparent color. NULL out of memory. */
+ * the transparent color. NULL out of memory.
+ *
+ * The same texels as averaging each texel's pixels in turn, read faster:
+ * a column's span of image pixels is worked out once, not once per texel;
+ * a texel row's pixels are summed image row by image row, in the order
+ * they are in memory; the alpha test is a >= 128 * n, which needs no
+ * division; and the averages divide by a reciprocal, the same quotient
+ * (sums of 65536 pixels and more, and columns 64 pixels wide or more,
+ * divide as before). Checked against the
+ * texel-by-texel loop on every entry of the Forbidden Memories HD pack and
+ * 48,925 other geometries (up, down, cropped, past the width), on Windows
+ * i686 and Android arm64: the same texels. On a Samsung A22's small cores
+ * (Cortex-A55, where the read-ahead threads mostly run) the pack's 1,957
+ * entries took 4.4 s instead of 10.1 s, against 17.6 s for reading their
+ * PNGs; on its big ones 2.1 s instead of 2.3 (29 October 2026). */
 static uint16_t *resample(const unsigned char *rgba, unsigned image_width, unsigned image_height, int words,
                           int rows, int bpp, int crop_left, int crop_width)
 {
-    int width = words * per_word(bpp), height = rows, x, y;
+    int width = words * per_word(bpp), height = rows, y, c;
+    int end = crop_left + crop_width < width ? crop_left + crop_width : width;
+    int columns = end > crop_left ? end - crop_left : 0;
     uint16_t *pixels = calloc((size_t)width * height, sizeof(uint16_t));
-    if (!pixels) return NULL;
+    int *first, *count, stamp[RESAMPLE_WIDTHS];
+    unsigned long *sum;
+    Reciprocal by[RESAMPLE_WIDTHS] = {{0, 0}};
+    if (!pixels || !columns) return pixels;
+    first = malloc((size_t)columns * 2 * sizeof(int));
+    sum = malloc((size_t)columns * 4 * sizeof(unsigned long));
+    if (!first || !sum) {
+        free(first);
+        free(sum);
+        free(pixels);
+        return NULL;
+    }
+    count = first + columns;
+    for (c = 0; c < columns; c++) {
+        int sx0 = (int)((long long)c * image_width / crop_width), sx1 = (int)((long long)(c + 1) * image_width / crop_width);
+        if (sx1 <= sx0) sx1 = sx0 + 1;
+        if (sx1 > (int)image_width) sx1 = (int)image_width;
+        first[c] = sx0;
+        count[c] = sx1 > sx0 ? sx1 - sx0 : 0;
+    }
+    for (c = 0; c < RESAMPLE_WIDTHS; c++) stamp[c] = -1;
     for (y = 0; y < height; y++) {
         int sy0 = (int)((long long)y * image_height / height), sy1 = (int)((long long)(y + 1) * image_height / height);
+        int sy, tall;
+        uint16_t *out = pixels + (size_t)y * width + crop_left;
         if (sy1 <= sy0) sy1 = sy0 + 1;
-        for (x = crop_left; x < crop_left + crop_width && x < width; x++) {
-            int px = x - crop_left;
-            int sx0 = (int)((long long)px * image_width / crop_width);
-            int sx1 = (int)((long long)(px + 1) * image_width / crop_width);
-            unsigned long r = 0, g = 0, b = 0, a = 0, n = 0;
-            int sx, sy;
-            if (sx1 <= sx0) sx1 = sx0 + 1;
-            for (sy = sy0; sy < sy1 && sy < (int)image_height; sy++) {
-                for (sx = sx0; sx < sx1 && sx < (int)image_width; sx++) {
-                    const unsigned char *p = rgba + ((size_t)sy * image_width + sx) * 4;
-                    r += p[0]; g += p[1]; b += p[2]; a += p[3]; n++;
+        if (sy1 > (int)image_height) sy1 = (int)image_height;
+        tall = sy1 > sy0 ? sy1 - sy0 : 0;
+        memset(sum, 0, (size_t)columns * 4 * sizeof(unsigned long));
+        for (sy = sy0; sy < sy1; sy++) {
+            const unsigned char *line = rgba + (size_t)sy * image_width * 4;
+            unsigned long *s = sum;
+            for (c = 0; c < columns; c++, s += 4) {
+                const unsigned char *p = line + (size_t)first[c] * 4;
+                unsigned long r = 0, g = 0, b = 0, a = 0;
+                int k;
+                for (k = count[c]; k > 0; k--, p += 4) {
+                    r += p[0]; g += p[1]; b += p[2]; a += p[3];
                 }
-            }
-            if (n && a / n >= 128) {
-                uint16_t color = (uint16_t)(((r / n) >> 3) | (((g / n) >> 3) << 5) | (((b / n) >> 3) << 10));
-                /* Black stays opaque: 0x8000 alone is transparent. */
-                pixels[y * width + x] = color ? (uint16_t)(color | 0x8000) : TEXTURE_SHADOW_BLACK;
-            } else {
-                pixels[y * width + x] = 0x8000; /* painted transparent: replaced, by nothing */
+                s[0] += r; s[1] += g; s[2] += b; s[3] += a;
             }
         }
+        for (c = 0; c < columns; c++) {
+            const unsigned long *s = sum + (size_t)c * 4;
+            unsigned long n = (unsigned long)count[c] * (unsigned long)tall, r, g, b;
+            uint16_t color;
+            if (!n || (n < RESAMPLE_EXACT ? s[3] < 128 * n : s[3] / n < 128)) {
+                out[c] = 0x8000; /* painted transparent: replaced, by nothing */
+                continue;
+            }
+            if (n < RESAMPLE_EXACT && count[c] < RESAMPLE_WIDTHS) {
+                /* A row's texels are one or two widths: a reciprocal each. */
+                Reciprocal *d = &by[count[c]];
+                if (stamp[count[c]] != y) {
+                    *d = reciprocal((unsigned)n);
+                    stamp[count[c]] = y;
+                }
+                r = (unsigned long)((s[0] * d->m) >> d->shift);
+                g = (unsigned long)((s[1] * d->m) >> d->shift);
+                b = (unsigned long)((s[2] * d->m) >> d->shift);
+            } else {
+                r = s[0] / n;
+                g = s[1] / n;
+                b = s[2] / n;
+            }
+            color = (uint16_t)((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10));
+            /* Black stays opaque: 0x8000 alone is transparent. */
+            out[c] = color ? (uint16_t)(color | 0x8000) : TEXTURE_SHADOW_BLACK;
+        }
     }
+    free(first);
+    free(sum);
     return pixels;
 }
 
@@ -635,14 +732,24 @@ static int load_pixels(Entry *entry)
         entry->failed = 1;
         return 0;
     }
-    if (entry->made) {
+    if (entry->source_w > 0 && entry->source_h > 0) {
         /* The part of the mod's picture its card shows, opaque over black
          * as the card's own art is made (art.c); or, for a picture with
          * see-through parts (the title's), as it is. */
         unsigned char *cut = NULL;
         size_t i, j;
-        if (entry->source_x + entry->source_w <= (int)image_width && entry->source_y + entry->source_h <= (int)image_height)
-            cut = malloc((size_t)entry->source_w * entry->source_h * 4);
+        int source_x = entry->source_x, source_y = entry->source_y, source_w = entry->source_w, source_h = entry->source_h;
+        if (entry->source_grid_w > 0 && entry->source_grid_h > 0) {
+            int right = (int)((long long)(source_x + source_w) * image_width / entry->source_grid_w);
+            int bottom = (int)((long long)(source_y + source_h) * image_height / entry->source_grid_h);
+            source_x = (int)((long long)source_x * image_width / entry->source_grid_w);
+            source_y = (int)((long long)source_y * image_height / entry->source_grid_h);
+            source_w = right - source_x;
+            source_h = bottom - source_y;
+        }
+        if (source_x >= 0 && source_y >= 0 && source_w > 0 && source_h > 0 &&
+            source_x + source_w <= (int)image_width && source_y + source_h <= (int)image_height)
+            cut = malloc((size_t)source_w * source_h * 4);
         if (!cut) {
             fprintf(stderr, "memories-pc: texture pack: %s changed since the card was made, or out of memory\n",
                     entry->file);
@@ -650,10 +757,10 @@ static int load_pixels(Entry *entry)
             entry->failed = 1;
             return 0;
         }
-        for (j = 0; j < (size_t)entry->source_h; j++) {
-            for (i = 0; i < (size_t)entry->source_w; i++) {
-                const unsigned char *p = rgba + (((entry->source_y + j) * image_width) + entry->source_x + i) * 4;
-                unsigned char *q = cut + (j * entry->source_w + i) * 4;
+        for (j = 0; j < (size_t)source_h; j++) {
+            for (i = 0; i < (size_t)source_w; i++) {
+                const unsigned char *p = rgba + (((source_y + j) * image_width) + source_x + i) * 4;
+                unsigned char *q = cut + (j * source_w + i) * 4;
                 if (entry->see_through) {
                     memcpy(q, p, 4);
                     continue;
@@ -666,8 +773,8 @@ static int load_pixels(Entry *entry)
         }
         free(rgba);
         rgba = cut;
-        image_width = (unsigned)entry->source_w;
-        image_height = (unsigned)entry->source_h;
+        image_width = (unsigned)source_w;
+        image_height = (unsigned)source_h;
     }
     entry->pixels = resample(rgba, image_width, image_height, entry->words, entry->rows, entry->bpp,
                              entry->crop_left, entry->crop_width);
@@ -681,6 +788,155 @@ static int load_pixels(Entry *entry)
     entry->image_width = (int)image_width;
     entry->image_height = (int)image_height;
     return 1;
+}
+
+/* A PNG's own pixel size, read without decoding it (png_image_begin_read
+ * alone fills in width/height; load_pixels's png_image_finish_read is what
+ * actually reads the pixels). For a caller that needs several
+ * TexturePack_AddDiscImageGroup crops of one file to succeed or fail
+ * together -- there is no rollback once an entry has installed -- so it can
+ * check every crop against the real dimensions first and add none of them
+ * if one would not fit, rather than leaving the pack with only the crops
+ * that happened to fit. 0 when the file cannot be read as a PNG. */
+int TexturePack_ImageSize(const char *path, int *width, int *height)
+{
+    png_image png = {0};
+    FILE *file;
+    if (!path) return 0;
+    png.version = PNG_IMAGE_VERSION;
+    file = fopen(path, "rb");
+    if (!file) return 0;
+    if (!png_image_begin_read_from_stdio(&png, file)) {
+        fclose(file);
+        return 0;
+    }
+    fclose(file);
+    *width = (int)png.width;
+    *height = (int)png.height;
+    png_image_free(&png);
+    return 1;
+}
+
+/* A copy of `entry`, before its pixels load, in `kept`. 0 out of memory. */
+static int keep_disc_image(const Entry *entry)
+{
+    Entry *more = realloc(kept, (size_t)(kept_count + 1) * sizeof(*kept));
+    if (!more) return 0;
+    kept = more;
+    kept[kept_count] = *entry;
+    kept[kept_count].file = strdup(entry->file);
+    if (!kept[kept_count].file) return 0;
+    kept[kept_count].kept = 1;
+    kept_count++;
+    entries[entry_count - 1].kept = 1;
+    return 1;
+}
+
+/* The kept disc images joined to the entries again, each read now, as
+ * TexturePack_AddDiscImageGroup reads them (a board upload may come before
+ * any lazy read could). 0 out of memory. */
+static int add_kept(void)
+{
+    Entry *more;
+    int i;
+    if (!kept_count) return 1;
+    more = realloc(entries, (size_t)(entry_count + kept_count) * sizeof(*entries));
+    if (!more) return 0;
+    entries = more;
+    for (i = 0; i < kept_count; i++) {
+        Entry *entry = &entries[entry_count];
+        *entry = kept[i];
+        entry->position = entry_count;
+        entry->file = strdup(kept[i].file);
+        if (!entry->file) return 0;
+        entry_count++;
+        if (!load_pixels(entry)) {
+            entry_count--;
+            free(entry->file);
+            entry_release(entry);
+        }
+    }
+    return 1;
+}
+
+int TexturePack_AddDiscImageGroup(unsigned group, const char *file, const char *archive, unsigned offset, int words,
+                                  int rows, int bpp, unsigned clut_offset, int clut_entries, int stride,
+                                  int crop_left, int crop_width, int source_x, int source_y, int source_w,
+                                  int source_h, unsigned rank)
+{
+    Entry entry, *more;
+    if (!file || !archive || !*archive || !*file || words < 1 || words > SOFT_GPU_WIDTH || rows < 1 ||
+        rows > SOFT_GPU_HEIGHT || (bpp != 4 && bpp != 8 && bpp != 16) || clut_entries < 0 ||
+        (clut_entries && !clut_offset) || stride < words || crop_left < 0 || crop_width < 1 ||
+        crop_left + crop_width > words * per_word(bpp) || source_x < 0 || source_y < 0 || source_w < 1 ||
+        source_h < 1 || entry_count >= 65535)
+        return 0;
+    memset(&entry, 0, sizeof(entry));
+    entry.file = strdup(file);
+    if (!entry.file) return 0;
+    strncpy(entry.archive, archive, sizeof(entry.archive) - 1);
+    entry.offset = offset;
+    entry.clut_offset = clut_offset;
+    entry.words = words;
+    entry.rows = rows;
+    entry.bpp = bpp;
+    entry.stride = (uint32_t)stride;
+    entry.crop_left = crop_left;
+    entry.crop_width = crop_width;
+    entry.clut_entries = clut_entries;
+    entry.source_x = source_x;
+    entry.source_y = source_y;
+    entry.source_w = source_w;
+    entry.source_h = source_h;
+    /* Fields give strip coordinates in the FM Editor's 256x254 board image;
+     * scale those coordinates to whichever PNG dimensions the author used. */
+    entry.source_grid_w = 256;
+    entry.source_grid_h = 254;
+    entry.group = group;
+    entry.rank = rank;
+    entry.position = entry_count;
+    more = realloc(entries, (size_t)(entry_count + 1) * sizeof(*entries));
+    if (!more) { free(entry.file); return 0; }
+    entries = more;
+    entries[entry_count++] = entry;
+    if (!keep_disc_image(&entry)) {
+        entry_count--;
+        free(entry.file);
+        return 0;
+    }
+    /* Field art must be ready before the very first terrain package upload:
+     * unlike a later field-card effect, Normal has no subsequent transfer
+     * that could repaint a lazily decoded replacement. */
+    if (!load_pixels(&entries[entry_count - 1])) {
+        /* Roll the entry back: left registered, a failed load could still
+         * win preferred_entry's rank/position tiebreak over a valid entry
+         * sharing its offset and geometry, shadowing it with no image. */
+        entry_count--;
+        free(entries[entry_count].file);
+        free(entries[entry_count].row_offsets);
+        entry_release(&entries[entry_count]);
+        free(kept[--kept_count].file);
+        return 0;
+    }
+    return install();
+}
+
+int TexturePack_AddDiscImage(const char *file, const char *archive, unsigned offset, int words, int rows, int bpp,
+                             unsigned clut_offset, int clut_entries, int stride, int crop_left, int crop_width,
+                             int source_x, int source_y, int source_w, int source_h, unsigned rank)
+{
+    return TexturePack_AddDiscImageGroup(0, file, archive, offset, words, rows, bpp, clut_offset, clut_entries,
+                                         stride, crop_left, crop_width, source_x, source_y, source_w, source_h, rank);
+}
+
+void TexturePack_SelectGroup(unsigned group)
+{
+    if (selected_group == group) return;
+    selected_group = group;
+    /* Board packages occupy these two texture columns.  Repainting their
+     * tagged words changes the selected field immediately, without another
+     * disc transfer or a global texture-pack reload. */
+    if (resolved && TextureDump_Tags) paint(640, 256, 128, 256);
 }
 
 /* The pack's image at its own resolution for the scaled picture: u and v
@@ -800,7 +1056,7 @@ static int locate(uint32_t offset, int *row, int *word)
                 found_word = (int)c;
             }
         }
-        if (found_row < 0) continue;
+        if (found_row < 0 || (entry->group && entry->group != selected_group)) continue;
         if (best < 0 || preferred_entry(entry, delta, &entries[best], best_delta)) {
             best = i;
             best_row = found_row;
@@ -854,7 +1110,7 @@ static int locate_texel(uint32_t offset, int texel, int *row, int *word)
                 c = (int)words;
             }
         }
-        if (r < 0) continue;
+        if (r < 0 || (entry->group && entry->group != selected_group)) continue;
         x = c * per_word(entry->bpp) + texel;
         if (x < entry->crop_left || x >= entry->crop_left + entry->crop_width) continue;
         if (best < 0 || preferred_entry(entry, delta, &entries[best], best_delta)) {
@@ -1091,6 +1347,7 @@ static void paint(int x, int y, int w, int h)
         wanted_resolve = 1;
         return;
     }
+    TextureDump_Touched(x, y, w, h);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             int vx = (x + i) & (SOFT_GPU_WIDTH - 1), vy = (y + j) & (SOFT_GPU_HEIGHT - 1), row, word, index, k, per;
@@ -1150,34 +1407,45 @@ static void paint(int x, int y, int w, int h)
     if (asked) wait_for_image(x, y, w, h);
 }
 
-/* The maps follow the words as the shadow does (texture_dump.c): cleared
- * with them, and moved with them. */
-static void forget(int x, int y, int w, int h)
+/* The entries other than 0 among `count` from `first`, which are cleared. */
+static unsigned clear_entries(uint16_t *first, size_t count)
 {
 #ifdef MEMORIES_TRANSLATED
+    return GuestRuntime_Clear16(first, count);
+#else
+    unsigned cleared = 0;
+    size_t i;
+    for (i = 0; i < count; i++) {
+        if (first[i]) {
+            first[i] = 0;
+            cleared++;
+        }
+    }
+    return cleared;
+#endif
+}
+
+/* The maps follow the words as the shadow does (texture_dump.c): cleared
+ * with them, and moved with them. The clean blocks the clear passes over
+ * (TextureDump_Clean) have no entry. */
+static void forget(int x, int y, int w, int h)
+{
     for (int j = 0; j < h; j++) {
         int left = w, column = x & (SOFT_GPU_WIDTH - 1);
         size_t row = (size_t)((y + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH;
         while (left > 0) {
-            int count = SOFT_GPU_WIDTH - column;
+            int count = SOFT_GPU_WIDTH - column, end, at;
             if (count > left) count = left;
-            map_generation += GuestRuntime_Clear16(entry_of + row + column, (size_t)count);
+            end = column + count;
+            for (at = TextureDump_PastClean(y + j, column, end); at < end;) {
+                int stop = TextureDump_PastUnclean(y + j, at, end);
+                map_generation += clear_entries(entry_of + row + at, (size_t)(stop - at));
+                at = TextureDump_PastClean(y + j, stop, end);
+            }
             left -= count;
             column = 0;
         }
     }
-#else
-    int i, j;
-    for (j = 0; j < h; j++) {
-        for (i = 0; i < w; i++) {
-            size_t at = (size_t)((y + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + ((x + i) & (SOFT_GPU_WIDTH - 1));
-            if (entry_of[at]) {
-                entry_of[at] = 0;
-                map_generation++;
-            }
-        }
-    }
-#endif
 }
 
 static void follow(int sx, int sy, int dx, int dy, int w, int h)
@@ -1362,6 +1630,7 @@ static void tag_block(int x, int y, uint32_t disc, int words, int rows)
     for (j = 0; j < rows; j++)
         for (i = 0; i < words; i++)
             TextureDump_Tags[(size_t)(y + j) * SOFT_GPU_WIDTH + x + i] = disc + (uint32_t)(j * words + i) * 2 + 1;
+    TextureDump_Touched(x, y, words, rows); /* after, as TextureDump_Loaded */
 }
 
 /* How far `disc` lies from the disc offsets tagged just around the block at
@@ -1489,6 +1758,33 @@ static int install(void)
     wanted_resolve = 1;
     generation++;
     return 1;
+}
+
+/* How many entries are registered, to remember before a caller adds
+ * several that must all succeed or none stay registered
+ * (TexturePack_RemoveEntriesFrom). */
+unsigned TexturePack_EntryCount(void) { return (unsigned)entry_count; }
+
+/* Un-registers every entry added since `mark` (a prior TexturePack_EntryCount),
+ * for a caller like fields.c's register_picture whose several
+ * TexturePack_AddDiscImageGroup calls, on one image, must all succeed or
+ * leave none of them installed. Safe only while entries stay in the order
+ * they were added in -- true until resolve() first sorts them
+ * (TexturePack_Service, "between frames, on the main thread"), which a
+ * mod's own loading always finishes well before. */
+void TexturePack_RemoveEntriesFrom(unsigned mark)
+{
+    int i;
+    if ((int)mark >= entry_count) return;
+    for (i = (int)mark; i < entry_count; i++) {
+        /* Added last, so their kept copies are the last ones too. */
+        if (entries[i].kept && kept_count) free(kept[--kept_count].file);
+        free(entries[i].file);
+        free(entries[i].row_offsets);
+        entry_release(&entries[i]);
+    }
+    entry_count = (int)mark;
+    install();
 }
 
 /* Made entries `first` on joined to the entries, each with its own copy of
@@ -2071,9 +2367,9 @@ void TexturePack_ReadStats(unsigned *images, unsigned *us, unsigned *max_us)
  * primitive the image it asked for before the next frame, as before, and
  * waits for it if need be (a replay with a pack checks the frames the
  * software GPU drew from those images, x64-data-mods). The wait is shorter:
- *  - the images one Service wants are read side by side, on DECODE_THREADS
- *    threads and on the main thread, which takes a waiting one itself
- *    (reads ahead leave one thread to these);
+ *  - the images one Service wants are read side by side, on the threads
+ *    decode_start starts and on the main thread, which takes a waiting one
+ *    itself (reads ahead leave one thread to these);
  *  - when a sheet's head is first given its image, the other readings of
  *    the same words (its other palettes) are read ahead, while nothing waits
  *    for them: the game draws them only later, the Build Deck's icons 6 s
@@ -2088,7 +2384,6 @@ void TexturePack_ReadStats(unsigned *images, unsigned *us, unsigned *max_us)
  * can run from the interrupt tick, where no lock may be taken. Made images
  * (TexturePack_AddMade) are still read where they are wanted (load_pixels).
  * No thread exists until a pack's image is first wanted. */
-#define DECODE_THREADS 3
 enum { DECODE_QUEUED, DECODE_RUNNING, DECODE_DONE };
 typedef struct Decode {
     struct Decode *next;
@@ -2108,7 +2403,7 @@ typedef struct Decode {
 static pthread_mutex_t decode_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t decode_work = PTHREAD_COND_INITIALIZER, decode_done = PTHREAD_COND_INITIALIZER;
 static Decode *decodes; /* oldest first: reads ahead are taken in the order asked */
-static int decode_threads, decode_threads_tried, decode_ahead_running;
+static int decode_threads, decode_threads_tried, decode_ahead_running, decode_ahead_most;
 static size_t decode_ahead_bytes, decode_ahead_limit;
 static unsigned decode_now_count, decode_ahead_count, decode_shared_count;
 
@@ -2183,7 +2478,8 @@ static void decode_finish(Decode *decode)
 }
 
 /* A job not started, those a Service waits for first. Reads ahead keep one
- * thread free, for what the next Service wants. */
+ * thread free, for what the next Service wants, and run at most
+ * decode_ahead_most at once (decode_start). */
 static Decode *decode_next(int only_now)
 {
     Decode *at, *ahead = NULL;
@@ -2192,7 +2488,7 @@ static Decode *decode_next(int only_now)
         if (at->now) return at;
         if (!ahead) ahead = at;
     }
-    return only_now || decode_ahead_running >= DECODE_THREADS - 1 ? NULL : ahead;
+    return only_now || decode_ahead_running >= decode_ahead_most ? NULL : ahead;
 }
 
 static void *decode_thread(void *unused)
@@ -2219,6 +2515,35 @@ static void *decode_thread(void *unused)
     return NULL;
 }
 
+/* How many threads read: one per core but the main thread's, 3 to 8. With
+ * the HD pack at Internal 4x, a duel's first two seconds read about fifty
+ * PNGs, one to five per Service, each about evenly inflate and resample.
+ * More threads shorten a Service that asks for several; one big sheet alone
+ * still takes what it takes on one core (80-100 ms on a Samsung A22), so
+ * all the waits together hardly change. Never fewer than 3, so a 2-4 core
+ * phone reads as it did. At most 8: a read holds its whole RGBA image (4 MB
+ * for a 1024x1024 sheet, 16 for 2048x2048) while it runs, and a 32-bit
+ * game has 2-4 GB for everything. The count configured, not online: a
+ * phone's idle cores can be off the moment the threads start, and they are
+ * started once. MEMORIES_PACK_THREADS sets it, 2 to 16. */
+static int decode_thread_count(void)
+{
+    const char *named = getenv("MEMORIES_PACK_THREADS");
+    long cores;
+    if (named && *named) {
+        long wanted = strtol(named, NULL, 10);
+        return wanted < 2 ? 2 : wanted > 16 ? 16 : (int)wanted;
+    }
+#ifdef _WIN32
+    cores = pthread_num_processors_np();
+#elif defined(_SC_NPROCESSORS_CONF) /* macOS has it only with _DARWIN_C_SOURCE */
+    cores = sysconf(_SC_NPROCESSORS_CONF);
+#else
+    cores = 0;
+#endif
+    return cores - 1 < 3 ? 3 : cores - 1 > 8 ? 8 : (int)(cores - 1);
+}
+
 /* The threads, the first time a pack's image is wanted. MEMORIES_PACK_READ_AHEAD
  * (megabytes, 0 none) sets how much may be read ahead; read here, on the
  * main thread. None started: the main thread reads all a Service wants. */
@@ -2226,9 +2551,10 @@ static void decode_start(void)
 {
     const char *named;
     sigset_t all, previous;
-    int i;
+    int i, wanted;
     if (decode_threads_tried) return;
     decode_threads_tried = 1;
+    wanted = decode_thread_count();
     named = getenv("MEMORIES_PACK_READ_AHEAD");
     /* A 32-bit game has 2-4 GB to hold every image it has read; a phone
      * holds the pack's images beside them and is the app the system ends
@@ -2247,16 +2573,23 @@ static void decode_start(void)
     /* The timer signal is the game's interrupt and must stay on the main thread. */
     sigfillset(&all);
     pthread_sigmask(SIG_BLOCK, &all, &previous);
-    for (i = 0; i < DECODE_THREADS; i++) {
+    for (i = 0; i < wanted; i++) {
         pthread_t thread;
         if (pthread_create(&thread, NULL, decode_thread, NULL)) break;
         pthread_detach(thread);
         decode_threads++;
     }
     pthread_sigmask(SIG_SETMASK, &previous, NULL);
-    if (decode_threads < DECODE_THREADS)
+    /* Reads ahead: 2 at once, as beside 3 threads before there were more,
+     * so the threads added go to what a Service waits for and a read ahead
+     * does not take a core from the game; one thread is kept from them,
+     * unless it is the only one (the main thread then reads what waits). */
+    pthread_mutex_lock(&decode_lock);
+    decode_ahead_most = decode_threads > 2 ? 2 : decode_threads > 1 ? decode_threads - 1 : 1;
+    pthread_mutex_unlock(&decode_lock);
+    if (decode_threads < wanted)
         fprintf(stderr, "memories-pc: texture pack: %d of %d read-ahead threads started\n", decode_threads,
-                DECODE_THREADS);
+                wanted);
 }
 
 static int decode_same(const Decode *decode, const Entry *entry)
@@ -2521,8 +2854,9 @@ void TexturePack_Unload(void)
     waiting_count = 0;
     generation++;
     map_generation++;
-    /* The images the port made stay: they are no pack's. */
-    if (made_count && (!add_made(0) || !install())) free_entries();
+    /* The images the port made stay: they are no pack's. So do the disc
+     * images a data mod declared (a field's board picture). */
+    if ((made_count || kept_count) && (!add_made(0) || !add_kept() || !install())) free_entries();
 }
 
 int TexturePack_EntryFor(int page_x, int page_y, int depth, int clut_x, int clut_y, int u, int v)

@@ -22,9 +22,9 @@ WHEN_HINTS = (
     "It won a battle that destroyed the other monster, and is still on the field: after the battle.",
     "All the while it is face up on the field: a boost that goes when it does.",
 )
-DO = ("magic", "boost", "heal", "damage", "destroy", "battle_immunity", "piercing")
+DO = ("magic", "boost", "heal", "damage", "destroy", "change_field", "battle_immunity", "piercing")
 DO_LABELS = ("Magic card effect", "Boost ATK/DEF", "Heal its owner's LP", "Damage the opponent's LP",
-             "Destroy monsters", "Cannot be destroyed by battle", "Piercing damage")
+             "Destroy monsters", "Change field", "Cannot be destroyed by battle", "Piercing damage")
 TARGET = ("self", "own", "others", "opponent", "all", "battle")
 TARGET_LABELS = ("This card", "Its owner's monsters", "Its owner's other monsters", "The opponent's monsters",
                  "Every monster", "The monster it battles")
@@ -183,6 +183,8 @@ MAX_EFFECTS = 8
 
 def allowed(when: str, do: str, target: str | None = None) -> bool:
     """What the game takes (monster_effects.c MonsterEffect_Allowed)."""
+    if do == "change_field":
+        return when not in ("face_up", "combat")
     if when == "face_up":
         return (do == "boost" and target != "battle") or (do in ("battle_immunity", "piercing") and (target is None or target == "self"))
     if do in ("battle_immunity", "piercing"):
@@ -377,6 +379,11 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
         if card not in MAGIC:
             return None
         out["card"] = card
+    elif do == "change_field":
+        field = effect.get("field")
+        if not isinstance(field, (str, int)) or isinstance(field, bool):
+            return None
+        out["field"] = field
     elif do == "battle_immunity":
         out["target"] = target
         if "modifier" in effect:
@@ -983,6 +990,8 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
         return f"Its owner gains {effect.get('amount')} LP{each}{conds}"
     if do == "damage":
         return f"The opponent loses {effect.get('amount')} LP{each}{conds}"
+    if do == "change_field":
+        return f"Change the field to {effect.get('field')}"
     target = effect.get("target", default_target(effect.get("when"), do))
     who = TARGET_LABELS[TARGET.index(target)] if target in TARGET else str(target)
     which = " ".join(str(effect[k]) for k in ("attribute", "type") if k in effect)

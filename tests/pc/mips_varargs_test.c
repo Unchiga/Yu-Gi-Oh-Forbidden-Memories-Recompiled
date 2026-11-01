@@ -36,6 +36,7 @@ int Psx_ccos(int angle) { return angle; }
 int Memories_Rand(void) { return 0; }
 int Memories_ScratchpadRetailView = 1; /* image.c: the desktops' layout */
 int Log_Wanted(LogChannel channel) { (void)channel; return 0; }
+int Log_Enabled(LogChannel channel) { (void)channel; return 0; }
 void Log_Printf(LogChannel channel, const char *format, ...) { (void)channel; (void)format; }
 void Crash_ReportFatal(const char *kind, const char *detail) { fprintf(stderr, "%s: %s\n", kind, detail); }
 

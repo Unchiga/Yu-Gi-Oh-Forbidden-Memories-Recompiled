@@ -2,6 +2,7 @@
 #include "monster_effects.h"
 #include "attributes.h"
 #include "cards.h"
+#include "fields.h"
 #include "pc/mods/json.h"
 #include "pc/mods/mods.h"
 #include "game/card_constants.h"
@@ -18,7 +19,7 @@ extern unsigned char gDuelEffect_abGroupByEffectId[];
 const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT] = {"summon", "flip", "draw", "combat", "destroyed",
                                                                  "destroy_opponent", "face_up"};
 const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT] = {"magic", "boost", "heal", "damage", "destroy",
-                                                             "battle_immunity", "piercing"};
+                                                             "change_field", "battle_immunity", "piercing"};
 const char *const MonsterEffect_TargetNames[MONSTER_TARGET_COUNT] = {"self", "own", "others", "opponent", "all",
                                                                      "battle"};
 const char *const MonsterEffect_EachNames[MONSTER_EACH_COUNT] = {"", "own", "opponent", "all"};
@@ -75,6 +76,8 @@ int MonsterEffect_MagicUsable(int card)
 
 int MonsterEffect_Allowed(int when, int action, int target)
 {
+    if (action == MONSTER_DO_CHANGE_FIELD)
+        return when != MONSTER_WHEN_FACE_UP && when != MONSTER_WHEN_COMBAT;
     if (when == MONSTER_WHEN_FACE_UP) {
         return (action == MONSTER_DO_BOOST && target != MONSTER_TARGET_BATTLE) ||
                (action == MONSTER_DO_BATTLE_IMMUNITY && target == MONSTER_TARGET_SELF) ||
@@ -607,11 +610,12 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
     }
     if (action < 0) {
         Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"do\" must be magic, boost, heal, damage, destroy, "
-                  "battle_immunity or piercing", index, n);
+                  "change_field, battle_immunity or piercing", index, n);
         return 0;
     }
     value = Json_Member(entry, "target");
-    target = value ? named(Json_String(value, NULL), MonsterEffect_TargetNames, MONSTER_TARGET_COUNT)
+    target = action == MONSTER_DO_CHANGE_FIELD ? MONSTER_TARGET_SELF
+             : value ? named(Json_String(value, NULL), MonsterEffect_TargetNames, MONSTER_TARGET_COUNT)
                    : card_effect ? ((action == MONSTER_DO_DAMAGE || action == MONSTER_DO_DESTROY)
                                         ? MONSTER_TARGET_OPPONENT : MONSTER_TARGET_OWN)
                                  : MonsterEffect_DefaultTarget(when, action);
@@ -634,7 +638,7 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
      * "self", "others" or battle target.  Its owner is the active side
      * while it resolves, so own/opponent/all work just as they do for a
      * monster effect. */
-    if (card_effect && (target == MONSTER_TARGET_SELF || target == MONSTER_TARGET_OTHERS ||
+    if (card_effect && action != MONSTER_DO_CHANGE_FIELD && (target == MONSTER_TARGET_SELF || target == MONSTER_TARGET_OTHERS ||
                         target == MONSTER_TARGET_BATTLE ||
                         ((action == MONSTER_DO_HEAL || action == MONSTER_DO_DAMAGE) &&
                          target == MONSTER_TARGET_ALL))) {
@@ -645,6 +649,14 @@ static int read_one(const char *mod, int index, int n, const JsonValue *entry, M
     out->action = (unsigned char)action;
     out->target = (unsigned char)target;
     switch (action) {
+    case MONSTER_DO_CHANGE_FIELD:
+        v = Fields_Value(Json_Member(entry, "field"));
+        if (v < 1) {
+            Mods_Note(mod, "cards[%d]: monster_effects[%d]: \"field\" must name a declared field", index, n);
+            return 0;
+        }
+        out->card = (unsigned short)v;
+        break;
     case MONSTER_DO_MAGIC:
         v = Cards_Reference(Json_Member(entry, "card"));
         if (v < 1 || v > CARD_COUNT || !MonsterEffect_MagicUsable(v)) {

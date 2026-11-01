@@ -27,7 +27,8 @@ def main():
     unused = sorted(
         n
         for n in names
-        if not n.startswith(("llvm.", "GuestRuntime_")) and n != "func_8005A188"
+        if not n.startswith(("llvm.", "GuestRuntime_"))
+        and n not in ("func_8005A188", "Cards_ModelStatsIndex")
     )
     (out / "unused.c").write_text(
         "#include <stdlib.h>\n"

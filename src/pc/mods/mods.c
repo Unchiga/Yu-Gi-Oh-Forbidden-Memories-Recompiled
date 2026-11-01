@@ -41,6 +41,7 @@
 #include "pc/sdk/disc.h"
 #include <ctype.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -50,6 +51,7 @@
 #include <time.h>
 #include <limits.h>
 #include "pc/compat/mman.h"
+#include "pc/memory.h" /* the mods' packet area */
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -63,6 +65,32 @@
 #define SECTOR 2048
 #define REGIONS_MAX 64
 #define PATCHES_MAX 1024
+/* One MODEL.MRG record (Model_LoadMonsterMerge, src/game/model.h). */
+#define MODEL_RECORD_SECTORS 0x114
+/* Where a native extra reads a mod's model's record (host_disc_read): model
+ * i from MODEL_SECTORS + i records on, past every position the drive can
+ * address, so no file of the disc moves for them. */
+#define MODEL_SECTORS 0x1000000
+#define MODELS_MAX 0x7FFF        /* model ids 0x8000 up, kept plus one in a u16 (pc/cards/cards.h) */
+#define MODEL_WINDOWS 2          /* the battle's two model slots */
+/* A bigger model's file: its model data (the record's first stage, 96
+ * sectors on the disc) is MODEL_GEOMETRY_MAX sectors at most, and the
+ * record's other stages, MODEL_TAIL_SECTORS, follow it. The battle parses
+ * that data in an arena of the slot's past guest RAM (MODEL_ARENA_BASE,
+ * held free by guest/image.c), the third arena for checking one first. */
+#define MODEL_STAGE0_SECTORS 96
+#define MODEL_TAIL_SECTORS (MODEL_RECORD_SECTORS - MODEL_STAGE0_SECTORS)
+#define MODEL_GEOMETRY_MAX 512
+/* A model's own texture pages ("texture_pages"), after the record's other
+ * stages: 64x256 halfwords of VRAM each, 16 sectors, the slot drawing from
+ * a texture bank of its own (src/pc/cards/battle_models.h). */
+#define MODEL_PAGE_SECTORS 16
+#define MODEL_PAGES_MAX 8
+#ifndef MODEL_ARENA_BASE        /* a test's own (tests/pc/disc_test.c) */
+#define MODEL_ARENA_BASE 0x90A00000u
+#endif
+#define MODEL_ARENA_SIZE 0x180000u
+#define MODEL_ARENAS (MODEL_WINDOWS + 1)
 
 #define OBJECT_MAX (64u << 20)   /* object_loader.c's own limit */
 
@@ -92,6 +120,7 @@ typedef struct {
     JsonDocument *manifest;
     const JsonValue *data;       /* the "data" array, applied when enabled */
     const JsonValue *cards;      /* the "cards" array: cards the mod adds (src/pc/cards) */
+    const JsonValue *models;     /* the "models" array: battle models the mod adds */
     char textures[PATH_MAX_];    /* a texture pack directory inside the mod, or empty */
     const JsonValue *assets;     /* named image replacements from mod.json, or NULL */
     char asset_dir[PATH_MAX_];   /* "assets": a directory whose PNGs are named by their path */
@@ -133,6 +162,38 @@ static int shut_down;   /* Mods_Shutdown has run: no mod code is called again */
 
 static Region regions[REGIONS_MAX];
 static int region_count;
+/* The models mods add ("models"): only their files' names, sizes and hashes
+ * are kept. A record is read when it is wanted, into the window of the
+ * battle slot that loads it (Mods_ModelWindow) or for a native extra
+ * (host_disc_read, at Mods_ModelSector). */
+typedef struct {
+    int mod;
+    const char *name;
+    const JsonValue *base;
+    char *path;
+    unsigned size, hash;
+    int stale;      /* its file was found gone or changed: not read again until the next launch */
+    int geometry;   /* sectors of model data of a model bigger than a record; 0 for a record */
+    int pages;      /* its own texture pages, after the record's other stages */
+} ModModel;
+static ModModel *models;
+static int model_count, model_capacity;
+static unsigned char *arenas[MODEL_ARENAS];
+/* The battle slots whose window holds a bigger model that has not been
+ * parsed yet (Mods_ModelPending). */
+static int pending[MODEL_WINDOWS];
+/* The texture pages of the model in each battle slot's window. */
+static unsigned char *window_pages[MODEL_WINDOWS];
+static int window_page_count[MODEL_WINDOWS];
+/* The battle slots' windows: MODEL_RECORD_SECTORS sectors each from
+ * window_lba, past the disc and the files it relocates, where the drive
+ * reads the record the slot's last load asked for. Mods_DiscSector reads
+ * them from interrupt context: the buffers are allocated once, with the
+ * first model, and only written while no transfer runs. */
+static unsigned char *window_data[MODEL_WINDOWS];
+static int window_model[MODEL_WINDOWS] = {-1, -1};
+static int window_lba = -1;
+static int read_model(int model, int first, int count, unsigned char *out);
 static Patch patches[PATCHES_MAX];
 static int patch_count;
 static int published_regions, published_patches;
@@ -320,7 +381,18 @@ static int host_disc_file_start(const MemoriesModHost *host, const char *iso_pat
 static int host_disc_read(const MemoriesModHost *host, int lba, int sectors, void *out)
 {
     (void)host;
-    return out && sectors > 0 ? Memories_DiscReadSectors(lba, sectors, out) : 0;
+    if (!out || sectors <= 0) return 0;
+    if (lba >= MODEL_SECTORS) return Mods_ModelRead(lba, sectors, out);
+    return Memories_DiscReadSectors(lba, sectors, out);
+}
+
+int Mods_ModelRead(int lba, int sectors, void *out)
+{
+    int first;
+    if (!out || sectors <= 0 || lba < MODEL_SECTORS) return 0;
+    first = (lba - MODEL_SECTORS) % MODEL_RECORD_SECTORS;
+    if (sectors > MODEL_RECORD_SECTORS - first) sectors = MODEL_RECORD_SECTORS - first;
+    return read_model((lba - MODEL_SECTORS) / MODEL_RECORD_SECTORS, first, sectors, out);
 }
 
 unsigned short (*Mods_PadSource)(int port);
@@ -349,6 +421,36 @@ static void *host_map_fixed(const MemoriesModHost *host, uintptr_t address, size
     got = Memories_MapFixed(wanted, size, PROT_READ | PROT_WRITE, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS,
                             -1, 0);
     return got == MAP_FAILED ? NULL : got;
+}
+
+/* The mods' packet area (API 22, src/pc/memory.h): mapped on the first ask,
+ * at the first 1 MiB of physical 8..16 MiB that is free, at its guest
+ * (direct, KSEG0) address so a packet's own pointer and its link agree. */
+static void *host_packet_area(const MemoriesModHost *host, size_t bytes)
+{
+#ifdef MEMORIES_TRANSLATED
+    (void)host;
+    (void)bytes;
+    return NULL; /* guest memory is not host memory there */
+#else
+    static int tried;
+    if (!owner(host)) return NULL;
+    if (!tried) {
+        uint32_t physical;
+        tried = 1;
+        for (physical = MEMORIES_MOD_PACKETS_FIRST; !Memories_ModPacketBase && physical < MEMORIES_MOD_PACKETS_LAST;
+             physical += MEMORIES_MOD_PACKETS_SIZE) {
+            if (Memories_MapModPackets(physical)) {
+                LOG(LOG_MODS, "packet area for mods at physical 0x%x, %u KiB", (unsigned)physical,
+                    (unsigned)(MEMORIES_MOD_PACKETS_SIZE / 1024));
+            }
+        }
+        if (!Memories_ModPacketBase) {
+            fprintf(stderr, "memories-pc: mods: no room for the mods' packet area: they use the game's\n");
+        }
+    }
+    return Memories_TakeModPackets(bytes);
+#endif
 }
 
 static int (*card_resolver)(const char *);
@@ -566,6 +668,7 @@ static void fill_host(Mod *mod)
     mod->host.sound_add = host_sound_add;
     mod->host.sound_play = host_sound_play;
     mod->host.sound_free = host_sound_free;
+    mod->host.packet_area = host_packet_area;
     mod->host.api = MEMORIES_MOD_API;
     mod->host.id = mod->id;
     mod->host.directory = mod->directory;
@@ -635,7 +738,210 @@ static int layout_disc_files(void)
         file->lba = next;
         next += file->reserved + 1;
     }
+    /* The battle slots' model windows follow the relocated files. */
+    window_lba = -1;
+    if (model_count) {
+        if (next < 0) next = Memories_DiscSectorCount();
+        if (next < 0 || next >= MEMORIES_DISC_MAX_LBA ||
+            MODEL_WINDOWS * MODEL_RECORD_SECTORS > MEMORIES_DISC_MAX_LBA - next - 1) return 0;
+        window_lba = next;
+    }
     return 1;
+}
+
+static int read_file(int model, unsigned char *out);
+
+/* Model `model`'s whole record, as read_file reads it, into `out` (a
+ * record's bytes); a file shorter than the record reads as zeros past its
+ * end. 0 for a model bigger than a record, which has no record of its own. */
+static int read_record(int model, unsigned char *out)
+{
+    if (model < 0 || model >= model_count || models[model].geometry || !read_file(model, out)) return 0;
+    memset(out + models[model].size, 0, (size_t)MODEL_RECORD_SECTORS * SECTOR - models[model].size);
+    return 1;
+}
+
+/* Model `model`'s file, whole (models[model].size bytes), into `out`: 0 when
+ * it cannot be read or is no longer what it was at startup, its size or its
+ * bytes (a mod updated in place is used from the next launch, as its other
+ * files are), so a parser is never handed a model that changed under it. */
+static int read_file(int model, unsigned char *out)
+{
+    size_t size, got = 0;
+    struct stat info;
+    int file;
+    if (model < 0 || model >= model_count || !models[model].path || models[model].stale) return 0;
+#ifdef _WIN32
+    file = open(models[model].path, O_RDONLY | O_BINARY);
+#else
+    file = open(models[model].path, O_RDONLY);
+#endif
+    /* Gone, another size or other bytes: stale. Not opened or not read
+     * whole (a scanner holding the file): tried again next time. */
+    if (file < 0) {
+        if (errno == ENOENT) models[model].stale = 1;
+        return 0;
+    }
+    if (fstat(file, &info) || (uint64_t)info.st_size != models[model].size) {
+        if (!fstat(file, &info) && (uint64_t)info.st_size != models[model].size) models[model].stale = 1;
+        close(file);
+        return 0;
+    }
+    size = models[model].size;
+    while (got < size) {
+#ifdef _WIN32
+        int chunk = _read(file, out + got, (unsigned)(size - got));
+#else
+        ssize_t chunk = read(file, out + got, size - got);
+#endif
+        if (chunk <= 0) break;
+        got += (size_t)chunk;
+    }
+    close(file);
+    if (got < size) return 0;
+    if (hash_bytes(2166136261u, out, size) != models[model].hash) {
+        models[model].stale = 1;
+        return 0;
+    }
+    return 1;
+}
+
+/* Sectors first to first + count of model `model`'s record, as read_record
+ * reads it; 0 when it cannot. */
+static int read_model(int model, int first, int count, unsigned char *out)
+{
+    unsigned char *record;
+    int ok;
+    if (first < 0 || count <= 0 || count > MODEL_RECORD_SECTORS - first) return 0;
+    if (first == 0 && count == MODEL_RECORD_SECTORS) return read_record(model, out) ? count : 0;
+    if (!(record = malloc((size_t)MODEL_RECORD_SECTORS * SECTOR))) return 0;
+    ok = read_record(model, record);
+    if (ok) memcpy(out, record + (size_t)first * SECTOR, (size_t)count * SECTOR);
+    free(record);
+    return ok ? count : 0;
+}
+
+int Mods_ModelCount(void) { return model_count; }
+int Mods_Model(int i, const char **name, const JsonValue **base, int *mod)
+{
+    if (i < 0 || i >= model_count || !models[i].path) return -1;
+    if (name) *name = models[i].name;
+    if (base) *base = models[i].base;
+    if (mod) *mod = models[i].mod;
+    return 0;
+}
+
+int Mods_ModelSector(int i)
+{
+    return i >= 0 && i < model_count && models[i].path && !models[i].stale && !models[i].geometry
+               ? MODEL_SECTORS + i * MODEL_RECORD_SECTORS : -1;
+}
+
+/* Fills battle slot `slot`'s window with model i's record, and for a bigger
+ * model its arena with the model data (`data`: not when a save state is
+ * loaded, which brings the arena as the game left it). */
+static int fill_window(int slot, int i, int data)
+{
+    unsigned char *file = NULL;
+    int ok;
+    window_model[slot] = -1;
+    pending[slot] = 0;
+    window_page_count[slot] = 0;
+    if (i >= 0 && i < model_count && models[i].geometry) {
+        size_t front = (size_t)models[i].geometry * SECTOR, stage0 = (size_t)MODEL_STAGE0_SECTORS * SECTOR;
+        ok = arenas[slot] && (file = malloc(models[i].size)) != NULL && read_file(i, file);
+        if (ok) {
+            /* The record's first stage is consumed without being copied
+             * (Mods_ModelPending): the window holds the rest. */
+            memset(window_data[slot], 0, stage0);
+            memcpy(window_data[slot] + stage0, file + front, (size_t)MODEL_TAIL_SECTORS * SECTOR);
+            if (models[i].pages) {
+                size_t bytes = (size_t)models[i].pages * MODEL_PAGE_SECTORS * SECTOR;
+                if (!window_pages[slot]) window_pages[slot] = malloc((size_t)MODEL_PAGES_MAX * MODEL_PAGE_SECTORS * SECTOR);
+                ok = window_pages[slot] != NULL;
+                if (ok) memcpy(window_pages[slot], file + front + (size_t)MODEL_TAIL_SECTORS * SECTOR, bytes);
+                if (ok) window_page_count[slot] = models[i].pages;
+            }
+            if (ok && data) {
+                memcpy(arenas[slot], file, front);
+                memset(arenas[slot] + front, 0, MODEL_ARENA_SIZE - front);
+                pending[slot] = 1;
+            }
+        }
+        free(file);
+    } else {
+        ok = read_record(i, window_data[slot]);
+    }
+    /* The record as it was at startup, or nothing: the caller then loads
+     * another, and a transfer a save state resumes reads zeros. */
+    if (!ok) {
+        memset(window_data[slot], 0, (size_t)MODEL_RECORD_SECTORS * SECTOR);
+        say("model %d: %s cannot be read as it was at startup", i,
+            i >= 0 && i < model_count && models[i].path ? models[i].path : "(none)");
+        return -1;
+    }
+    window_model[slot] = i;
+    return window_lba + slot * MODEL_RECORD_SECTORS;
+}
+
+int Mods_ModelWindow(int slot, int i)
+{
+    if (slot < 0 || slot >= MODEL_WINDOWS || window_lba < 0 || !window_data[slot]) return -1;
+    return fill_window(slot, i, 1);
+}
+
+void Mods_ModelForget(int slot)
+{
+    if (slot < 0 || slot >= MODEL_WINDOWS || !window_data[slot]) return;
+    window_model[slot] = -1;
+    pending[slot] = 0;
+    window_page_count[slot] = 0;
+    memset(window_data[slot], 0, (size_t)MODEL_RECORD_SECTORS * SECTOR);
+}
+
+int Mods_ModelPending(int slot) { return slot >= 0 && slot < MODEL_WINDOWS && pending[slot]; }
+const unsigned char *Mods_ModelPages(int slot, int *count)
+{
+    int pages = slot >= 0 && slot < MODEL_WINDOWS ? window_page_count[slot] : 0;
+    if (count) *count = pages;
+    return pages ? window_pages[slot] : NULL;
+}
+int *Mods_ModelPendings(unsigned *size)
+{
+    *size = sizeof(pending);
+    return pending;
+}
+void Mods_ModelParsed(int slot) { if (slot >= 0 && slot < MODEL_WINDOWS) pending[slot] = 0; }
+
+unsigned char *Mods_ModelArena(int arena, unsigned *size)
+{
+    if (size) *size = MODEL_ARENA_SIZE;
+    return arena >= 0 && arena < MODEL_ARENAS ? arenas[arena] : NULL;
+}
+
+int Mods_ModelGeometry(int i)
+{
+    return i >= 0 && i < model_count && models[i].path ? models[i].geometry * SECTOR : 0;
+}
+
+int *Mods_ModelWindows(unsigned *size)
+{
+    *size = sizeof(window_model);
+    return window_model;
+}
+
+void Mods_ModelRebind(void)
+{
+    for (int slot = 0; slot < MODEL_WINDOWS; slot++) {
+        pending[slot] = 0;
+        if (window_model[slot] >= 0) fill_window(slot, window_model[slot], 0);
+    }
+}
+
+static int model_window(int lba)
+{
+    if (window_lba < 0 || lba < window_lba || lba - window_lba >= MODEL_WINDOWS * MODEL_RECORD_SECTORS) return -1;
+    return (lba - window_lba) / MODEL_RECORD_SECTORS;
 }
 
 int Mods_DiscFileInfo(int retail_lba, int *lba, unsigned *size)
@@ -662,6 +968,10 @@ static int virtual_file(int lba)
 int Mods_DiscSource(int lba, int *source)
 {
     int i = virtual_file(lba);
+    if (overrides_live && model_window(lba) >= 0) {
+        *source = -1;
+        return 1;
+    }
     if (i < 0) return 0;
     *source = lba - disc_files[i].lba < disc_files[i].retail_sectors
         ? disc_files[i].retail_lba + lba - disc_files[i].lba : -1;
@@ -684,7 +994,16 @@ unsigned Mods_DiscSignature(void)
     unsigned hash = 2166136261u;
     int relocated = 0;
     for (int i = 0; i < disc_file_count; i++) relocated |= disc_files[i].reserved != 0;
-    if (!region_count && !patch_count && !relocated) return 0;
+    if (!region_count && !patch_count && !relocated && !model_count) return 0;
+    if (model_count) {   /* without models the signature is the one it always was */
+        for (int i = 0; i < model_count; i++) {
+            hash = hash_bytes(hash, &models[i].hash, sizeof(models[i].hash));
+            hash = hash_bytes(hash, &models[i].size, sizeof(models[i].size));
+            /* the pages move where the model data ends: a model with none hashes as before */
+            if (models[i].pages) hash = hash_bytes(hash, &models[i].pages, sizeof(models[i].pages));
+        }
+        hash = hash_bytes(hash, &window_lba, sizeof(window_lba));
+    }
     for (int i = 0; i < disc_file_count; i++) {
         const DiscFile *file = &disc_files[i];
         hash = hash_bytes(hash, &file->retail_lba, sizeof(file->retail_lba));
@@ -727,6 +1046,11 @@ static void publish_overrides(void)
         if (disc_files[i].lba < low) low = disc_files[i].lba;
         if (disc_files[i].lba + disc_files[i].sectors - 1 > high)
             high = disc_files[i].lba + disc_files[i].sectors - 1;
+    }
+    if (window_lba >= 0) {
+        if (window_lba < low) low = window_lba;
+        if (window_lba + MODEL_WINDOWS * MODEL_RECORD_SECTORS - 1 > high)
+            high = window_lba + MODEL_WINDOWS * MODEL_RECORD_SECTORS - 1;
     }
     published_regions = region_count;
     published_patches = patch_count;
@@ -776,6 +1100,7 @@ static void drop_overrides(int mod)
      * them would briefly hide every relocated file from the drive. */
     for (i = 0; i < region_count; i++) owned |= regions[i].mod == mod;
     for (i = 0; i < patch_count; i++) owned |= patches[i].mod == mod;
+    for (i = 0; i < model_count; i++) owned |= models[i].mod == mod;
     if (!owned) return;
     overrides_live = 0;   /* the drive model stops looking before anything goes */
     __asm__ volatile("" ::: "memory");
@@ -789,6 +1114,17 @@ static void drop_overrides(int mod)
         free(patches[i].bytes);
     }
     patch_count = kept;
+    /* Once the disc's layout is frozen the cards have taken the models'
+     * places (Cards_ModelId): a dropped mod's models stay in the list, with
+     * no file, so that no other mod's moves; they load as their bases. */
+    for (i = 0, kept = 0; i < model_count; i++) {
+        if (models[i].mod != mod) { models[kept++] = models[i]; continue; }
+        for (int slot = 0; slot < MODEL_WINDOWS; slot++) if (window_model[slot] == i) window_model[slot] = -1;
+        free(models[i].path);
+        models[i].path = NULL;
+        if (disc_layout_frozen) kept++;
+    }
+    model_count = kept;
     publish_overrides();
 }
 
@@ -945,6 +1281,131 @@ static int add_region(Mod *mod, int index, int named, int lba, int sectors, cons
     return 1;
 }
 
+/* One of a mod's "models": a MODEL.MRG record of its own, read from the
+ * mod's file whenever the game or a native extra wants it. */
+/* The arenas of the bigger models, mapped once, with the first one. */
+static int map_arenas(void)
+{
+    for (int i = 0; i < MODEL_ARENAS; i++) {
+        void *got;
+        if (arenas[i]) continue;
+        got = Memories_MapFixed((void *)(uintptr_t)(MODEL_ARENA_BASE + (unsigned)i * MODEL_ARENA_SIZE),
+                                MODEL_ARENA_SIZE, PROT_READ | PROT_WRITE,
+                                MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (got == MAP_FAILED) return 0;
+        arenas[i] = got;
+    }
+    return 1;
+}
+
+static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
+{
+    const char *name = Json_String(Json_Member(entry, "name"), NULL);
+    const char *file = Json_String(Json_Member(entry, "file"), NULL);
+    char path[PATH_MAX_];
+    struct stat info;
+    unsigned char *image;
+    const JsonValue *pages_value = Json_Member(entry, "texture_pages");
+    long pages = Json_Number(pages_value, 0);
+    int handle, geometry = 0;
+    if (!name || !*name || !file) {
+        note(mod, "models[%d] needs a \"name\" and a \"file\"", at);
+        return 0;
+    }
+    if (model_count >= MODELS_MAX) {
+        note(mod, "more than %d models", MODELS_MAX);
+        return 0;
+    }
+    if (pages_value && (pages < 0 || pages > MODEL_PAGES_MAX || Json_TypeOf(pages_value) != JSON_NUMBER)) {
+        note(mod, "models[%d]: \"texture_pages\" is a count from 0 to %d", at, MODEL_PAGES_MAX);
+        return 0;
+    }
+    if (!Paths_Contained(file)) {
+        note(mod, "models[%d]: %s is outside the mod", at, file);
+        return 0;
+    }
+    if (snprintf(path, sizeof(path), "%s/%s", mod->directory, file) >= (int)sizeof(path)) return 0;
+#ifdef _WIN32
+    handle = open(path, O_RDONLY | O_BINARY);
+#else
+    handle = open(path, O_RDONLY);
+#endif
+    if (handle < 0 || fstat(handle, &info) || info.st_size <= 0) {
+        if (handle >= 0) close(handle);
+        note(mod, "cannot read %s", file);
+        return 0;
+    }
+    if (pages && (uint64_t)info.st_size <= (uint64_t)MODEL_RECORD_SECTORS * SECTOR) {
+        close(handle);
+        note(mod, "%s: its %ld texture pages would follow the record's other stages, and it is no larger than a "
+                  "record; model rejected", file, pages);
+        return 0;
+    }
+    if ((uint64_t)info.st_size > (uint64_t)MODEL_RECORD_SECTORS * SECTOR) {
+        /* A bigger model: whole sectors, model data, the record's other
+         * stages, then its texture pages (notes/modding.md, "Bigger models"). */
+        uint64_t sectors = (uint64_t)info.st_size / SECTOR, after = MODEL_TAIL_SECTORS + (uint64_t)pages * MODEL_PAGE_SECTORS;
+        if (info.st_size % SECTOR || sectors <= after || sectors - after > MODEL_GEOMETRY_MAX ||
+            (pages && sectors - after < MODEL_STAGE0_SECTORS)) {
+            close(handle);
+            note(mod, "%s is larger than a model record (%d sectors) and is not a bigger model (whole sectors, "
+                      "%d of model data at most, %d at least with pages, then the record's other %d, then %ld "
+                      "texture pages of %d); "
+                      "model rejected",
+                 file, MODEL_RECORD_SECTORS, MODEL_GEOMETRY_MAX, MODEL_STAGE0_SECTORS, MODEL_TAIL_SECTORS, pages,
+                 MODEL_PAGE_SECTORS);
+            return 0;
+        }
+        if (!map_arenas()) {
+            close(handle);
+            note(mod, "%s: no room for a bigger model's data at 0x%X; model rejected", file, MODEL_ARENA_BASE);
+            return 0;
+        }
+        geometry = (int)(sectors - after);
+    }
+    /* Read once, for its hash (the mod set's signature, which save states check). */
+    image = map_file(handle, (size_t)info.st_size);
+    close(handle);
+    if (!image) {
+        note(mod, "cannot read %s", file);
+        return 0;
+    }
+    if (model_count == model_capacity) {
+        int capacity = model_capacity ? model_capacity * 2 : 16;
+        ModModel *grown = realloc(models, (size_t)capacity * sizeof(*models));
+        if (!grown) { unmap_file(image, (size_t)info.st_size); return 0; }
+        models = grown;
+        model_capacity = capacity;
+    }
+    for (int slot = 0; slot < MODEL_WINDOWS; slot++)
+        if (!window_data[slot] && !(window_data[slot] = calloc(MODEL_RECORD_SECTORS, SECTOR))) {
+            unmap_file(image, (size_t)info.st_size);
+            return 0;
+        }
+    for (int i = 0; i < model_count; i++)
+        if (!strcmp(models[i].name, name)) {
+            if (models[i].mod == index) warn(mod, 0, "two models are named %s; the later one wins", name);
+            else warn(mod, 0, "model %s is also %s's; the later one wins", name, mods[models[i].mod].id);
+            break;
+        }
+    models[model_count].mod = index;
+    models[model_count].name = name;
+    models[model_count].base = Json_Member(entry, "base");
+    models[model_count].size = (unsigned)info.st_size;
+    models[model_count].hash = hash_bytes(2166136261u, image, (size_t)info.st_size);
+    models[model_count].stale = 0;
+    models[model_count].geometry = geometry;
+    models[model_count].pages = (int)pages;
+    unmap_file(image, (size_t)info.st_size);
+    if (!(models[model_count].path = strdup(path))) return 0;
+    model_count++;
+    if (!layout_disc_files()) {
+        note(mod, "virtual disc address space exhausted by the model windows");
+        return 0;   /* apply_overrides rolls back every contribution of this mod */
+    }
+    return 1;
+}
+
 /* The "data" array of a manifest, once the mod is applied. */
 static int apply_overrides(Mod *mod, int index)
 {
@@ -1030,10 +1491,16 @@ static int apply_overrides(Mod *mod, int index)
             }
         }
     }
+    for (i = 0; i < Json_Count(mod->models); i++)
+        if (!add_model(mod, index, Json_At(mod->models, i), i)) goto failed;
     publish_overrides();
     if (region_count || patch_count) {
         say("%s: %d replaced regions, %d patched runs, sectors %d to %d",
             mod->id, region_count, patch_count, override_low, override_high);
+    }
+    if (Json_Count(mod->models)) {
+        say("%s: %d models (%d in all), the battle's windows at sector %d",
+            mod->id, Json_Count(mod->models), model_count, window_lba);
     }
     return 1;
 streamed:
@@ -1072,6 +1539,10 @@ int Mods_DiscSector(int lba, void *user_data)
     if (!overrides_live) return 0;
     __asm__ volatile("" ::: "memory");
     if (lba < override_low || lba > override_high) return 0;
+    if ((i = model_window(lba)) >= 0) {   /* a battle slot's model (Mods_ModelWindow) */
+        memcpy(out, window_data[i] + (size_t)((lba - window_lba) % MODEL_RECORD_SECTORS) * SECTOR, SECTOR);
+        return 1;
+    }
     named = virtual_file(lba);
     if (named >= 0) {
         relative = lba - disc_files[named].lba;
@@ -1292,7 +1763,7 @@ static const char *const manifest_keys[] = {
     "settings", "fusions", "equips", "rituals", "drops", "decks", "duelists", "text", "font",
     "chest_overflow", "terrain_bonus", "trap_thresholds", "equip_bonus_default", "passwords", "starter",
     "starter_pools", "title", "menu", "limits", "guardian_stars", "attributes", "packs", "pack_shop",
-    "card_text_colors", "card_layout", "palette_ramps", "ui", "tower", "card_types",
+    "card_text_colors", "card_layout", "palette_ramps", "ui", "tower", "card_types", "fields", "models",
 };
 
 /* How many letters to add, remove or change to turn one word into the
@@ -1466,6 +1937,11 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         mod->broken = 1;
         note(mod, "\"cards\" is not an array");
     }
+    mod->models = Json_Member(root, "models");
+    if (mod->models && Json_TypeOf(mod->models) != JSON_ARRAY) {
+        mod->broken = 1;
+        note(mod, "\"models\" is not an array");
+    }
     /* Data overrides change what the game loaded on its way up, so they are
      * only whole while the game starts with them in place; the cards a mod
      * adds are counted once, when the game starts. */
@@ -1474,7 +1950,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         const JsonValue *entry = Json_At(mod->data, i);
         if (Json_Member(entry, "file") && Json_Member(entry, "replace")) mod->restart = 1;
     }
-    if (Json_Count(mod->cards)) mod->restart = 1;
+    if (Json_Count(mod->cards) || Json_Count(mod->models)) mod->restart = 1;
     {   /* So are the rule tables (src/pc/cards/tables.c), the starter decks
          * (src/pc/cards/starter.c) and a translation (src/pc/text): all are
          * read once, at startup. */
@@ -1482,7 +1958,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
                                              "text", "font", "terrain_bonus", "trap_thresholds",
                                              "chest_overflow", "passwords", "starter", "starter_pools",
                                              "limits", "guardian_stars", "attributes", "packs", "pack_shop",
-                                             "palette_ramps", "tower"};
+                                             "palette_ramps", "tower", "fields"};
         for (size_t t = 0; t < sizeof(tables) / sizeof(tables[0]); t++) {
             const JsonValue *value = Json_Member(root, tables[t]);
             /* "text": "text.txt" is one file named as a string. */

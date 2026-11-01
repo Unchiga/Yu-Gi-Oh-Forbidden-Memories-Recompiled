@@ -16,6 +16,7 @@
 #include "game/ai_opponent_data.h"
 #include "game/duel_side_state.h"
 #include "game/duel_init_scene.h"
+#include "game/duel_effect_resource_record.h"
 #include "game/display_object.h"
 #include "duel_ui.h"
 #include "pc/platform/ui_config.h"
@@ -37,6 +38,26 @@ static int checked;
 static int cpu_duel(void)
 {
     return (D_8009B26C & 31) == 3 && D_8009B26E == 0x81 && D_8009B360[0] < 0 && gDuel_bOpponentID >= 0;
+}
+
+/* A duel preview uses a linked pair of display objects. Check the existing
+ * resources rather than tracking a separate flag for each duel action. */
+static int large_card_preview_visible(void)
+{
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        const DuelEffectResourceRecord *entry = &D_800EA0E8[i];
+        const DisplayObject *card = (const DisplayObject *)entry->object_00;
+        const DisplayObject *details = (const DisplayObject *)entry->object_04;
+
+        if (!card || !details || details->field_54 != card) continue;
+        if ((card->flags & DISPLAY_OBJECT_RENDERABLE_MASK) != DISPLAY_OBJECT_RENDERABLE_MASK) continue;
+        if ((details->flags & DISPLAY_OBJECT_RENDERABLE_MASK) != DISPLAY_OBJECT_RENDERABLE_MASK) continue;
+        if (details->attribute & 0x80000000u) continue; /* GsDOFF */
+        return 1;
+    }
+    return 0;
 }
 
 /* Once a duel, as the result screen opens: the same sum over the player's
@@ -66,6 +87,7 @@ static void update(void)
     if (phase < PHASE_FIRST_DRAW || phase > PHASE_LAST_PLAY) return;
     checked = 0;
     if (phase == PHASE_CARD_USE) return;
+    if (large_card_preview_visible()) return;
     /* The card viewer, a card's effect being shown, the quit dialog. */
     if (gDuel_bEffectState || gDuel_wCardEffectFlags || gDuel_bQuitDialogState || !D_8009B214) return;
     /* The plate goes with the FIELD box (Duel_InitScene's sprite), which

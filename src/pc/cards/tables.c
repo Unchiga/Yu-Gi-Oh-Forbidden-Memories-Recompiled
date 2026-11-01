@@ -17,6 +17,7 @@
  * on top of it. */
 #include "tables.h"
 #include "cards.h"
+#include "fields.h"
 #include "pc/free_duel/duelists.h"
 #include "pc/mods/mods.h"
 #include "pc/mods/json.h"
@@ -231,7 +232,7 @@ static FixedDeck *fixed_decks;
 static int fixed_count, fixed_room;
 static long overflow_starchips;          /* per card the chest has no room for */
 static int chest_limit;                  /* copies the chest keeps; 0: the disc's 250 */
-#define TERRAINS 6                        /* DUEL_TERRAIN_COUNT: Forest to Yami, 1-6 */
+#define TERRAINS FIELDS_MAX
 /* Retail types use the card record's five-bit field; custom monster types
  * use cards.c's logical type bank.  A mod may provide a bonus for any
  * declared monster type. */
@@ -1527,22 +1528,10 @@ const unsigned short *Tables_Pool(int pool, const unsigned short *retail)
 
 /* The terrains by gDuel_bTerrain's value, 1-6, as the field cards name them,
  * and the English words for the last three. */
-static const char *const terrain_names[TERRAINS][2] = {
-    {"Forest", NULL}, {"Wasteland", NULL}, {"Mountain", NULL}, {"Sogen", "Meadow"}, {"Umi", "Sea"}, {"Yami", "Dark"}};
-
 int Tables_TerrainNamed(const char *text)
 {
-    int terrain;
-    if (strspn(text, "0123456789") == strlen(text) && *text) {
-        terrain = atoi(text);
-        return terrain >= 1 && terrain <= TERRAINS ? terrain : -1;
-    }
-    for (terrain = 0; terrain < TERRAINS; terrain++) {
-        if (same_letters(text, terrain_names[terrain][0]) ||
-            (terrain_names[terrain][1] && same_letters(text, terrain_names[terrain][1])))
-            return terrain + 1;
-    }
-    return -1;
+    Fields_Build();
+    return Fields_Find(text);
 }
 
 /* "terrain_bonus": { terrain: { type: points }, "replace": true }. A listed
@@ -1554,7 +1543,7 @@ static void read_terrain_bonus(const char *mod, const JsonValue *table)
     char where[128];
     if (!table) return;
     if (Json_TypeOf(table) != JSON_OBJECT) {
-        Mods_Note(mod, "\"terrain_bonus\" is an object of terrains (Forest, Wasteland, Mountain, Sogen, Umi, Yami)");
+        Mods_Note(mod, "\"terrain_bonus\" is an object of fields");
         return;
     }
     if (Json_Bool(Json_Member(table, "replace"), 0)) {
@@ -1569,7 +1558,7 @@ static void read_terrain_bonus(const char *mod, const JsonValue *table)
         snprintf(where, sizeof(where), "terrain_bonus \"%s\"", name);
         terrain = Tables_TerrainNamed(name);
         if (terrain < 0) {
-            Mods_Note(mod, "%s: the terrains are Forest, Wasteland, Mountain, Sogen, Umi and Yami", where);
+            Mods_Note(mod, "%s: name a declared field", where);
             continue;
         }
         if (Json_TypeOf(entry) != JSON_OBJECT) {
@@ -1599,7 +1588,7 @@ static void read_terrain_bonus(const char *mod, const JsonValue *table)
 
 int Tables_TerrainBonus(int terrain, int type, int *bonus)
 {
-    if (terrain < 1 || terrain > TERRAINS || type < 0 || type >= TABLE_TYPE_LIMIT || !Cards_IsMonsterType(type)) return 0;
+    if (terrain < 1 || terrain > TERRAINS || !Fields_Declared(terrain) || type < 0 || type >= TABLE_TYPE_LIMIT || !Cards_IsMonsterType(type)) return 0;
     if (!terrain_listed[terrain - 1][type]) return 0;
     *bonus = terrain_bonus[terrain - 1][type];
     return 1;
@@ -2406,6 +2395,7 @@ static void forget_pools(void)
 
 void Tables_AddFrom(const char *mod, const char *directory, const JsonValue *manifest)
 {
+    Fields_Build();
     forget_pools();
     pool_directory = directory;
     read_fusions(mod, Json_Member(manifest, "fusions"));

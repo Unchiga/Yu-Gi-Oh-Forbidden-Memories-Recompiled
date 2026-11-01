@@ -12,6 +12,10 @@ static unsigned driver_calls;
 void GsU_00000000(void) { driver_calls++; }
 void *func_800603DC(u32 type) { assert(type == 0x02000000); return GsU_00000000; }
 int DrawSync(int mode) { assert(!mode); return 0; }
+/* What a mod's model is checked by (src/pc/cards/battle_models.h): nothing here. */
+void BattleModels_Page(unsigned authored) { (void)authored; }
+int BattleModels_Image(int clut, int slot, int x, int y, int w, int h)
+{ (void)clut; (void)slot; (void)x; (void)y; (void)w; (void)h; return 1; }
 static u8 *area(u32 address, size_t size) {
     u8 *p = Memories_Resolve(GuestRuntime_Memory(), address, size, 4); assert(p); return p;
 }

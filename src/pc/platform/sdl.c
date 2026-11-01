@@ -1549,7 +1549,7 @@ static int es_take_frame(void)
 
 static void draw_overlay(int *x, int *y, int *w, int *h)
 {
-    int hx, hy, hw, hh, tx, ty, tw, th, left, right;
+    int hx, hy, hw, hh, tx, ty, tw, th, left, right, row;
     FusionHelper_Viewport((int)layout.dst.x, (int)layout.dst.y, (int)layout.dst.w, (int)layout.dst.h);
     if (Panel_Shown()) { /* the panel covers the window: nothing else shows */
         Panel_Draw(&canvas);
@@ -1564,11 +1564,12 @@ static void draw_overlay(int *x, int *y, int *w, int *h)
     if (TouchPad_Shown()) Hud_DrawMods(&canvas);
     TouchPadArt_Draw(&canvas, &tx, &ty, &tw, &th); /* under the menu and the HUD */
     /* The save and deck slot menus keep between the pad's columns (they are
-     * played with the pad), and below the bar while it shows (pushing the
-     * picture down or drawn over it); from the top only where a bar drawn
-     * over the picture is hidden. */
+     * played with the pad) and below its top row, and below the bar while
+     * it shows (pushing the picture down or drawn over it); from the top
+     * only where a bar drawn over the picture is hidden. */
     if (!TouchPad_FreeSpan(&left, &right)) left = right = 0;
-    Menu_SetOverlayArea(left, right, bar_overlays() && !menu_visible ? 0 : -1);
+    row = TouchPad_TopRowBottom();
+    Menu_SetOverlayArea(left, right, row ? row : bar_overlays() && !menu_visible ? 0 : -1);
     if (Settings_Get(SET_SHOW_HUD) == 2 || Menu_IsOpen()) {
         Hud_Draw(&canvas);
         Menu_Draw(&canvas); /* dropdowns stay above the full statistics panel */
@@ -1958,14 +1959,16 @@ static void pump(void)
             event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) {
             int kind = event.type == SDL_EVENT_FINGER_DOWN     ? TOUCH_FINGER_DOWN
                        : event.type == SDL_EVENT_FINGER_MOTION ? TOUCH_FINGER_MOVE
-                                                               : TOUCH_FINGER_UP;
+                       : event.type == SDL_EVENT_FINGER_UP     ? TOUCH_FINGER_UP
+                                                               : TOUCH_FINGER_CANCEL;
             int fx = (int)(event.tfinger.x * (float)layout.win_w), fy = (int)(event.tfinger.y * (float)layout.win_h);
             if (SDL_GetWindowFromEvent(&event) == window &&
                 TouchPad_Finger(kind, (uint64_t)event.tfinger.fingerID, fx, fy))
                 menu_dirty = 1;
             if (kind != TOUCH_FINGER_MOVE)
                 LOG(LOG_INPUT, "finger %d %s at %d,%d: touch pad %s", (int)event.tfinger.fingerID,
-                    kind == TOUCH_FINGER_DOWN ? "down" : "up", fx, fy, TouchPad_Shown() ? "shown" : "hidden");
+                    kind == TOUCH_FINGER_DOWN ? "down" : kind == TOUCH_FINGER_UP ? "up" : "cancelled", fx, fy,
+                    TouchPad_Shown() ? "shown" : "hidden");
             continue;
         }
         /* The mouse events SDL makes of a touch: on the pad they are the
@@ -2161,13 +2164,29 @@ static void pump(void)
     if (mods_window && mods_dirty) draw_mods();
     mods_dirty = 0;
     if (TouchPad_SetMode(Settings_Get(SET_TOUCH_PAD))) menu_dirty = 1;
+    if (TouchPad_SetStyle(Settings_Get(SET_TOUCH_STYLE))) menu_dirty = 1;
     /* Once per pump, after every event of it: SDL delivers a tap as finger
      * events and mouse events made of them, and the pad yielding or coming
      * back between the two would hand one half to the menu and the other to
-     * the pad. MENU opens the first menu; while a menu, a notice or the bar
-     * drawn over the picture is up, the pad steps aside (touch_pad.h). */
+     * the pad. MENU opens the first menu (Game's style) or the Game menu
+     * (Simple's), and STATES the File menu (save and load a state, its
+     * slot); SPEED steps Game speed through x1 to x4, back to x1 after x4 or
+     * from any other speed, and saves it as the menu does. While a menu, a
+     * notice or the bar drawn over the picture is up, the pad steps aside
+     * (touch_pad.h). */
     if (TouchPad_TakeMenu()) {
-        Menu_Open();
+        if (TouchPad_Style() == TOUCH_STYLE_SIMPLE) Menu_OpenAt(MENU_BAR_GAME);
+        else Menu_Open();
+        menu_dirty = 1;
+    }
+    if (TouchPad_TakeStates()) {
+        Menu_OpenAt(MENU_BAR_FILE);
+        menu_dirty = 1;
+    }
+    if (TouchPad_TakeSpeed()) {
+        int speed = Settings_Get(SET_SPEED);
+        Settings_Set(SET_SPEED, speed >= 100 && speed < 400 ? (speed / 100 + 1) * 100 : 100);
+        Settings_Save();
         menu_dirty = 1;
     }
     update_menu_visibility();
@@ -2813,7 +2832,9 @@ int Platform_PadConnected(int port) { return port == 0 || Gamepad_Connected(port
  * a pointer (external synthetic X input does not reach SDL correctly).
  * "key" presses and releases at once; "keydown" and "keyup" hold a key
  * between two frames, so the game sees it ("600:keydown:s,606:keyup:s").
- * "300:shot" saves the composed window (menu included) like Shift+F12. */
+ * "tap:x:y", "fdown:x:y" and "fup:x:y" do the same with a finger, for the
+ * touch controls. "300:shot" saves the composed window (menu included)
+ * like Shift+F12. */
 static void run_event_script(unsigned frame)
 {
     static const char *script;
@@ -2881,6 +2902,20 @@ static void run_event_script(unsigned frame)
             event.key.down = false;
             if (release) SDL_PushEvent(&event);
             script = name + n;
+        } else if (strcmp(kind, "tap") == 0 || strcmp(kind, "fdown") == 0 || strcmp(kind, "fup") == 0) {
+            /* A finger at window pixels x, y (the touch controls): "tap"
+             * lands and lifts in one go, "fdown"/"fup" hold it across frames. */
+            x = (int)strtol(script + 1, &end, 10);
+            y = (int)strtol(end + 1, &end, 10);
+            script = end;
+            event.type = SDL_EVENT_FINGER_DOWN;
+            event.tfinger.fingerID = 1;
+            event.tfinger.x = layout.win_w > 0 ? (float)x / (float)layout.win_w : 0;
+            event.tfinger.y = layout.win_h > 0 ? (float)y / (float)layout.win_h : 0;
+            event.tfinger.windowID = SDL_GetWindowID(window);
+            if (strcmp(kind, "fup") != 0) SDL_PushEvent(&event);
+            event.type = SDL_EVENT_FINGER_UP;
+            if (strcmp(kind, "fdown") != 0) SDL_PushEvent(&event);
         } else {
             x = (int)strtol(script + 1, &end, 10);
             y = (int)strtol(end + 1, &end, 10);

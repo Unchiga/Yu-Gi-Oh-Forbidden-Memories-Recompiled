@@ -23,6 +23,9 @@
 #include "model_graphics_state.h"
 #include "model_handler_state.h"
 #include "model_control.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
+#endif
 #include "model_transfer_flags.h"
 #include "high_memory_addresses.h"
 #include "model_control_slot_animation.h"
@@ -232,6 +235,9 @@ void func_800559D4(s32 index)
             u32 card_id;
             s32 sound_id;
             do { card_id = other->field_DF8; } while (0);
+#ifdef MEMORIES_PC
+            card_id = Cards_ModelStatsIndex(card_id); /* a mod's model: its base */
+#endif
             sound_id = ((gDuel_adwCardStats[card_id] >> 26) & 0x1F) == 1 ? 3 : 4;
             SD_SEPlay(sound_id, 0xFF, 0);
         }

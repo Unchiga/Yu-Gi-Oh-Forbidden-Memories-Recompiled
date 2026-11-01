@@ -838,7 +838,7 @@ static int read_floor(const char *mod, int index, const JsonValue *value, TowerF
         reference(part, text, sizeof(text));
         if (same_word(text, "none") || !strcmp(text, "0")) floor->terrain = 0;
         else if ((floor->terrain = Tables_TerrainNamed(text)) < 0) {
-            Mods_Note(mod, "%s: \"field\" is none, Forest, Wasteland, Mountain, Meadow, Sea or Dark (1-6)", where);
+            Mods_Note(mod, "%s: \"field\" is none, Forest, Wasteland, Mountain, Meadow, Sea, Dark or a mod's field", where);
             floor->terrain = 0;
         }
     }

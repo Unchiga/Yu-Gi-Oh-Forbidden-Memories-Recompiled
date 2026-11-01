@@ -204,6 +204,49 @@ static void field_thumbnail(int named)
     assert(TexturePack_EntryFor(896, 0, 1, 896, 224, 0, 0) == 0);
 }
 
+/* A field's board picture (TexturePack_AddDiscImageGroup, fields.c):
+ * shown only while its group is selected, and still there after the packs
+ * reload (a texture-pack mod toggled, an HD pack setting changed). Runs
+ * after field_thumbnail, whose disc it reads. */
+static void disc_image_reload(void)
+{
+    uint16_t original[704];
+    const unsigned char blue[] = {0, 0, 255, 255};
+    char path[1024];
+    uint32_t rgb;
+    unsigned mark;
+    memcpy(original, disc + 2048, sizeof(original));
+    make_dir("board");
+    write_png("board/board.png", blue, 1, 1);
+    snprintf(path, sizeof(path), "%s/board/board.png", root);
+    assert(TexturePack_AddDiscImageGroup(7, path, "WA_MRG.MRG", 0, 20, 32, 8, 1280, 64, 20, 0, 40, 0, 0, 256, 254, 1));
+    /* A rolled back group (fields.c's five strips, one failing) is gone,
+     * through reloads too. */
+    mark = TexturePack_EntryCount();
+    assert(TexturePack_AddDiscImageGroup(8, path, "WA_MRG.MRG", 0, 20, 32, 8, 1280, 64, 20, 0, 40, 0, 0, 256, 254, 1));
+    TexturePack_RemoveEntriesFrom(mark);
+    TexturePack_Service();
+    TextureDump_Delivered(original, sizeof(original), 1, 0);
+    SoftGpu_Load(640, 256, 20, 32, original);
+    SoftGpu_Load(640, 500, 64, 1, original + 640);
+    TexturePack_Service();
+    assert(TexturePack_EntryFor(640, 256, 1, 640, 500, 0, 0) == 0); /* group 0 selected */
+    TexturePack_SelectGroup(7);
+    assert(TexturePack_EntryFor(640, 256, 1, 640, 500, 0, 0) != 0);
+    assert(TextureDump_Sample(640, 256, 1, 10 << 16, 10 << 16, &rgb) == 1 && rgb == 0x0000ff);
+    TexturePack_Unload();
+    TexturePack_Service();
+    TextureDump_Delivered(original, sizeof(original), 1, 0);
+    SoftGpu_Load(640, 256, 20, 32, original);
+    SoftGpu_Load(640, 500, 64, 1, original + 640);
+    TexturePack_Service();
+    assert(TexturePack_EntryFor(640, 256, 1, 640, 500, 0, 0) != 0);
+    assert(TextureDump_Sample(640, 256, 1, 10 << 16, 10 << 16, &rgb) == 1 && rgb == 0x0000ff);
+    TexturePack_SelectGroup(8);
+    assert(TexturePack_EntryFor(640, 256, 1, 640, 500, 0, 0) == 0);
+    TexturePack_SelectGroup(0);
+}
+
 /* A mod card's thumbnail made from an 8x4 PNG whose middle four columns
  * are its picture: red, then blue, black cut off at each side. */
 static void made_image(void)
@@ -849,6 +892,7 @@ int main(void)
     bank_sprites();
     field_thumbnail(0);
     field_thumbnail(1);
+    disc_image_reload();
     /* A made image is read where it is wanted, by none of the threads. */
     TexturePack_DecodeStats(&made_now, &made_ahead, &made_shared, &threads);
     made_image();

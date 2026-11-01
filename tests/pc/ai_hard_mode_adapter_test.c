@@ -38,6 +38,8 @@ int Tables_TerrainBonus(int field, int type, int *bonus)
     *bonus = terrain_points;
     return 1;
 }
+/* A mod that makes Shadow Spell take 1200; Spellbinding Circle as retail. */
+long Tables_Value(int which, long retail) { return which == TABLES_VALUE_SHADOW_SPELL ? 1200 : retail; }
 s32 Duel_CalcGuardianStarMatchup(s32 attacker, s32 defender)
 {
     return attacker == 11 && defender == 12 ? star_points : 0;
@@ -159,6 +161,12 @@ int main(void)
     hidden_mode = 2; b = board(&o); assert(b.enemy[0].id == 999 && b.enemy[0].attack == 9999);
     assert(hidden_lookups == 1);
     D_800E9FF0[1].swords_turns_remaining = 2; b = board(&o); assert(b.pinned && !b.enemy_pinned);
+    assert(b.spellbinding == 500 && b.shadow_spell == 1200);
+    /* The opponent's last locked turn is behind it at 1: its count drops
+       before it plays. */
+    D_800E9FF0[0].swords_turns_remaining = 2; b = board(&o); assert(b.enemy_pinned);
+    D_800E9FF0[0].swords_turns_remaining = 1; b = board(&o); assert(!b.enemy_pinned);
+    D_800E9FF0[0].swords_turns_remaining = 0;
     hidden_mode = 1;
     for (i = 0; i < 5; i++) D_801A8000[i] = i;
     gAiScript_aMemory[2] = 123;

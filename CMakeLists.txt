@@ -23,6 +23,7 @@ add_library(memories_pc_core STATIC
     src/pc/compat/pgxp.c
     src/pc/compat/libgs_ot.c
     src/pc/memory.c
+    src/pc/mod_packets.c
     src/pc/render/packets.c
     src/pc/render/soft_gpu.c
     src/pc/render/texture_dump.c
@@ -438,6 +439,8 @@ if(BUILD_TESTING)
         target_include_directories(memories_mips_varargs_test PRIVATE src)
         target_compile_definitions(memories_mips_varargs_test PRIVATE MEMORIES_PC _LANGUAGE_C LANGUAGE_C)
         target_compile_options(memories_mips_varargs_test PRIVATE -Wall)
+        # clock_gettime (mips.c's trace): winpthread's on MinGW
+        target_link_libraries(memories_mips_varargs_test PRIVATE Threads::Threads)
         set_source_files_properties(src/game/func_80058838.c PROPERTIES COMPILE_OPTIONS "-fno-strict-aliasing")
         if(NOT WIN32)
             target_compile_options(memories_mips_varargs_test PRIVATE -m32)
@@ -449,7 +452,7 @@ if(BUILD_TESTING)
     endif()
     # mod_libc.c lends mods the indirect-branch thunks (src/pc/guest/branch_thunks.c).
     add_executable(memories_mods_test tests/pc/mods_test.c src/pc/mods/mods.c src/pc/mods/events.c src/pc/mods/hooks.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/mod_libc.c
-        src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c
+        src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c src/pc/mod_packets.c
         src/pc/platform/paths.c src/pc/platform/settings.c)
     target_include_directories(memories_mods_test PRIVATE src)
     # The mod C library hands mods the maths functions and reads the monotonic
@@ -461,7 +464,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_mods COMMAND memories_mods_test)
     set(MOD_TEST_SOURCES src/pc/mods/mods.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/events.c src/pc/mods/hooks.c
-        src/pc/mods/mod_libc.c src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c
+        src/pc/mods/mod_libc.c src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c src/pc/mod_packets.c
         src/pc/platform/paths.c src/pc/platform/settings.c)
     add_executable(memories_mods_manager_test tests/pc/mods_manager_test.c ${MOD_TEST_SOURCES})
     target_include_directories(memories_mods_manager_test PRIVATE src)
@@ -485,7 +488,10 @@ if(BUILD_TESTING)
     add_test(NAME pc_starchip_award COMMAND memories_starchip_award_test)
     add_executable(memories_disc_test tests/pc/disc_test.c src/pc/sdk/libds.c ${MOD_TEST_SOURCES})
     target_include_directories(memories_disc_test PRIVATE src)
-    target_compile_definitions(memories_disc_test PRIVATE MEMORIES_PC _POSIX_C_SOURCE=200809L)
+    # The bigger models' arenas where a test process (32 bits without
+    # --large-address-aware, or under ASan) can map them.
+    target_compile_definitions(memories_disc_test PRIVATE MEMORIES_PC _POSIX_C_SOURCE=200809L
+                               MODEL_ARENA_BASE=0x50000000u)
     target_link_libraries(memories_disc_test PRIVATE m Threads::Threads)
     if(NOT MSVC)
         target_compile_options(memories_disc_test PRIVATE -Wall -Wextra -Werror)
@@ -497,6 +503,8 @@ if(BUILD_TESTING)
     add_test(NAME pc_disc COMMAND memories_disc_test)
     add_test(NAME pc_disc_capacity COMMAND memories_disc_test capacity)
     add_test(NAME pc_disc_failed_code COMMAND memories_disc_test failed-code)
+    add_test(NAME pc_disc_models COMMAND memories_disc_test models)
+    add_test(NAME pc_disc_bigger_models COMMAND memories_disc_test bigger-models)
     # The test includes cards.c and relies on --gc-sections to drop the parts
     # that need the game and renderer. ELF linkers resolve symbols after GC;
     # the PE linker reports them before it, so this test is ELF-only.
@@ -520,13 +528,20 @@ if(BUILD_TESTING)
     target_include_directories(memories_password_data_test PRIVATE src)
     target_compile_definitions(memories_password_data_test PRIVATE MEMORIES_PC)
     add_test(NAME pc_password_data COMMAND memories_password_data_test)
-    add_executable(memories_tables_test tests/pc/tables_test.c tests/pc/duelists_stubs.c src/pc/mods/json.c)
+    add_executable(memories_tables_test tests/pc/tables_test.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_tables_test PRIVATE src)
     target_compile_definitions(memories_tables_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
         target_compile_options(memories_tables_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_tables COMMAND memories_tables_test)
+    add_executable(memories_fields_test tests/pc/fields_test.c src/pc/mods/json.c)
+    target_include_directories(memories_fields_test PRIVATE src)
+    target_compile_definitions(memories_fields_test PRIVATE MEMORIES_PC)
+    if(NOT MSVC)
+        target_compile_options(memories_fields_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_fields COMMAND memories_fields_test)
     # Guardian Stars: the matchup table a mod's "guardian_stars" gives, pair by
     # pair against tests/pc/guardian_stars/*.expected, which the FM Editor's
     # test checks its own arithmetic against too.
@@ -548,7 +563,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_attributes COMMAND memories_attributes_test)
     # A card's "stars" through cards.c's own add_entry, on a stand-in for the
     # disc's tables (notes/modding.md, "No star").
-    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c tests/pc/attribute_icons_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c
+    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
                    src/pc/mods/json.c src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_stars_test PRIVATE src)
     target_compile_definitions(memories_cards_stars_test PRIVATE MEMORIES_PC)
@@ -562,7 +577,7 @@ if(BUILD_TESTING)
     # Two mods' "cards" in the load order the settings give, through the real
     # mod loader and cards.c's Cards_Build: once as the folders sort, once
     # with the second moved first (notes/more-cards.md).
-    add_executable(memories_cards_order_test tests/pc/cards_order_test.c tests/pc/attribute_icons_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c ${MOD_TEST_SOURCES}
+    add_executable(memories_cards_order_test tests/pc/cards_order_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_order_test PRIVATE src)
     target_compile_definitions(memories_cards_order_test PRIVATE MEMORIES_PC)
@@ -576,7 +591,7 @@ if(BUILD_TESTING)
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods
     # redefining one id, and a name the game has no letters for.
-    add_executable(memories_card_types_test tests/pc/card_types_test.c tests/pc/attribute_icons_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c ${MOD_TEST_SOURCES}
+    add_executable(memories_card_types_test tests/pc/card_types_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_card_types_test PRIVATE src)
     target_compile_definitions(memories_card_types_test PRIVATE MEMORIES_PC)
@@ -602,7 +617,7 @@ if(BUILD_TESTING)
         target_compile_options(memories_type_icons_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_type_icons COMMAND memories_type_icons_test)
-    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c tests/pc/duelists_stubs.c src/pc/mods/json.c)
+    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_free_duel_progress_test PRIVATE src)
     target_compile_definitions(memories_free_duel_progress_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -619,7 +634,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_font_art COMMAND memories_font_art_test)
     set_tests_properties(pc_font_art PROPERTIES SKIP_RETURN_CODE 77)
-    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/cards/tables.c tests/pc/duelists_stubs.c src/pc/mods/json.c)
+    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/cards/tables.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_card_drops_test PRIVATE src)
     target_compile_definitions(memories_card_drops_test PRIVATE MEMORIES_PC)
     # The game's headers (drops.c's save and reward layouts) are 32-bit.

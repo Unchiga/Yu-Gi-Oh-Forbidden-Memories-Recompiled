@@ -14,6 +14,7 @@ typedef struct FrameStats {
     unsigned game_us, present_us, game_max_us, present_max_us;
     unsigned missed_vblanks;
     unsigned draw_words, draw_us;
+    unsigned windows;          /* how many times these were counted (every 120 frames) */
 } FrameStats;
 const FrameStats *Memories_FrameStats(void);
 void Memories_SetDrawStats(unsigned words, unsigned us);

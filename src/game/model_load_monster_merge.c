@@ -8,6 +8,9 @@
 #include "file_transfer_steps.h"
 #define MODEL_SLOT_SETUP_EXPLICIT_TRANSFER_ARGS
 #include "model_slot_setup.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
+#endif
 
 /* Starts the asynchronous transfer that fills one model slot with a monster
  * merge record, and records the slot's display properties while the request is
@@ -51,6 +54,9 @@ s32 Model_LoadMonsterMerge(s32 slot, s32 model, s32 p2, s32 p3, s32 p4,
         SD_KeyOffVoiceSlots();
     }
     File_WaitForTransfers();
+#ifdef MEMORIES_PC
+    Cards_ModelLoads(slot);   /* a mod model's window, if it is one, is given below */
+#endif
     func_8004CB0C(slot, 0, 0, arg6);
     D_800F2C40[slot].field_E1D = flags;
     if (slot < 2) {
@@ -65,6 +71,25 @@ s32 Model_LoadMonsterMerge(s32 slot, s32 model, s32 p2, s32 p3, s32 p4,
             D_800F2C40[slot].field_E14 = 0;
             return 0;
         }
+#ifdef MEMORIES_PC
+        /* A mod's model: its record is read from the mod into this slot's
+           window, past the disc (src/pc/mods/mods.c), and the drive reads
+           it there as it would MODEL.MRG's, from where MODEL.MRG starts.
+           One that cannot be read (its file gone or changed since startup),
+           or a bigger one that does not fit (src/pc/cards/battle_models.h),
+           loads as its base, a monster of the disc. */
+        if (model >= CARDS_MODEL_MOD_FIRST) {
+            s32 window = Cards_ModelWindow(slot, model);
+            if (window >= gFile_anLba[2]) {
+                transfer = File_TryRequestAsyncTransfer(
+                    2, gFile_szModelMrgPath, window - gFile_anLba[2],
+                    MODEL_MRG_SECTOR_COUNT, func_80056D7C, 0, 0
+                );
+                goto requested;
+            }
+            model = Cards_ModelStatsIndex(model);
+        }
+#endif
         if (model < 0 || model >= MODEL_MRG_ID_END
             || (model >= MODEL_MRG_FIRST_GAP_START
                 && model < MODEL_MRG_FIRST_GAP_END)
@@ -87,6 +112,9 @@ s32 Model_LoadMonsterMerge(s32 slot, s32 model, s32 p2, s32 p3, s32 p4,
                 MODEL_MRG_SECTOR_COUNT, func_80056D7C,
                 0, 0
             );
+#ifdef MEMORIES_PC
+        requested:
+#endif
             if (p2 >= 0) {
                 D_800F2C40[slot].field_DFA = p2;
             }

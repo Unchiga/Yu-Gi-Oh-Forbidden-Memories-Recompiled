@@ -14,6 +14,8 @@
 
 static char image_path[1024];
 static int delivered_lba, callback_count, expected_lba, audio_blocks;
+static int model_file;   /* the models case: the directory has a MODEL.MRG of two records */
+#define RECORD (0x114 * 2048)
 static unsigned char callback_data[5 * 2048];
 const char *GameFiles_Disc(char *why, size_t size) { (void)why; (void)size; return image_path; }
 void Crash_ReportFatal(const char *kind, const char *detail) { fprintf(stderr, "%s: %s\n", kind, detail); abort(); }
@@ -73,7 +75,8 @@ static void fixture(int sectors)
         if (lba == 18) {
             int at = record(raw + 24, "CARD.MRG;1", 20, 5000);
             at += record(raw + 24 + at, "NEXT.DAT;1", 23, 2048);
-            record(raw + 24 + at, "SECOND.MRG;1", 24, 2048);
+            at += record(raw + 24 + at, "SECOND.MRG;1", 24, 2048);
+            if (model_file) record(raw + 24 + at, "MODEL.MRG;1", 20, 2 * RECORD);
         }
         if (lba >= 20) memset(raw + 24, lba, 2048);
         if (lba == 30) { memset(raw + 24, 0, 2048); raw[18] = raw[22] = 0x64; }
@@ -109,6 +112,182 @@ static int inspect_startup(const char *directory, unsigned rank, int (*part)(con
     return 1;
 }
 static void unload_pack(void) {}
+
+/* "bigger-models": a model bigger than a record, its model data and then the
+ * record's other stages. It has no sector; its window holds those stages
+ * after a first stage of zeros, and its model data goes to its slot's arena
+ * (at MODEL_ARENA_BASE, the test's own). A file that is not whole sectors,
+ * or has more model data than an arena takes, is refused. */
+static int bigger_models_case(void)
+{
+    enum { DATA = 136, TAIL = 180, PAGE = 16 };
+    static unsigned char big[(DATA + TAIL) * 2048], odd[RECORD + 100], huge[(512 + 1 + TAIL) * 2048], got[2048];
+    static unsigned char paged[(96 + TAIL + 2 * PAGE) * 2048], record[RECORD], thin[(80 + TAIL + 2 * PAGE) * 2048];
+    unsigned char *arena;
+    const unsigned char *pages;
+    int count;
+    char path[1024];
+    int window, *windows;
+    unsigned size;
+    for (size_t i = 0; i < sizeof(big); i++) big[i] = (unsigned char)(i / 2048 + 1);
+    manifest("b-big", "{\"enabled\":true,\"models\":[{\"name\":\"big\",\"file\":\"big.bin\"}]}");
+    write_file("mods/b-big/big.bin", big, sizeof(big));
+    manifest("c-odd", "{\"enabled\":true,\"models\":[{\"name\":\"odd\",\"file\":\"odd.bin\"}]}");
+    write_file("mods/c-odd/odd.bin", odd, sizeof(odd));
+    manifest("d-huge", "{\"enabled\":true,\"models\":[{\"name\":\"huge\",\"file\":\"huge.bin\"}]}");
+    write_file("mods/d-huge/huge.bin", huge, sizeof(huge));
+    /* "texture_pages": after the record's other stages, 16 sectors each. */
+    for (size_t i = 0; i < sizeof(paged); i++) paged[i] = (unsigned char)(i / 2048 + 1);
+    manifest("e-paged", "{\"enabled\":true,\"models\":[{\"name\":\"paged\",\"file\":\"p.bin\",\"texture_pages\":2}]}");
+    write_file("mods/e-paged/p.bin", paged, sizeof(paged));
+    manifest("f-short", "{\"enabled\":true,\"models\":[{\"name\":\"short\",\"file\":\"r.bin\",\"texture_pages\":1}]}");
+    write_file("mods/f-short/r.bin", record, sizeof(record));
+    manifest("g-many", "{\"enabled\":true,\"models\":[{\"name\":\"many\",\"file\":\"p.bin\",\"texture_pages\":9}]}");
+    write_file("mods/g-many/p.bin", paged, sizeof(paged));
+    manifest("h-thin", "{\"enabled\":true,\"models\":[{\"name\":\"thin\",\"file\":\"t.bin\",\"texture_pages\":2}]}");
+    write_file("mods/h-thin/t.bin", thin, sizeof(thin));   /* 80 sectors of model data: fewer than 96 */
+    snprintf(path, sizeof(path), "%s/mods", root); assert(!setenv("MEMORIES_MODS_DIR", path, 1));
+    assert(!setenv("MEMORIES_USER_DIR", root, 1));
+    snprintf(path, sizeof(path), "%s/settings", root); assert(!setenv("MEMORIES_SETTINGS", path, 1));
+    Settings_Load(); Mods_Load();
+    assert(Mods_Active(find("b-big")));
+    assert(!Mods_Active(find("c-odd")) && strstr(Mods_Status(find("c-odd")), "not a bigger model"));
+    assert(!Mods_Active(find("d-huge")) && strstr(Mods_Status(find("d-huge")), "not a bigger model"));
+    assert(Mods_Active(find("e-paged")));
+    assert(!Mods_Active(find("f-short")) && strstr(Mods_Status(find("f-short")), "no larger than a record"));
+    assert(!Mods_Active(find("g-many")) && strstr(Mods_Status(find("g-many")), "\"texture_pages\" is a count"));
+    assert(!Mods_Active(find("h-thin")) && strstr(Mods_Status(find("h-thin")), "not a bigger model"));
+    assert(Mods_ModelCount() == 2 && Mods_ModelGeometry(0) == DATA * 2048 && Mods_ModelGeometry(1) == 96 * 2048);
+    /* Its window holds the record's other stages, the slot its pages. */
+    assert(!Mods_ModelPages(0, &count) && count == 0);
+    window = Mods_ModelWindow(0, 1);
+    assert(window >= 0 && Mods_ModelPending(0));
+    assert(Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == 97);
+    assert(Memories_DiscReadSectors(window + 275, 1, got) == 1 && got[0] == (unsigned char)(96 + TAIL));
+    pages = Mods_ModelPages(0, &count);
+    assert(pages && count == 2 && pages[0] == (unsigned char)(96 + TAIL + 1));
+    assert(pages[(2 * PAGE - 1) * 2048] == (unsigned char)(96 + TAIL + 2 * PAGE));
+    Mods_ModelRebind();   /* a save state's load: the pages again */
+    assert(Mods_ModelPages(0, &count) && count == 2);
+    Mods_ModelForget(0);
+    assert(!Mods_ModelPages(0, &count) && count == 0);
+    /* No sector: a native extra reads its base instead (3D Monsters). */
+    assert(Mods_ModelSector(0) == -1 && Mods_ModelRead(0x1000000, 1, got) == 0);
+    arena = Mods_ModelArena(0, &size);
+    assert(arena && (uintptr_t)arena == 0x50000000u && size == 0x180000);
+    assert((uintptr_t)Mods_ModelArena(2, NULL) == 0x50000000u + 2 * 0x180000 && !Mods_ModelArena(3, NULL));
+    window = Mods_ModelWindow(1, 0);
+    assert(window >= 0 && Mods_ModelPending(1) && !Mods_ModelPending(0));
+    assert(Memories_DiscReadSectors(window + 5, 1, got) == 1 && got[0] == 0 && got[2047] == 0);
+    assert(Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == (unsigned char)(DATA + 1));
+    assert(Memories_DiscReadSectors(window + 275, 1, got) == 1 && got[0] == (unsigned char)(DATA + TAIL));
+    arena = Mods_ModelArena(1, NULL);
+    assert(arena[0] == 1 && arena[(DATA - 1) * 2048] == DATA && arena[DATA * 2048] == 0);
+    Mods_ModelParsed(1);
+    assert(!Mods_ModelPending(1));
+    /* A save state's load reads the window again but leaves the arena, which
+       the state brings as the game left it, and the pending flag with it. */
+    arena[0] = 0x5A;
+    Mods_ModelRebind();
+    assert(arena[0] == 0x5A && !Mods_ModelPending(1));
+    assert(Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == (unsigned char)(DATA + 1));
+    /* The slot loading something else lets the window go. */
+    Mods_ModelForget(1);
+    windows = Mods_ModelWindows(&size);
+    assert(windows[1] == -1 && Memories_DiscReadSectors(window + 96, 1, got) == 1 && got[0] == 0);
+    Mods_Shutdown();
+    return 0;
+}
+
+/* "models": two records of a mod's own, read from its files into the battle
+ * slots' windows past the disc and the files it relocates, which the drive
+ * reads; a file larger than a record is refused, and one changed since
+ * startup is not read. */
+static int models_case(void)
+{
+    static unsigned char one[RECORD], two[RECORD / 2], big[RECORD + 1], whole[2 * RECORD + 2048], got[2048];
+    const char *name;
+    char path[1024];
+    int lba, mod, window, *windows;
+    unsigned bytes;
+    memset(one, 0x11, sizeof(one));
+    for (size_t i = 0; i < sizeof(two); i++) two[i] = (unsigned char)(i / 2048 + 1);
+    manifest("m-models", "{\"enabled\":true,\"models\":[{\"name\":\"one\",\"file\":\"one.bin\"},"
+                         "{\"name\":\"two\",\"file\":\"two.bin\",\"base\":\"Mystical Elf\"}]}");
+    write_file("mods/m-models/one.bin", one, sizeof(one));
+    write_file("mods/m-models/two.bin", two, sizeof(two));
+    manifest("n-big", "{\"enabled\":true,\"models\":[{\"name\":\"big\",\"file\":\"big.bin\"}]}");
+    write_file("mods/n-big/big.bin", big, sizeof(big));   /* one byte past a record */
+    /* Loaded after them, MODEL.MRG replaced whole by a larger file, which
+       moves past the disc's end: the windows follow it, and stay the
+       models'. */
+    manifest("o-whole", "{\"enabled\":true,\"data\":[{\"file\":\"\\\\DATA\\\\MODEL.MRG;1\",\"replace\":\"model.bin\"}]}");
+    memset(whole, 0x77, sizeof(whole));
+    write_file("mods/o-whole/model.bin", whole, sizeof(whole));
+    snprintf(path, sizeof(path), "%s/mods", root); assert(!setenv("MEMORIES_MODS_DIR", path, 1));
+    assert(!setenv("MEMORIES_USER_DIR", root, 1));
+    snprintf(path, sizeof(path), "%s/settings", root); assert(!setenv("MEMORIES_SETTINGS", path, 1));
+    Settings_Load(); Mods_Load();
+    assert(Mods_Active(find("m-models")) && Mods_RequiresRestart(find("m-models")));
+    assert(!Mods_Active(find("n-big")) && strstr(Mods_Status(find("n-big")), "model record"));
+    assert(Mods_ModelCount() == 2);
+    assert(!Mods_Model(0, &name, NULL, &mod) && !strcmp(name, "one") && mod == find("m-models"));
+    assert(!Mods_Model(1, &name, NULL, NULL) && !strcmp(name, "two"));
+    assert(Mods_Model(2, NULL, NULL, NULL) == -1);
+    assert(Mods_ModelSector(0) == 0x1000000 && Mods_ModelSector(1) == 0x1000000 + 0x114);
+    assert(Mods_ModelSector(2) == -1 && Mods_ModelSector(-1) == -1);
+    /* o-whole's MODEL.MRG, past the disc's 600 sectors, and each slot's
+       window after it and its guard sector. */
+    assert(!Memories_DiscFileInfo("\\DATA\\MODEL.MRG;1", &lba, &bytes) && lba == 600 && bytes == sizeof(whole));
+    assert(Memories_DiscReadSectors(lba + 2 * 0x114, 1, got) == 1 && got[0] == 0x77);
+    window = Mods_ModelWindow(0, 1);
+    assert(window == lba + 2 * 0x114 + 1 + 1 && Mods_ModelWindow(1, 0) == window + 0x114);
+    assert(Memories_DiscReadSectors(window + 5, 1, got) == 1 && got[0] == 6);              /* two */
+    assert(Memories_DiscReadSectors(window + 0x113, 1, got) == 1 && got[0] == 0);          /* past its file */
+    assert(Memories_DiscReadSectors(window + 0x114 + 7, 1, got) == 1 && got[0] == 0x11);   /* one */
+    assert(Mods_ModelWindow(0, 0) == window && Memories_DiscReadSectors(window + 5, 1, got) == 1 && got[0] == 0x11);
+    assert(Mods_ModelWindow(0, 2) == -1 && Mods_ModelWindow(2, 0) == -1);
+    /* What save states carry, and reading it back after a load. */
+    windows = Mods_ModelWindows(&bytes);
+    assert(bytes == 2 * sizeof(int) && windows[0] == -1 && windows[1] == 0);
+    windows[0] = 1;
+    Mods_ModelRebind();
+    assert(Memories_DiscReadSectors(window + 5, 1, got) == 1 && got[0] == 6);
+    /* A model file changed since startup, in its bytes or its size, is not
+       read: the window is zeros and the loader takes the model's base. */
+    /* A native extra reads a model at its sector, within its record. */
+    assert(Mods_ModelRead(0x1000000 + 0x114 + 5, 1, got) == 1 && got[0] == 6);
+    assert(Mods_ModelRead(0x1000000 + 0x113, 4, got) == 1 && got[0] == 0x11);
+    two[5 * 2048] = 0x55;
+    write_file("mods/m-models/two.bin", two, sizeof(two));
+    assert(Mods_ModelWindow(0, 1) == -1 && windows[0] == -1);
+    assert(Memories_DiscReadSectors(window + 5, 1, got) == 1 && got[0] == 0);
+    /* Nor by a native extra, whatever sectors it asks for (3D Monsters
+       parsed a changed record of the same size and crashed). */
+    assert(Mods_ModelRead(0x1000000 + 0x114 + 5, 1, got) == 0);
+    assert(Mods_ModelRead(0x1000000 + 0x114 + 100, 1, got) == 0);
+    /* Once found changed, it has no sector (3D Monsters then stops asking
+       every frame) and is not read again until the next launch, even with
+       its file put back. */
+    assert(Mods_ModelSector(1) == -1 && Mods_ModelSector(0) == 0x1000000);
+    two[5 * 2048] = 6;
+    write_file("mods/m-models/two.bin", two, sizeof(two));
+    assert(Mods_ModelWindow(0, 1) == -1 && Mods_ModelRead(0x1000000 + 0x114 + 5, 1, got) == 0);
+    write_file("mods/m-models/two.bin", two, sizeof(two) - 1);
+    assert(Mods_ModelWindow(0, 1) == -1 && Mods_ModelRead(0x1000000 + 0x114, 1, got) == 0);
+    assert(Mods_ModelWindow(0, 0) == window);   /* the other model still reads */
+    assert(Mods_ModelRead(0x1000000 + 7, 1, got) == 1 && got[0] == 0x11);
+    /* A file gone is stale too (one that cannot be opened for another
+       reason is tried again: a scanner may be holding it). */
+    snprintf(path, sizeof(path), "%s/mods/m-models/one.bin", root);
+    assert(!remove(path));
+    assert(Mods_ModelRead(0x1000000 + 7, 1, got) == 0 && Mods_ModelSector(0) == -1);
+    write_file("mods/m-models/one.bin", one, sizeof(one));
+    assert(Mods_ModelWindow(0, 0) == -1);
+    Mods_Shutdown();
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     unsigned char replacement[9000], lower[12000], got[5 * 2048], alias[2048];
@@ -119,6 +298,16 @@ int main(int argc, char **argv)
     DslFILE file;
     DslLOC loc;
     assert(scratch_dir(root, sizeof(root), "memories-disc")); make_dir("mods");
+    if (argc > 1 && !strcmp(argv[1], "models")) {
+        model_file = 1;
+        fixture(600);
+        return models_case();
+    }
+    if (argc > 1 && !strcmp(argv[1], "bigger-models")) {
+        model_file = 1;
+        fixture(600);
+        return bigger_models_case();
+    }
     fixture(capacity ? MEMORIES_DISC_MAX_LBA - 2 : 40);
     for (size_t i = 0; i < sizeof(replacement); i++) replacement[i] = (unsigned char)(i * 13 + 7);
     memset(lower, 0xCC, sizeof(lower));

@@ -11,6 +11,8 @@
 #include "func_800291E0.h"
 #include "card_preview_callbacks.h"
 #ifdef MEMORIES_PC
+#define MAIN_MODE_STATE_ACTIVE_AS_SCALAR
+#include "main_mode_state.h"
 #include "pc/cards/cards.h"
 #include "pc/cards/card_layout.h"
 #endif
@@ -210,7 +212,14 @@ shared_tail:
     object->flags |= 8;
 
     DisplayObject_SelectOrderingTable1(object);
+#ifdef MEMORIES_PC
+    /* Card details use the preview's depth minus one. During duels, keep
+     * both the frame and details in front of the FIELD sprite. Other card
+     * viewers retain the original depth. */
+    DisplayObject_SetDepthOffset(object, (D_8009B26C & 0x1F) == 3 ? 1 : -1);
+#else
     DisplayObject_SetDepthOffset(object, -1);
+#endif
 
     ((DisplayObject *)entry->object_04)->field_65 = 3;
     object->field_65 = 3;

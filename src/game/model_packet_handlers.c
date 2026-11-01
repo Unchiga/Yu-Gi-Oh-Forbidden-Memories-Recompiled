@@ -6,6 +6,9 @@
 #include "model.h"
 #include "model_packet_handlers.h"
 #include "../unmatched.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/battle_models.h"
+#endif
 
 #define MODEL_ANIMATION_SEQUENCE_SLOT(entry) \
     ((GsSEQ *G32 *)&(entry)->field_1E0[(entry)->field_E1B])
@@ -24,6 +27,16 @@ void func_8005C6A0(s32 *object, ModelSlot *entry)
     }
     handler = func_8005C7BC;
     *(void *G32 *G32)object[1] = handler;
+#ifdef MEMORIES_PC
+    /* The slot has MODEL_SLOT_PART_COUNT parts; a mod's bigger model with
+       more would be linked past them (the disc's have 42 at most). It is
+       not linked, and BattleModels_Check loads the model's base instead. */
+    if (entry->field_E1B + ((u16 *)MODEL_ANIMATION_WORDS(object))[3] > MODEL_SLOT_PART_COUNT) {
+        BattleModels_TooManyParts();
+        *(void *G32 *G32)object[1] = (void *)GsU_00000000;
+        return;
+    }
+#endif
     count = GsLinkAnim(
         MODEL_ANIMATION_SEQUENCE_SLOT(entry),
         MODEL_ANIMATION_WORDS(object)

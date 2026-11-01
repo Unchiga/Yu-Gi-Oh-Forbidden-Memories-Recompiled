@@ -2,6 +2,7 @@
 #define D_8009B178_AS_SIDE_ARRAY
 #include "monster_effects_duel.h"
 #include "cards.h"
+#include "fields.h"
 #include "tables.h"
 #include "pc/mods/mods.h"
 #include "pc/mods/events.h"
@@ -9,6 +10,7 @@
 #include "game/card_constants.h"
 #include "game/duel_card.h"
 #include "game/duel_card_record_lifecycle.h"
+#include "game/duel_terrain_boost.h"
 #include "game/duel_grid.h"
 #include "game/duel_side_state.h"
 #include "game/duel_scene_state.h"
@@ -303,6 +305,31 @@ static void change_life(int side, int amount, int sound)
     }
 }
 
+/* A data-defined field has no physical card id, but its render carrier does.
+ * The terrain byte Forest..Yami is 1..6, and their actual card IDs are
+ * 330..335.  The terrain routine derives the former from the low byte of
+ * that real card ID (0x14A..0x14F); 0x4A itself is not a valid dispatcher
+ * card ID.  Start that field card's two-step effect instead of copying its
+ * final state here.  The terrain
+ * handler then owns the swirl, sound, delayed package transfer, board swap
+ * and stat refresh exactly as it does for a card played from the hand. */
+static int change_field(int field, int side)
+{
+    int carrier;
+    if (!Fields_Declared(field)) return 0;
+    carrier = Fields_Carrier(field);
+    Fields_Activate(field);
+    if (side != D_8009B1D5) {
+        S.swapped = 1;
+        S.saved_turn = D_8009B1D5;
+        lend_turn(side);
+    }
+    S.running = 1;
+    S.magic_card = 329 + carrier;
+    DuelEffect_StartRetailCardEffect(S.magic_card, 0);
+    return 1;
+}
+
 static unsigned char *splash_number(int id, int config)
 {
     return (unsigned char *)(uintptr_t)(id == SPLASH_HEAL ? HEAL_CONFIGS + config * HEAL_CONFIG_SIZE
@@ -406,6 +433,8 @@ static int resolve(void)
     count = times(effect, trigger.record);
     if (effect->each) LOG(LOG_DUEL_EFFECTS, "monster effects: for each: %d counted", count);
     switch (effect->action) {
+    case MONSTER_DO_CHANGE_FIELD:
+        return change_field(effect->card, side);
     case MONSTER_DO_MAGIC:
         /* Played as its owner would play it: on the other side's turn the
          * turn is lent to the owner for as long as the effect runs. */
@@ -550,15 +579,21 @@ int MonsterEffects_Update(void)
         return 0;
     }
     if (S.running == 1) {
-        /* The first handler is done (most only clear the flags); the
-         * second is the effect, as DuelScene_UpdateCardUse runs them, for
-         * the same card (gDuel_wEffectCardID is set only when the retail
-         * start ran, not when a code mod handled it). */
+        /* Let the retail first handler finish before scheduling the actual
+         * effect handler.  In particular, changing the field used to queue
+         * the terrain handler on the very next monster-effects tick, then
+         * restore its owner's turn while the terrain animation was still
+         * using that state. */
+        if (gDuel_wCardEffectFlags) return 1;
         S.running = 2;
         DuelEffect_StartRetailCardEffect(S.magic_card, 1);
         return 1;
     }
     if (S.running == 2) {
+        /* Terrain effects remain live for several frames while their board
+         * request and animation run.  Do not put a temporarily lent turn
+         * back until their retail handler has completed. */
+        if (gDuel_wCardEffectFlags) return 1;
         S.running = 0;
         S.destroy_mask = 0;
         if (S.swapped) {

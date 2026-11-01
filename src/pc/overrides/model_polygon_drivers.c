@@ -49,6 +49,9 @@
 #include "types.h"
 #include "pc/compat/gte.h"
 #include "pc/compat/pgxp.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/fields.h"
+#endif
 #include <stddef.h>
 #include <stdint.h>
 
@@ -64,6 +67,29 @@ enum { RTPS = 0x0180001, RTPT = 0x0280030, NCLIP = 0x1400006, AVSZ3 = 0x158002d,
 typedef struct Driver {
     int quad, gouraud, cull, window, translucent, shared;
 } Driver;
+
+/* Fields_UnmirrorQuadUV (fields.c) un-mirrors a mod field's centre-strip
+ * picture; this just gathers one quad's raw UV halfwords and each corner's
+ * model-space Z (an SVECTOR is x, y, z, padding) for it. Every retail field
+ * and every non-quad polygon are untouched; the model data stays
+ * byte-for-byte retail either way. */
+static void unmirror_field_centre(u32 uv[4], const u8 *vertices, const unsigned vertex[4], int corners)
+{
+#ifdef MEMORIES_PC
+    int i;
+    unsigned short quad_uv[4];
+    int z[4];
+    if (corners != 4 || !Fields_UnmirrorCentre()) return;
+    for (i = 0; i < 4; i++) {
+        quad_uv[i] = (unsigned short)(uv[i] & 0xffff);
+        z[i] = ((const int16_t *)(vertices + vertex[i] * 8))[2];
+    }
+    Fields_UnmirrorQuadUV(quad_uv, z);
+    for (i = 0; i < 4; i++) uv[i] = (uv[i] & ~0xffffu) | quad_uv[i];
+#else
+    (void)uv; (void)vertices; (void)vertex; (void)corners;
+#endif
+}
 
 static void load_vector(unsigned slot, const u8 *vectors, unsigned index)
 {
@@ -249,6 +275,7 @@ static u32 *draw(u32 *scratch, const Driver *kind)
             shade[0] = (shade[0] & 0x00ffffffu) | (color & 0xff000000u);
         }
     emit:
+        unmirror_field_centre(uv, vertices, vertex, corners);
         entry = entries + ((Memories_GteReadData(7) >> shift));
         uv[1] |= page_bits;
         if (kind->translucent) {

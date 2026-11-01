@@ -117,6 +117,7 @@ COMMON_FILES = [
     "compat/pgxp.c",
     "compat/libgs_ot.c",
     "render/packets.c",
+    "mod_packets.c",
     "render/soft_gpu.c",
     "render/texture_dump.c",
     "render/texture_pack.c",

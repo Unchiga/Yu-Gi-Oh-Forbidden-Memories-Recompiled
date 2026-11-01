@@ -23,6 +23,9 @@
 #include "file_transfer_steps.h"
 #define DUEL_PACKAGE_STAGE_RAW_ARENAS
 #include "duel_load_package_stage.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
+#endif
 
 void func_80056D7C(FileTransferDescriptor *d, s32 stage)
 {
@@ -38,6 +41,19 @@ void func_80056D7C(FileTransferDescriptor *d, s32 stage)
     switch (stage) {
     case 0: {
         u8 *destination;
+#ifdef MEMORIES_PC
+        /* A mod's bigger model: its model data is in the slot's arena
+           already (src/pc/cards/battle_models.h), and the RAM this stage
+           fills is where the slot draws; the stage is consumed without
+           copying, as stage 4's is for the other stance. */
+        if (index < 2 && Cards_ModelArena(index)) {
+            d->phase_size = 96 * FILE_SECTOR_SIZE;
+            D_8009B0F4_abs &= 0xFFFCFFFF;
+            D_8009B0F4_abs |= 0x200000;
+            d->done = 1;
+            break;
+        }
+#endif
         if (index == 0) {
             destination = D_80010000;
         } else {

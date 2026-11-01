@@ -117,7 +117,9 @@ and a copy may become one the same way. An equip whose `effect` is a disc equip 
 the monsters that one fits, with its bonus (Megamorph's +1000 too), and
 `equips` in the [gameplay tables](gameplay-tables.md) may change that. `model`
 and `effect` work the same on a card that stays on its side, and a copy's
-`model` and `effect` may name the card as a replace's do.
+`model` and `effect` may name the card as a replace's do. `model` may also
+name a battle model a mod adds ([Battle models](modding.md#battle-models-monsters-the-disc-does-not-have),
+API 21).
 
 The CPU plays a magic card as the disc's card its `effect` names, when that is
 a magic card too: its scripts look cards up by the disc's numbers, so a mod
@@ -378,6 +380,7 @@ Man-eater Bug as on the cards:
 | `heal` | its owner gains LP, up to the duel's starting LP as the recovery cards do | `amount` (1 to 9999) |
 | `damage` | the other side loses LP | `amount` (1 to 9999) |
 | `destroy` | the other side's monsters are destroyed, shown as Crush Card shows it | `target`: `opponent` (the default) or, on `flip`, `battle` (the monster attacking it, the default there); `type` and `attribute` keep it to those |
+| `change_field` | changes the active duel field and immediately recalculates every monster's terrain bonus | `field`: a retail or declared field id or name. It cannot run every frame (`face_up`) or during combat |
 
 `target` is `self` (the default), `own` (its side's monsters, itself too),
 `others` (its side's other monsters), `opponent`, `all`, or `battle` (the

@@ -54,6 +54,13 @@ int HdText_TitleCard(int page_x, int page_y, int u, int v, int factor, int *atla
 int HdText_HudEnabled(void);
 int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u, int v, int w, int h, int factor,
                int *atlas_u, int *atlas_v);
+/* The active field's own name over the FIELD box's terrain word (fields.h,
+ * Fields_HasCustomName), like HdText_TitleCard: checked and drawn whether
+ * or not a texture pack already painted that sprite, so a renamed or
+ * modded field's name is never left wrong by one. Returns 0 at once, no
+ * texture pack touched, when the active field has no name of its own. */
+int HdText_FieldWord(int depth, int page_x, int page_y, int clut_x, int clut_y, int u, int v, int w, int h,
+                     int factor, int *atlas_u, int *atlas_v);
 /* The opponent's name in place of COM (View > Opponent's name for COM),
  * (at 1x too: HdText_NamePixels): a box made from COM's, as long as the name needs
  * (Tables_DuelistShortName), drawn over the life-point panel at x, y

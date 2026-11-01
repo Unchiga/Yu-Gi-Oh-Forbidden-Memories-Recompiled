@@ -27,7 +27,8 @@ MANIFEST_KEYS = ("id", "name", "version", "author", "description", "library", "e
                  "font",
                  "chest_overflow", "terrain_bonus", "trap_thresholds", "equip_bonus_default", "passwords",
                  "starter", "starter_pools", "limits", "guardian_stars", "packs", "pack_shop", "card_text_colors", "card_layout",
-                 "palette_ramps", "title", "menu", "ui", "tower", "card_types", "attributes")
+                 "palette_ramps", "title", "menu", "ui", "tower", "card_types", "attributes", "fields",
+                 "models")
 
 
 @dataclass
@@ -242,6 +243,43 @@ def _check_card_types(project: Project, out: list):
                              f"\"name\" is already type {names[normalized]}'s name or retail alias"))
         else:
             names[normalized] = type_
+
+
+def _check_fields(project: Project, out: list):
+    """Match fields.c's registry checks before a manifest is saved."""
+    section = project.other.get("fields")
+    if section is None:
+        return
+    if not isinstance(section, dict) or not isinstance(section.get("fields"), list):
+        out.append(Issue("error", "Mod info", "fields", "must be an object with a \"fields\" list"))
+        return
+    retail = {"normal", "forest", "wasteland", "mountain", "sogen", "meadow", "umi", "sea", "yami", "dark"}
+    names = dict.fromkeys(retail)
+    for index, entry in enumerate(section["fields"]):
+        where = f"fields.fields[{index}]"
+        if not isinstance(entry, dict):
+            out.append(Issue("error", "Mod info", where, "must be an object with numeric id and name"))
+            continue
+        field_id, name, replace = entry.get("id"), entry.get("name"), entry.get("replace")
+        if field_id is not None and (not isinstance(field_id, int) or isinstance(field_id, bool) or not 1 <= field_id <= 255):
+            out.append(Issue("error", "Mod info", where, "id is 1 to 255"))
+        if replace is not None and (not isinstance(replace, str) or replace.lower() not in retail):
+            out.append(Issue("error", "Mod info", where, "replace names a retail field"))
+        if (not isinstance(name, str) or not name or not any(c.isalnum() for c in name)) and replace is None:
+            out.append(Issue("error", "Mod info", where, "name is a non-empty string with a letter or number"))
+            continue
+        if isinstance(name, str):
+            normalized = "".join(c.lower() for c in name if c.isalnum())
+            key = field_id if field_id is not None else replace if replace is not None else index + 7
+            if normalized in names and names[normalized] != key:
+                out.append(Issue("error", "Mod info", where, "name is already another field's name or retail alias"))
+            else:
+                names[normalized] = key
+        picture = entry.get("image", entry.get("picture"))
+        if picture is not None and (not isinstance(picture, str) or not picture or not picture.lower().endswith(".png")):
+            out.append(Issue("error", "Mod info", where, "image names a PNG in the mod"))
+        if "mirror" in entry and not isinstance(entry["mirror"], bool):
+            out.append(Issue("error", "Mod info", where, "mirror is true or false"))
 
 
 def _check_tags(project: Project, out: list):
@@ -489,6 +527,7 @@ def validate(project: Project) -> list:
     out = []
     _check_info(project, out)
     _check_card_types(project, out)
+    _check_fields(project, out)
     for cid in sorted(project.cards):
         if project.card_changed(cid):
             _check_card(project, cid, out)

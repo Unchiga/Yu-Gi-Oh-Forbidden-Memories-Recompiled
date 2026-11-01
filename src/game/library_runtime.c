@@ -164,7 +164,7 @@ void func_8002ACA4(u8 *state)
             /* A card past the disc's stands as its base's model, and a card
                a mod made a monster may have none to load. */
             id = Cards_HasModel(id + 1) ? Cards_ModelId(id + 1) - 1 : -1;
-            if (id >= 0 && ((gDuel_adwCardStats[id] >> 0x1A) & 0x1F) < 0x14) {
+            if (id >= 0 && ((gDuel_adwCardStats[Cards_ModelStatsIndex(id)] >> 0x1A) & 0x1F) < 0x14) {
 #else
             if (((gDuel_adwCardStats[id] >> 0x1A) & 0x1F) < 0x14) {
 #endif

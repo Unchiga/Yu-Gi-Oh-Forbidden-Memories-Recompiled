@@ -1,4 +1,5 @@
 #include "pc/mods/mods.h"
+#include "pc/guest/mips.h"
 /* LIBETC/LIBAPI: callbacks, VSync, critical sections and the BIOS pad driver.
  * The VBlank "interrupt" is the platform's 60 Hz signal; everything reachable
  * from it must stay async-signal-safe (no stdio, no allocation, no Xlib). */
@@ -308,6 +309,7 @@ int Memories_VSync(int mode)
         /* VBlanks that passed with no game frame for them: those that got in
          * during the game's frame, and during the present that just ran. */
         if (Platform_VBlankCount() - last_vsync > 1) late += Platform_VBlankCount() - last_vsync - 1;
+        Memories_MipsFrame(frames == 119 ? 120 : 0);   /* the interpreter's share, logged with these */
         if (++frames == 120) {
             double seconds = since.tv_sec ? (double)(t1.tv_sec - since.tv_sec) + (t1.tv_nsec - since.tv_nsec) / 1e9 : 0;
             frame_stats.game_us = game_us / 120;
@@ -318,6 +320,7 @@ int Memories_VSync(int mode)
             frame_stats.fps_tenths = seconds > 0 ? (unsigned)(1200.0 / seconds + 0.5) : 0;
             frame_stats.shown_tenths =
                 seconds > 0 ? (unsigned)((Memories_ShownFrames() - shown_then) * 10.0 / seconds + 0.5) : 0;
+            frame_stats.windows++;
             if (Log_Enabled(LOG_FRAMES)) {
                 LOG(LOG_FRAMES, "game %u us, present %u us per frame (max %u, %u); %u VBlanks missed in 120 frames",
                     game_us / 120, present_us / 120, game_max, present_max, late);

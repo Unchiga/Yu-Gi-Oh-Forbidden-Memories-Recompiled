@@ -38,6 +38,9 @@
 #include "../game/gpu_packets.h"
 #include "../game/func_80034830.h"
 #include "../game/func_80061A84.h"
+#ifdef MEMORIES_PC
+#include "../pc/cards/fields.h"
+#endif
 
 #define ABS3(v) ((v) >= 0 ? (v) : -(v))
 #define LINE_G2_VIEW(packet) ((LINE_G2 *)(packet))
@@ -149,10 +152,25 @@ u32 *func_80034830(GsARGUNIT_NORMAL *arg)
                     gte_strgb(&gt->r3);
                     gte_stszotz(&scr[7]);
                     setPolyGT4(gt);
+#ifdef MEMORIES_PC
+                    {
+                        unsigned short quad_uv[4];
+                        int quad_z[4];
+                        quad_uv[0] = rec[0]; quad_uv[1] = rec[2]; quad_uv[2] = rec[4]; quad_uv[3] = rec[6];
+                        quad_z[0] = vertop[rec[7]].vz; quad_z[1] = vertop[rec[9]].vz;
+                        quad_z[2] = vertop[rec[11]].vz; quad_z[3] = vertop[rec[13]].vz;
+                        Fields_UnmirrorQuadUV(quad_uv, quad_z);
+                        *(u16 *)&gt->u0 = quad_uv[0];
+                        *(u16 *)&gt->u1 = quad_uv[1];
+                        *(u16 *)&gt->u2 = quad_uv[2];
+                        *(u16 *)&gt->u3 = quad_uv[3];
+                    }
+#else
                     *(u16 *)&gt->u0 = rec[0];
                     *(u16 *)&gt->u1 = rec[2];
                     *(u16 *)&gt->u2 = rec[4];
                     *(u16 *)&gt->u3 = rec[6];
+#endif
                     gt->tpage = rec[3];
                     gt->clut = rec[1];
                     *(POLY_GT4 *)out = *gt;
@@ -262,10 +280,25 @@ u32 *func_80034830(GsARGUNIT_NORMAL *arg)
                 gte_strgb(&gt->r3);
                 gte_stszotz(&scr[7]);
                 setPolyGT4(gt);
+#ifdef MEMORIES_PC
+                {
+                    unsigned short quad_uv[4];
+                    int quad_z[4];
+                    quad_uv[0] = rec[0]; quad_uv[1] = rec[2]; quad_uv[2] = rec[4]; quad_uv[3] = rec[6];
+                    quad_z[0] = vertop[rec[7]].vz; quad_z[1] = vertop[rec[9]].vz;
+                    quad_z[2] = vertop[rec[11]].vz; quad_z[3] = vertop[rec[13]].vz;
+                    Fields_UnmirrorQuadUV(quad_uv, quad_z);
+                    *(u16 *)&gt->u0 = quad_uv[0];
+                    *(u16 *)&gt->u1 = quad_uv[1];
+                    *(u16 *)&gt->u2 = quad_uv[2];
+                    *(u16 *)&gt->u3 = quad_uv[3];
+                }
+#else
                 *(u16 *)&gt->u0 = rec[0];
                 *(u16 *)&gt->u1 = rec[2];
                 *(u16 *)&gt->u2 = rec[4];
                 *(u16 *)&gt->u3 = rec[6];
+#endif
                 gt->tpage = rec[3];
                 gt->clut = rec[1];
                 *(POLY_GT4 *)out = *gt;
