@@ -458,6 +458,14 @@ if(BUILD_TESTING)
     target_include_directories(memories_mods_manager_test PRIVATE src)
     target_link_libraries(memories_mods_manager_test PRIVATE m Threads::Threads)
     add_test(NAME pc_mods_manager COMMAND memories_mods_manager_test)
+    # The mods folder the player chose (src/pc/mods/mods.c, Mods_Folder): each case
+    # is a process of its own, as Mods_Load scans once.
+    add_executable(memories_mods_folder_test tests/pc/mods_folder_test.c src/pc/mods/import.c ${MOD_TEST_SOURCES})
+    target_include_directories(memories_mods_folder_test PRIVATE src)
+    target_link_libraries(memories_mods_folder_test PRIVATE m Threads::Threads ZLIB::ZLIB)
+    foreach(mods_folder_case file precedence missing notfolder env envempty exclusive)
+        add_test(NAME pc_mods_folder_${mods_folder_case} COMMAND memories_mods_folder_test ${mods_folder_case})
+    endforeach()
     # What enabled mods change in common (src/pc/mods/overlap.c): the mods in
     # tests/pc/mod_overlaps, whose lines the FM Editor's check must find too.
     add_executable(memories_mods_overlap_test tests/pc/mods_overlap_test.c src/pc/mods/overlap.c src/pc/mods/json.c

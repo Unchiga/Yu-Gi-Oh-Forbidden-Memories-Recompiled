@@ -3,8 +3,12 @@
 /* The mod system: what the port itself calls. Mods are directories, not
  * built-in code -- see modapi.h for what one contains and notes/modding.md
  * for how one is written. They are found beside the executable (`mods/`,
- * where the release's own mods live) and in the player's mods directory
- * (paths.h), which is where a player installs someone else's. Whether a mod
+ * where the release's own mods live), in a mods folder the player chose
+ * (Mods_Folder, below) and in the player's mods directory (paths.h), which
+ * is where a player installs someone else's. They are read in that order,
+ * and on one id the later wins: the chosen folder over the release's mods,
+ * the user directory's over both. MEMORIES_MODS_DIR, when set, is the only
+ * folder read. The game never writes to the chosen folder. Whether a mod
  * is applied is a setting, `mod.<id>`, saved with the rest of them. */
 
 #define MODS_MAX 256
@@ -177,6 +181,28 @@ const char *Mods_Directory(int mod);
 /* Where players put new mods (MEMORIES_MODS_DIR, else the user mods
  * folder), created if missing; 0 on success. */
 int Mods_InstallDirectory(char *out, size_t size);
+/* The mods folder the player chose, one more folder the game reads (origin
+ * "folder"), between the release's mods and the user directory's: the first
+ * line of mods-folder.txt in the user directory, else
+ * MEMORIES_MODS_FOLDER, which wins when it is set (set to nothing, it says
+ * there is none). A path that is not absolute is taken from the program
+ * directory, a '\' is a '/' on Windows. 0 and the path in `out`, or -1 when
+ * there is none. Whether it can be read is not looked at here. Mods are
+ * scanned once, at the first Mods_Load: a change applies at the next launch.
+ * MEMORIES_MODS_DIR set means no other folder is read, this one neither. */
+int Mods_Folder(char *out, size_t size);
+/* Choose the mods folder (writes mods-folder.txt, atomically); NULL or ""
+ * chooses none (the file goes). The folder need not exist or be readable
+ * yet, as when the permission for it is asked for after. -1, with the reason
+ * in `why`, when the path is one the game reads already (the release's
+ * mods/, the user directory's, MEMORIES_MODS_DIR, or a folder in one) or
+ * the file could not be written. Does not change this launch's list. */
+int Mods_SetFolder(const char *path, char *why, size_t why_size);
+/* Why this launch did not read the folder of Mods_Folder (it is gone, is not a
+ * folder, cannot be read, is one the game reads already, or MEMORIES_MODS_DIR
+ * is set); "" when it was read or there is none, and before Mods_Load. Said in
+ * the log only, never as a notice: for the Mods window to show. Borrowed. */
+const char *Mods_FolderProblem(void);
 /* A mod folder put in the player's mods folder while the game runs (the
  * Android Mods panel's Import mod..., import.h), read as the startup scan
  * reads one. A new id joins the list, off (its setting is recorded as off:

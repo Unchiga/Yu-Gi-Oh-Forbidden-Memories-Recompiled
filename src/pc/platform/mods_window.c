@@ -1311,6 +1311,11 @@ static void remove_start(void)
         put(status, sizeof(status), "Wait for the import or the HD pack to finish first.");
         return;
     }
+    if (!strcmp(Mods_Origin(selected), "folder")) {
+        put(status, sizeof(status), "%s is in your own mods folder, which the game does not delete from. "
+            "Delete it there.", name);
+        return;
+    }
     if (strcmp(Mods_Origin(selected), "installed")) {
         put(status, sizeof(status), "%s came with the game, so it cannot be removed.", name);
         return;

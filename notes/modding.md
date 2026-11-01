@@ -12,7 +12,14 @@ that is off or does not load any more ([Mod manager](mods-window.md)).
 | Directory | What is in it |
 |---|---|
 | `mods/` beside the executable | the mods the release ships (`3d-monsters`, `hand-camera`, `ai-hard-mode`, `yamyi-mods`, `drop-missing-cards`) |
+| a mods folder the player chose (below) | mods the player keeps wherever they like |
 | `mods/` in the user directory | mods the player installed |
+
+The three are read in that order, and on one `id` the later wins: the chosen
+folder over the release's mods, the user directory's over both (so a mod
+imported in the game, or an HD pack update, is never hidden by an older copy
+in the chosen folder). In one folder, the first of two with an id, in the
+order of their names, is kept.
 
 The user directory is where everything the player owns lives: settings,
 controls, memory cards, save states, screenshots, their mods and whatever a
@@ -21,10 +28,39 @@ mod stores. It is `Documents\My Games\YFM Re-Decomp` on Windows and
 [`src/pc/platform/paths.h`](../src/pc/platform/paths.h). A mod in the user
 directory replaces one the release ships with the same `id`.
 
+### Your own mods folder
+
+A player who keeps their mods in a folder of their own (a download folder, a
+pack on another disk) names it in `mods-folder.txt` in the user directory:
+one path, UTF-8, on the first line that says anything (a byte order mark and
+a CRLF are fine; on Windows `\` and `/` both do). A path that is not
+absolute is taken from the program directory, so a portable pack can say
+`mods-extra`. `MEMORIES_MODS_FOLDER` names it for one run instead and wins
+over the file (set to nothing, it says there is none). Mods are scanned once
+at start-up, so a change applies at the next launch. In code:
+`Mods_SetFolder` writes the file (an empty path removes it), `Mods_Folder`
+reads it, `Mods_FolderProblem` says why a folder was not read
+([`src/pc/mods/mods.h`](../src/pc/mods/mods.h)).
+
+It is one more folder the game reads, not a replacement for the others, and
+the game never writes to it. Importing a mod or the HD pack, `mod-data/<id>/`,
+the settings and profiles all stay in the user directory, and **Remove** does
+not delete a mod that lives in the chosen folder (delete it there). A mod in
+the chosen folder shows as `folder` where the Mods window shows where a mod
+came from.
+
+A folder that is gone, is a file or cannot be read is left out, with no
+notice at start-up: the reason is in the log (`mods folder: ...`) and
+`Mods_FolderProblem`, for the Mods window to show, and the choice stays so
+the mods come back when the folder does. The choice is also refused when the
+folder is one the game reads already (the release's `mods/`, the user
+directory's, or one inside them; links are not followed).
+
 | Variable | Effect |
 |---|---|
 | `MEMORIES_USER_DIR` | the user directory, instead of the platform's |
-| `MEMORIES_MODS_DIR` | the only directory scanned for mods |
+| `MEMORIES_MODS_DIR` | the only directory scanned for mods (the release's `mods/`, the chosen folder and the user directory's are then not read) |
+| `MEMORIES_MODS_FOLDER` | the player's mods folder for this run, over `mods-folder.txt`; empty means none |
 | `MEMORIES_MODS=0` | load no mods at all this run |
 | `MEMORIES_MOD_<ID>=0/1` | settle one mod for this run; the id uppercased, everything that is not a letter or a digit an underscore (`MEMORIES_MOD_3D_MONSTERS=1`) |
 | `MEMORIES_MOD_<ID>_<KEY>=n` | one of a code mod's settings for this run, over what the settings file says (`MEMORIES_MOD_3D_MONSTERS_SCALE=5000`) |
