@@ -257,8 +257,10 @@ static int nearest(const Weighted *c, const Rgb *palette, const int *by_green, i
  * for every picture; where the game's allocator registers each one (the
  * translated build, whose registry is searched in a line) that was nearly all
  * of the time a card's picture took. Here the memory comes from a few chunks,
- * handed out in order and all freed at once. Each chunk is at least twice the
- * last, so the sixteen places for them are never used up. */
+ * handed out in order and all freed at once. A chunk is the first one's size,
+ * or a request's when that is bigger, so the memory stays near what the cuts
+ * use (a bust's hundred pictures are millions of pixels): a picture of
+ * all-different colors takes four or five chunks of the sixteen. */
 #define ARENA_CHUNKS 16
 
 typedef struct {
@@ -271,7 +273,7 @@ static void *arena_get(Arena *arena, size_t bytes)
 {
     bytes = (bytes + 15u) & ~(size_t)15u;
     if (!arena->count || bytes > arena->size - arena->used) {
-        size_t size = arena->count ? arena->size * 2 : arena->size;
+        size_t size = arena->size;
         if (size < bytes) size = bytes;
         if (arena->count == ARENA_CHUNKS) return NULL;
         arena->chunks[arena->count] = malloc(size);
@@ -310,9 +312,8 @@ static void quantize(const Rgb *pixels, int count, int colors, unsigned short *c
     int box_count = 1, i, k, n = 0, by_green[256];
     boxes[0].colors = NULL;
     if (count < 1) return;
-    /* A chunk that holds a picture of all-different colors and its cuts, in
-     * the usual case; a bigger one is a chunk more. */
-    arena.size = (size_t)count * 64;
+    /* A chunk holds the two copies of the pixels and some of what follows. */
+    arena.size = (size_t)count * 16;
     sorted = arena_get(&arena, (size_t)count * sizeof(*sorted));
     spare = arena_get(&arena, (size_t)count * sizeof(*spare));
     if (!sorted || !spare) goto done;
