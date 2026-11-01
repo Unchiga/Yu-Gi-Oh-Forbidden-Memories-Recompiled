@@ -239,9 +239,9 @@ def features(manifest: dict, project=None) -> list:
         for effect in _entries(entry.get("monster_effects")):
             if effect.get("do") == "battle_immunity":
                 add(19, "a monster effect's \"battle_immunity\"")
-            if effect.get("do") in ("piercing", "piercing_damage"):
+            if effect.get("do") == "piercing":
                 add(19, "a monster effect's \"piercing\"")
-            if "conditions" in effect or "condition" in effect:
+            if "conditions" in effect:
                 add(19, "a monster effect's \"conditions\"")
     # --- API 20 -------------------------------------------------------------
     if "fields" in manifest:

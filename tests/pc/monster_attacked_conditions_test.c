@@ -136,7 +136,12 @@ s32 Duel_CalcCardStats(DuelCardRecord *card)
 {
     int slot = card - &D_801A7AD8[0];
     if (slot >= 0 && slot < 30) {
-        return gDuel_adwCardStats[slot];
+        int atk = gDuel_adwCardStats[slot] & 0xFFFF;
+        int def = ((unsigned int)gDuel_adwCardStats[slot] >> 16) & 0xFFFF;
+        MonsterEffects_Stats(card, &atk, &def);
+        if (atk < 0) atk = 0;
+        if (def < 0) def = 0;
+        return (atk & 0xFFFF) | ((def & 0xFFFF) << 16);
     }
     return 0;
 }
@@ -1196,6 +1201,20 @@ static void test_attacker_criteria_immunity(void)
     gDuel_adwCardStats[20] = 1000 | (2500 << 16); /* 2500 DEF < 2000 is false */
     assert(MonsterEffects_HasBattleImmunity(5) == 0);
 
+    /* attacked_by_stat sees monster-effect boosts (e.g. 300 base ATK + 2000 boost = 2300 >= 1000) */
+    eff_ex.attacker_stat = 1; /* ATK */
+    eff_ex.attacker_stat_op = MONSTER_OP_GE;
+    eff_ex.attacker_amount = 1000;
+    s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
+    gDuel_adwCardStats[20] = 300 | (200 << 16);
+    gMonsterEffects.battle_attack[20] = 0;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+    gMonsterEffects.battle_attack[20] = 2000; /* 300 + 2000 = 2300 >= 1000 */
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    gMonsterEffects.battle_attack[20] = 0;
+    gDuel_adwCardStats[20] = 3000 | (2500 << 16);
+
     /* --- Test 4: MONSTER_BATTLE_MOD_ATTACKED_BY_LEVEL --- */
     /* Higher level (MONSTER_OP_GT) */
     memset(&eff_ex, 0, sizeof(eff_ex));
@@ -1516,6 +1535,54 @@ static void test_piercing_damage(void)
     s_test_effects[0] = eff;
     s_test_effects_ex[0] = eff_ex;
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 1); /* 1000 < 1500 */
+
+    /* attacks_stat sees monster-effect boosts (e.g. 300 base ATK + 2000 boost = 2300 >= 1000) */
+    eff_ex.attacker_stat = 1; /* ATK */
+    eff_ex.attacker_stat_op = MONSTER_OP_GE;
+    eff_ex.attacker_amount = 1000;
+    s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
+    gDuel_adwCardStats[20] = 300 | (1500 << 16);
+    gMonsterEffects.battle_attack[20] = 0;
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
+    gMonsterEffects.battle_attack[20] = 2000; /* 300 + 2000 = 2300 >= 1000 */
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+    gMonsterEffects.battle_attack[20] = 0;
+
+    /* Nested s_evaluating_stats: a face_up boost with multiple stat conditions preserves s_evaluating_stats */
+    {
+        MonsterEffect boost_eff = {0};
+        MonsterEffectEx boost_ex = {0};
+        boost_eff.when = MONSTER_WHEN_FACE_UP;
+        boost_eff.action = MONSTER_DO_BOOST;
+        boost_eff.target = MONSTER_TARGET_ALL;
+        boost_eff.type = -1;
+        boost_eff.attribute = -1;
+        boost_eff.attack = 2000;
+        boost_ex.cond_count = 2;
+        boost_ex.cond_mode = MONSTER_COND_MODE_ALL;
+        boost_ex.conditions[0].type = MONSTER_COND_STAT_THRESHOLD;
+        boost_ex.conditions[0].stat = MONSTER_STAT_ATK;
+        boost_ex.conditions[0].op = MONSTER_OP_GE;
+        boost_ex.conditions[0].value = 1000;
+        boost_ex.conditions[1].type = MONSTER_COND_STAT_THRESHOLD;
+        boost_ex.conditions[1].stat = MONSTER_STAT_ATK;
+        boost_ex.conditions[1].op = MONSTER_OP_GE;
+        boost_ex.conditions[1].value = 1000;
+        s_test_effects[1] = boost_eff;
+        s_test_effects_ex[1] = boost_ex;
+        s_test_effect_count = 2;
+        /* Slot 5 has base ATK 1800 (>= 1000), so its face_up boost (+2000 to all) applies to slot 20 (300 -> 2300) */
+        gDuel_adwCardStats[5] = 1800 | (1000 << 16);
+        gDuel_adwCardStats[20] = 300 | (1500 << 16);
+        assert((Duel_CalcCardStats(&D_801A7AD8[20]) & 0xFFFF) == 2300);
+        assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+        /* If slot 5 has base ATK 500 (< 1000), condition 1 must NOT see its own +2000 boost via cleared s_evaluating_stats */
+        gDuel_adwCardStats[5] = 500 | (1000 << 16);
+        assert((Duel_CalcCardStats(&D_801A7AD8[5]) & 0xFFFF) == 500);
+        s_test_effect_count = 1;
+        gDuel_adwCardStats[5] = 1800 | (1000 << 16);
+    }
 
     /* --- Test 5: MONSTER_PIERCING_MOD_LEVEL (higher / lower level) --- */
     memset(&eff_ex, 0, sizeof(eff_ex));

@@ -254,6 +254,9 @@ class FeatureTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(self.needs(value), 19)
         self.assertEqual(self.needs(effect(do="boost", attack=100)), 10)
+        # Keys/actions the game does not read ("piercing_damage", singular "condition") do not bump to 19
+        self.assertEqual(self.needs(effect(do="piercing_damage")), 10)
+        self.assertEqual(self.needs(effect(do="boost", attack=100, condition={"type": "lower_lp"})), 10)
 
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})

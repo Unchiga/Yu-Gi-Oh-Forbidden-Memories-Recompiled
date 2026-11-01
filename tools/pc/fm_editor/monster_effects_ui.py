@@ -478,26 +478,12 @@ class EffectDialog(FormDialog):
         self.result = None
         effect = fx.normalize(effect, project.resolve, self.attribute_choice, project.type_names) if effect else None
         self.start = effect or {"when": "summon", "do": "boost", "target": "self", "attack": 500}
-        self.conditions = [dict(c) for c in (effect.get("conditions") or
-                           ([effect["condition"]] if effect and "condition" in effect else []))] if effect else []
+        self.conditions = [dict(c) for c in (effect.get("conditions") or ())] if effect else []
         self.attack_mod = "always"
         self.attack_reset = "turn"
         if effect and effect.get("do") == "battle_immunity":
             self.attack_mod = effect.get("modifier", "always")
             self.attack_reset = effect.get("reset", "turn")
-            for i, c in enumerate(self.conditions):
-                if c.get("type") in fx.ATTACK_CONDITIONS:
-                    t = c.get("type")
-                    if t in ("first_attacked", "after_one_attack", "destroyed_after_1_attack"):
-                        self.attack_mod = "first_attacked"
-                    elif t in ("second_attacked", "destroyed_after_2_attacks", "destroyed_after_two_attacks", "can_only_be_destroyed_after_two_attacks"):
-                        self.attack_mod = "destroyed_after_2_attacks"
-                    elif t in ("third_attacked", "destroyed_after_3_attacks", "destroyed_after_three_attacks", "can_only_be_destroyed_after_three_attacks"):
-                        self.attack_mod = "destroyed_after_3_attacks"
-                    if "reset" in c:
-                        self.attack_reset = c["reset"]
-                    del self.conditions[i]
-                    break
         elif effect and effect.get("do") == "piercing":
             self.attack_mod = effect.get("modifier", "always")
         super().__init__(master, "Monster effect" if effect is None else "Change the monster effect", self.build,

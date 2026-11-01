@@ -200,7 +200,7 @@ Continuous effects under `when: "face_up"` (`boost`, `battle_immunity`, and `pie
 ### Evaluation Pipeline & Re-entrancy Guards
 - **Strict Face-Up Scope (`when: "face_up"`)**: Conditions and `condition_mode` are exclusively valid on continuous face-up monster effects (`when: "face_up"`). They cannot be attached to spells or traps (`card_effects`), nor to non-face-up triggered monster effects (`summon`, `flip`, `draw`, `combat`, `destroyed`, `destroy_opponent`). Any attempt to declare conditions on these emits a `Mods_Note` diagnostic and rejects the effect.
 - **`condition_mode`**: `"all"` (logical AND) or `"any"` (logical OR).
-- **Stat Recursion Guard**: Because conditions evaluate in-combat effective stats using `Duel_CalcCardStats()`, an internal re-entrancy flag `s_evaluating_stats` in `src/pc/cards/monster_effects_duel.c` prevents infinite recursion loops.
+- **Stat Recursion Guard**: Condition stat checks (`stat_threshold`, `lowest_atk`, `highest_atk`, `control_stat`) set an internal re-entrancy flag `s_evaluating_stats` in `src/pc/cards/monster_effects_duel.c` before calling `Duel_CalcCardStats()`, so `MonsterEffects_Stats()` returns early and conditions compare stats before monster-effect boosts (base + equip/permanent modifiers + terrain) to avoid recursion loops. Attacker and defender stat checks on `battle_immunity` and `piercing` (`attacked_by_stat`, `attacked_by_monster`, `attacks_stat`, `attacks_monster`) have no loop and evaluate full effective stats including monster-effect boosts.
 
 ### Condition Catalog & Specification
 

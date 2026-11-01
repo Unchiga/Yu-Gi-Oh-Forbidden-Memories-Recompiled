@@ -897,19 +897,19 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
             return count > 0;
         }
         case MONSTER_COND_STAT_THRESHOLD: {
-            int attack, defense, val, packed;
+            int attack, defense, val, packed, saved = s_evaluating_stats;
             DuelCardRecord *card = &D_801A7AD8[record];
 
             s_evaluating_stats = 1;
             packed = Duel_CalcCardStats(card);
-            s_evaluating_stats = 0;
+            s_evaluating_stats = saved;
             attack = packed & 0xFFFF;
             defense = (unsigned int)packed >> 16;
             val = (cond->stat == MONSTER_STAT_DEF) ? defense : attack;
             return compare_op(val, cond->op, cond->value);
         }
         case MONSTER_COND_LOWEST_ATK: {
-            int my_atk;
+            int my_atk, saved = s_evaluating_stats;
             s_evaluating_stats = 1;
             my_atk = Duel_CalcCardStats(&D_801A7AD8[record]) & 0xFFFF;
             for (r = 0; r < MONSTER_RECORDS; r++) {
@@ -917,15 +917,15 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
                 if (r == record || !slot_has_monster(r) || !S.face_up[r]) continue;
                 other_atk = Duel_CalcCardStats(&D_801A7AD8[r]) & 0xFFFF;
                 if (other_atk <= my_atk) {
-                    s_evaluating_stats = 0;
+                    s_evaluating_stats = saved;
                     return 0;
                 }
             }
-            s_evaluating_stats = 0;
+            s_evaluating_stats = saved;
             return 1;
         }
         case MONSTER_COND_HIGHEST_ATK: {
-            int my_atk;
+            int my_atk, saved = s_evaluating_stats;
             s_evaluating_stats = 1;
             my_atk = Duel_CalcCardStats(&D_801A7AD8[record]) & 0xFFFF;
             for (r = 0; r < MONSTER_RECORDS; r++) {
@@ -933,11 +933,11 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
                 if (r == record || !slot_has_monster(r) || !S.face_up[r]) continue;
                 other_atk = Duel_CalcCardStats(&D_801A7AD8[r]) & 0xFFFF;
                 if (other_atk >= my_atk) {
-                    s_evaluating_stats = 0;
+                    s_evaluating_stats = saved;
                     return 0;
                 }
             }
-            s_evaluating_stats = 0;
+            s_evaluating_stats = saved;
             return 1;
         }
         case MONSTER_COND_FEWER_MONSTERS:
@@ -961,14 +961,15 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
         case MONSTER_COND_CONTROL_STAT: {
             int found = 0;
             for (r = 0; r < MONSTER_RECORDS; r++) {
-                int attack, defense, val, packed, match;
+                int attack, defense, val, packed, match, saved;
                 if (!slot_has_monster(r)) continue;
                 if (owner(r) != owner(record)) continue;
                 if (cond->scope && r == record) continue;
                 if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN) continue;
+                saved = s_evaluating_stats;
                 s_evaluating_stats = 1;
                 packed = Duel_CalcCardStats(&D_801A7AD8[r]);
-                s_evaluating_stats = 0;
+                s_evaluating_stats = saved;
                 attack = packed & 0xFFFF;
                 defense = (unsigned int)packed >> 16;
                 val = (cond->stat == MONSTER_STAT_DEF) ? defense : attack;
@@ -1171,10 +1172,7 @@ int MonsterEffects_HasBattleImmunity(int record)
                     int a = Cards_Attribute(att_card);
                     if (a != ex->attacker_attribute) continue;
                 } else if (ex->battle_modifier == MONSTER_BATTLE_MOD_ATTACKED_BY_STAT) {
-                    int packed, att_val;
-                    s_evaluating_stats = 1;
-                    packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]);
-                    s_evaluating_stats = 0;
+                    int packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]), att_val;
                     if (ex->attacker_stat == 2)
                         att_val = (unsigned int)packed >> 16; /* DEF */
                     else
@@ -1196,10 +1194,7 @@ int MonsterEffects_HasBattleImmunity(int record)
                         if (a != ex->attacker_attribute) continue;
                     }
                     if (ex->attacker_stat > 0 || ex->attacker_amount > 0) {
-                        int packed, att_val;
-                        s_evaluating_stats = 1;
-                        packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]);
-                        s_evaluating_stats = 0;
+                        int packed = Duel_CalcCardStats(&D_801A7AD8[att_rec]), att_val;
                         if (ex->attacker_stat == 2)
                             att_val = (unsigned int)packed >> 16; /* DEF */
                         else
@@ -1255,10 +1250,7 @@ int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
                 int a = Cards_Attribute(def_card);
                 if (a != ex->attacker_attribute) continue;
             } else if (ex->battle_modifier == MONSTER_PIERCING_MOD_ATTACKS_STAT) {
-                int packed, def_val;
-                s_evaluating_stats = 1;
-                packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]);
-                s_evaluating_stats = 0;
+                int packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]), def_val;
                 if (ex->attacker_stat == 2)
                     def_val = (unsigned int)packed >> 16; /* DEF */
                 else
@@ -1280,10 +1272,7 @@ int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
                     if (a != ex->attacker_attribute) continue;
                 }
                 if (ex->attacker_stat > 0 || ex->attacker_amount > 0) {
-                    int packed, def_val;
-                    s_evaluating_stats = 1;
-                    packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]);
-                    s_evaluating_stats = 0;
+                    int packed = Duel_CalcCardStats(&D_801A7AD8[defender_record]), def_val;
                     if (ex->attacker_stat == 2)
                         def_val = (unsigned int)packed >> 16; /* DEF */
                     else
@@ -1307,8 +1296,9 @@ int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
 void MonsterEffects_Stats(const void *pointer, int *attack, int *defense)
 {
     const DuelCardRecord *card = pointer;
-    int target = (int)(card - D_801A7AD8), source;
+    int target = (int)(card - D_801A7AD8), source, saved;
     if (!S.ready || !monster_zone(target) || s_evaluating_stats) return;
+    saved = s_evaluating_stats;
     s_evaluating_stats = 1;
     if (phase() == PHASE_BATTLE) {
         *attack += S.battle_attack[target];
@@ -1332,5 +1322,5 @@ void MonsterEffects_Stats(const void *pointer, int *attack, int *defense)
             *defense += effects[e].defense * count;
         }
     }
-    s_evaluating_stats = 0;
+    s_evaluating_stats = saved;
 }

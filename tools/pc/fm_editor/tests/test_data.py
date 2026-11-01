@@ -1727,8 +1727,10 @@ class MonsterEffectsTest(unittest.TestCase):
         self.assertEqual(eff_always, {"when": "face_up", "do": "piercing", "target": "self"})
         self.assertEqual(fx.describe(eff_always), "Inflicts piercing damage")
 
-        # Pruned alias piercing_damage is rejected
+        # Pruned alias piercing_damage is rejected, and singular "condition" / "battle_modifier" are ignored
         self.assertIsNone(fx.normalize({"when": "face_up", "do": "piercing_damage"}))
+        self.assertNotIn("conditions", fx.normalize({"when": "face_up", "do": "piercing", "condition": {"type": "lower_lp"}}))
+        self.assertFalse(fx.effect_has_attack_condition({"when": "face_up", "do": "battle_immunity", "battle_modifier": "first_attacked"}))
 
         # Disallowed when not face_up
         self.assertIsNone(fx.normalize({"when": "combat", "do": "piercing"}))

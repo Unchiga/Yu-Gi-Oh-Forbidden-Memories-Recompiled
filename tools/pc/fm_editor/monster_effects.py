@@ -584,13 +584,6 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
             norm_conds.append(nc)
         if norm_conds:
             out["conditions"] = norm_conds
-    elif "condition" in effect:
-        if when != "face_up":
-            return None
-        nc = normalize_condition(effect["condition"], resolve, type_names)
-        if nc is None:
-            return None
-        out["conditions"] = [nc]
 
     return out
 
@@ -623,23 +616,18 @@ def _filter(source: dict, out: dict, attribute_resolve=None, type_names=None) ->
 
 
 def effect_has_attack_condition(effect: dict) -> bool:
-    """True if effect has a battle immunity attack count modifier or (legacy) attack condition."""
+    """True if effect has a battle immunity attack count modifier."""
     if not isinstance(effect, dict):
         return False
     if effect.get("do") == "battle_immunity":
-        mod = effect.get("modifier") or effect.get("battle_modifier")
+        mod = effect.get("modifier")
         if mod and mod in ATTACK_COUNT_MODIFIERS:
             return True
-    conds = effect.get("conditions")
-    if not conds and "condition" in effect:
-        conds = [effect["condition"]]
-    if isinstance(conds, list):
-        return any(isinstance(c, dict) and c.get("type") in ATTACK_CONDITIONS for c in conds)
     return False
 
 
 def monster_has_attack_condition(effects: list, exclude_index: int | None = None) -> bool:
-    """True if any effect other than exclude_index has an attack condition or modifier."""
+    """True if any effect other than exclude_index has an attack count modifier."""
     if not isinstance(effects, list):
         return False
     for i, e in enumerate(effects):
@@ -651,25 +639,10 @@ def monster_has_attack_condition(effects: list, exclude_index: int | None = None
 
 
 def count_monster_attack_conditions(effects: list) -> int:
-    """Total count of attack conditions and modifiers across all effects of a monster."""
+    """Total count of attack count modifiers across all effects of a monster."""
     if not isinstance(effects, list):
         return 0
-    total = 0
-    for e in effects:
-        if not isinstance(e, dict):
-            continue
-        if e.get("do") == "battle_immunity":
-            mod = e.get("modifier") or e.get("battle_modifier")
-            if mod and mod in ATTACK_COUNT_MODIFIERS:
-                total += 1
-        conds = e.get("conditions")
-        if not conds and "condition" in e:
-            conds = [e["condition"]]
-        if isinstance(conds, list):
-            for c in conds:
-                if isinstance(c, dict) and c.get("type") in ATTACK_CONDITIONS:
-                    total += 1
-    return total
+    return sum(1 for e in effects if effect_has_attack_condition(e))
 
 
 def problems(effects, resolve=None, attribute_resolve=None, type_names=None) -> list:
@@ -801,8 +774,6 @@ def condition_words(cond: dict, card_name=lambda cid: f"#{cid}") -> str:
 def conditions_words(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
     """" (if ...)" string for conditions on an effect, or ""."""
     conds = effect.get("conditions")
-    if not conds and "condition" in effect:
-        conds = [effect["condition"]]
     if not conds:
         return ""
     mode = effect.get("condition_mode", "all")
