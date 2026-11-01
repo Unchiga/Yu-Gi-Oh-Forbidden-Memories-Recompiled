@@ -403,6 +403,27 @@ static void test_import_job(void)
     said = import_zip(damaged, 2);
     assert(strstr(said, "Nothing was imported. The .zip is damaged: jobbad/data.bin does not match its checksum."));
     assert(Mods_Count() == count && !folder_has("mods/jobbad") && !folder_has("picked.zip") && !import_leftovers());
+    /* A Stop that comes after the unpacking's last check is not why it
+     * failed: the checksum's reason stays, not "The import was stopped.". */
+    ImportJob_SetStepHook(step_hook);
+    step_calls = 0;
+    step_pause = 2; /* the manifest is chunk 1, data.bin chunk 2: written, not yet checked */
+    step_gate = 0;
+    write_zip(import_source, damaged, 2);
+    tap_widget(MODS_UI_FOLDER);
+    while (__atomic_load_n(&step_calls, __ATOMIC_ACQUIRE) < 2) {
+        ModsWindow_Tick();
+        nap();
+    }
+    tap_widget(MODS_UI_FOLDER);
+    assert(strstr(said_now(), "Stopping..."));
+    __atomic_store_n(&step_gate, 1, __ATOMIC_RELEASE);
+    import_pump();
+    ImportJob_SetStepHook(NULL);
+    said = said_now();
+    assert(strstr(said, "Nothing was imported. The .zip is damaged: jobbad/data.bin does not match its checksum."));
+    assert(!strstr(said, "stopped") && !ImportJob_Cancelled());
+    assert(Mods_Count() == count && !folder_has("mods/jobbad") && !folder_has("picked.zip") && !import_leftovers());
     /* The unpacking: its share, and a Stop in the middle of a file leaves
      * nothing in the mods folder (the hidden folder holds the half-written
      * file meanwhile). */

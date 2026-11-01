@@ -109,7 +109,8 @@ the panel usable meanwhile.
   and the game thread reads the rest only after it, the HD pack's handoff;
   the byte counts (`Mods_ImportWatch`, the copy's) are atomics. **Stop**
   sets an atomic that the copy and the unpacking read between chunks of 64
-  KB, even in the middle of a big file: the copy is removed and the hidden
+  KB (of the unpacked bytes, so a deflated file stops after one of its
+  chunks too), even in the middle of a big file: the copy is removed and the hidden
   `.import-XXXXXX` folder with what was unpacked in it, so nothing is left in
   `mods/` ("The import was stopped. Nothing was imported."). A Stop that
   comes as the reading ends imports nothing; one that comes after the
@@ -118,6 +119,13 @@ the panel usable meanwhile.
   wait for the import (Apply says so). Closing the panel lets the import go
   on; the step after it (the question, the final message) runs when the
   panel opens again, as with the HD pack.
+  Limits: Stop is read between chunks, not at once. The copy of a document
+  from a cloud provider can wait inside the provider's own read (a slow
+  download) and sees the Stop when that read returns, and a finished
+  import keeps its `.incoming.zip` until the panel is opened again. A
+  failure that comes with a late Stop keeps its own words ("Nothing was
+  imported, but ... could not be put back"); only a step that ended because
+  of the Stop says it was stopped.
 
 - **What counts as a mod in it**: every folder with a `mod.json` at the
   `.zip`'s root (the whole `.zip` is then the mod, in a folder named by the
@@ -168,7 +176,10 @@ the panel usable meanwhile.
   names starting with a dot), checking each file's size and CRC; only then
   is each mod renamed into place, and any failure puts back what was moved
   and removes the hidden folder (an old folder that cannot be put back is
-  kept in `mods/.recovered-XXXXXX` and named in the message; a new mod
+  kept in `mods/.recovered-XXXXXX` and named in the message; the old
+  folder waits in the hidden folder's `old/<name>` meanwhile, so if the app
+  ends between the two renames the next cleanup puts it back where nothing
+  has taken its place and deletes the rest; a new mod
   already placed that can be neither moved back nor removed is named too,
   "...could not be taken out of the mods folder again (delete that
   folder)"). What an
@@ -176,12 +187,14 @@ the panel usable meanwhile.
 - **Testing**: `MEMORIES_IMPORT_ZIP=<file>` (in `environment.txt`) makes
   Import mod... take that file instead of opening the picker.
   `pc_mod_import` checks the reader and the installer on `.zip` files it
-  writes (the progress chunk by chunk, a cancel in the middle of a file);
+  writes (the progress chunk by chunk, a cancel in the middle of a file, stored or
+  deflated, an interrupted Replace's old mod put back by the cleanup);
   `pc_mods_window` drives the panel's import with a fake picker and a fake
   copy that waits at a known piece (`import_pump`, `test_import_job`): the
   share said, Stop in the copy and in the middle of a file of the
   unpacking, nothing left in `mods/`, the panel closed and opened again
-  meanwhile, a failure of the copy and of the unpacking.
+  meanwhile, a failure of the copy and of the unpacking, and a Stop that
+  comes too late to be why the unpacking failed.
   `ImportJob_SetStepHook` is the test seam that pauses the unpacking at a
   chunk.
 

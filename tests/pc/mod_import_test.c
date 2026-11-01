@@ -473,6 +473,52 @@ int main(void)
             Mods_ImportClose(imp);
         }
     }
+    /* The same, with the big file deflated: its 300000 bytes are one chunk of
+     * the .zip, so the cancel is seen between the chunks it unpacks to. */
+    reset();
+    {
+        static char body[300001];
+        ZipItem items[] = {{"alpha/mod.json", MANIFEST_A, 0, 0, 0, 0, 0, 0}, {"alpha/big.bin", body, 1, 0, 0, 0, 0, 0}};
+        unsigned done = 0;
+        int cancel = 0;
+        ModsImport *imp;
+        memset(body, 'B', sizeof(body) - 1);
+        write_zip(zip, items, 2);
+        imp = Mods_ImportOpen(zip, why, sizeof(why));
+        CHECK(imp != NULL);
+        if (imp) {
+            step_cancel = &cancel;
+            step_calls = 0;
+            step_cancel_at = 4; /* the manifest, then the big file's third chunk */
+            Mods_ImportWatch(imp, &done, &cancel);
+            Mods_ImportStepped(imp, step);
+            CHECK(!Mods_ImportInstall(imp, mods, why, sizeof(why)));
+            CHECK(!strcmp(why, "Cancelled.") && step_calls == 4 && done == strlen(MANIFEST_A) + 3 * 65536);
+            CHECK(!strcmp(listing("mods"), ""));
+            Mods_ImportClose(imp);
+        }
+    }
+    /* The process ended between a Replace's two renames: the old mod is in
+     * the hidden folder's old/ and nothing is in its place, so it goes back
+     * (and the unfinished new one goes). Where something is already there
+     * (the new mod got in), the old copy is deleted; a removed mod's folder
+     * has no old/ to restore. */
+    reset();
+    {
+        make("mods/.import-abc123/0");
+        file_write("mods/.import-abc123/0/mod.json", "new alpha");
+        make("mods/.import-abc123/old/alpha");
+        file_write("mods/.import-abc123/old/alpha/mod.json", "old alpha");
+        make("mods/.import-def456/old/beta");
+        file_write("mods/.import-def456/old/beta/mod.json", "old beta");
+        make("mods/beta");
+        file_write("mods/beta/mod.json", "new beta");
+        make("mods/.import-removing-gamma/old/gamma");
+        file_write("mods/.import-removing-gamma/old/gamma/mod.json", "removed gamma");
+        Mods_ImportCleanup(mods);
+        CHECK(file_is("mods/alpha/mod.json", "old alpha") && file_is("mods/beta/mod.json", "new beta"));
+        CHECK(!strcmp(listing("mods"), "alpha beta"));
+    }
     /* What an interrupted import leaves is cleared. */
     reset();
     {

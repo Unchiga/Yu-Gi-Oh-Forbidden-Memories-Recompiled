@@ -57,19 +57,17 @@ int ImportJob_Cancelled(void) { return job.cancelled; }
 const char *ImportJob_Why(void) { return job.why; }
 void ImportJob_SetStepHook(void (*hook)(void)) { job.hook = hook; }
 
-/* The step failed: the reason, and IMPORT_JOB_FAILED (published last). A
- * failure that came with a Stop is the Stop's. */
+/* The step failed: the reason, and IMPORT_JOB_FAILED (published last). The
+ * steps say "Cancelled." when the Stop is why they ended; any other reason
+ * is kept even if a Stop came too late (an old mod that could not be put
+ * back is named in it). */
 static void fail(const char *format, ...)
 {
     va_list list;
-    if (load(&job.cancel)) {
-        job.cancelled = 1;
-        snprintf(job.why, sizeof(job.why), "Cancelled.");
-    } else {
-        va_start(list, format);
-        vsnprintf(job.why, sizeof(job.why), format, list);
-        va_end(list);
-    }
+    va_start(list, format);
+    vsnprintf(job.why, sizeof(job.why), format, list);
+    va_end(list);
+    job.cancelled = !strcmp(job.why, "Cancelled.");
     publish(IMPORT_JOB_FAILED);
 }
 

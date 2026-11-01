@@ -150,3 +150,10 @@ accept v0.3.0 record FrameStats grew by the windows counter at its end
 # was 15. Every button keeps its value; the touch pad's calls are the
 # platform's, and no mod takes a TouchButton or sizes anything by the count.
 accept v0.3.0 enum TOUCH_BUTTONS counts the touch controls' top row
+
+# Import mod... on a thread of its own: the fetch callback ModsWindow_SetImport
+# takes gained done, total and cancel (the copy's progress and the Stop). The
+# function is the platform's own (sdl.c calls it once at start, with the
+# platform's picker and copy); no mod calls it, and none could hand it the
+# platform's copy.
+accept v0.3.0 function ModsWindow_SetImport takes a fetch callback with the progress and Stop parameters after its sizes
