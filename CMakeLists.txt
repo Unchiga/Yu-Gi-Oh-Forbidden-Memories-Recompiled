@@ -460,6 +460,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_mods_manager COMMAND memories_mods_manager_test)
     # The mods folder the player chose (src/pc/mods/mods.c, Mods_Folder): each case
     # is a process of its own, as Mods_Load scans once.
+    find_package(ZLIB REQUIRED)
     add_executable(memories_mods_folder_test tests/pc/mods_folder_test.c src/pc/mods/import.c ${MOD_TEST_SOURCES})
     target_include_directories(memories_mods_folder_test PRIVATE src)
     target_link_libraries(memories_mods_folder_test PRIVATE m Threads::Threads ZLIB::ZLIB)

@@ -116,7 +116,7 @@ static void file_case(void)
     assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
     snprintf(path, sizeof(path), "%s/prog/mods", root);
     assert(Mods_SetFolder(path, why, sizeof(why)) == -1);
-    snprintf(path, sizeof(path), "%s/prog/mods", root);
+    assert(Mods_SetFolder("mods", why, sizeof(why)) == -1);   /* from the program directory: the same */
     assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
     /* A sibling that only starts like the user's mods folder is another folder. */
     snprintf(path, sizeof(path), "%s/user/mods-extra", root);

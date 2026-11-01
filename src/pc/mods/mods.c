@@ -2070,7 +2070,7 @@ static int scan(const char *root, const char *origin)
 #define FOLDER_FILE "mods-folder.txt"
 static char folder_problem[PATH_MAX_ + 200];
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)   /* the file system does not tell case */
 #define SAME_CHAR(a, b) (tolower((unsigned char)(a)) == tolower((unsigned char)(b)))
 #else
 #define SAME_CHAR(a, b) ((a) == (b))
@@ -2123,11 +2123,24 @@ static int folder_is_scanned(const char *path)
     return 0;
 }
 
+/* A tidy folder as an absolute one: a path that is not absolute is from the
+ * program directory (a portable pack says "mods-extra"). -1 if it does not fit. */
+static int absolute_folder(const char *line, char *path, size_t size)
+{
+    int absolute = line[0] == '/';
+#ifdef _WIN32
+    if (isalpha((unsigned char)line[0]) && line[1] == ':') absolute = 1;
+#endif
+    if (snprintf(path, size, absolute ? "%s%s" : "%s/%s", absolute ? "" : Paths_ProgramDir(), line) >= (int)size)
+        return -1;
+    tidy_folder(path);
+    return 0;
+}
+
 int Mods_Folder(char *out, size_t size)
 {
     char line[PATH_MAX_], path[PATH_MAX_];
     const char *named = getenv("MEMORIES_MODS_FOLDER");
-    int absolute;
     line[0] = '\0';
     if (named) {   /* set, even to nothing: the file is not read */
         if (snprintf(line, sizeof(line), "%s", named) >= (int)sizeof(line)) return -1;
@@ -2142,26 +2155,14 @@ int Mods_Folder(char *out, size_t size)
         }
         fclose(file);
     }
-    if (!line[0]) return -1;
-    absolute = line[0] == '/';
-    /* A path that is not absolute is from the program directory (a portable
-     * pack says "mods-extra"). */
-#ifdef _WIN32
-    if (isalpha((unsigned char)line[0]) && line[1] == ':') absolute = 1;
-#endif
-    if (!absolute) {
-        if (snprintf(path, sizeof(path), "%s/%s", Paths_ProgramDir(), line) >= (int)sizeof(path)) return -1;
-        tidy_folder(path);
-    } else {
-        snprintf(path, sizeof(path), "%s", line);
-    }
+    if (!line[0] || absolute_folder(line, path, sizeof(path))) return -1;
     if ((size_t)snprintf(out, size, "%s", path) >= size) return -1;
     return 0;
 }
 
 int Mods_SetFolder(const char *path, char *why, size_t why_size)
 {
-    char saved[PATH_MAX_], temporary[PATH_MAX_], text[PATH_MAX_], reason[1200];
+    char saved[PATH_MAX_], temporary[PATH_MAX_], text[PATH_MAX_], resolved[PATH_MAX_], reason[1200];
     FILE *file;
     size_t length;
     int written;
@@ -2171,7 +2172,7 @@ int Mods_SetFolder(const char *path, char *why, size_t why_size)
         return -1;
     }
     tidy_folder(text);
-    if (text[0] && folder_is_scanned(text)) {
+    if (text[0] && (absolute_folder(text, resolved, sizeof(resolved)) || folder_is_scanned(resolved))) {
         snprintf(why, why_size, "That is one of the game's own mods folders, which it reads already. Choose another.");
         return -1;
     }
