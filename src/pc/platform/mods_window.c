@@ -80,7 +80,10 @@ static char launch_folder[1024];
  * given since, is a restart too), and the question that asks for it (pending
  * 7; folder_step 2 while the system's page is up). */
 static int (*access_have)(void), (*access_ask)(char *, size_t), (*access_asked)(char *, size_t);
+static int (*access_can_ask)(void);
+static const char *(*access_right)(void);
 static int access_now = 1, launch_unread, launch_access = -1;
+static volatile int access_recheck_now; /* the app came back to the front (ModsWindow_RefreshAccess) */
 static int folder_restart(void);
 static void folder_launch(void);
 static const char *access_hint(void);
@@ -148,7 +151,7 @@ static void layout_touch(Layout *l)
      * platform has a file picker for it (an app has no folder window to
      * open: Platform_OpenFolder fails on Android); on the list's page. */
     l->folder = none();
-    if (import_pick && (!compact || page == 0)) {
+    if (import_pick && pending != 6 && (!compact || page == 0)) {
         int w = max(120 * unit, width_text("Import mod...") + 24 * unit);
         l->folder = rect(l->close.x - g - w, footer, w, t);
     }
@@ -158,7 +161,7 @@ static void layout_touch(Layout *l)
      * question is up (pending 5) the answer is the Apply button, which reads
      * Remove, so this one steps aside rather than showing a second, dead one. */
     l->remove = none();
-    if (import_pick && selected >= 0 && pending != 5 && (!compact || page == 1)) {
+    if (import_pick && selected >= 0 && pending != 5 && pending != 6 && (!compact || page == 1)) {
         int w = max(90 * unit, width_text("Remove") + 24 * unit), edge = l->folder.w ? l->folder.x : l->close.x;
         l->remove = rect(edge - g - w, footer, w, t);
     }
@@ -395,6 +398,7 @@ void ModsWindow_Init(void)
     {   /* a mods folder the game could not read this time */
         char path[1024];
         access_now = access_have ? access_have() : 1;
+        access_recheck_now = 0;
         if (!Mods_Folder(path, sizeof(path)) && !access_now)
             put(status, sizeof(status), "%.300s: %s", path, access_hint());
         else if (!Mods_Folder(path, sizeof(path)) && *Mods_FolderProblem())
@@ -687,8 +691,9 @@ static int body(MenuCanvas *c, int w, int y)
         y = wrap(c, 0, y, w, line, DIM);
         y = wrap(c, 0, y, w, Mods_Directory(selected), DIM) + 16 * unit;
         y = wrap(c, 0, y, w,
-                 Mods_HasCode(selected) ? "Native code mod: runs game code from this author."
-                                        : "Content mod: assets, cards or data patches.",
+                 Mods_CodeSkipped(selected) ? "Native code mod: only its data is used from your mods folder."
+                 : Mods_HasCode(selected)   ? "Native code mod: runs game code from this author."
+                                            : "Content mod: assets, cards or data patches.",
                  DIM);
         if (Mods_Status(selected)[0])
             y = wrap(c, 0, y + 16 * unit, w, Mods_Status(selected), Mods_Failed(selected) ? RED : WARN);
@@ -1488,21 +1493,74 @@ static void folder_launch(void)
     launch_known = 1;
 }
 void ModsWindow_SetFolderAccess(int (*have)(void), int (*ask)(char *why, size_t why_size),
-                                int (*asked)(char *why, size_t why_size))
+                                int (*asked)(char *why, size_t why_size), int (*can_ask)(void),
+                                const char *(*right)(void))
 {
+    folder_launch(); /* the mods are scanned by now */
     access_have = have;
     access_ask = ask;
     access_asked = asked;
+    access_can_ask = can_ask;
+    access_right = right;
     access_now = have ? have() : 1;
-    if (have && launch_access < 0) /* the first showing: as the start scanned the folder, if the player gave no right since */
+    if (have && launch_access < 0) /* as the start scanned the folder, whatever the player gave since */
         launch_access = access_now;
+}
+void ModsWindow_RefreshAccess(void)
+{
+    access_recheck_now = 1;
+}
+/* The right's name, as Android calls it (All files access from Android 11). */
+static const char *access_name(void)
+{
+    return access_right ? access_right() : "All files access";
+}
+/* Whether the device has a way to give the right at all. */
+static int access_possible(void)
+{
+    return !access_can_ask || access_can_ask();
 }
 /* The folder is chosen, and the game cannot read it for want of the right:
  * what to do about it, for the message line. */
 static const char *access_hint(void)
 {
-    return "Without All files access the game cannot read it. Allow it in Settings, Apps, this app, Permissions, "
-           "or choose the folder again.";
+    static char hint[256];
+    if (!access_possible())
+        put(hint, sizeof(hint), "This device cannot give the game %s. Use Import mod... instead.", access_name());
+    else
+        put(hint, sizeof(hint), "Without %s the game cannot read it. Allow it in Settings, Apps, this app, "
+            "Permissions, or choose the folder again.", access_name());
+    return hint;
+}
+/* The right is held after all (given on the system's page, or in Settings while
+ * the game was behind it): what the window says, and 1 to draw again. */
+static int access_came(void)
+{
+    char path[1024];
+    access_now = 1;
+    if (pending == 7) /* the question is answered */
+        pending = 0;
+    if (Mods_Folder(path, sizeof(path)))
+        return 1;
+    put(status, sizeof(status), "%s is on.%s", access_name(),
+        folder_restart() ? " The game reads the folder after a restart: Apply changes." : "");
+    return 1;
+}
+/* While a folder is chosen that the game cannot read: whether the right came
+ * (asked of the system about twice a second, and at once when the app returns
+ * to the front). 1 when the window must be drawn again. */
+static int access_recheck(void)
+{
+    static int ticks;
+    char path[1024];
+    int forced = access_recheck_now;
+    access_recheck_now = 0;
+    if (!access_have || access_now || Mods_Folder(path, sizeof(path)))
+        return 0;
+    if (!forced && ++ticks < 30)
+        return 0;
+    ticks = 0;
+    return access_have() ? access_came() : 0;
 }
 /* What the question says (pending 6): the folder, why it is not read if it
  * is not, and the choices. */
@@ -1513,16 +1571,24 @@ static void folder_ask(void)
     if (Mods_Folder(path, sizeof(path)))
         put(status, sizeof(status), "Mods folder: none. Choose a folder to read its mods as well as the game's own?");
     else
+        /* in a few lines on a phone: the reason was said when the window opened */
         put(status, sizeof(status), "Mods folder: %.300s %s Choose another folder, or use none?", path,
-            !access_now ? access_hint() : *Mods_FolderProblem() ? Mods_FolderProblem() : "It is read when the game starts.");
+            !access_now ? (touch ? "The game cannot read it yet." : access_hint())
+            : *Mods_FolderProblem() ? (touch ? "It was not read this time." : Mods_FolderProblem())
+                                    : "It is read when the game starts.");
 }
 /* The folder was chosen on a phone that has not given the right to read it:
  * the question (pending 7) says why it is asked, with one sentence. */
 static void folder_offer_access(const char *path)
 {
+    if (!access_possible()) {
+        pending = 0;
+        put(status + strlen(status), sizeof(status) - strlen(status), " %s", access_hint());
+        return;
+    }
     pending = 7;
-    put(status, sizeof(status), "To read %.300s the game needs All files access, which Android asks for on its "
-        "next screen. Allow it?", path);
+    put(status, sizeof(status), "To read %.300s the game needs %s, which Android asks for on its next screen. "
+        "Allow it?", path, access_name());
 }
 /* Allow was answered yes: Android's page, and the answer at the next ticks. */
 static void folder_allow(void)
@@ -1534,7 +1600,7 @@ static void folder_allow(void)
         return;
     }
     folder_step = 2;
-    put(status, sizeof(status), "Allow All files access for the game, then come back.");
+    put(status, sizeof(status), "Allow %s for the game, then come back.", access_name());
 }
 /* The folder the player chose, or none (path NULL): saved now, read at the
  * next launch (Apply & restart). */
@@ -1602,16 +1668,16 @@ static int folder_poll(void)
         if (!result)
             return 0;
         folder_step = 0;
-        access_now = result > 0;
-        if (result > 0)
-            put(status, sizeof(status), "All files access is on.%s", folder_restart() ? " The game reads the folder "
-                "after a restart: Apply changes." : "");
-        else
+        if (result > 0) {
+            access_came();
+        } else {
+            access_now = 0;
             put(status, sizeof(status), "%s%s%s", result < -1 ? why : "", result < -1 ? " " : "", access_hint());
+        }
         return 1;
     }
     if (folder_step != 1 || !folder_picked)
-        return 0;
+        return access_recheck();
     result = folder_picked(path, sizeof(path), why, sizeof(why));
     if (!result)
         return 0;

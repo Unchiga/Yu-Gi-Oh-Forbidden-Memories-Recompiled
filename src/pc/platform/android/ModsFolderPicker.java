@@ -7,6 +7,7 @@ import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.util.Log;
 import java.io.File;
+import java.io.IOException;
 
 /**
  * The Mods panel's Mods folder... on Android (src/pc/platform/android.c):
@@ -62,7 +63,8 @@ public class ModsFolderPicker extends ModsFolderBase {
     /**
      * The path of a folder the external storage provider gave: "primary:Download/MyMods" is
      * /storage/emulated/0/Download/MyMods (this user's), "home:" its Documents folder, and
-     * "1234-ABCD:Mods" an SD card or USB drive, /storage/1234-ABCD/Mods. Null for another provider.
+     * "1234-ABCD:Mods" an SD card, or "0123456789ABCDEF:Mods" a USB drive, /storage/<id>/Mods. Null for
+     * another provider, and for a document id that climbs out of its volume ("primary:../../data").
      */
     static String pathOf(Uri tree) {
         if (!STORAGE.equals(tree.getAuthority()))
@@ -82,10 +84,17 @@ public class ModsFolderPicker extends ModsFolderBase {
             base = Environment.getExternalStorageDirectory();
         else if (volume.equals("home"))
             base = new File(Environment.getExternalStorageDirectory(), "Documents");
-        else if (volume.matches("[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}"))
+        else if (volume.matches("[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}|[0-9A-Fa-f]{16}"))
             base = new File("/storage/" + volume);
         else
             return null;
-        return inside.isEmpty() ? base.getPath() : new File(base, inside).getPath();
+        if (inside.isEmpty())
+            return base.getPath();
+        try {
+            String root = base.getCanonicalPath(), path = new File(base, inside).getCanonicalPath();
+            return path.equals(root) || path.startsWith(root + "/") ? path : null;
+        } catch (IOException e) {
+            return null;
+        }
     }
 }

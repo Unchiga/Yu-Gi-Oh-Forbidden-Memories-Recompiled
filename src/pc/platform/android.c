@@ -844,8 +844,11 @@ static int folder_start(const char *name, char *why, size_t why_size)
     return 0;
 }
 
-/* The answer: 0 while there is none, else the kind (PICK_*) with its text. */
-static int folder_answer(char *text, size_t size)
+/* The answer: PICK_NONE while there is none, else the kind (PICK_*). A chosen
+ * folder's path goes whole into `path` (when there is one; the other kinds' text
+ * is the reason, in `why`): one that does not fit is no answer, as a cut path
+ * is another folder. */
+static int folder_answer(char *path, size_t size, char *why, size_t why_size)
 {
     char record[1024], *taken = NULL;
     int what;
@@ -853,9 +856,41 @@ static int folder_answer(char *text, size_t size)
     what = take_pick(record, folder_request, &taken);
     if (what == PICK_NONE) return PICK_NONE;
     folder_asking = 0;
-    snprintf(text, size, "%s", taken ? taken : "");
+    why[0] = '\0';
+    if (what == PICK_CHOSEN && path) {
+        if (strlen(taken ? taken : "") >= size) {
+            snprintf(why, why_size, "That folder's path is too long for the game to keep.");
+            what = PICK_FAILED;
+        } else {
+            snprintf(path, size, "%s", taken ? taken : "");
+        }
+    } else {
+        snprintf(why, why_size, "%s", taken ? taken : "");
+    }
     free(taken);
     return what;
+}
+
+/* At the start, before the mods are scanned (menu.c): the folder the player
+ * chose in the picker when the system ended the last process while it was in
+ * front, so that nobody was there to read the answer. Taken as take_pick takes
+ * the disc's: a fresh one only. Only a folder is taken (1, its path); what the
+ * access page left, a refusal or a cancel is dropped. */
+int Platform_TakePendingModsFolder(char *path, size_t size)
+{
+    char record[1024], *taken = NULL;
+    int what, found = 0;
+    if (!folder_record(record, sizeof(record))) return 0;
+    what = take_pick(record, NULL, &taken);
+    if (what == PICK_CHOSEN && taken && taken[0] == '/' && strlen(taken) < size) {
+        snprintf(path, size, "%s", taken);
+        found = 1;
+    }
+    if (what != PICK_NONE)
+        fprintf(stderr, "memories-pc: an answer about the mods folder from before this start: %s\n",
+                found ? path : "dropped");
+    free(taken);
+    return found;
 }
 
 int Platform_PickModsFolder(char *why, size_t why_size)
@@ -876,23 +911,27 @@ int Platform_PickedModsFolder(char *path, size_t size, char *why, size_t why_siz
         snprintf(path, size, "%s", getenv("MEMORIES_PICK_FOLDER"));
         return 1;
     }
-    what = folder_answer(why, why_size);
+    what = folder_answer(path, size, why, why_size);
     if (what == PICK_NONE) return 0;
-    if (what == PICK_CHOSEN) {
-        snprintf(path, size, "%s", why);
-        why[0] = '\0';
-        return 1;
-    }
+    if (what == PICK_CHOSEN) return 1;
     if (what == PICK_CANCELLED) return -1;
     if (!*why) snprintf(why, why_size, "The folder picker failed.");
     return -2;
 }
 
-/* ModsFolderAccess.has, through JNI (the host stack: callers are the panel's
- * handlers, which run in the pump). 1 when the game may read shared storage. */
-static void folder_has_java(void *argument)
+/* A question of ModsFolderAccess (`method`: "has" or "canAsk", both taking the
+ * Context and answering a boolean), through JNI (the host stack: callers are
+ * the panel's handlers, which run in the pump). What cannot be found out is
+ * answered yes: it is not asked about. */
+typedef struct {
+    const char *method;
+    int result;
+} FolderQuery;
+
+static void folder_ask_java(void *argument)
 {
-    int *result = argument;
+    FolderQuery *query = argument;
+    int *result = &query->result;
     JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
     jobject activity = env ? (jobject)SDL_GetAndroidActivity() : NULL;
     jclass activity_class = NULL, loader_class = NULL, found = NULL;
@@ -914,7 +953,7 @@ static void folder_has_java(void *argument)
         CHECKED(load = (*env)->GetMethodID(env, loader_class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;")) &&
         CHECKED(name = (*env)->NewStringUTF(env, "org.yfmredecomp.game.ModsFolderAccess")) &&
         CHECKED(found = (jclass)(*env)->CallObjectMethod(env, loader, load, name)) &&
-        CHECKED(method = (*env)->GetStaticMethodID(env, found, "has", "(Landroid/content/Context;)Z"))) {
+        CHECKED(method = (*env)->GetStaticMethodID(env, found, query->method, "(Landroid/content/Context;)Z"))) {
         jboolean has = (*env)->CallStaticBooleanMethod(env, found, method, activity);
         if (!java_failed(env)) *result = has ? 1 : 0;
     }
@@ -923,12 +962,27 @@ static void folder_has_java(void *argument)
     (*env)->DeleteLocalRef(env, activity);
 }
 
+static int folder_query(const char *method)
+{
+    FolderQuery query = {method, 1};
+    if (getenv("MEMORIES_PICK_FOLDER")) return 1; /* scripted runs */
+    Memories_OnHostStack(folder_ask_java, &query);
+    return query.result;
+}
+
 int Platform_ModsFolderAccess(void)
 {
-    int result = 1;
-    if (getenv("MEMORIES_PICK_FOLDER")) return 1; /* scripted runs */
-    Memories_OnHostStack(folder_has_java, &result);
-    return result;
+    return folder_query("has");
+}
+
+int Platform_ModsFolderCanAsk(void)
+{
+    return folder_query("canAsk");
+}
+
+const char *Platform_ModsFolderRight(void)
+{
+    return SDL_GetAndroidSDKVersion() >= 30 ? "All files access" : "Storage";
 }
 
 int Platform_AskModsFolderAccess(char *why, size_t why_size)
@@ -938,11 +992,11 @@ int Platform_AskModsFolderAccess(char *why, size_t why_size)
 
 int Platform_AskedModsFolderAccess(char *why, size_t why_size)
 {
-    int what = folder_answer(why, why_size);
+    int what = folder_answer(NULL, 0, why, why_size);
     if (what == PICK_NONE) return 0;
     if (what == PICK_CHOSEN) return 1;
     if (what == PICK_CANCELLED) return -1;
-    if (!*why) snprintf(why, why_size, "Android would not show its All files access page.");
+    if (!*why) snprintf(why, why_size, "Android would not show its page for that.");
     return -2;
 }
 

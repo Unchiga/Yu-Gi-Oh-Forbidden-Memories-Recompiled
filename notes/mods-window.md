@@ -83,8 +83,23 @@ that the game reads the folder after a restart. Cancel, or coming back
 without it, keeps the folder chosen and says how to allow it later ("Without
 All files access the game cannot read it. Allow it in Settings, Apps, this app, Permissions, or choose the folder again.");
 the panel opens with that message whenever a folder is chosen and the right is
-missing. Remove on a mod from that folder answers that it is in the player's
-own mods folder.
+missing, and drops it by itself (Apply & restart lit) when the right comes
+from Settings while the game is behind it: it looks again when the app is back
+in front and about twice a second while the message shows. Before Android 11
+the right is called "Storage". On a device with no page for it the folder is
+saved all the same, and the message says "This device cannot give the game All
+files access. Use Import mod... instead." without asking. While a question is
+up (the folder, or the right) Import mod... and Remove step aside, so that
+the question has the footer's room (four lines on a phone) and Use no folder
+is in reach. Remove on a mod from that folder answers that it is in the
+player's own mods folder.
+
+On Android a mod from that folder is read for its data only: a mod with code
+is listed, its data applies, and its status says "Code not run: import it to
+run its code" (details: "Native code mod: only its data is used from your mods
+folder"), because other apps can write to shared storage. Import mod... puts
+the mod in the game's own folder, where its code runs. On the desktop nothing
+changes.
 
 The profile field accepts a name (letters, digits, spaces, `_`, `-`). Save writes
 the currently applied preferences to `mod-profiles/<name>.txt` in the user

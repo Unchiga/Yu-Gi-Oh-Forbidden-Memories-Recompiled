@@ -528,7 +528,8 @@ static void open_panel(int kind)
         /* and Mods folder... takes a folder of the phone's storage */
         ModsWindow_SetFolderPicker(Platform_PickModsFolder, Platform_PickedModsFolder);
         ModsWindow_SetFolderAccess(Platform_ModsFolderAccess, Platform_AskModsFolderAccess,
-                                   Platform_AskedModsFolderAccess);
+                                   Platform_AskedModsFolderAccess, Platform_ModsFolderCanAsk,
+                                   Platform_ModsFolderRight);
     }
 #endif
     if (!Panel_Open(kind)) return;
@@ -1972,6 +1973,9 @@ static bool SDLCALL app_event(void *userdata, SDL_Event *event)
         }
         break;
     case SDL_EVENT_DID_ENTER_FOREGROUND:
+#ifdef SDL_PLATFORM_ANDROID
+        ModsWindow_RefreshAccess(); /* All files access may have been given in Settings meanwhile */
+#endif
         if (background_paused) {
             background_paused = 0;
             if (background_clock_rate && Platform_ClockRate() == 0) Platform_SetClockRate(background_clock_rate);
@@ -2572,6 +2576,12 @@ int Platform_Open(const char *title)
     sigset_t previous;
     ControlsRuntime_Init();
     Menu_LoadSettings(); /* the volume and scale apply with or without a window */
+#ifdef SDL_PLATFORM_ANDROID
+    /* What the mods folder could be read with at this start, for the panel's
+     * Apply & restart: noted now that the mods are scanned. */
+    ModsWindow_SetFolderAccess(Platform_ModsFolderAccess, Platform_AskModsFolderAccess, Platform_AskedModsFolderAccess,
+                               Platform_ModsFolderCanAsk, Platform_ModsFolderRight);
+#endif
     if (getenv("MEMORIES_HEADLESS")) {
         return 0;
     }

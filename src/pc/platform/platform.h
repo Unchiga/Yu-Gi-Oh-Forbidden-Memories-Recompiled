@@ -41,6 +41,14 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size);
 int Platform_PickModsFolder(char *why, size_t why_size);
 int Platform_PickedModsFolder(char *path, size_t size, char *why, size_t why_size);
 int Platform_ModsFolderAccess(void);
+/* Whether this device has a page to give the right on (0: it cannot, and the
+ * panel says so instead of asking), the right's name for the messages ("All
+ * files access", before Android 11 "Storage"), and the folder the picker
+ * chose when the last process was ended with it open (1 with the path), which
+ * menu.c takes before the mods are scanned. */
+int Platform_ModsFolderCanAsk(void);
+const char *Platform_ModsFolderRight(void);
+int Platform_TakePendingModsFolder(char *path, size_t size);
 int Platform_AskModsFolderAccess(char *why, size_t why_size);
 int Platform_AskedModsFolderAccess(char *why, size_t why_size);
 /* Android only (android.c; sdl.c hands it to HdPack_SetNet there): the

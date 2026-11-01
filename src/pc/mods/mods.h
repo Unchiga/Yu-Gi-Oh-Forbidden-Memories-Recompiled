@@ -241,6 +241,13 @@ int Mods_Failed(int mod);
 /* The mod has code to load (a "library" or "libraries"), whether or not
  * this game can load it. */
 int Mods_HasCode(int mod);
+/* Its code is not run: the mod comes from the mods folder the player chose,
+ * where this game reads data only (Android: Mods_SetFolderCode). It is still a
+ * mod with its data, and says so in its status. */
+int Mods_CodeSkipped(int mod);
+/* Whether a mod from the chosen mods folder may run its code: yes except on
+ * Android (the default there is no), where other apps can write to it. */
+void Mods_SetFolderCode(int allowed);
 /* What the mods in `enabled` change in common, loading in the order `ranks`
  * gives (each mod's Load order, as the Mods window stages it), or the saved
  * order when `ranks` is NULL, with the settings `values` gives (values[mod]
