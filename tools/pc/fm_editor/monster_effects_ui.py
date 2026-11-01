@@ -549,8 +549,8 @@ class EffectDialog(FormDialog):
         line("card", "Magic card", self.choice(body, "card", [self.magic_label(c) for c in fx.MAGIC], lambda v: 0x14))
         self.target_box = line("target", "Whose", ttk.Combobox(body, textvariable=self.vars["target"],
                                                                state="readonly", width=48))
-        if project is not None:
-            names = project.type_names
+        if self.project is not None:
+            names = self.project.type_names
             filter_types = [names[i] or TYPE_NAMES[i] for i in range(TYPE_MAGIC)] + \
                            [names[i] for i in range(24, len(names)) if names[i] and i != 255]
             attacker_types = [names[i] or TYPE_NAMES[i] for i in range(TYPE_MAGIC)] + \
@@ -559,7 +559,7 @@ class EffectDialog(FormDialog):
             filter_types = list(TYPE_NAMES[:TYPE_MAGIC])
             attacker_types = list(TYPE_NAMES[:TYPE_MAGIC])
         type_icon = lambda v: TYPE_NAMES.index(v) if v in TYPE_NAMES else (
-            project.type_names.index(v) if project is not None and v in project.type_names and project.type_names.index(v) < TYPE_MAGIC else None)
+            self.project.type_names.index(v) if self.project is not None and v in self.project.type_names and self.project.type_names.index(v) < TYPE_MAGIC else None)
         line("type", "Only type", self.choice(body, "type", [ANY] + filter_types, type_icon))
         line("attribute", "Only attribute", self.choice(body, "attribute", self.attribute_names(), self.attribute_icon))
         pictures = card_icons.photos(self.app, body, 2) if self.app is not None else {}

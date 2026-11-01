@@ -122,6 +122,10 @@ void MonsterEffects_FilterTargets(unsigned *objects);
 void MonsterEffects_Stats(const void *record, int *attack, int *defense);
 /* Whether this monster has active battle immunity (cannot be destroyed by battle). */
 int MonsterEffects_HasBattleImmunity(int record);
+/* Battle immunity for planning: -1 if immune to attacker_record (or always when
+ * attacker_record < 0), 1..3 for remaining N-hit shields, 0 otherwise; when
+ * defender_record < 0, inspects card -defender_record's unconditional effects. */
+int MonsterEffects_BattleImmunity(int attacker_record, int defender_record);
 /* Whether this monster inflicts piercing damage when attacking the defending monster. */
 int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record);
 /* Whether conditions on an effect are currently met for a monster. */

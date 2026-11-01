@@ -41,25 +41,75 @@ int Hm_KeepValue(HmCard c)
     return 800;
 }
 
+static int enemy_perm_immune(const HmBoard *b, int own_slot, int enemy_slot)
+{
+    if (b->enemy[enemy_slot].flags & HM_IMMUNE) return 1;
+    if (own_slot >= 0 && (b->enemy_immune[enemy_slot] & (1u << own_slot))) return 1;
+    return 0;
+}
+static int enemy_immune(const HmBoard *b, int own_slot, int enemy_slot, int hits)
+{
+    if (enemy_perm_immune(b, own_slot, enemy_slot)) return 1;
+    return hits < b->enemy_shields[enemy_slot];
+}
+static int own_pierces(const HmBoard *b, int own_slot, int enemy_slot)
+{
+    if (b->own[own_slot].flags & HM_PIERCE) return 1;
+    return (b->own_pierce[own_slot] & (1u << enemy_slot)) != 0;
+}
+static int own_perm_immune(const HmBoard *b, HmCard c, int own_slot, int enemy_slot)
+{
+    if (c.flags & HM_IMMUNE) return 1;
+    if (own_slot >= 0 && enemy_slot >= 0 && (b->own_immune[own_slot] & (1u << enemy_slot))) return 1;
+    return 0;
+}
+static int enemy_pierces(const HmBoard *b, int enemy_slot, HmCard c, int own_slot)
+{
+    (void)c;
+    if (b->enemy[enemy_slot].flags & HM_PIERCE) return 1;
+    if (own_slot >= 0 && (b->enemy_pierce[enemy_slot] & (1u << own_slot))) return 1;
+    return 0;
+}
+
 /* Hidden cards arrive redacted (id=-1), with no secret identity or stats,
  * and are taken as 1800 ATK; so is a monster the opponent may still play
  * (`unknown`). Enemies in `dead` are gone by then. */
 #define HM_UNSEEN 1800
-static int threat(const HmBoard *b, HmCard c, int defense, unsigned dead, int unknown)
+static int threat_slot(const HmBoard *b, HmCard c, int own_slot, int defense, unsigned dead, int unknown)
 {
-    int loss = 0, i, diff;
+    int loss = 0, i, diff, breakers = 0;
+    int shields = own_slot >= 0 ? b->own_shields[own_slot] : 0;
     if (b->enemy_pinned) return 0;
+    if (shields > 0 && !(c.flags & HM_IMMUNE)) {
+        for (i = 0; i < 5; i++) if (b->enemy[i].id && !(dead & (1u << i))) {
+            HmCard e = b->enemy[i];
+            int power = e.id < 0 ? HM_UNSEEN : e.attack + Hm_StarBonus(e.star, c.star);
+            if (power > (defense ? c.defense : c.attack) && !own_perm_immune(b, c, own_slot, i))
+                breakers++;
+        }
+        if (unknown && HM_UNSEEN > (defense ? c.defense : c.attack))
+            breakers++;
+    }
     for (i = 0; i < 5; i++) if (b->enemy[i].id && !(dead & (1u << i))) {
         HmCard e = b->enemy[i];
         int power = e.id < 0 ? HM_UNSEEN : e.attack + Hm_StarBonus(e.star, c.star);
         diff = power - (defense ? c.defense : c.attack);
-        if (diff > 0) loss = max(loss, (defense ? 0 : diff) + value(c) / 2);
+        if (diff > 0) {
+            int pierce = e.id > 0 && enemy_pierces(b, i, c, own_slot);
+            int dmg = (defense && !pierce) ? 0 : diff;
+            int immune = own_perm_immune(b, c, own_slot, i) || (shields > 0 && breakers <= shields);
+            loss = max(loss, dmg + (immune ? 0 : value(c) / 2));
+        }
     }
     diff = HM_UNSEEN - (defense ? c.defense : c.attack);
-    if (unknown && diff > 0) loss = max(loss, (defense ? 0 : diff) + value(c) / 2);
+    if (unknown && diff > 0) {
+        int immune = (c.flags & HM_IMMUNE) || (shields > 0 && breakers <= shields);
+        loss = max(loss, (defense ? 0 : diff) + (immune ? 0 : value(c) / 2));
+    }
     return loss;
 }
-static int safety(const HmBoard *b, HmCard c, int defense) { return threat(b, c, defense, 0, 0); }
+static int safety_slot(const HmBoard *b, int slot, int defense) { return threat_slot(b, b->own[slot], slot, defense, 0, 0); }
+static int safety(const HmBoard *b, HmCard c, int defense) { return threat_slot(b, c, -1, defense, 0, 0); }
 
 int Hm_ChooseStar(const HmBoard *b, HmCard c, int pinned)
 {
@@ -75,7 +125,13 @@ int Hm_ChooseStar(const HmBoard *b, HmCard c, int pinned)
             HmCard e = b->enemy[i];
             int diff = c.attack + Hm_StarBonus(current.star, e.star) -
                 ((e.flags & HM_DEFENSE) ? e.defense : e.attack);
-            if (diff > 0) score = max(score, 2000 + diff + value(e) / 2);
+            if (diff > 0) {
+                int immune = (e.flags & HM_IMMUNE) || b->enemy_shields[i] > 0;
+                int pierce = (c.flags & HM_PIERCE) != 0;
+                int dmg = (e.flags & HM_DEFENSE) ? (pierce ? diff : 0) : diff;
+                int rem = immune ? 0 : value(e) / 2;
+                if (dmg > 0 || rem > 0) score = max(score, 2000 + dmg + rem);
+            }
         }
         if (score > best) { best = score; answer = choice; }
     }
@@ -92,9 +148,10 @@ typedef struct {
 
 /* An attacker stays in attack position through the opponent's turn: what
  * that costs over the safer stance it could otherwise take. */
-static int exposed(const HmBoard *b, HmCard a, unsigned dead)
+static int exposed(const HmBoard *b, int slot, unsigned dead)
 {
-    return max(0, threat(b, a, 0, dead, 1) - threat(b, a, 1, dead, 1));
+    HmCard a = b->own[slot];
+    return max(0, threat_slot(b, a, slot, 0, dead, 1) - threat_slot(b, a, slot, 1, dead, 1));
 }
 /* A trade that takes the last monster, one that would otherwise hold
  * (in defense against no more ATK than its DEF, or in attack against less
@@ -114,7 +171,7 @@ static int emptied(const HmBoard *b, int attacker, unsigned dead, unsigned targe
     return hit;
 }
 
-static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack *out)
+static int attack_options(AttackSearch *s, unsigned used, unsigned dead, unsigned hits, Attack *out)
 {
     int i, j, n = 0, targets = 0;
     for (j = 0; j < 5; j++) if (s->b->enemy[j].id && !(dead & (1u << j))) targets++;
@@ -124,7 +181,7 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
         if (!targets) {
             /* A 0 ATK attack changes nothing and would tie any sequence. */
             if (a.attack > 0)
-                out[n++] = (Attack){i, -1, a.attack, 0, 0, a.attack * 4 - exposed(s->b, a, dead), 0};
+                out[n++] = (Attack){i, -1, a.attack, 0, 0, a.attack * 4 - exposed(s->b, i, dead), 0};
             continue;
         }
         for (j = 0; j < 5; j++) {
@@ -138,39 +195,74 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
                 move.uncertain = 1;
                 move.gain = 100 + s->o->blind_risk * 3;
             } else {
-                diff = a.attack + Hm_StarBonus(a.star, e.star) -
-                    ((e.flags & HM_DEFENSE) ? e.defense : e.attack);
-                if (diff < 0 || (diff == 0 && ((e.flags & HM_DEFENSE) || !s->o->trades))) continue;
-                move.damage = (e.flags & HM_DEFENSE) ? 0 : diff;
-                move.removed = value(e) + 400;
-                move.lost = diff == 0 ? value(a) + 400 + emptied(s->b, i, dead, 1u << j) :
-                    exposed(s->b, a, dead | (1u << j));
-                move.gain = move.damage * 4 + move.removed - move.lost;
+                int hits_j = (int)((hits >> (j * 3)) & 7u);
+                int def_pos = (e.flags & HM_DEFENSE) != 0;
+                int e_imm = enemy_immune(s->b, i, j, hits_j);
+                int a_imm = own_perm_immune(s->b, a, i, j) || s->b->own_shields[i] > 0;
+                int pierce = own_pierces(s->b, i, j);
+                int kills;
+                diff = a.attack + Hm_StarBonus(a.star, e.star) - (def_pos ? e.defense : e.attack);
+                if (diff < 0 || (diff == 0 && (def_pos || e_imm || (!s->o->trades && !a_imm)))) continue;
+                kills = (def_pos ? diff > 0 : diff >= 0) && !e_imm;
+                move.damage = def_pos ? (pierce ? diff : 0) : diff;
+                if (!kills && move.damage <= 0) {
+                    /* A 0-damage hit on an immune monster is only worthwhile when it strips
+                     * an N-hit shield and enough unused attackers remain to finish it this turn. */
+                    int shields = s->b->enemy_shields[j];
+                    int need = shields - hits_j + 1, avail = 0, k;
+                    if (enemy_perm_immune(s->b, i, j) || shields <= hits_j) continue;
+                    for (k = 0; k < 5; k++) {
+                        HmCard c = s->b->own[k];
+                        int d;
+                        if (!monster(c) || (c.flags & HM_USED) || (used & (1u << k))) continue;
+                        if (enemy_perm_immune(s->b, k, j)) continue;
+                        d = c.attack + Hm_StarBonus(c.star, e.star) - (def_pos ? e.defense : e.attack);
+                        if (d > 0 || (d == 0 && !def_pos &&
+                            (s->o->trades || own_perm_immune(s->b, c, k, j) || s->b->own_shields[k] > 0)))
+                            avail++;
+                    }
+                    if (avail < need) continue;
+                    move.removed = 0;
+                    move.lost = exposed(s->b, i, dead | (1u << j));
+                    move.gain = -move.lost;
+                } else {
+                    unsigned next_dead = kills ? (dead | (1u << j)) : dead;
+                    move.removed = kills ? value(e) + 400 : 0;
+                    move.lost = (diff == 0 && !a_imm) ? value(a) + 400 + emptied(s->b, i, dead, kills ? (1u << j) : 0) :
+                        exposed(s->b, i, next_dead);
+                    move.gain = move.damage * 4 + move.removed - move.lost;
+                }
             }
             out[n++] = move;
         }
     }
-    /* Stable best-first ordering; economical attacker breaks ties. */
+    /* Stable best-first ordering; a multi-hit target already in progress comes
+     * first so bounded continuation search finishes breaking its shield, and
+     * an economical attacker breaks ties. */
     for (i = 1; i < n; i++) {
         Attack v = out[i];
+        int v_prog = v.t >= 0 && ((hits >> (v.t * 3)) & 7u) > 0;
         j = i;
-        while (j && (out[j-1].gain < v.gain ||
-               (out[j-1].gain == v.gain && s->b->own[out[j-1].a].attack > s->b->own[v.a].attack))) {
-            out[j] = out[j-1]; j--;
+        while (j) {
+            int j_prog = out[j-1].t >= 0 && ((hits >> (out[j-1].t * 3)) & 7u) > 0;
+            if (v_prog > j_prog || (v_prog == j_prog && (out[j-1].gain < v.gain ||
+                (out[j-1].gain == v.gain && s->b->own[out[j-1].a].attack > s->b->own[v.a].attack)))) {
+                out[j] = out[j-1]; j--;
+            } else break;
         }
         out[j] = v;
     }
     return n;
 }
 
-static void attack_search(AttackSearch *s, unsigned used, unsigned dead,
+static void attack_search(AttackSearch *s, unsigned used, unsigned dead, unsigned hits,
                           int damage, int score, int depth, Attack first)
 {
     Attack moves[25];
     int n, i;
     if (s->nodes >= s->o->budget) return;
     s->nodes++;
-    n = attack_options(s, used, dead, moves);
+    n = attack_options(s, used, dead, hits, moves);
     /* All root alternatives, up to three promising continuations per node. */
     if (depth) n = min(n, 3);
     for (i = 0; i < n; i++) {
@@ -178,16 +270,18 @@ static void attack_search(AttackSearch *s, unsigned used, unsigned dead,
         int next_damage = damage + m.damage;
         int next_score = score + m.gain;
         int ranked = next_score + (next_damage >= s->b->enemy_lp ? HM_WIN : 0);
-        if (ranked > s->best.score || (ranked == s->best.score && ranked > 0 &&
+        if ((m.damage > 0 || m.removed > 0 || m.uncertain) &&
+            (ranked > s->best.score || (ranked == s->best.score && ranked > 0 &&
             s->best.selection[9] && s->b->own[root.a].attack <
-            s->b->own[s->best.selection[9]-1].attack)) {
+            s->b->own[s->best.selection[9]-1].attack))) {
             s->best.score = ranked;
             s->best.result = 2;
             s->best.selection[9] = (unsigned char)(root.a + 1);
             s->best.selection[10] = (unsigned char)(root.t < 0 ? 58 : root.t + 56);
         }
         if (!m.uncertain && depth < 4 && next_damage < s->b->enemy_lp)
-            attack_search(s, used | (1u << m.a), dead | (m.t < 0 ? 0 : 1u << m.t),
+            attack_search(s, used | (1u << m.a), dead | (m.removed ? (1u << m.t) : 0),
+                          hits + (m.t < 0 ? 0 : (1u << (m.t * 3))),
                           next_damage, next_score, depth + 1, root);
     }
 }
@@ -196,7 +290,7 @@ static HmDecision attacks(const HmBoard *b, const HmOptions *o)
 {
     AttackSearch s = {b, o, {{0}, 0, 0, 0}, 0};
     Attack first = {0};
-    if (!b->pinned) attack_search(&s, 0, 0, 0, 0, 0, first);
+    if (!b->pinned) attack_search(&s, 0, 0, 0, 0, 0, 0, first);
     s.best.nodes = s.nodes;
     return s.best;
 }
@@ -244,7 +338,7 @@ static int guarded(const HmBoard *b)
     if (b->enemy_pinned) return 0;
     for (i = 0; i < 5; i++) if (monster(b->own[i])) {
         HmCard c = b->own[i];
-        int up = safety(b, c, 0), down = safety(b, c, 1);
+        int up = safety_slot(b, i, 0), down = safety_slot(b, i, 1);
         int held = (c.flags & HM_USED) ? ((c.flags & HM_DEFENSE) ? down : up) : min(up, down);
         loss += held; mine++;
         if (!held) falls = 0;
@@ -384,7 +478,7 @@ HmDecision Hm_PlanField(const HmBoard *b, const HmOptions *o, const HmRules *r,
     if (retail && !o->defense) { best.result = 3; return best; }
     for (i = 0; i < 5; i++) if (b->own[i].id && !(b->own[i].flags & HM_USED)) {
         HmCard c = b->own[i];
-        int down = safety(b, c, 1), up = safety(b, c, 0);
+        int down = safety_slot(b, i, 1), up = safety_slot(b, i, 0);
         best.result = 2;
         best.selection[9] = i + 1;
         /* Equally safe (nothing visible can attack): the stronger stance,
@@ -431,8 +525,14 @@ static void consider_monster(HandSearch *s, HmCard card, int count, int field)
         HmCard e = s->b->enemy[i];
         int diff = card.attack + Hm_StarBonus(card.star, e.star) -
             ((e.flags & HM_DEFENSE) ? e.defense : e.attack);
-        if (diff > 0) hit = max(hit, value(e) / 2 + ((e.flags & HM_DEFENSE) ? 0 : diff));
-        if (!(e.flags & HM_DEFENSE) && diff >= s->b->enemy_lp) hit = HM_WIN;
+        if (diff > 0) {
+            int immune = (e.flags & HM_IMMUNE) || s->b->enemy_shields[i] > 0;
+            int pierce = (card.flags & HM_PIERCE) != 0;
+            int dmg = (e.flags & HM_DEFENSE) ? (pierce ? diff : 0) : diff;
+            int rem = immune ? 0 : value(e) / 2;
+            hit = max(hit, rem + dmg);
+            if (dmg >= s->b->enemy_lp) hit = HM_WIN;
+        }
     }
     if (!occupied(s->b->enemy) && !s->b->pinned) {
         hit = card.attack;

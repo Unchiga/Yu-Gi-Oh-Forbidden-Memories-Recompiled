@@ -71,7 +71,7 @@ CONDITION_LABELS = (
 )
 CONDITION_HINTS = (
     "A specific card is face up on the field (own, opponent, or whole field).",
-    "This card's current effective ATK or DEF compared against a value (<, <=, >, >=).",
+    "This card's current effective ATK or DEF compared against a value (<, <=, >, >=, ==).",
     "This card has strictly lower ATK than every other face-up monster on the field (ties disqualify).",
     "This card has strictly higher ATK than every other face-up monster on the field (ties disqualify).",
     "Active only while you control strictly fewer monsters than your opponent (having 0 monsters counts; ties disqualify).",

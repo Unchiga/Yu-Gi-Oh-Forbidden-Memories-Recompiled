@@ -207,7 +207,7 @@ Continuous effects under `when: "face_up"` (`boost`, `battle_immunity`, and `pie
 | Condition Type | Parameters | Evaluation Summary |
 | -------------- | ---------- | ------------------ |
 | **`named_card`** | `card`<br>`whose`: `"all"`, `"own"`, `"opponent"` | True if designated card is face-up in the specified field zone. |
-| **`stat_threshold`** | `stat`: `"atk"` or `"def"`<br>`op`: `"<"`, `"<="`, `">"`, `">="`<br>`value`: integer | Compares this monster's current effective stat against `value`. |
+| **`stat_threshold`** | `stat`: `"atk"` or `"def"`<br>`op`: `"<"`, `"<="`, `">"`, `">="`, `"=="`<br>`value`: integer | Compares this monster's current effective stat against `value`. |
 | **`lowest_atk`** | _(none)_ | True if this monster has strictly lower ATK than every other face-up monster on the board. Ties disqualify. |
 | **`highest_atk`** | _(none)_ | True if this monster has strictly higher ATK than every other face-up monster on the board. Ties disqualify. |
 | **`fewer_monsters`** | _(none)_ | True if controller controls strictly fewer monsters than opponent (`own < opp`). Zero monsters handled explicitly; ties disqualify. |
@@ -245,9 +245,16 @@ The FM Editor (`tools/pc/fm_editor`) provides complete graphical configuration f
 - **Bidirectional Treeview**: Horizontal and vertical scrollbars prevent truncation of descriptive effect phrases.
 - **Expanded Windows**: Default widths expanded (`EffectDialog` at 680px minsize, `ConditionDialog` at 620px minsize) with horizontal window resizing enabled.
 
-- **C Engine Tests**:
+## AI Hard Mode Integration (`mods/ai-hard-mode`)
+- `MonsterEffects_BattleImmunity(int attacker_record, int defender_record)` and `MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)` expose battle immunity and piercing evaluation to `mods/ai-hard-mode` during hand and field planning.
+- **Attack Planning**: Avoids zero-damage attacks against immune defense monsters, scores LP/piercing damage against immune targets without assuming they leave the field, respects attacker-specific immunity filters (`attacked_by_*`), and tracks multi-hit shield depletion (`first_attacked`, `destroyed_after_2_attacks`, `destroyed_after_3_attacks`) across multi-attacker sequences.
+- **Defense, Spells & Hand Planning**: Accounts for enemy piercing when choosing between attack and defense stances, credits the AI's own battle immunity when evaluating survival and `Swords of Revealing Light`, values `Stop Defense` against high-DEF immune walls, and scores piercing damage when selecting hand/fusion plays.
+- **Hidden-Card Redaction**: Face-down enemy monsters remain redacted unless `sees_hidden()` allows inspection.
+
+- **C Engine & AI Tests**:
   - `tests/pc/cards_stars_test.c`: Validates effect parsing, serialization, and battle immunity stat comparisons.
-  - `tests/pc/monster_attacked_conditions_test.c`: Exhaustive test matrix for all attacker/defender modifiers, modular conditions, and tier comparisons.
+  - `tests/pc/monster_attacked_conditions_test.c`: Exhaustive test matrix for all attacker/defender modifiers, modular conditions, tier comparisons, and `MonsterEffects_BattleImmunity`.
+  - `tests/pc/ai_hard_mode_test.c` & `tests/pc/ai_hard_mode_adapter_test.c`: Validates planner and adapter handling of battle immunity, N-hit shields, piercing damage, and hidden-card redaction.
 - **FM Editor Python Tests**:
   - `tools/pc/fm_editor/tests/test_data.py`: Tests manifest serialization, deserialization, and validator problem rules.
   - `tools/pc/fm_editor/tests/test_gui.py`: Tests effect dialog widgets, condition dialog parameters, and single attack modifier enforcement.

@@ -1706,6 +1706,50 @@ static void test_piercing_damage(void)
     assert(MonsterEffects_HasPiercingDamage(5, 20) == 0);
     gMonsterEffects.face_up[5] = 1;
 
+    /* Card-level and non-battle planning queries (MonsterEffects_BattleImmunity) */
+    memset(&eff_ex, 0, sizeof(eff_ex));
+    eff.when = MONSTER_WHEN_FACE_UP;
+    eff.action = MONSTER_DO_PIERCING;
+    eff_ex.battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
+    s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
+    assert(MonsterEffects_HasPiercingDamage(-1, -1) == 1);
+    eff_ex.cond_count = 1;
+    s_test_effects_ex[0] = eff_ex;
+    assert(MonsterEffects_HasPiercingDamage(-1, -1) == 0);
+
+    eff.action = MONSTER_DO_BATTLE_IMMUNITY;
+    eff_ex.cond_count = 0;
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_ALWAYS;
+    s_test_effects[0] = eff;
+    s_test_effects_ex[0] = eff_ex;
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    gMonsterEffects.card[20] = 2;
+    gMonsterEffects.face_up[20] = 1;
+    assert(MonsterEffects_BattleImmunity(-1, -1) == -1);
+    assert(MonsterEffects_BattleImmunity(-1, 20) == -1);
+
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_AFTER_2_ATTACKS;
+    eff_ex.battle_reset = MONSTER_RESET_TURN;
+    s_test_effects_ex[0] = eff_ex;
+    gMonsterEffects.attacked_turn[20] = 0;
+    assert(MonsterEffects_BattleImmunity(-1, -1) == 2);
+    assert(MonsterEffects_BattleImmunity(5, 20) == 2);
+    gMonsterEffects.attacked_turn[20] = 1;
+    assert(MonsterEffects_BattleImmunity(5, 20) == 1);
+    gMonsterEffects.attacked_turn[20] = 2;
+    assert(MonsterEffects_BattleImmunity(5, 20) == 0);
+
+    eff_ex.battle_modifier = MONSTER_BATTLE_MOD_ATTACKED_BY_TYPE;
+    eff_ex.attacker_type = 130;
+    s_test_effects_ex[0] = eff_ex;
+    D_801A7AD8[5].card_id = 1;
+    s_mock_type[1] = 130;
+    assert(MonsterEffects_BattleImmunity(-1, 20) == 0);
+    assert(MonsterEffects_BattleImmunity(5, 20) == -1);
+    s_mock_type[1] = 1;
+    assert(MonsterEffects_BattleImmunity(5, 20) == 0);
+
     puts("test_piercing_damage: PASSED");
 }
 
