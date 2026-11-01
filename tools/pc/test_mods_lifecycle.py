@@ -38,7 +38,11 @@ def main():
         environment = dict(os.environ, TMPDIR=str(OUT))
         if target == "linux":
             program = OUT / "lifecycle"
-            compile_cmd = ["gcc", "-m32", *flags, *SOURCES, "-lm", "-o", str(program)]
+            # As the game is built (build_game32.py): without 64-bit readdir the
+            # scan of the mods folder fails with EOVERFLOW on a file system whose
+            # inode numbers need more than 32 bits (a mounted Windows drive in
+            # WSL, btrfs, XFS, NFS) and finds no mods at all.
+            compile_cmd = ["gcc", "-m32", *flags, "-D_FILE_OFFSET_BITS=64", *SOURCES, "-lm", "-o", str(program)]
             launch = [str(program)]
         else:
             build_win32_deps.use_toolchain()
