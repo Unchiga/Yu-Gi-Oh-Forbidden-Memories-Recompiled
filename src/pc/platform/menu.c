@@ -822,8 +822,11 @@ void Menu_LoadSettings(void)
 #ifdef __ANDROID__
     {   /* a folder chosen in the system's picker that the last process did not live to read */
         char path[1024], why[400];
-        if (Platform_TakePendingModsFolder(path, sizeof(path)) && Mods_SetFolder(path, why, sizeof(why)))
-            fprintf(stderr, "memories-pc: mods folder %s: %s\n", path, why);
+        if (Platform_TakePendingModsFolder(path, sizeof(path))) {
+            Mods_SetFolder(path, why, sizeof(why)); /* a note on a success, the reason on a failure */
+            if (*why)
+                fprintf(stderr, "memories-pc: mods folder %s: %s\n", path, why);
+        }
     }
 #endif
     Mods_Load(); /* the mods the settings say are applied, once they are read */

@@ -1541,7 +1541,9 @@ static int access_came(void)
     access_now = 1;
     if (pending == 7) /* the question is answered */
         pending = 0;
-    if (Mods_Folder(path, sizeof(path)))
+    /* A question or a step has the message line: the Apply button is lit already,
+     * and the line says nothing of the right that it would have to push out. */
+    if (Mods_Folder(path, sizeof(path)) || pending || hd_step || import_step || import_waiting)
         return 1;
     put(status, sizeof(status), "%s is on.%s", access_name(),
         folder_restart() ? " The game reads the folder after a restart: Apply changes." : "");
@@ -1556,11 +1558,13 @@ static int access_recheck(void)
     char path[1024];
     int forced = access_recheck_now;
     access_recheck_now = 0;
-    if (!access_have || access_now || Mods_Folder(path, sizeof(path)))
+    if (!access_have || access_now)
         return 0;
     if (!forced && ++ticks < 30)
         return 0;
     ticks = 0;
+    if (Mods_Folder(path, sizeof(path)))
+        return 0;
     return access_have() ? access_came() : 0;
 }
 /* What the question says (pending 6): the folder, why it is not read if it

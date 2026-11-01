@@ -64,7 +64,8 @@ public class ModsFolderPicker extends ModsFolderBase {
      * The path of a folder the external storage provider gave: "primary:Download/MyMods" is
      * /storage/emulated/0/Download/MyMods (this user's), "home:" its Documents folder, and
      * "1234-ABCD:Mods" an SD card, or "0123456789ABCDEF:Mods" a USB drive, /storage/<id>/Mods. Null for
-     * another provider, and for a document id that climbs out of its volume ("primary:../../data").
+     * another provider, for a document id that climbs out of its volume ("primary:../../data"), and for one
+     * with a line break or another control character in it.
      */
     static String pathOf(Uri tree) {
         if (!STORAGE.equals(tree.getAuthority()))
@@ -90,9 +91,15 @@ public class ModsFolderPicker extends ModsFolderBase {
             return null;
         if (inside.isEmpty())
             return base.getPath();
+        /* take_pick (android.c) reads the path up to a line break: one here would choose another folder */
+        for (int i = 0; i < inside.length(); i++)
+            if (inside.charAt(i) < 0x20)
+                return null;
         try {
+            /* The canonical paths only say whether it stays in its volume. The answer is the path as the
+             * volume is reached here, as above: a device whose volume root is a link can read that. */
             String root = base.getCanonicalPath(), path = new File(base, inside).getCanonicalPath();
-            return path.equals(root) || path.startsWith(root + "/") ? path : null;
+            return path.equals(root) || path.startsWith(root + "/") ? new File(base, inside).getPath() : null;
         } catch (IOException e) {
             return null;
         }

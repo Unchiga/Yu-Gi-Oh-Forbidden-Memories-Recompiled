@@ -1158,6 +1158,33 @@ static void folder_access_case(void)
     said = on_screen(1600, 900);
     assert(strstr(said, "All files access is on.") && !strstr(said, "Without"));
     assert(!ModsWindow_Tick()); /* once */
+    /* ...but not over a question: a Remove keeps its text and its target, and the right counts once it is answered. */
+    {
+        static const ZipItem rm[] = {{"rmacc/mod.json", "{\"id\": \"rmacc\", \"name\": \"Access me\"}", 1, 0, 0, 0, 0, 0}};
+        char question[4096];
+        access_held = 0;
+        ModsWindow_SetImport(fake_pick, fake_picked, fake_fetch);
+        reopen();
+        snprintf(import_source, sizeof(import_source), "%s/picked.zip", root);
+        assert(strstr(import_zip(rm, 1), "Imported Access me."));
+        tap_widget(MODS_UI_REMOVE);
+        said = on_screen(1600, 900);
+        assert(strstr(said, "Remove Access me? Its folder is deleted"));
+        snprintf(question, sizeof(question), "%s", said);
+        access_held = 1;
+        ModsWindow_RefreshAccess();
+        assert(ModsWindow_Tick());
+        said = on_screen(1600, 900);
+        assert(!strcmp(said, question) && !strstr(said, "is on."));
+        assert(!ModsWindow_Tick());
+        tap_widget(MODS_UI_CLOSE); /* Cancel */
+        said = on_screen(1600, 900);
+        assert(!strstr(said, "Remove Access me?") && !strstr(said, "Without All files access"));
+        tap_widget(MODS_UI_APPLY); /* lit: the folder is read after a restart */
+        assert(strstr(on_screen(1600, 900), "restarts the game"));
+        tap_widget(MODS_UI_CLOSE);
+        ModsWindow_SetImport(NULL, NULL, NULL);
+    }
     /* ...or noticed while the panel shows it, within a second. */
     access_held = 0;
     reopen();
