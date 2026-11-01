@@ -706,13 +706,33 @@ int Mods_ImportFolderId(const char *directory, char *id, size_t size)
     return 1;
 }
 
-/* The old mods a cut-short import had moved aside (<temporary>/old/<name>,
- * Mods_ImportInstall) go back to <mods>/<name> when nothing is there: the
- * new one did not get in. One that is there is the new mod's, and the old
- * copy is left to be deleted. The number of old mods that could not go back. */
+/* The first name in `directory` that is not hidden, in `name`; 0 if none. */
+static int first_visible(const char *directory, char *name, size_t size)
+{
+    DIR *handle = opendir(directory);
+    struct dirent *entry;
+    int found = 0;
+    if (!handle)
+        return 0;
+    while (!found && (entry = readdir(handle)))
+        if (entry->d_name[0] != '.' && strlen(entry->d_name) < size) {
+            copy(name, size, entry->d_name);
+            found = 1;
+        }
+    closedir(handle);
+    return found;
+}
+
+/* The old mods a cut-short import had moved aside (Mods_ImportInstall puts
+ * the old <replaced> of the new <target> in <temporary>/old/<target>/<replaced>)
+ * go back to <mods>/<replaced> when neither it nor <mods>/<target> is
+ * there: the new mod did not get in. A <target> that is there is the new mod
+ * (which may have another name than the one it replaced: the same id under
+ * another folder), so the old copy is left to be deleted. The number of old
+ * mods that could not go back. */
 static int restore_old(const char *mods, const char *temporary)
 {
-    char old[2048], names[64][256];
+    char old[2048], targets[64][256];
     DIR *directory;
     struct dirent *entry;
     int n = 0, lost = 0;
@@ -720,13 +740,17 @@ static int restore_old(const char *mods, const char *temporary)
         return 0;
     while ((entry = readdir(directory)) && n < 64)
         if (entry->d_name[0] != '.')
-            copy(names[n++], sizeof(names[0]), entry->d_name);
+            copy(targets[n++], sizeof(targets[0]), entry->d_name);
     closedir(directory);
     for (int i = 0; i < n; i++) {
-        char from[2400], to[2400];
+        char inner[2400], replaced[256], from[2700], to[2400], target[2400];
         struct stat info;
-        if (snprintf(from, sizeof(from), "%s/%s", old, names[i]) >= (int)sizeof(from) ||
-            snprintf(to, sizeof(to), "%s/%s", mods, names[i]) >= (int)sizeof(to) || (!stat(to, &info) || errno != ENOENT))
+        if (snprintf(inner, sizeof(inner), "%s/%s", old, targets[i]) >= (int)sizeof(inner) ||
+            !first_visible(inner, replaced, sizeof(replaced)) ||
+            snprintf(from, sizeof(from), "%s/%s", inner, replaced) >= (int)sizeof(from) ||
+            snprintf(to, sizeof(to), "%s/%s", mods, replaced) >= (int)sizeof(to) ||
+            snprintf(target, sizeof(target), "%s/%s", mods, targets[i]) >= (int)sizeof(target) ||
+            (!stat(to, &info) || errno != ENOENT) || (!stat(target, &info) || errno != ENOENT))
             continue;
         lost += rename(from, to) != 0;
     }
@@ -906,16 +930,19 @@ int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t w
         Place *at = &places[placed];
         struct stat info;
         if (mod->replace[0] && !stat(mod->replace, &info)) {
-            /* Under its own name, in "old": if the process ends between this
-             * rename and the new mod's, Mods_ImportCleanup knows where the
-             * old mod goes back. */
-            char old[1200];
+            /* Under its own name, in "old/<the new mod's folder>": if the
+             * process ends between this rename and the new mod's (or before
+             * the folder is removed), Mods_ImportCleanup knows where the old
+             * mod goes back, and whether the new one got in. */
+            char old[1200], inner[1200];
             const char *name = mod->replace + strlen(mod->replace);
             while (name > mod->replace && name[-1] != '/' && name[-1] != '\\')
                 name--;
             if (snprintf(old, sizeof(old), "%s/old", temporary) >= (int)sizeof(old) ||
-                snprintf(at->aside, sizeof(at->aside), "%s/%s", old, name) >= (int)sizeof(at->aside) ||
-                (mkdir(old, 0777) && errno != EEXIST) || rename(mod->replace, at->aside)) {
+                snprintf(inner, sizeof(inner), "%s/%s", old, mod->folder) >= (int)sizeof(inner) ||
+                snprintf(at->aside, sizeof(at->aside), "%s/%s", inner, name) >= (int)sizeof(at->aside) ||
+                (mkdir(old, 0777) && errno != EEXIST) || (mkdir(inner, 0777) && errno != EEXIST) ||
+                rename(mod->replace, at->aside)) {
                 snprintf(why, why_size, "Could not move the old %s aside: %s.", mod->folder, strerror(errno));
                 goto undo;
             }

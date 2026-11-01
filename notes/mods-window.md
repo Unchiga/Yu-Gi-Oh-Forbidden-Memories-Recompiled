@@ -177,9 +177,10 @@ the panel usable meanwhile.
   is each mod renamed into place, and any failure puts back what was moved
   and removes the hidden folder (an old folder that cannot be put back is
   kept in `mods/.recovered-XXXXXX` and named in the message; the old
-  folder waits in the hidden folder's `old/<name>` meanwhile, so if the app
-  ends between the two renames the next cleanup puts it back where nothing
-  has taken its place and deletes the rest; a new mod
+  folder waits in the hidden folder's `old/<new folder>/<old folder>` meanwhile, so if the app
+  ends between the two renames the next cleanup puts it back when neither
+  its place nor the new mod's folder (which can have another name: the same
+  id installed under another folder) is taken, and deletes the rest; a new mod
   already placed that can be neither moved back nor removed is named too,
   "...could not be taken out of the mods folder again (delete that
   folder)"). What an

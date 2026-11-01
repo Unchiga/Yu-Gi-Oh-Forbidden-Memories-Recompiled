@@ -308,6 +308,27 @@ int main(void)
         CHECK(file_is("mods/alpha/new.txt", "new") && !exists("mods/alpha/old.txt"));
         CHECK(!strcmp(listing("mods"), "alpha"));
     }
+    /* Replace of a folder with another name (the same id installed as
+     * alpha-2): the new mod lands as alpha, the old folder is gone, and
+     * nothing is left. */
+    reset();
+    {
+        ZipItem old_items[] = {{"alpha-2/mod.json", MANIFEST_A, 0, 0, 0, 0, 0, 0},
+                               {"alpha-2/old.txt", "old", 0, 0, 0, 0, 0, 0}};
+        ZipItem new_items[] = {{"alpha/mod.json", MANIFEST_A, 1, 0, 0, 0, 0, 0},
+                               {"alpha/new.txt", "new", 0, 0, 0, 0, 0, 0}};
+        ModsImport *imp;
+        CHECK(import(old_items, 2, &count, why, sizeof(why)));
+        write_zip(zip, new_items, 2);
+        imp = Mods_ImportOpen(zip, why, sizeof(why));
+        CHECK(imp != NULL);
+        if (imp) {
+            strcat(strcpy(Mods_ImportMod(imp, 0)->replace, mods), "/alpha-2");
+            CHECK(Mods_ImportInstall(imp, mods, why, sizeof(why)));
+            Mods_ImportClose(imp);
+        }
+        CHECK(file_is("mods/alpha/new.txt", "new") && !strcmp(listing("mods"), "alpha"));
+    }
     /* A second mod failing puts the first one's old folder back. */
     reset();
     {
@@ -507,17 +528,41 @@ int main(void)
     {
         make("mods/.import-abc123/0");
         file_write("mods/.import-abc123/0/mod.json", "new alpha");
-        make("mods/.import-abc123/old/alpha");
-        file_write("mods/.import-abc123/old/alpha/mod.json", "old alpha");
-        make("mods/.import-def456/old/beta");
-        file_write("mods/.import-def456/old/beta/mod.json", "old beta");
+        make("mods/.import-abc123/old/alpha/alpha");
+        file_write("mods/.import-abc123/old/alpha/alpha/mod.json", "old alpha");
+        make("mods/.import-def456/old/beta/beta");
+        file_write("mods/.import-def456/old/beta/beta/mod.json", "old beta");
         make("mods/beta");
         file_write("mods/beta/mod.json", "new beta");
-        make("mods/.import-removing-gamma/old/gamma");
-        file_write("mods/.import-removing-gamma/old/gamma/mod.json", "removed gamma");
+        make("mods/.import-removing-gamma/old/gamma/gamma");
+        file_write("mods/.import-removing-gamma/old/gamma/gamma/mod.json", "removed gamma");
         Mods_ImportCleanup(mods);
         CHECK(file_is("mods/alpha/mod.json", "old alpha") && file_is("mods/beta/mod.json", "new beta"));
         CHECK(!strcmp(listing("mods"), "alpha beta"));
+    }
+    /* A Replace can replace a folder of another name (the same id installed
+     * as alpha-2, the new mod's folder alpha): once the new one landed, the
+     * old alpha-2 is not put back beside it. In a .zip of two mods the first
+     * one landed and the process ended in the second's Replace: the first's
+     * old copy stays gone, the second's (nothing in its place) goes back. */
+    reset();
+    {
+        make("mods/alpha");
+        file_write("mods/alpha/mod.json", "new alpha");
+        make("mods/.import-abc123/old/alpha/alpha-2");
+        file_write("mods/.import-abc123/old/alpha/alpha-2/mod.json", "old alpha-2");
+        Mods_ImportCleanup(mods);
+        CHECK(file_is("mods/alpha/mod.json", "new alpha") && !strcmp(listing("mods"), "alpha"));
+        make("mods/m0");
+        file_write("mods/m0/mod.json", "new m0");
+        make("mods/.import-def456/old/m0/m0");
+        file_write("mods/.import-def456/old/m0/m0/mod.json", "old m0");
+        make("mods/.import-def456/old/m1/m1");
+        file_write("mods/.import-def456/old/m1/m1/mod.json", "old m1");
+        make("mods/.import-def456/1");
+        Mods_ImportCleanup(mods);
+        CHECK(file_is("mods/m0/mod.json", "new m0") && file_is("mods/m1/mod.json", "old m1"));
+        CHECK(!strcmp(listing("mods"), "alpha m0 m1"));
     }
     /* What an interrupted import leaves is cleared. */
     reset();

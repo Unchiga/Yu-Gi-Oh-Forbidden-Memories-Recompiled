@@ -1021,7 +1021,7 @@ void ModsWindow_SetImport(int (*pick)(char *, size_t), int (*picked)(char *, siz
     import_fetch = fetch;
     /* what an import cut short (the app ended in it) left in the mods
      * folder; never while the HD pack's job has files there */
-    if (pick && !import_step && !import_waiting && HdPack_State() == HD_IDLE &&
+    if (pick && !import_step && !import_waiting && !ImportJob_Busy() && HdPack_State() == HD_IDLE &&
         !Mods_InstallDirectory(folder, sizeof(folder))) {
         Mods_ImportCleanup(folder);
         if (HdPack_Available() && !Paths_User(folder, sizeof(folder), "downloads"))

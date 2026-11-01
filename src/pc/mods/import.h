@@ -19,11 +19,12 @@
  * folder (".import-XXXXXX", which the mod scan skips), checking each
  * entry's size and CRC, and then renames each mod into place, after moving
  * the folder it replaces (ModsImportMod.replace) aside, into the hidden
- * folder's "old/<name>". Any failure puts back what it moved and removes the
- * hidden folder: nothing is written outside the mods folder, and nothing
- * half unpacked is left in it. An old folder that cannot be put back is kept
- * in ".recovered-XXXXXX" (named in the reason), never removed. Names are at most 32 folders deep; two mods
- * with one folder or one id are refused. */
+ * folder's "old/<new folder>/<old folder>". Any failure puts back what it
+ * moved and removes the hidden folder: nothing is written outside the mods
+ * folder, and nothing half unpacked is left in it. An old folder that cannot
+ * be put back is kept in ".recovered-XXXXXX" (named in the reason), never
+ * removed. Names are at most 32 folders deep; two mods with one folder or one
+ * id are refused. */
 #include <limits.h>
 #include <stddef.h>
 
@@ -78,7 +79,7 @@ int Mods_ImportFolderId(const char *directory, char *id, size_t size);
 /* Removes what an import cut short left in the mods folder (".import-*"
  * folders and ".incoming*.zip" files). An old mod it had moved aside for a
  * new one that never got in (the process ended between the two renames) goes
- * back to its place first, when nothing is there. */
+ * back to its place first, when neither its place nor the new mod's is taken. */
 void Mods_ImportCleanup(const char *mods);
 /* Removes a folder and everything in it, never following a link (on
  * Windows, where only the tests run it, a junction is followed). 0 when it
