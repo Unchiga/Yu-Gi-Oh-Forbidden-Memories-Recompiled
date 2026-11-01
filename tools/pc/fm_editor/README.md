@@ -70,10 +70,9 @@ where the pictures and links below work.
 5. **Save it into the game.** **File > Export mod...** and choose the game's
    mods folder: `Documents\My Games\YFM Re-Decomp\mods` on Windows,
    `~/Library/Application Support/YFM Re-Decomp/mods` on macOS,
-   `~/.local/share/YFM Re-Decomp/mods` on Linux (the dialog opens there when
-   it exists; **File > Open mod folder...** starts in the mods folder you
-   chose for the game, if there is one, and Export still goes to the user
-   directory's). The editor makes a folder named after the mod's id in it. From
+   `~/.local/share/YFM Re-Decomp/mods` on Linux (the dialog starts there when
+   it exists, and you can go to another folder; **File > Open mod folder...**
+   starts in the mods folder you chose for the game, if there is one). The editor makes a folder named after the mod's id in it. From
    then on **File > Save** (Ctrl+S) writes that same folder.
 6. **Turn it on.** Start the game, press **F10** for the menu bar, open
    **Game > Mods**, tick the mod and restart the game: the tables are read
@@ -1253,7 +1252,8 @@ when it starts. Check three things: the mod's folder is in a mods folder the
 game reads (`Documents\My Games\YFM Re-Decomp\mods`, the folder named in
 `mods-folder.txt` if you chose one,
 `~/Library/Application Support/YFM Re-Decomp/mods` on macOS,
-`~/.local/share/YFM Re-Decomp/mods`, or `mods/` beside the game; **File > Export mod...** puts it there), it is
+`~/.local/share/YFM Re-Decomp/mods`, or `mods/` beside the game; **File > Export mod...** starts in the user
+directory's), it is
 ticked in **Game > Mods** (F10 shows the menu bar), and the game was
 restarted after the save. The Mods window lists the mod even when it cannot
 load it, and says why.
@@ -2056,8 +2056,13 @@ reads what the game's `Mods_Folder` does: `MEMORIES_MODS_FOLDER`, set even to
 nothing, else the first line of `mods-folder.txt` in the user directory, with
 a byte order mark, spaces, double quotes and a trailing separator taken off,
 `\` read as `/` on Windows, and a path that is not absolute taken from the
-program directory; left out here as the game leaves it out when it is a folder
-the game reads already) and the user directory's `mods`, each one's copy of a
+program directory (`disc.program_dir()`, which `MEMORIES_PROGRAM_DIR` names
+as it does for the game; run from the source it is the script's folder, not
+the game's, so set it to the game's folder to check a relative path or a
+portable pack); left out here, as the game leaves it out, when `MEMORIES_MODS_DIR`
+is set or it is a folder the game reads already). The user directory is the
+game's too (`disc.user_dir()`: `MEMORIES_USER_DIR`, else `user/` in the
+program directory when `portable.txt` is there, else the platform's) and the user directory's `mods`, each one's copy of a
 mod replacing the one before it; and the folder the mod was opened
 from, which is this mod whatever its id now. Every installed mod counts,
 applied or not; the summary names the ones off in the game now

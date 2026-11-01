@@ -492,9 +492,9 @@ class App(Editing, tk.Tk):
         return folder if folder.is_dir() else Path.cwd()
 
     def chosen_dir(self):
-        """The mods folder the player chose for the game (validate.chosen_folder),
+        """The mods folder the player chose for the game (validate.chosen_in_use),
         when it is there; the game reads it, and Export never writes to it."""
-        folder = validate.chosen_folder()
+        folder = validate.chosen_in_use()
         try:
             return folder if folder is not None and folder.is_dir() else None
         except OSError:

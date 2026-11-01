@@ -281,6 +281,78 @@ class ChosenFolder(unittest.TestCase):
             self.assertEqual(found["same"], self.user / "mods" / "dup")
             os.environ["MEMORIES_MODS_FOLDER"] = ""
             self.assertNotIn("pack-only", {m.id for m in overlaps.installed(validate.mod_folders())})
+    def test_a_nul_ends_the_line_as_it_does_for_the_game(self):
+        self.sidecar(b"/packs/mine\0junk\n/other\n")
+        self.assertEqual(validate.chosen_folder(), Path("/packs/mine"))
+        self.sidecar("﻿/packs/utf16".encode("utf-16"))   # Notepad's "Unicode": NULs between the letters
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            validate.mod_folders()   # a name nothing can open, but no error
+        self.sidecar(b"\0/packs/mine")
+        self.assertIsNone(validate.chosen_folder())
+
+    def test_a_folder_is_tidied_again_after_the_program_directory_is_joined(self):
+        self.sidecar("/mods /\n")
+        self.assertEqual(validate.chosen_folder(), Path("/mods"))
+        self.sidecar('"/mods " \n')
+        self.assertEqual(validate.chosen_folder(), Path("/mods"))
+
+    def test_mods_dir_set_means_no_chosen_folder_is_read(self):
+        chosen = self.root / "pack"
+        os.environ["MEMORIES_MODS_FOLDER"] = str(chosen)
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertEqual(validate.chosen_in_use(), chosen)
+            os.environ["MEMORIES_MODS_DIR"] = str(self.root / "only")
+            self.assertIsNone(validate.chosen_in_use())
+
+    def test_a_folder_the_game_reads_already_is_not_in_use(self):
+        os.environ["MEMORIES_MODS_FOLDER"] = str(self.user / "mods")
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertIsNone(validate.chosen_in_use())
+            self.assertEqual(validate.chosen_folder(), self.user / "mods")
+
+
+class Portable(unittest.TestCase):
+    """The game's own program and user directories (paths.c Paths_ProgramDir,
+    Paths_UserDir): portable.txt beside the program puts the player's files in
+    its user/, which is where mods-folder.txt and user/mods are."""
+
+    def setUp(self):
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        for name in ("MEMORIES_MODS_FOLDER", "MEMORIES_MODS_DIR", "MEMORIES_USER_DIR"):
+            os.environ.pop(name, None)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.program = Path(tmp.name).resolve() / "game"
+        self.program.mkdir()
+        os.environ["MEMORIES_PROGRAM_DIR"] = str(self.program)
+
+    def test_program_dir_variable_names_the_program_directory(self):
+        self.assertEqual(disc.program_dir(), self.program)
+
+    def test_empty_program_dir_variable_is_ignored(self):
+        os.environ["MEMORIES_PROGRAM_DIR"] = ""
+        self.assertNotEqual(disc.program_dir(), Path(""))
+
+    def test_portable_txt_puts_the_user_directory_beside_the_program(self):
+        (self.program / "portable.txt").write_text("", encoding="utf-8")
+        self.assertEqual(disc.user_dir(), self.program / "user")
+
+    def test_user_dir_variable_wins_over_portable_txt(self):
+        (self.program / "portable.txt").write_text("", encoding="utf-8")
+        os.environ["MEMORIES_USER_DIR"] = str(self.program / "named")
+        self.assertEqual(disc.user_dir(), self.program / "named")
+
+    def test_without_portable_txt_it_is_the_platforms(self):
+        self.assertNotEqual(disc.user_dir(), self.program / "user")
+
+    def test_portable_user_directory_holds_the_sidecar_and_the_mods(self):
+        (self.program / "portable.txt").write_text("", encoding="utf-8")
+        (self.program / "user").mkdir()
+        (self.program / "user" / "mods-folder.txt").write_text("mods-extra\n", encoding="utf-8")
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertEqual(validate.mod_folders(), [self.program / "mods-extra", self.program / "user" / "mods"])
+
 
 
 if __name__ == "__main__":

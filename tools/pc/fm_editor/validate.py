@@ -680,7 +680,7 @@ def _tidy_folder(text: str) -> str:
     around it (Explorer's "Copy as path" adds them), "/" for "\\" on Windows,
     no trailing separator (but a root's)."""
     import sys
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
     text = text.lstrip(" \t").rstrip(" \t\r\n")
     if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
@@ -719,33 +719,57 @@ def chosen_folder():
         for part in raw.split(b"\n"):
             if len(part) >= limit - 1:   # fgets' buffer is full before the line ends
                 return None
-            line = _tidy_folder(part.decode("utf-8", errors="replace"))
+            # fgets and strlen: a NUL (a UTF-16 file) ends the line
+            line = _tidy_folder(part.split(b"\0")[0].decode("utf-8", errors="surrogateescape"))
             if line:
                 break
     if not line:
         return None
     absolute = line[0] == "/" or (sys.platform == "win32" and line[0].isascii() and line[0].isalpha()
                                   and line[1:2] == ":")
-    path = line if absolute else _tidy_folder(f"{disc.program_dir()}/{line}")
+    path = _tidy_folder(line if absolute else f"{disc.program_dir()}/{line}")
     if len(path.encode("utf-8", "surrogateescape")) >= limit:
         return None
     return Path(path)
 
 
 def _inside(path, roots) -> bool:
-    """Whether `path` is one of `roots` or lies under one (links followed,
-    the case of a Windows name ignored)."""
+    """Whether `path` is one of `roots` or lies under one: links followed
+    except on Windows, where the game's GetFullPathNameW does not follow them
+    either, and the case of a Windows name ignored."""
     import os
+    import sys
     from pathlib import Path
 
     def canon(place):
         try:
-            return Path(os.path.normcase(str(Path(place).resolve())))
-        except (OSError, RuntimeError):
-            return Path(os.path.normcase(os.path.abspath(str(place))))
+            if sys.platform != "win32":
+                place = Path(place).resolve()
+        except (OSError, RuntimeError, ValueError):
+            pass
+        return Path(os.path.normcase(os.path.abspath(str(place))))
 
     here = canon(path)
     return any(canon(root) == here or canon(root) in here.parents for root in roots)
+
+
+def chosen_in_use():
+    """The chosen folder (chosen_folder) when the game reads it: not while
+    MEMORIES_MODS_DIR is set, and not when it is one the game reads already
+    (the mods beside the game, the user directory or a folder in either), as
+    the game leaves it out. None otherwise."""
+    import os
+    from . import disc
+    if os.environ.get("MEMORIES_MODS_DIR"):
+        return None
+    chosen = chosen_folder()
+    try:
+        str(chosen).encode("utf-8")
+    except UnicodeEncodeError:   # not text: the game leaves it out
+        return None
+    shipped = shipped_folder()
+    own = [disc.program_dir() / "mods", disc.user_dir()] + ([shipped] if shipped else [])
+    return None if chosen is None or _inside(chosen, own) else chosen
 
 
 def mod_folders(project: Project = None) -> list:
@@ -753,10 +777,9 @@ def mod_folders(project: Project = None) -> list:
     (the only folder it then reads); else the mods beside the game
     (shipped_folder), the player's chosen folder (chosen_folder) and the user
     directory's mods folder, each one's copy of a mod replacing the one
-    before it. The chosen folder is left out when it is one the game reads
-    already (the mods beside the game, the user directory or a folder in
-    it), as the game does. And the folder the mod being edited was opened
-    from, when it is another."""
+    before it. The chosen folder is left out when chosen_in_use says the game
+    does not read it. And the folder the mod being edited was opened from,
+    when it is another."""
     import os
     from pathlib import Path
     from . import disc
@@ -767,8 +790,8 @@ def mod_folders(project: Project = None) -> list:
         shipped = shipped_folder()
         user = disc.user_dir()
         folders = [shipped] if shipped else []
-        chosen = chosen_folder()
-        if chosen is not None and not _inside(chosen, [disc.program_dir() / "mods", user] + folders):
+        chosen = chosen_in_use()
+        if chosen is not None:
             folders.append(chosen)
         folders.append(user / "mods")
     source = getattr(project, "source_dir", None)
