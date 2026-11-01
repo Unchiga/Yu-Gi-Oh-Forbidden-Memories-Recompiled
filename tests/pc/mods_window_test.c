@@ -1033,24 +1033,32 @@ static char access_failure[200];
 static int fake_have(void) { return access_held; }
 static int fake_can_ask(void) { return access_possible; }
 static const char *fake_right(void) { return access_name; }
-/* How many lines the footer's message was drawn in (it is cut after four), by
- * the colour of the line that starts with `first`. */
-static int message_lines(const char *first)
+/* In how many lines `whole`, the footer's message, was drawn (it is cut after
+ * four): the lines from the one it starts in, until they hold all of it. -1 when
+ * it is not on the screen, -2 when what follows is not it. */
+static int message_lines(const char *whole)
 {
-    const char *line = strstr(drawn, first);
-    char color[8];
+    char head[16];
+    const char *line;
+    size_t at = 0;
     int lines = 0;
-    if (!line)
+    snprintf(head, sizeof(head), "%.12s", whole);
+    if (!(line = strstr(drawn, head)))
         return -1;
     while (line > drawn && line[-1] != '\n')
         line--;
-    snprintf(color, sizeof(color), "%.6s", strchr(line, ' ') + 1);
-    for (const char *at = drawn; *at; at = strchr(at, '\n') + 1) {
-        const char *shade = strchr(at, ' ');
-        if (shade && !strncmp(shade + 1, color, 6))
-            lines++;
+    while (*line && whole[at]) {
+        const char *text = strchr(strchr(line, ' ') + 1, ' ') + 1, *end = strchr(line, '\n');
+        size_t length = (size_t)(end - text);
+        if (strncmp(text, whole + at, length))
+            return -2;
+        lines++;
+        at += length;
+        if (whole[at] == ' ') /* a line ends where a space was, which the text lost */
+            at++;
+        line = end + 1;
     }
-    return lines;
+    return whole[at] ? -2 : lines;
 }
 static int fake_ask(char *why, size_t size)
 {
@@ -1092,7 +1100,7 @@ static void folder_access_case(void)
     said = on_screen(1600, 900);
     assert(strstr(said, "Without All files access the game cannot read it.") && !access_asks);
     reopen(); /* shown again whenever the folder is */
-    assert(strstr(on_screen(1600, 900), second) && strstr(drawn, "cannot read it"));
+    assert(strstr(on_screen(1600, 900), "Without All files access the game cannot read it."));
     /* Allowed on Android's page. */
     choose_folder(1, second);
     tap_widget(MODS_UI_APPLY); /* Allow */
@@ -1121,7 +1129,7 @@ static void folder_access_case(void)
     tap_widget(MODS_UI_APPLY);
     ModsWindow_Tick();
     said = on_screen(1600, 900);
-    assert(strstr(said, "This phone has no settings page") && strstr(said, "Without All files access"));
+    assert(strstr(said, "This phone has no settings page") && !strstr(said, "Without All files access"));
     /* A device with no page for the right: no question, and the way out. */
     access_possible = 0;
     access_asks = 0;
@@ -1180,7 +1188,9 @@ static void folder_access_case(void)
      * unreadable (the longest message), and Use no folder in reach. */
     {
         static const int sizes[][3] = {{1600, 720, 2}, {853, 400, 2}, {1280, 600, 1}};
-        char deep[1024];
+        static const char hint[] = "Without All files access the game cannot read it. Allow it in this app's settings.",
+                          cannot[] = "This device cannot give the game All files access. Use Import mod... instead.";
+        char deep[1024], question[1400];
         snprintf(deep, sizeof(deep), "%s/second", root);
         access_held = 0;
         for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
@@ -1189,10 +1199,22 @@ static void folder_access_case(void)
             ModsWindow_Resize(sizes[i][0], sizes[i][1]);
             choose_folder(1, deep);
             tap_widget(MODS_UI_CLOSE); /* Cancel the question for the right */
+            on_screen(sizes[i][0], sizes[i][1]);
+            assert(message_lines(hint) >= 1 && message_lines(hint) <= 4); /* the hint is whole too */
+            access_possible = 0;
+            ModsWindow_Init();
+            ModsWindow_Resize(sizes[i][0], sizes[i][1]);
+            on_screen(sizes[i][0], sizes[i][1]);
+            assert(message_lines(cannot) >= 1 && message_lines(cannot) <= 4);
+            access_possible = 1;
+            ModsWindow_Init();
+            ModsWindow_Resize(sizes[i][0], sizes[i][1]);
             tap_widget(MODS_UI_MODSDIR);
             said = on_screen(sizes[i][0], sizes[i][1]);
             assert(strstr(said, "Choose another folder, or use none?") && strstr(said, "Use no folder"));
-            assert(message_lines("Mods folder:") >= 1 && message_lines("Mods folder:") <= 4);
+            snprintf(question, sizeof(question), "Mods folder: %s The game cannot read it yet. Choose another folder, "
+                     "or use none?", deep);
+            assert(message_lines(question) >= 1 && message_lines(question) <= 4);
             assert(ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y) && !ModsWindow_Locate(MODS_UI_FOLDER, &x, &y));
             tap_widget(MODS_UI_CLOSE);
         }

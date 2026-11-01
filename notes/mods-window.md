@@ -81,7 +81,7 @@ next screen. Allow it?", with Allow (the Apply button's place) and Cancel.
 Allow opens Android's page; coming back with the right, the message says so and
 that the game reads the folder after a restart. Cancel, or coming back
 without it, keeps the folder chosen and says how to allow it later ("Without
-All files access the game cannot read it. Allow it in Settings, Apps, this app, Permissions, or choose the folder again.");
+All files access the game cannot read it. Allow it in this app's settings.");
 the panel opens with that message whenever a folder is chosen and the right is
 missing, and drops it by itself (Apply & restart lit) when the right comes
 from Settings while the game is behind it: it looks again when the app is back

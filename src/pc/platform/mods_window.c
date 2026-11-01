@@ -400,7 +400,8 @@ void ModsWindow_Init(void)
         access_now = access_have ? access_have() : 1;
         access_recheck_now = 0;
         if (!Mods_Folder(path, sizeof(path)) && !access_now)
-            put(status, sizeof(status), "%.300s: %s", path, access_hint());
+            /* a phone's footer has few lines: the hint, without the path */
+            put(status, sizeof(status), touch ? "%.0s%s" : "%.300s: %s", path, access_hint());
         else if (!Mods_Folder(path, sizeof(path)) && *Mods_FolderProblem())
             put(status, sizeof(status), "%s", Mods_FolderProblem());
     }
@@ -1528,8 +1529,8 @@ static const char *access_hint(void)
     if (!access_possible())
         put(hint, sizeof(hint), "This device cannot give the game %s. Use Import mod... instead.", access_name());
     else
-        put(hint, sizeof(hint), "Without %s the game cannot read it. Allow it in Settings, Apps, this app, "
-            "Permissions, or choose the folder again.", access_name());
+        put(hint, sizeof(hint), "Without %s the game cannot read it. Allow it in this app's settings.",
+            access_name());
     return hint;
 }
 /* The right is held after all (given on the system's page, or in Settings while
@@ -1583,7 +1584,7 @@ static void folder_offer_access(const char *path)
 {
     if (!access_possible()) {
         pending = 0;
-        put(status + strlen(status), sizeof(status) - strlen(status), " %s", access_hint());
+        put(status, sizeof(status), "%s", access_hint());
         return;
     }
     pending = 7;
@@ -1596,7 +1597,7 @@ static void folder_allow(void)
     char why[400];
     pending = 0;
     if (access_ask(why, sizeof(why))) {
-        put(status, sizeof(status), "%s %s", why, access_hint());
+        put(status, sizeof(status), "%s", access_possible() ? why : access_hint());
         return;
     }
     folder_step = 2;
@@ -1672,7 +1673,8 @@ static int folder_poll(void)
             access_came();
         } else {
             access_now = 0;
-            put(status, sizeof(status), "%s%s%s", result < -1 ? why : "", result < -1 ? " " : "", access_hint());
+            /* what the system said, or when it has no page to give (the same, in the panel's words) the hint */
+            put(status, sizeof(status), "%s", result < -1 && access_possible() ? why : access_hint());
         }
         return 1;
     }
