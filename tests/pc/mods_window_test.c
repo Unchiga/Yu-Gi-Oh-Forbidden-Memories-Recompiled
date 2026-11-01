@@ -933,6 +933,21 @@ static void folder_choices(int touch)
         snprintf(path, sizeof(path), "chosen/mine/mod.json");
         assert(folder_has(path) && !Mods_Removed(mine));
     }
+    if (!touch) { /* the key hint is whole beside the buttons, at the window's own size */
+        char hint[256];
+        const char *at, *end;
+        ModsWindow_Resize(920, 640);
+        assert(ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y));
+        draw(920, 640);
+        at = strstr(drawn, "scroll");
+        assert(at && (end = strchr(at, '\n')));
+        while (at > drawn && at[-1] != '\n')
+            at--;
+        at = strchr(strchr(at, ' ') + 1, ' ') + 1; /* past the line's y and color */
+        snprintf(hint, sizeof(hint), "%.*s", (int)(end - at), at);
+        assert(Menu_TextWidthScaled(hint, 1) <= x - 28 && strstr(hint, "Wheel: scroll"));
+        ModsWindow_Resize(1600, 900);
+    }
     /* The question: the folder now, and the choices. */
     tap_widget(MODS_UI_MODSDIR);
     said = on_screen(1600, 900);
@@ -958,6 +973,22 @@ static void folder_choices(int touch)
     assert(!strstr(said, "after a restart"));
     tap_widget(MODS_UI_APPLY);
     assert(strstr(on_screen(1600, 900), "No pending changes") && restarts == before + 1);
+    /* The window is asked for again (Platform_OpenMods sets the picker each time) while the
+     * dialog is open: the answer is still taken, and is the one that was given. */
+    folder_opens = 0;
+    folder_result = 1;
+    snprintf(folder_answer, sizeof(folder_answer), "%s", second);
+    folder_waits = 2;
+    tap_widget(MODS_UI_MODSDIR);
+    tap_widget(MODS_UI_APPLY); /* Choose folder... */
+    ModsWindow_Tick();
+    ModsWindow_SetFolderPicker(fake_folder_pick, fake_folder_picked);
+    tap_widget(MODS_UI_MODSDIR); /* asked again while it is open: no second dialog, no old answer */
+    for (int i = 0; i < 5; i++)
+        ModsWindow_Tick();
+    assert(folder_opens == 1 && Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, second));
+    choose_folder(1, chosen);
+    assert(Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, chosen));
     /* Use no folder: a restart is due. */
     tap_widget(MODS_UI_MODSDIR);
     tap_widget(MODS_UI_MODSDIR);
@@ -995,6 +1026,10 @@ static int folder_main(void)
 {
     char path[1024];
     assert(scratch_dir(root, sizeof(root), "memories-mod-window-folder"));
+#ifdef _WIN32
+    for (char *c = root; *c; c++) /* Mods_Folder gives a path with slashes; so must the paths compared to it */
+        if (*c == '\\') *c = '/';
+#endif
     make_dir("prog");
     make_dir("prog/mods");
     make_dir("user");

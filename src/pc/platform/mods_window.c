@@ -266,7 +266,7 @@ static void layout(Layout *l)
     l->apply = rect(width - p - 150 * unit, height - 48 * unit, 150 * unit, 30 * unit);
     l->close = rect(width - p - 252 * unit, height - 48 * unit, 94 * unit, 30 * unit);
     l->folder = rect(width - p - 418 * unit, height - 48 * unit, 158 * unit, 30 * unit);
-    l->modsdir = folder_pick ? rect(l->folder.x - 8 * unit - 150 * unit, height - 48 * unit, 150 * unit, 30 * unit)
+    l->modsdir = folder_pick ? rect(l->folder.x - 8 * unit - 130 * unit, height - 48 * unit, 130 * unit, 30 * unit)
                              : none();
     l->back = rect(0, 0, 0, 0);
     l->hd = none(); /* a phone's panel only (layout_touch) */
@@ -949,8 +949,15 @@ void ModsWindow_Draw(MenuCanvas *c)
     else
         text(c, 20 * unit, height - 59 * unit, width - 40 * unit,
              *status ? status : "Changes are staged. Apply once when you are ready.", pending ? WARN : DIM);
-    text(c, 20 * unit, height - 32 * unit, (l.modsdir.w ? l.modsdir.x : l.folder.x) - 28 * unit,
-         "Arrow keys: select / toggle   Tab: search   Mouse wheel: scroll", DIM);
+    {   /* the keys, as fully as the room beside the buttons lets */
+        int room = (l.modsdir.w ? l.modsdir.x : l.folder.x) - 28 * unit;
+        const char *hint = "Arrow keys: select / toggle   Tab: search   Mouse wheel: scroll";
+        if (width_text(hint) > room)
+            hint = "Arrows: select   Tab: search   Wheel: scroll";
+        if (width_text(hint) > room)
+            hint = "Tab: search   Wheel: scroll";
+        text(c, 20 * unit, height - 32 * unit, room, hint, DIM);
+    }
     button(c, l.folder, "Open mods folder", 0);
     draw_modsdir(c, &l);
     button(c, l.close, pending ? "Cancel" : "Close", 0);
@@ -1437,6 +1444,8 @@ static void remove_confirm(void)
 void ModsWindow_SetFolderPicker(int (*pick)(char *why, size_t why_size),
                                 int (*picked)(char *path, size_t size, char *why, size_t why_size))
 {
+    if (pick == folder_pick && picked == folder_picked)   /* the platform sets them whenever the window is asked for */
+        return;
     folder_pick = pick;
     folder_picked = picked;
     folder_step = 0;
