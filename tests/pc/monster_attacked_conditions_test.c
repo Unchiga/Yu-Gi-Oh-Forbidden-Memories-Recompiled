@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "game/display_object.h"
 #include "game/duel_card.h"
 #include "game/duel_effect_request.h"
 #include "game/duel_side_state.h"
@@ -338,6 +339,88 @@ static void test_first_second_third_attacked_sequence(void)
     s_test_effects[0] = eff_third;
     s_test_effects_ex[0] = ex_third;
     assert(MonsterEffects_HasBattleImmunity(5) == 0); /* Destroyed after 3 attacks */
+
+    /* --- Test through MonsterEffects_Battle() and look() (MonsterEffects_Update in PHASE_FIELD) --- */
+    reset_test_duel();
+    DisplayObject att_obj, def_obj;
+    memset(&att_obj, 0, sizeof(att_obj));
+    memset(&def_obj, 0, sizeof(def_obj));
+    att_obj.field_6A = 20; /* Attacker in zone 20 */
+    def_obj.field_6A = 5;  /* Defender in zone 5 */
+    D_800E9EF0[0] = &att_obj;
+    D_800E9EF0[1] = &def_obj;
+
+    /* Configure first_attacked with reset: "duel" and reset: "copy" */
+    MonsterEffectEx ex_duel = ex_first;
+    ex_duel.battle_reset = MONSTER_RESET_DUEL;
+    MonsterEffectEx ex_copy = ex_first;
+    ex_copy.battle_reset = MONSTER_RESET_COPY;
+
+    /* Battle 1: MonsterEffects_Battle() increments attacked_summon, attacked_turn, attacked_duel */
+    gDuel_wSceneStateFlags = PHASE_BATTLE;
+    MonsterEffects_Battle();
+    assert(gMonsterEffects.attacked_summon[5] == 1);
+    assert(gMonsterEffects.attacked_turn[5] == 1);
+    assert(gMonsterEffects.attacked_duel[5] == 1);
+
+    s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_duel;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    s_test_effects_ex[0] = ex_copy;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+    /* Return to PHASE_FIELD: look() runs while the same card (18) remains in zone 5 */
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    MonsterEffects_Update();
+    assert(gMonsterEffects.attacked_summon[5] == 1);
+    assert(gMonsterEffects.attacked_duel[5] == 1);
+
+    /* Battle 2 on the same monster: counts become 2, so first_attacked immunity is exhausted */
+    gDuel_wSceneStateFlags = PHASE_BATTLE;
+    MonsterEffects_Battle();
+    assert(gMonsterEffects.attacked_summon[5] == 2);
+    assert(gMonsterEffects.attacked_duel[5] == 2);
+    s_test_effects_ex[0] = ex_duel;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+    s_test_effects_ex[0] = ex_copy;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+    /* Now a new monster (card 19) is played into zone 5 and look() runs in PHASE_FIELD:
+     * both attacked_summon[5] and attacked_duel[5] must be cleared to 0! */
+    D_801A7AD8[5].card_id = 19;
+    D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    MonsterEffects_Update();
+    assert(gMonsterEffects.card[5] == 19);
+    assert(gMonsterEffects.attacked_summon[5] == 0);
+    assert(gMonsterEffects.attacked_duel[5] == 0);
+
+    /* First attack against the new monster in zone 5: immune again under both "copy" and "duel"! */
+    gDuel_wSceneStateFlags = PHASE_BATTLE;
+    MonsterEffects_Battle();
+    assert(gMonsterEffects.attacked_summon[5] == 1);
+    assert(gMonsterEffects.attacked_duel[5] == 1);
+    s_test_effects_ex[0] = ex_duel;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    s_test_effects_ex[0] = ex_copy;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+
+    /* Also test re-placing the same card ID into zone 5 via MonsterEffects_Placed(5, 0) */
+    MonsterEffects_Placed(5, 0);
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    MonsterEffects_Update();
+    assert(gMonsterEffects.attacked_summon[5] == 0);
+    assert(gMonsterEffects.attacked_duel[5] == 0);
+
+    /* Phase 12 (DuelScene_UpdateResultOutro) is NOT a battle phase: immunity must be 0 */
+    gMonsterEffects.trap_battle_record[0] = 20;
+    gMonsterEffects.trap_battle_record[1] = 5;
+    gMonsterEffects.attacked_duel[5] = 1;
+    gDuel_wSceneStateFlags = 12;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+    D_800E9EF0[0] = NULL;
+    D_800E9EF0[1] = NULL;
 
     puts("test_first_second_third_attacked_sequence: PASSED (1st, 2-attack, and "
          "3-attack survival match accurately)");
@@ -1293,11 +1376,16 @@ static void test_piercing_damage(void)
     assert(gMonsterEffects.piercing_applied == 1);
     assert(D_800E9FF0[1].life_points.signed_value == 7000); /* Only 1000 damage total, not 30,000! */
 
-    /* When leaving battle phase (transitioning to field/hand phase), piercing state resets */
-    gDuel_wSceneStateFlags = PHASE_FIELD;
+    /* Phase 12 (result outro) is not a battle phase: piercing state resets and does not re-run */
+    int eff_attacks_before = D_8009B1C8->rank.effective_attacks;
+    D_8009B174 = 4;
+    s_mock_last_damage_amount = 0;
+    gDuel_wSceneStateFlags = 12;
     MonsterEffects_Update();
     assert(gMonsterEffects.piercing_applied == 0);
     assert(gMonsterEffects.piercing_damage == 0);
+    assert(s_mock_last_damage_amount == 0);
+    assert(D_8009B1C8->rank.effective_attacks == eff_attacks_before);
 
     /* --- Test 2: MONSTER_PIERCING_MOD_TYPE --- */
     memset(&eff_ex, 0, sizeof(eff_ex));

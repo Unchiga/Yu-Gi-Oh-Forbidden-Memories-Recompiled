@@ -535,6 +535,7 @@ static void look(void)
         }
         if (now != before || S.placed[record]) {
             S.attacked_summon[record] = 0;
+            S.attacked_duel[record] = 0;
             if (!now) S.attacked_turn[record] = 0;
         }
         S.card[record] = (short)now;
@@ -630,7 +631,7 @@ int MonsterEffects_Update(void)
         if (monster_zone(D_8009B208) && MonsterEffects_HasBattleImmunity(D_8009B208)) D_8009B208 = -1;
         if (monster_zone(D_8009B209) && MonsterEffects_HasBattleImmunity(D_8009B209)) D_8009B209 = -1;
     }
-    if (now == PHASE_BATTLE || now == 12) {
+    if (now == PHASE_BATTLE) {
         int att_rec = S.trap_battle_record[0];
         int def_rec = S.trap_battle_record[1];
         if (monster_zone(att_rec) && D_8009B1B0[0] == -1 && MonsterEffects_HasBattleImmunity(att_rec)) {
@@ -1136,7 +1137,7 @@ int MonsterEffects_HasBattleImmunity(int record)
 
             /* Must be in combat and the monster must be the defender being attacked.
              * If the monster attacks, it does not get battle immunity. */
-            in_battle = (now == PHASE_BATTLE || now == PHASE_RESUME || now == 12);
+            in_battle = (now == PHASE_BATTLE || now == PHASE_RESUME);
             if (!in_battle) continue;
 
             if (record != S.trap_battle_record[1]) continue;
