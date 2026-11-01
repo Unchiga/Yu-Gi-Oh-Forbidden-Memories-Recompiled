@@ -880,7 +880,7 @@ int Platform_TakePendingModsFolder(char *path, size_t size)
 {
     char record[1024], *taken = NULL;
     int what, found = 0;
-    if (!folder_record(record, sizeof(record))) return 0;
+    if (folder_asking || !folder_record(record, sizeof(record))) return 0; /* a pick of this process is its own */
     what = take_pick(record, NULL, &taken);
     if (what == PICK_CHOSEN && taken && taken[0] == '/' && strlen(taken) < size) {
         snprintf(path, size, "%s", taken);
