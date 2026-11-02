@@ -13,19 +13,34 @@ word of its own):
     backend      native      the decomp's C runs it when the bytes match;
                  interpret   not ported yet (the default of a new row);
                  keep        must stay interpreted, the note says why
-    span         the bytes from the slot base that are the shape's code and
-                 constants: where the decomp's layout starts the module's
-                 data. A row that is not native gets the code the images
-                 have in common, which is the most a hash can cover
+    span         the bytes from the slot base the hash covers. By default the
+                 shape's code and constants, where the decomp's layout
+                 starts the module's data (`data_start`); WIDER when the C
+                 divides by, or indexes with, a word of the slot's data
+                 (see below). A row that is not native gets the code the
+                 images have in common, the most a hash can cover
+    data_start   the decomp's data start for the shape (native rows)
+    sources      the numbers of the upstream headers whose C the module is
+                 made of (variant<N>_*.c), separated by `;`; empty: the
+                 shape's own number. A few modules mix two
     identifier_a, identifier_b   the first word of each slot's image
     images       distinct slot A images of the shape on the disc
     sha256_a, sha256_b   SHA-256 of the first `span` bytes of each slot's image
     note         why a row is `keep`
 
-The hash is of the code and constants only, not of the record's data, which
-the C reads where the disc put it: a mod that changes a model's tables or
-textures still runs the C, and one that changes the code gets the
-interpreter (src/pc/overlays/model_modules.c). Everything but backend, note
+The hash is of the code and constants, not of the record's data, which the C
+reads where the disc put it: a mod that changes a model's tables or textures
+still runs the C, and one that changes the code gets the interpreter
+(src/pc/overlays/model_modules.c). **Widening rule for a batch:** the span is
+the data start unless the C divides by, takes a remainder by, or indexes an
+array with a word it reads from the slot's data, because the interpreter
+survives a zero divisor (MIPS divu gives lo = 0xFFFFFFFF, `break 7` is a
+no-op) and an out-of-range index where native C crashes (x86) or reads
+elsewhere. Then the span grows to cover those words (up to what every retail
+image agrees on: `check --disc` fails when the images of a row differ inside
+its span), so that a mod that changes them gets the interpreter, and the
+row's note says which words and why. The reviewer of a batch greps the
+shape's C for `/`, `%` and `[` on values derived from the slot. Everything but backend, note
 and a native row's span is written from the disc by `update`, never by hand.
 
     python tools/pc/model_gate.py check                  # the table, the header and the address sections agree
@@ -58,7 +73,8 @@ ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "config/pc/model_gate.csv"
 HEADER = ROOT / "src/pc/overlays/model_gate_table.h"
 ADDRESSES = ROOT / "config/pc/guest_addresses.txt"
-COLUMNS = ("shape", "backend", "span", "identifier_a", "identifier_b", "images", "sha256_a", "sha256_b", "note")
+COLUMNS = ("shape", "backend", "span", "data_start", "sources", "identifier_a", "identifier_b", "images",
+           "sha256_a", "sha256_b", "note")
 BACKENDS = ("native", "interpret", "keep")
 IMAGE_SIZE = 0x5000        # the ten sectors a variant image is (model_oracle.py, VARIANT_SECTORS)
 BASE = {"A": 0x8013B000, "B": 0x8017B000}
@@ -75,6 +91,15 @@ class Row(dict):
     @property
     def span(self) -> int:
         return int(self["span"], 0)
+
+    @property
+    def data_start(self) -> int | None:
+        return int(self["data_start"], 0) if self["data_start"] else None
+
+    @property
+    def sources(self) -> list[int]:
+        """The upstream header numbers the module's C is named after."""
+        return [int(number) for number in self["sources"].split(";")] if self["sources"] else [self.shape]
 
     def identifier(self, slot: str) -> int:
         return int(self["identifier_" + slot.lower()])
@@ -115,9 +140,11 @@ def write_table(rows: list[Row], path: Path = TABLE) -> None:
 
 # --- what the build needs ---------------------------------------------------------
 
-def source_patterns(row: Row, slot: str) -> str:
-    return ("src/native_overlays/model_variant/variant{}_*.c" if slot == "A"
-            else "src/native_overlays/model_variant_slot1/variant{}_*.c").format(row.shape)
+def source_patterns(row: Row, slot: str) -> tuple[str, ...]:
+    """The globs of the module's C files in a slot (a tuple: a module may be
+    made of the C of several headers)."""
+    folder = "model_variant" if slot == "A" else "model_variant_slot1"
+    return tuple(f"src/native_overlays/{folder}/variant{number}_*.c" for number in row.sources)
 
 
 SYMBOL = re.compile(r"\b(func|D)_([0-9A-F]{8})\b")
@@ -131,9 +158,9 @@ def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
     that falls inside the slot's image."""
     base = BASE[slot]
     found = {}
-    folders = [root / "src/native_overlays/model_variant"] if slot == "A" else [root / "src/native_overlays/model_variant_slot1"]
-    for folder in folders:
-        for path in sorted(folder.glob(f"variant{row.shape}_*")):
+    folder = root / ("src/native_overlays/model_variant" if slot == "A" else "src/native_overlays/model_variant_slot1")
+    for number in row.sources:
+        for path in sorted(folder.glob(f"variant{number}_*")):
             if path.suffix in (".c", ".h"):
                 for kind, digits in SYMBOL.findall(path.read_text(encoding="utf-8", errors="replace")):
                     address = int(digits, 16)
@@ -240,6 +267,7 @@ def rewrite(shapes: dict[int, Shape], old: list[Row]) -> list[Row]:
         provisional = min(shape.common("A"), shape.common("B"))
         span = row.span if row and backend in ("native", "keep") else provisional
         rows.append(Row(shape=number, backend=backend, span=f"0x{span:X}",
+                        data_start=row["data_start"] if row else "", sources=row["sources"] if row else "",
                         identifier_a=number, identifier_b=shape.identifier_b,
                         images=len(shape.images["A"]),
                         sha256_a=hashed(shape, "A", span), sha256_b=hashed(shape, "B", span),
@@ -257,9 +285,13 @@ def boundaries(shapes: dict[int, Shape], rows: list[Row]) -> list[str]:
         shape = shapes[row.shape]
         for slot in "AB":
             common = shape.common(slot)
+            data_start = row.data_start
             lines.append(f"shape {row.shape} slot {slot}: {len(shape.images[slot])} distinct images, "
                          f"{len(shape.records)} (record, alternative) pairs, common prefix 0x{common:X}, "
-                         f"span 0x{row.span:X}, {common - row.span} bytes of data shared beyond it"
+                         f"span 0x{row.span:X}"
+                         + (f" (data start 0x{data_start:X}, widened by {row.span - data_start})"
+                            if data_start is not None and row.span != data_start else "")
+                         + f", {common - row.span} bytes shared beyond it"
                          + ("" if common >= row.span else "  ** THE SPAN IS LONGER THAN WHAT THEY SHARE **"))
     return lines
 
@@ -281,6 +313,17 @@ def problems(rows: list[Row]) -> list[str]:
             continue
         if span % 4 or not 0 < span <= IMAGE_SIZE:
             bad.append(f"{where}: span 0x{span:X} is not a word count inside the image")
+        try:
+            row.sources
+        except ValueError:
+            bad.append(f"{where}: sources {row['sources']!r} is not header numbers separated by ;")
+        if row["backend"] == "native":
+            if row["data_start"] == "":
+                bad.append(f"{where}: a native row gives the decomp's data start")
+            elif row.data_start > span:
+                bad.append(f"{where}: span 0x{span:X} stops before the data start 0x{row.data_start:X}")
+            elif row.data_start < span and not row["note"].strip():
+                bad.append(f"{where}: the span is wider than the data start: the note says which words it covers")
         for slot in "AB":
             if not re.fullmatch(r"[0-9a-f]{64}", row.sha256(slot)):
                 bad.append(f"{where}: slot {slot} has no SHA-256")
@@ -299,8 +342,9 @@ def check_sources(rows: list[Row]) -> list[str]:
         if row["backend"] != "native":
             continue
         for slot in "AB":
-            if not list(ROOT.glob(source_patterns(row, slot))):
-                bad.append(f"shape {row.shape} is native but {source_patterns(row, slot)} matches nothing")
+            for pattern in source_patterns(row, slot):
+                if not list(ROOT.glob(pattern)):
+                    bad.append(f"shape {row.shape} is native but {pattern} matches nothing")
     sections: dict[str, dict[str, int]] = {}
     current = None
     for line in ADDRESSES.read_text(encoding="utf-8").splitlines():

@@ -180,7 +180,8 @@ def units():
     native = {source.replace("\\", "/") for source in build.NATIVE}
     found += [path for path in native if path.startswith(PORT)]
     for _, pattern, _, _ in build.MODULES:
-        found += glob.glob(pattern, root_dir=ROOT)
+        for one in ((pattern,) if isinstance(pattern, str) else pattern):
+            found += glob.glob(one, root_dir=ROOT)
     return sorted({path.replace("\\", "/") for path in found})
 
 

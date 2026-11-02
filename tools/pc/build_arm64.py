@@ -81,6 +81,16 @@ def definitions(ir):
     return set(inspect(ir)["definitions"])
 
 
+def own_variables(ir):
+    """The writable variables an IR module defines (a `global`, not a
+    `constant`, not a declaration)."""
+    return [
+        name
+        for name, modifiers in re.findall(r"^@(\S+) = ((?:\w+ )*)global ", ir, re.M)
+        if "external" not in modifiers.split()
+    ]
+
+
 def replace_names(ir, renames):
     return normalize(ir, renames)
 
@@ -219,6 +229,13 @@ def prepare_guest_units(jobs, groups, natives, ordinary, path_for, address_table
         clashes = group_defs[name] & others
         if name in GATED_MODULES:
             clashes |= group_defs[name]
+        if name in SOURCE_ADDRESSED_MODULES:
+            # As build_game32.py: the gate runs the C against the record's own
+            # data in guest memory, and a variable of the module's own would
+            # be host storage the image never sees.
+            variables = [v for source in groups[name] for v in own_variables(raw_text[source])]
+            if variables:
+                raise SystemExit(f"{name}: a gated module with variables of its own: {', '.join(variables[:8])}")
         renames[name] = {symbol: name + "__" + symbol for symbol in clashes}
         for s in groups[name]:
             raw_text[s] = replace_names(raw_text[s], renames[name])

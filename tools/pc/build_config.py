@@ -155,7 +155,14 @@ def game_sources():
         )
     }
     groups.update(
-        (name, sorted(path.relative_to(ROOT).as_posix() for path in ROOT.glob(pattern)))
+        (
+            name,
+            sorted(
+                path.relative_to(ROOT).as_posix()
+                for one in ((pattern,) if isinstance(pattern, str) else pattern)
+                for path in ROOT.glob(one)
+            ),
+        )
         for name, pattern, _, _ in MODULES
     )
     return groups

@@ -685,19 +685,37 @@ has 324 of them, 183 on more than one image. A row has the shape, its
 `keep`, a shape that must stay interpreted, with the reason in its note:
 shape 128 reads stack bytes it never wrote, which native C would take from
 the host's stack), its `span`, the SHA-256 of the first `span` bytes of each
-slot's image, and the images and identifiers it was written from.
-`span` is where the decomp's layout starts the module's data: the hash covers
-code and constants only, so a mod that changes a model's tables or textures
+slot's image, and the images and identifiers it was written from, the
+decomp's `data_start` and, for a module made of the C of two headers, the
+`sources` (header numbers separated by `;`; empty: the shape's own).
+`span` is where the hash stops. **By default it is the data start** (where the
+decomp's layout starts the module's data): the hash then covers code and
+constants only, so a mod that changes a model's tables or textures
 (`MODEL.MRG` data, #398/#399) still runs the C, and one that changes the
-code is interpreted. The rows are written from the disc by
+code is interpreted. **A batch widens it** to cover any word of the slot's
+data that the C divides by, takes a remainder by, or indexes with: the
+interpreter survives a zero divisor (`divu` leaves lo = `0xFFFFFFFF`,
+`break 7` is a no-op) where native C faults on x86 (and gives 0 on arm64),
+so a mod that zeroed such a word must get the interpreter. The batch's
+reviewer greps the shape's C for `/`, `%` and `[` on values derived from the
+slot, and the row's note says which words the widening covers. `check --disc`
+fails when the images of a row differ anywhere inside its span, and
+`problems` when a span is wider than the data start with no note. The rows are written from the disc by
 `tools/pc/model_gate.py update --disc` (never by hand: only `backend`, the
 note and a native or kept row's span are), which also writes the table the
 game is built with, `src/pc/overlays/model_gate_table.h`; `check` verifies
 the table, that file and the address sections against each other, and
 against the disc with `--disc` (the images of a shape must agree over its
-span; the report says how far beyond it: for 418, `0x3F60` in both slots
-against a span of `0x396C`, the 1,524 bytes between being per-record data
-that happens to be equal on the 11 retail images). To port a shape:
+span; the report says how far beyond it they agree). Shape 418 is the
+example of a widened span: its data start is `0x396C`, but
+`variant418_bands.c` and `variant418_quad.c` divide by the attack's
+frame-timing words at `D_8013E96C + 0xFC + cmd * 0x44` (`+0x2C`,
+`+0x30 - 0x2C`, `+0x38 - 0x34`), so its span is `0x3F60`, the common prefix
+of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
+those 1,524 bytes runs the interpreter, and one that changes anything after
+them (the model's tables and textures) still runs the C. The gate only
+matches the US disc's modules: the other regions' 418 images differ and are
+interpreted. To port a shape:
 copy the decomp's `variant<shape>_*.c` into `src/native_overlays/model_variant` (not
 `src/overlays`: every C file there must be a subsegment of a split, which
 these modules do not have here; the headers' relative includes are the

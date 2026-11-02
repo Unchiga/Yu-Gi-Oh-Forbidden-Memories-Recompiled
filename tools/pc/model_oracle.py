@@ -408,7 +408,14 @@ def backend_errors(side: dict, expected: dict[str, bool], native_allowed: bool) 
     side, and the interpreter in the others; never native for a side that
     asked for the interpreter or the stand-in."""
     errors = []
-    for slot, ways in sorted(backends(side).items()):
+    ran = backends(side)
+    # A slot that holds a native row's code and made no variant call at all
+    # is an error too (compare() has already said so for the slots a battle's
+    # outcome runs; expected holds only those).
+    for slot in sorted(expected):
+        if native_allowed and expected[slot] and slot not in ran:
+            errors.append(f"{side['side']}: slot {slot} holds a module the table runs as native C and made no call")
+    for slot, ways in sorted(ran.items()):
         want_native = native_allowed and expected.get(slot, False)
         if want_native and ways != {"native"}:
             errors.append(f"{side['side']}: slot {slot} holds a module the table runs as native C and ran "

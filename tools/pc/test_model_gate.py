@@ -64,6 +64,50 @@ def side(name, ways_a, ways_b="interpreter"):
             "paths": {"variant 418 in A": [ways_a], "variant 568 in B": [ways_b]}}
 
 
+class SpanRules(unittest.TestCase):
+    """What a native row's span has to satisfy."""
+
+    @staticmethod
+    def shape(first_difference):
+        shape = model_gate.Shape(418, 568)
+        for slot in "AB":
+            for fill in (1, 2):
+                image = bytearray(model_gate.IMAGE_SIZE)
+                image[first_difference:] = bytes([fill]) * (model_gate.IMAGE_SIZE - first_difference)
+                shape.images[slot][str(fill)] = bytes(image)
+        return shape
+
+    def test_images_must_agree_within_the_span(self):
+        shape = self.shape(0x400)
+        self.assertEqual(shape.common("A"), 0x400)
+        model_gate.hashed(shape, "A", 0x400)
+        with self.assertRaises(SystemExit):
+            model_gate.hashed(shape, "A", 0x404)
+
+    def row(self, **fields):
+        base = dict(shape="418", backend="native", span="0x3F60", data_start="0x396C", sources="",
+                    identifier_a="418", identifier_b="568", images="11", sha256_a="a" * 64,
+                    sha256_b="b" * 64, note="widened: divides by slot words")
+        base.update(fields)
+        return model_gate.Row(base)
+
+    def test_a_span_wider_than_the_data_start_says_why(self):
+        self.assertEqual(model_gate.problems([self.row()]), [])
+        self.assertTrue(model_gate.problems([self.row(note="")]))
+
+    def test_a_span_may_not_stop_before_the_data_start(self):
+        self.assertTrue(model_gate.problems([self.row(span="0x3000")]))
+
+    def test_a_native_row_gives_its_data_start(self):
+        self.assertTrue(model_gate.problems([self.row(data_start="")]))
+
+    def test_a_module_may_be_made_of_two_headers(self):
+        row = self.row(sources="433;450")
+        self.assertEqual(row.sources, [433, 450])
+        self.assertEqual(len(model_gate.source_patterns(row, "A")), 2)
+        self.assertEqual(self.row().sources, [418])
+
+
 class OracleBackends(unittest.TestCase):
     """The oracle's check that native C ran exactly where the table says."""
 
@@ -83,6 +127,15 @@ class OracleBackends(unittest.TestCase):
         verdict = self.verdict(side("subject", "native", "native"), side("reference", "interpreter"))
         self.assertEqual(verdict["status"], "error")
         self.assertIn("slot B ran native C", verdict["why"])
+
+    def test_a_native_slot_with_no_call_is_an_error(self):
+        silent = side("subject", "native")
+        silent["paths"] = {"variant 568 in B": ["interpreter"]}
+        errors = model_oracle.backend_errors(silent, {"A": True, "B": False}, True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("slot A holds a module the table runs as native C and made no call", errors[0])
+        # A side that asked for the interpreter is not expected to run native.
+        self.assertEqual(model_oracle.backend_errors(silent, {"A": True, "B": False}, False), [])
 
     def test_a_reference_in_interpreter_mode_never_runs_native(self):
         verdict = self.verdict(side("subject", "native"), side("reference", "native"))
