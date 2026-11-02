@@ -11,6 +11,7 @@
 #include "pc/mods/events.h"
 #include "image.h"
 #include "retail_image.h"
+#include "mips.h"
 #include "pc/audio/spu.h"
 #include "pc/audio/replace.h"
 #include "pc/compat/gte.h"
@@ -261,6 +262,19 @@ void Memories_StateSubsystems(MemoriesState *state)
     Memories_StateJumps(state);
 #endif
     RetailImage_State(state);
+#ifndef MEMORIES_TRANSLATED
+    {
+        /* The interpreted modules' stack (mips.c), RAM on the console:
+         * retail module code reads locals it never wrote. A state from
+         * before this chunk gets it cleared, as at boot, so that loading
+         * it twice gives the same game too. The translated game keeps it
+         * with its other mappings ("arm64-regions"). */
+        MemoriesStateField stack;
+        stack.data = Memories_MipsStack(&stack.size);
+        if (!Memories_StateChunk(state, "mips-stack", &stack, 1) && Memories_StateLoading(state))
+            memset(stack.data, 0, stack.size);
+    }
+#endif
     Spu_State(state);
     LibSpu_State(state);
     LibDs_State(state);

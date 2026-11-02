@@ -1,0 +1,13 @@
+{
+ "format": 1,
+ "kind": "scripted",
+ "header": {
+  "os": "win32",
+  "settings": {}
+ },
+ "start": {
+  "kind": "boot"
+ },
+ "script": "scenario.py",
+ "notes": "A real bug: states did not carry the interpreter's stack; fails before the fix, passes after."
+}

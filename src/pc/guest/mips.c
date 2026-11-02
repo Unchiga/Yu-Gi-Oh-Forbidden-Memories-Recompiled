@@ -120,6 +120,20 @@ static int ensure_stack(void)
     return 0;
 }
 
+/* The interpreted code's stack, for save states (state_subsystems.c). Retail
+ * module code reads locals it never wrote (variant module 128: the fourth
+ * byte of the two colours it hands Model_QueueTintRequestForParts, the start
+ * one becoming the tint pass's draw mode, and the corners of a POLY_FT4 that
+ * only SetPolyFT4 touched): on the console those read what earlier code left
+ * on the stack, which a state holds as part of RAM. So does this one, or a
+ * battle started from a state would look different after other battles. */
+void *Memories_MipsStack(size_t *size)
+{
+    ensure_stack();
+    *size = STACK_SIZE;
+    return (void *)(uintptr_t)(stack_top + 16 - STACK_SIZE);
+}
+
 /* The last run's instructions, for the trace (Memories_MipsTry), failed runs too. */
 static unsigned try_steps;
 
