@@ -171,7 +171,7 @@ class ChosenFolder(unittest.TestCase):
         self.sidecar("D:\\Mods\\Pack\\\\\n")
         self.assertEqual(validate.chosen_folder(), Path("D:/Mods/Pack"))
         self.sidecar("D:\\\n")
-        self.assertEqual(str(validate.chosen_folder()).replace("\\", "/"), "D:/")
+        self.assertEqual(validate.chosen_folder(), Path("D:/"))
 
     def test_backslash_is_a_separator_on_windows_only(self):
         self.on("win32")
