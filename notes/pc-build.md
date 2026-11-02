@@ -627,8 +627,10 @@ tint pass's draw mode (`func_800528AC`, `Model_HasInsufficientBufferSpace`);
 it also reads the corners of a `POLY_FT4` that only `SetPolyFT4` touched
 (`sp+0x80`/`0x82`, `0x8013C0AC`) for a `ratan2`. Those are the only reads
 whose values differed between the two histories below (an instrumented
-interpreter, 2026-11-02); the bridge's forwarding of unwritten argument words
-to callees that take fewer is not among them. On the console the words are game RAM and a
+interpreter, 2026-11-02). The bridge forwards eight stack words to every
+native call, written or not; every callee that got an unwritten one in those
+battles takes fewer parameters than that word's place, so it is not among
+them. On the console the words are game RAM and a
 save state holds them; the port's interpreted code runs on its own stack, and
 since "Port: save states carry the interpreter's stack" a state holds it too
 (chunk `mips-stack`, all 256 KiB; the translated build already kept it with
