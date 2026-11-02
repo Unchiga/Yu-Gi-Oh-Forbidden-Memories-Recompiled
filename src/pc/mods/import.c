@@ -2,8 +2,9 @@
  * its central directory, which is where the names, sizes and file types
  * are; each entry's data is found through its local header and inflated
  * with zlib (raw deflate), which every build links already (libpng's).
- * ZIP64 and multi-disk archives are refused: a mod is far below their
- * sizes, and MODS_IMPORT_BYTES caps it anyway. */
+ * ZIP64 and multi-disk archives are refused: they start where the plain
+ * form's 4 GB and 65,535 entries end, which MODS_IMPORT_BYTES and
+ * MODS_IMPORT_ENTRIES keep below. */
 #define _POSIX_C_SOURCE 200809L
 #include "pc/compat/fs.h"
 #include "import.h"
@@ -22,8 +23,8 @@
 #include <unistd.h>
 #endif
 
-#define ZIP_MAX (1024L * 1024 * 1024)   /* the .zip itself */
-#define DIRECTORY_MAX (16u << 20)       /* its central directory */
+#define ZIP_MAX MODS_IMPORT_ZIP_BYTES
+#define DIRECTORY_MAX (32u << 20)       /* its central directory */
 #define MANIFEST_MAX (4u << 20)         /* a mod.json read to name the mod */
 #define NAME_MAX_ 512
 #define CHUNK 65536
@@ -53,7 +54,7 @@ static unsigned le32(const unsigned char *p) { return le16(p) | (unsigned)le16(p
 
 static int read_at(FILE *file, unsigned long offset, void *out, size_t size)
 {
-    return offset <= (unsigned long)ZIP_MAX && !fseek(file, (long)offset, SEEK_SET) &&
+    return offset <= ZIP_MAX && !fseek(file, (long)offset, SEEK_SET) &&
            fread(out, 1, size, file) == size;
 }
 
@@ -387,8 +388,8 @@ ModsImport *Mods_ImportOpen(const char *zip, char *why, size_t why_size)
         snprintf(why, why_size, "Could not read the .zip: %s.", strerror(errno));
         goto fail;
     }
-    if (fseek(import->file, 0, SEEK_END) || (size = ftell(import->file)) < 0 || size > ZIP_MAX) {
-        snprintf(why, why_size, "The .zip is too large (more than 1 GB).");
+    if (fseek(import->file, 0, SEEK_END) || (size = ftell(import->file)) < 0 || (unsigned long)size > ZIP_MAX) {
+        snprintf(why, why_size, "The .zip is too large (more than %lu MB).", (ZIP_MAX >> 20) + 1);
         goto fail;
     }
     if (size < 22) {
@@ -504,7 +505,8 @@ ModsImport *Mods_ImportOpen(const char *zip, char *why, size_t why_size)
         }
         import->total += e->size;
         if (import->total > MODS_IMPORT_BYTES) {
-            snprintf(why, why_size, "The mod is too large: more than %u MB once unpacked.", MODS_IMPORT_BYTES >> 20);
+            snprintf(why, why_size, "The mod is too large: more than %u MB once unpacked.",
+                     (MODS_IMPORT_BYTES >> 20) + 1);
             goto fail;
         }
         p += 46 + name_length + extra + comment;
@@ -546,7 +548,7 @@ ModsImport *Mods_ImportOpen(const char *zip, char *why, size_t why_size)
             if (depth > 2)
                 continue;
             if (n == MODS_IMPORT_MAX) {
-                snprintf(why, why_size, "The .zip has more than %d mods; import them a few at a time.",
+                snprintf(why, why_size, "The .zip has more than %d mods, more than the game takes.",
                          MODS_IMPORT_MAX);
                 goto fail;
             }

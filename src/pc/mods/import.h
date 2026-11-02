@@ -24,11 +24,17 @@
  * folder that cannot be put back is kept in ".recovered-XXXXXX" (named in
  * the reason), never removed. Names are at most 32 folders deep; two mods
  * with one folder or one id are refused. */
+#include <limits.h>
 #include <stddef.h>
 
-#define MODS_IMPORT_MAX 32                    /* mods in one .zip */
-#define MODS_IMPORT_ENTRIES 20000             /* files and folders in one .zip */
-#define MODS_IMPORT_BYTES (512u * 1024 * 1024) /* unpacked */
+#define MODS_IMPORT_MAX 256                   /* mods in one .zip: as many as the game takes (MODS_MAX) */
+#define MODS_IMPORT_ENTRIES 65534             /* files and folders in one .zip: the plain form's */
+/* Unpacked, which the free space must hold too: 4 GB, less the byte that
+ * keeps the count of bytes unpacked so far (Mods_ImportWatch) in 32 bits. */
+#define MODS_IMPORT_BYTES 0xFFFFFFFFu
+/* The .zip itself: the plain form's 4 GB where a long holds its offsets
+ * (fseek, ftell), else 2 GB (a 32-bit long: Windows, and 32-bit builds). */
+#define MODS_IMPORT_ZIP_BYTES ((unsigned long)(LONG_MAX < 0xFFFFFFFFL ? LONG_MAX : 0xFFFFFFFFL))
 
 typedef struct ModsImport ModsImport;
 typedef struct {

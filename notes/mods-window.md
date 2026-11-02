@@ -82,12 +82,16 @@ paused while the panel shows.
 **Import mod...** (Android; `ModsWindow_SetImport`, which no desktop
 calls, so the desktop window and the desktop's test panels have no such
 button) opens the system's file picker; the chosen document is copied into
-the mods folder (`mods/.incoming.zip`), read
+the mods folder (`mods/.incoming.zip`; a document over the importer's 4 GB,
+or one whose size the provider gives and the free space cannot hold, is
+refused before the copy), read
 (`src/pc/mods/import.c`), and its mods are put in place and added to the
 list, off, without a restart (`Mods_Discover`): the first one is selected,
 and the message line says "Imported <name>." (or "Imported 3 mods: A, B and
 C."). Turning one on is then like any other mod's change (Apply, a restart
-when the mod needs one).
+when the mod needs one). The copy, the reading and the unpacking run on the
+game's thread, so the panel waits through them without a progress bar: a
+few seconds for a usual mod, minutes for a pack of gigabytes.
 
 - **What counts as a mod in it**: every folder with a `mod.json` at the
   `.zip`'s root (the whole `.zip` is then the mod, in a folder named by the
@@ -128,9 +132,12 @@ when the mod needs one).
   Android's shared storage, are found as the second is written: "Two files
   in the .zip are one file on this storage..."), two mods with
   one folder or one `id`, names that are not UTF-8, ZIP64 or split
-  archives, more than 20,000 entries, more than 512 MB unpacked, a `.zip`
-  over 1 GB, a file that is not a `.zip`, or more mods than the game takes
-  (256). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
+  archives (the plain form holds 65,534 entries and 4 GB, which is what
+  the importer takes), more than 4 GB unpacked or more than the free space
+  holds, a `.zip` over 4 GB (2 GB where a `long` has 32 bits, where `ftell`
+  stops: Windows and the 32-bit builds; Android's arm64 game takes 4 GB),
+  a file that is not a `.zip`, or more mods than the game takes (256, in
+  one `.zip` or with those installed). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
   Unpacking goes into a hidden `mods/.import-XXXXXX` folder (the scan skips
   names starting with a dot), checking each file's size and CRC; only then
   is each mod renamed into place, and any failure puts back what was moved
@@ -219,9 +226,9 @@ installs a `.zip`. Nothing is contacted until it is tapped.
   and takes its asset `yfm-redecomp-hd-mod-<tag>.zip` (else the first
   `yfm-redecomp-hd-mod-*.zip`), its size and its `digest` (an asset without
   one is refused: the download could not be checked; one over the
-  importer's 512 MB unpacked is refused before anything is downloaded, since
+  importer's 4 GB unpacked is refused before anything is downloaded, since
   pictures barely compress: "The HD pack of <tag> is too large: more than
-  512 MB once unpacked."). Then:
+  4096 MB once unpacked."). Then:
   - the same release installed (its tag in the mod folder's `.hd-release`,
     since the pack's `mod.json` says `"version": "1.0"` in every release):
     "The HD pack is already installed (v0.2.0)." and nothing is downloaded;

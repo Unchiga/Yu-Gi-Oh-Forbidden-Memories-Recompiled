@@ -523,6 +523,25 @@ int main(void)
         }
 #endif
     }
+    /* A pack of mods in one .zip, one wrapper folder down: as many as the
+     * game takes; one more is refused before anything is written. */
+    {
+        static char names[MODS_IMPORT_MAX + 1][32], manifests[MODS_IMPORT_MAX + 1][64];
+        static ZipItem items[MODS_IMPORT_MAX + 1];
+        for (int i = 0; i <= MODS_IMPORT_MAX; i++) {
+            snprintf(names[i], sizeof(names[i]), "pack/m%03d/mod.json", i);
+            snprintf(manifests[i], sizeof(manifests[i]), "{\"id\": \"m%03d\"}", i);
+            items[i] = (ZipItem){names[i], manifests[i], 1, 0, 0, 0, 0, 0};
+        }
+        reset();
+        CHECK(import(items, MODS_IMPORT_MAX, &count, why, sizeof(why)));
+        CHECK(count == MODS_IMPORT_MAX);
+        CHECK(exists("mods/m000/mod.json") && exists("mods/m255/mod.json"));
+        reset();
+        CHECK(!import(items, MODS_IMPORT_MAX + 1, &count, why, sizeof(why)) && count == -1);
+        CHECK(strstr(why, "more than 256 mods") != NULL);
+        CHECK(!exists("mods/m000"));
+    }
     Mods_ImportRemoveTree(root);
     if (failures)
         fprintf(stderr, "%d checks failed\n", failures);

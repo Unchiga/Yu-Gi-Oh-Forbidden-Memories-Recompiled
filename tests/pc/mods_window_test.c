@@ -7,6 +7,7 @@
 #include "pc/mods/overlap.h"
 #include "pc/mods/hd_pack.h"
 #include "zip_writer.h"
+#include <limits.h>
 #ifndef _WIN32
 #include <dirent.h>
 #endif
@@ -548,16 +549,18 @@ static void test_hd_pack_asset(void)
                             "\"size\": 10, \"browser_download_url\": \"https://x/y.zip\"}]}",
                             &r, why, sizeof(why)) == 0);
     assert(strstr(why, "no checksum")); /* no "digest": never downloaded unchecked */
+#if LONG_MAX > 0xFFFFFFFFL /* a long holds the size (a 32-bit one refuses the whole answer) */
+    assert(HdPack_PickAsset("{\"tag_name\": \"v1.0.0\", \"assets\": [{\"name\": \"" HD_PACK_PREFIX "v1.0.0.zip\", "
+                            "\"size\": 4294967296, \"digest\": \"sha256:" FAKE_SHA "\", "
+                            "\"browser_download_url\": \"https://x/y.zip\"}]}",
+                            &r, why, sizeof(why)) == 0); /* more than the importer unpacks */
+    assert(strstr(why, "too large: more than 4096 MB once unpacked"));
+#endif
     assert(HdPack_PickAsset("{\"tag_name\": \"v1.0.0\", \"assets\": [{\"name\": \"" HD_PACK_PREFIX "v1.0.0.zip\", "
                             "\"size\": 2000000000, \"digest\": \"sha256:" FAKE_SHA "\", "
                             "\"browser_download_url\": \"https://x/y.zip\"}]}",
-                            &r, why, sizeof(why)) == 0);
-    assert(strstr(why, "too large: more than 512 MB once unpacked"));
-    assert(HdPack_PickAsset("{\"tag_name\": \"v1.0.0\", \"assets\": [{\"name\": \"" HD_PACK_PREFIX "v1.0.0.zip\", "
-                            "\"size\": 600000000, \"digest\": \"sha256:" FAKE_SHA "\", "
-                            "\"browser_download_url\": \"https://x/y.zip\"}]}",
-                            &r, why, sizeof(why)) == 0); /* under 1 GB, but more than the importer unpacks */
-    assert(strstr(why, "too large"));
+                            &r, why, sizeof(why)) == 1); /* 2 GB: the importer takes it */
+    assert(r.size == 2000000000ul);
     assert(HdPack_PickAsset("{\"message\": \"Not Found\"}", &r, why, sizeof(why)) == -1);
     assert(HdPack_PickAsset("<html>", &r, why, sizeof(why)) == -1);
 }
