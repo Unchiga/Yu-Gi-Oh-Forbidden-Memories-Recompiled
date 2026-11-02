@@ -132,6 +132,88 @@ static int folder_has(const char *relative)
     snprintf(path, sizeof(path), "%s/%s", root, relative);
     return !stat(path, &info);
 }
+/* Mods folder... with a folder picker that answers as the test says
+ * (ModsWindow_SetFolderPicker), and what the window then shows. */
+static char folder_answer[1024], folder_failure[200];
+static int folder_result, folder_opens, folder_waits;
+static int fake_folder_pick(char *why, size_t size)
+{
+    (void)why;
+    (void)size;
+    folder_opens++;
+    return 0;
+}
+static int fake_folder_picked(char *path, size_t size, char *why, size_t why_size)
+{
+    if (folder_waits-- > 0)
+        return 0;
+    snprintf(path, size, "%s", folder_answer);
+    snprintf(why, why_size, "%s", folder_failure);
+    return folder_result;
+}
+/* Everything the window drew, as one line of text. */
+static const char *on_screen(int w, int h)
+{
+    static char said[4096];
+    const char *line;
+    draw(w, h);
+    said[0] = 0;
+    for (line = drawn; *line; line = strchr(line, '\n') + 1) {
+        const char *text = strchr(strchr(line, ' ') + 1, ' ') + 1;
+        size_t length = (size_t)(strchr(line, '\n') - text);
+        if (strlen(said) + length + 2 < sizeof(said)) {
+            strncat(said, text, length);
+            strcat(said, " ");
+        }
+    }
+    if (getenv("MODS_TEST_SCREEN"))
+        fprintf(stderr, "screen: %s\n", said);
+    return said;
+}
+/* Mods folder... is pressed and answered: the folder picker is asked, and
+ * its answer (folder_result, folder_answer) is taken at the ticks. */
+static void choose_folder(int result, const char *path)
+{
+    folder_result = result;
+    snprintf(folder_answer, sizeof(folder_answer), "%s", path ? path : "");
+    folder_waits = 2;
+    tap_widget(MODS_UI_MODSDIR);
+    tap_widget(MODS_UI_APPLY); /* Choose folder... */
+    for (int i = 0; i < 5; i++)
+        ModsWindow_Tick();
+}
+/* MEMORIES_MODS_DIR set (as in this whole run): the choice is saved all the
+ * same, and the window says it is not read; no restart helps it. */
+static void test_folder_override(void)
+{
+    char other[1024];
+    int x, y, opens = folder_opens, before = restarts;
+    const char *said;
+    /* a folder outside the user directory, which is root here */
+    assert(scratch_dir(other, sizeof(other), "memories-mod-window-elsewhere"));
+    ModsWindow_SetFolderPicker(NULL, NULL);
+    ModsWindow_Init();
+    ModsWindow_Resize(920, 640);
+    assert(!ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y)); /* no picker: no button */
+    ModsWindow_SetFolderPicker(fake_folder_pick, fake_folder_picked);
+    ModsWindow_Init();
+    assert(ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y));
+    choose_folder(1, other);
+    said = on_screen(920, 640);
+    assert(folder_opens == opens + 1);
+    assert(strstr(said, "Mods folder: ") && strstr(said, "elsewhere") && strstr(said, "MEMORIES_MODS_DIR"));
+    assert(!strstr(said, "after a restart"));
+    /* ... so Apply has nothing to restart for. */
+    tap_widget(MODS_UI_APPLY);
+    assert(strstr(on_screen(920, 640), "No pending changes") && restarts == before);
+    /* Use no folder. */
+    tap_widget(MODS_UI_MODSDIR);
+    said = on_screen(920, 640);
+    assert(strstr(said, "Mods folder: ") && strstr(said, "elsewhere") && strstr(said, "use none?"));
+    tap_widget(MODS_UI_MODSDIR);
+    assert(strstr(on_screen(920, 640), "Mods folder: none."));
+    ModsWindow_SetFolderPicker(NULL, NULL);
+}
 /* The panel on a phone or tablet (touch), as an Android app has it. */
 static void test_import(void)
 {
@@ -810,10 +892,179 @@ static void test_text_cuts(void)
     Menu_TextTrim(cut);
     assert(strcmp(cut, "a") == 0);
 }
-int main(void)
+/* The mods folder as the game starts with one (the run named "folder": the
+ * only run where MEMORIES_MODS_DIR is not set, since the mods are scanned
+ * once a process): a folder chosen before the start, mods of it marked as
+ * its own, Remove leaving them be, and the choices a window makes. */
+static void folder_mod(const char *place, const char *id)
+{
+    char file[1024];
+    make_dir(place);
+    snprintf(file, sizeof(file), "%s/mod.json", place);
+    write_text(file, id);
+}
+static void folder_choices(int touch)
+{
+    char path[1024], chosen[1024], second[1024];
+    int x, y, mine = find("mine"), before = restarts;
+    const char *said;
+    snprintf(chosen, sizeof(chosen), "%s/chosen", root);
+    snprintf(second, sizeof(second), "%s/second", root);
+    test_touch = touch;
+    ModsWindow_SetImport(touch ? fake_pick : NULL, touch ? fake_picked : NULL, touch ? fake_fetch : NULL);
+    ModsWindow_SetFolderPicker(fake_folder_pick, fake_folder_picked);
+    ModsWindow_Init();
+    ModsWindow_Resize(1600, 900);
+    assert(mine >= 0 && !strcmp(Mods_Origin(mine), "folder") && !strcmp(Mods_Origin(find("shipped")), "shipped"));
+    assert(Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, chosen));
+    /* Where the mod comes from, in its details: the first row is selected,
+     * and the next if that is the shipped one. */
+    said = on_screen(1600, 900);
+    if (!strstr(said, "from your mods folder")) {
+        input(MENU_EVENT_KEY_DOWN, 0, 0, MENU_KEY_DOWN, NULL);
+        said = on_screen(1600, 900);
+    }
+    assert(strstr(said, "from your mods folder") && strstr(said, "Mine") && !strstr(said, "/  shipped"));
+    /* Remove does not delete from it: it says so and touches nothing. */
+    if (touch) {
+        tap_widget(MODS_UI_REMOVE);
+        said = on_screen(1600, 900);
+        assert(strstr(said, "is in your own mods folder, which the game does not delete from. Delete it there."));
+        snprintf(path, sizeof(path), "chosen/mine/mod.json");
+        assert(folder_has(path) && !Mods_Removed(mine));
+    }
+    if (!touch) { /* the key hint is whole beside the buttons, at the window's own size */
+        char hint[256];
+        const char *at, *end;
+        ModsWindow_Resize(920, 640);
+        assert(ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y));
+        draw(920, 640);
+        at = strstr(drawn, "scroll");
+        assert(at && (end = strchr(at, '\n')));
+        while (at > drawn && at[-1] != '\n')
+            at--;
+        at = strchr(strchr(at, ' ') + 1, ' ') + 1; /* past the line's y and color */
+        snprintf(hint, sizeof(hint), "%.*s", (int)(end - at), at);
+        assert(Menu_TextWidthScaled(hint, 1) <= x - 28 && strstr(hint, "Wheel: scroll"));
+        ModsWindow_Resize(1600, 900);
+    }
+    /* The question: the folder now, and the choices. */
+    tap_widget(MODS_UI_MODSDIR);
+    said = on_screen(1600, 900);
+    assert(strstr(said, "Mods folder: ") && strstr(said, chosen) && strstr(said, "Choose another folder, or use none?"));
+    assert(strstr(said, "Use no folder") && strstr(said, "Choose folder...") && strstr(said, "Cancel"));
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    assert(!strstr(on_screen(1600, 900), "Choose another folder"));
+    /* Another folder: saved at once, read after a restart, which Apply asks for. */
+    folder_opens = 0;
+    choose_folder(1, second);
+    said = on_screen(1600, 900);
+    assert(folder_opens == 1 && strstr(said, "Mods folder: ") && strstr(said, second));
+    assert(strstr(said, "The game reads it after a restart: Apply changes."));
+    assert(Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, second));
+    tap_widget(MODS_UI_APPLY);
+    said = on_screen(1600, 900);
+    assert(strstr(said, "Applying these changes restarts the game.") && strstr(said, "Apply & restart") && restarts == before);
+    tap_widget(MODS_UI_APPLY);
+    assert(restarts == before + 1); /* Platform_RestartGame, which fails here */
+    /* Back to the one the game started with: nothing to restart for. */
+    choose_folder(1, chosen);
+    said = on_screen(1600, 900);
+    assert(!strstr(said, "after a restart"));
+    tap_widget(MODS_UI_APPLY);
+    assert(strstr(on_screen(1600, 900), "No pending changes") && restarts == before + 1);
+    /* The window is asked for again (Platform_OpenMods sets the picker each time) while the
+     * dialog is open: the answer is still taken, and is the one that was given. */
+    folder_opens = 0;
+    folder_result = 1;
+    snprintf(folder_answer, sizeof(folder_answer), "%s", second);
+    folder_waits = 2;
+    tap_widget(MODS_UI_MODSDIR);
+    tap_widget(MODS_UI_APPLY); /* Choose folder... */
+    ModsWindow_Tick();
+    ModsWindow_SetFolderPicker(fake_folder_pick, fake_folder_picked);
+    tap_widget(MODS_UI_MODSDIR); /* asked again while it is open: no second dialog, no old answer */
+    for (int i = 0; i < 5; i++)
+        ModsWindow_Tick();
+    assert(folder_opens == 1 && Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, second));
+    choose_folder(1, chosen);
+    assert(Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, chosen));
+    /* Use no folder: a restart is due. */
+    tap_widget(MODS_UI_MODSDIR);
+    tap_widget(MODS_UI_MODSDIR);
+    said = on_screen(1600, 900);
+    assert(strstr(said, "Mods folder: none.") && strstr(said, "after a restart"));
+    assert(Mods_Folder(path, sizeof(path)) != 0);
+    assert(!folder_has("user/mods-folder.txt")); /* the file goes with the choice */
+    /* The question with none chosen has one choice. */
+    tap_widget(MODS_UI_MODSDIR);
+    said = on_screen(1600, 900);
+    assert(strstr(said, "Mods folder: none. The game reads the mods in a folder you choose") &&
+           !strstr(said, "Use no folder"));
+    assert(!ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y));
+    tap_widget(MODS_UI_CLOSE);
+    /* A folder the game keeps its own things in is refused, with the reason. */
+    snprintf(path, sizeof(path), "%s/user/mods/inside", root);
+    choose_folder(1, path);
+    said = on_screen(1600, 900);
+    assert(strstr(said, "game") && Mods_Folder(path, sizeof(path)) != 0);
+    /* No choice made, or the picker failing. */
+    choose_folder(-1, NULL);
+    assert(!strstr(on_screen(1600, 900), "Choose the folder"));
+    snprintf(folder_failure, sizeof(folder_failure), "Could not open the folder picker: no portal");
+    choose_folder(-2, NULL);
+    assert(strstr(on_screen(1600, 900), "Could not open the folder picker: no portal"));
+    folder_failure[0] = 0;
+    /* The choice is back to the start's: the window may close without asking. */
+    choose_folder(1, chosen);
+    assert(ModsWindow_RequestClose());
+    ModsWindow_SetImport(NULL, NULL, NULL);
+    ModsWindow_SetFolderPicker(NULL, NULL);
+    test_touch = 0;
+}
+static int folder_main(void)
+{
+    char path[1024];
+    assert(scratch_dir(root, sizeof(root), "memories-mod-window-folder"));
+#ifdef _WIN32
+    for (char *c = root; *c; c++) /* Mods_Folder gives a path with slashes; so must the paths compared to it */
+        if (*c == '\\') *c = '/';
+#endif
+    make_dir("prog");
+    make_dir("prog/mods");
+    make_dir("user");
+    make_dir("user/mods");
+    make_dir("chosen");
+    make_dir("second");
+    folder_mod("prog/mods/shipped", "{\"id\": \"shipped\", \"name\": \"Shipped\"}");
+    folder_mod("chosen/mine", "{\"id\": \"mine\", \"name\": \"Mine\"}");
+    snprintf(path, sizeof(path), "%s/prog", root);
+    assert(!setenv("MEMORIES_PROGRAM_DIR", path, 1));
+    snprintf(path, sizeof(path), "%s/user", root);
+    assert(!setenv("MEMORIES_USER_DIR", path, 1));
+    snprintf(path, sizeof(path), "%s/user/settings.txt", root);
+    assert(!setenv("MEMORIES_SETTINGS", path, 1));
+    unsetenv("MEMORIES_MODS_DIR");
+    unsetenv("MEMORIES_MODS_FOLDER");
+    unsetenv("MEMORIES_MODS");
+    snprintf(path, sizeof(path), "%s/chosen", root);
+    {
+        char why[400];
+        assert(!Mods_SetFolder(path, why, sizeof(why)));
+    }
+    Settings_Load();
+    Mods_Load();
+    assert(Mods_Count() == 2);
+    folder_choices(0);
+    folder_choices(48);
+    return 0;
+}
+int main(int argc, char **argv)
 {
     char path[1024];
     int w, h;
+    if (argc > 1 && !strcmp(argv[1], "folder"))
+        return folder_main();
     test_text_cuts();
     assert(scratch_dir(root, sizeof(root), "memories-mod-window"));
     make_dir("mods");
@@ -993,6 +1244,7 @@ int main(void)
         assert(grabbed > 10);
         test_touch = 0;
     }
+    test_folder_override();
     test_import();
     test_remove();
     test_hd_pack();
