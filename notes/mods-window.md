@@ -71,6 +71,38 @@ details line of a mod from that folder reads "from your mods folder". When a
 chosen folder could not be read this launch, the window opens with the reason
 in the message line.
 
+On a phone (`ModsWindow_SetFolderPicker` and `ModsWindow_SetFolderAccess`, which
+`sdl.c` gives the panel on Android) the button is the leftmost of the list
+page's footer buttons (when the message keeps 140 units of room beside them),
+the picker is Android's, and a chosen folder that the game may not read yet
+asks for the right first ([A mods folder on the phone's storage](pc-build.md#a-mods-folder-on-the-phones-storage)):
+"To read <folder> the game needs All files access, which Android asks for on its
+next screen. Allow it?", with Allow (the Apply button's place) and Cancel.
+Allow opens Android's page; coming back with the right, the message says so and
+that the game reads the folder after a restart. Cancel, or coming back
+without it, keeps the folder chosen and says how to allow it later ("Without
+All files access the game cannot read it. Allow it in this app's settings.");
+the panel opens with that message whenever a folder is chosen and the right is
+missing, and drops it by itself (Apply & restart lit) when the right comes
+from Settings while the game is behind it: it looks again when the app is back
+in front and about twice a second while the message shows. Before Android 11
+the right is called "Storage". On a device with no page for it the folder is
+saved all the same, and the message says "This device cannot give the game All
+files access. Use Import mod... instead." without asking. While a question is
+up (the folder, or the right) Import mod... and Remove step aside, so that
+the question has the footer's room (four lines on a phone) and Use no folder
+is in reach. Remove on a mod from that folder answers that it is in the
+player's own mods folder.
+
+On Android a mod from that folder starts off whatever its manifest says, as any
+app with the right can write there.
+On Android a mod from that folder is read for its data only: a mod with code
+is listed, its data applies, and its status says "Code not run: import it to
+run its code" (details: "Native code mod: only its data is used from your mods
+folder"), because other apps can write to shared storage. Import mod... puts
+the mod in the game's own folder, where its code runs. On the desktop nothing
+changes.
+
 The profile field accepts a name (letters, digits, spaces, `_`, `-`). Save writes
 the currently applied preferences to `mod-profiles/<name>.txt` in the user
 directory. Load stages that profile for inspection; it does not change the

@@ -61,6 +61,25 @@ void ModsWindow_SetImport(int (*pick)(char *why, size_t why_size), int (*picked)
  * is no such button. */
 void ModsWindow_SetFolderPicker(int (*pick)(char *why, size_t why_size),
                                 int (*picked)(char *path, size_t size, char *why, size_t why_size));
+/* Where the folder can be read only with a right the player gives (Android's
+ * All files access): `have` says whether it is held now (1) or not (0); after
+ * a folder was chosen without it, the window asks, in a sentence, whether to
+ * `ask`, which opens the system's page for it and returns at once (0, or -1
+ * with why), and `asked` is polled with the ticks: 0 while the page is up, 1
+ * granted, -1 refused, -2 failed (why). A folder stays chosen when the right
+ * is refused; the window says how to give it, whenever it shows a folder it
+ * cannot read. `can_ask` says whether the device has a page to give it on
+ * (0: the window sends the player to Import mod... instead of asking), and
+ * `right` names it ("All files access"; before Android 11 "Storage"); both may
+ * be NULL (yes, and "All files access"). Called once at the start, after the
+ * mods are scanned, so that the window knows what the start could read.
+ * Without them (NULL, the default: every desktop) nothing is asked. */
+void ModsWindow_SetFolderAccess(int (*have)(void), int (*ask)(char *why, size_t why_size),
+                                int (*asked)(char *why, size_t why_size), int (*can_ask)(void),
+                                const char *(*right)(void));
+/* The app is back in front: the right may have been given meanwhile, in the
+ * system's Settings; it is asked about at the next ModsWindow_Tick. Any thread. */
+void ModsWindow_RefreshAccess(void);
 /* Once per pump while the panel shows: an import's next step. 1 when the
  * window must be drawn again. */
 int ModsWindow_Tick(void);

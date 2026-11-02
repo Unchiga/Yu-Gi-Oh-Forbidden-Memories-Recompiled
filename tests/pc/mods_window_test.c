@@ -11,7 +11,8 @@
 #include <dirent.h>
 #endif
 static int restarts;
-int Menu_Scale(void) { return 1; }
+static int test_scale = 1; /* Menu_Scale: the phone's density */
+int Menu_Scale(void) { return test_scale; }
 static int test_touch; /* Menu_TouchTarget: 0 with a mouse */
 int Menu_TouchTarget(void) { return test_touch; }
 int Menu_TextWidthScaled(const char *s, int scale) { return (int)strlen(s) * 7 * scale; }
@@ -999,7 +1000,7 @@ static void folder_choices(int touch)
     /* The question with none chosen has one choice. */
     tap_widget(MODS_UI_MODSDIR);
     said = on_screen(1600, 900);
-    assert(strstr(said, "Mods folder: none. The game reads the mods in a folder you choose") &&
+    assert(strstr(said, "Mods folder: none. Choose a folder to read its mods") &&
            !strstr(said, "Use no folder"));
     assert(!ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y));
     tap_widget(MODS_UI_CLOSE);
@@ -1019,6 +1020,236 @@ static void folder_choices(int touch)
     choose_folder(1, chosen);
     assert(ModsWindow_RequestClose());
     ModsWindow_SetImport(NULL, NULL, NULL);
+    ModsWindow_SetFolderPicker(NULL, NULL);
+    test_touch = 0;
+}
+/* A phone: a folder chosen without the right to read it asks for the right,
+ * in a sentence first; refused, it stays chosen and the window says how to
+ * give the right; given, a restart is due even if the folder is the one the
+ * game started with (which it could not read). */
+static int access_held, access_asks, access_answer, access_possible = 1;
+static const char *access_name = "All files access";
+static char access_failure[200];
+static int fake_have(void) { return access_held; }
+static int fake_can_ask(void) { return access_possible; }
+static const char *fake_right(void) { return access_name; }
+/* In how many lines `whole`, the footer's message, was drawn (it is cut after
+ * four): the lines from the one it starts in, until they hold all of it. -1 when
+ * it is not on the screen, -2 when what follows is not it. */
+static int message_lines(const char *whole)
+{
+    char head[16];
+    const char *line;
+    size_t at = 0;
+    int lines = 0;
+    snprintf(head, sizeof(head), "%.12s", whole);
+    if (!(line = strstr(drawn, head)))
+        return -1;
+    while (line > drawn && line[-1] != '\n')
+        line--;
+    while (*line && whole[at]) {
+        const char *text = strchr(strchr(line, ' ') + 1, ' ') + 1, *end = strchr(line, '\n');
+        size_t length = (size_t)(end - text);
+        if (strncmp(text, whole + at, length))
+            return -2;
+        lines++;
+        at += length;
+        if (whole[at] == ' ') /* a line ends where a space was, which the text lost */
+            at++;
+        line = end + 1;
+    }
+    return whole[at] ? -2 : lines;
+}
+static int fake_ask(char *why, size_t size)
+{
+    (void)why;
+    (void)size;
+    access_asks++;
+    return 0;
+}
+static int fake_asked(char *why, size_t size)
+{
+    snprintf(why, size, "%s", access_failure);
+    return access_answer;
+}
+/* The window as it opens, at a size where a scratch folder's path fits a line. */
+static void reopen(void)
+{
+    ModsWindow_Init();
+    ModsWindow_Resize(1600, 900);
+}
+static void folder_access_case(void)
+{
+    char path[1024], second[1024];
+    const char *said;
+    int x, y, before = restarts;
+    snprintf(second, sizeof(second), "%s/second", root);
+    test_touch = 48;
+    ModsWindow_SetFolderPicker(fake_folder_pick, fake_folder_picked);
+    ModsWindow_SetFolderAccess(fake_have, fake_ask, fake_asked, fake_can_ask, fake_right);
+    access_held = 0;
+    reopen();
+    /* Refused: the folder stays chosen, and the way to give the right is said. */
+    choose_folder(1, second);
+    said = on_screen(1600, 900);
+    assert(strstr(said, "needs All files access") && strstr(said, "Allow it?") && !access_asks);
+    assert(strstr(said, "Allow") && strstr(said, "Cancel"));
+    assert(!ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y)); /* steps aside for the question */
+    assert(Mods_Folder(path, sizeof(path)) == 0 && !strcmp(path, second)); /* saved before it was asked */
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    said = on_screen(1600, 900);
+    assert(strstr(said, "Without All files access the game cannot read it.") && !access_asks);
+    reopen(); /* shown again whenever the folder is */
+    assert(strstr(on_screen(1600, 900), "Without All files access the game cannot read it."));
+    /* Allowed on Android's page. */
+    choose_folder(1, second);
+    tap_widget(MODS_UI_APPLY); /* Allow */
+    assert(access_asks == 1);
+    access_answer = 0;
+    ModsWindow_Tick();
+    assert(strstr(on_screen(1600, 900), "Allow All files access for the game"));
+    access_answer = 1;
+    access_held = 1;
+    assert(ModsWindow_Tick());
+    said = on_screen(1600, 900);
+    assert(strstr(said, "All files access is on.") && strstr(said, "after a restart: Apply changes."));
+    tap_widget(MODS_UI_APPLY);
+    assert(strstr(on_screen(1600, 900), "restarts the game"));
+    tap_widget(MODS_UI_CLOSE);
+    /* Not on Android's page: the page's own refusal, or none to show. */
+    access_held = 0;
+    access_answer = -1;
+    choose_folder(1, second);
+    tap_widget(MODS_UI_APPLY);
+    ModsWindow_Tick();
+    assert(strstr(on_screen(1600, 900), "Without All files access the game cannot read it."));
+    access_answer = -2;
+    snprintf(access_failure, sizeof(access_failure), "This phone has no settings page for All files access.");
+    choose_folder(1, second);
+    tap_widget(MODS_UI_APPLY);
+    ModsWindow_Tick();
+    said = on_screen(1600, 900);
+    assert(strstr(said, "This phone has no settings page") && !strstr(said, "Without All files access"));
+    /* A device with no page for the right: no question, and the way out. */
+    access_possible = 0;
+    access_asks = 0;
+    choose_folder(1, second);
+    said = on_screen(1600, 900);
+    assert(!strstr(said, "Allow it?") && !access_asks && strstr(said, "This device cannot give the game All files access.") &&
+           strstr(said, "Use Import mod... instead."));
+    reopen();
+    assert(strstr(on_screen(1600, 900), "This device cannot give the game All files access."));
+    access_possible = 1;
+    /* Before Android 11 the right is Storage. */
+    access_name = "Storage";
+    reopen();
+    said = on_screen(1600, 900);
+    assert(strstr(said, "Without Storage the game cannot read it.") && !strstr(said, "All files access"));
+    choose_folder(1, second);
+    assert(strstr(on_screen(1600, 900), "the game needs Storage, which Android asks for"));
+    tap_widget(MODS_UI_CLOSE);
+    access_name = "All files access";
+    /* Given in Settings with the game behind it, and noticed when it is back in front... */
+    reopen();
+    assert(strstr(on_screen(1600, 900), "Without All files access"));
+    access_held = 1;
+    ModsWindow_RefreshAccess();
+    assert(ModsWindow_Tick());
+    said = on_screen(1600, 900);
+    assert(strstr(said, "All files access is on.") && !strstr(said, "Without"));
+    assert(!ModsWindow_Tick()); /* once */
+    /* ...but not over a question: a Remove keeps its text and its target, and the right counts once it is answered. */
+    {
+        static const ZipItem rm[] = {{"rmacc/mod.json", "{\"id\": \"rmacc\", \"name\": \"Access me\"}", 1, 0, 0, 0, 0, 0}};
+        char question[4096];
+        access_held = 0;
+        ModsWindow_SetImport(fake_pick, fake_picked, fake_fetch);
+        reopen();
+        snprintf(import_source, sizeof(import_source), "%s/picked.zip", root);
+        assert(strstr(import_zip(rm, 1), "Imported Access me."));
+        tap_widget(MODS_UI_REMOVE);
+        said = on_screen(1600, 900);
+        assert(strstr(said, "Remove Access me? Its folder is deleted"));
+        snprintf(question, sizeof(question), "%s", said);
+        access_held = 1;
+        ModsWindow_RefreshAccess();
+        assert(ModsWindow_Tick());
+        said = on_screen(1600, 900);
+        assert(!strcmp(said, question) && !strstr(said, "is on."));
+        assert(!ModsWindow_Tick());
+        tap_widget(MODS_UI_CLOSE); /* Cancel */
+        said = on_screen(1600, 900);
+        assert(!strstr(said, "Remove Access me?") && !strstr(said, "Without All files access"));
+        tap_widget(MODS_UI_APPLY); /* lit: the folder is read after a restart */
+        assert(strstr(on_screen(1600, 900), "restarts the game"));
+        tap_widget(MODS_UI_CLOSE);
+        ModsWindow_SetImport(NULL, NULL, NULL);
+    }
+    /* ...or noticed while the panel shows it, within a second. */
+    access_held = 0;
+    reopen();
+    access_held = 1;
+    {
+        int ticks = 0;
+        while (!ModsWindow_Tick() && ticks < 40)
+            ticks++;
+        assert(ticks > 0 && ticks < 40 && strstr(on_screen(1600, 900), "All files access is on."));
+    }
+    /* The start's own folder, unread then and readable now: a restart reads it. */
+    {
+        char chosen[1024];
+        snprintf(chosen, sizeof(chosen), "%s/chosen", root);
+        access_held = 1;
+        choose_folder(1, chosen);
+        said = on_screen(1600, 900);
+        assert(strstr(said, "The game reads it after a restart: Apply changes."));
+        tap_widget(MODS_UI_APPLY);
+        said = on_screen(1600, 900);
+        assert(strstr(said, "Applying these changes restarts the game.") && strstr(said, "Apply & restart"));
+        assert(restarts == before);
+        tap_widget(MODS_UI_APPLY);
+        assert(restarts == before + 1);
+    }
+    /* The folder question on a phone (pending 6) shows whole beside its buttons:
+     * the A22's 1600 x 720 at twice the unit, and a small screen, with the folder
+     * unreadable (the longest message), and Use no folder in reach. */
+    {
+        static const int sizes[][3] = {{1600, 720, 2}, {853, 400, 2}, {1280, 600, 1}};
+        static const char hint[] = "Without All files access the game cannot read it. Allow it in this app's settings.",
+                          cannot[] = "This device cannot give the game All files access. Use Import mod... instead.";
+        char deep[1024], question[1400];
+        snprintf(deep, sizeof(deep), "/storage/emulated/0/Download/Second"); /* a phone's, not the test's long scratch path */
+        access_held = 0;
+        for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+            test_scale = sizes[i][2];
+            ModsWindow_Init();
+            ModsWindow_Resize(sizes[i][0], sizes[i][1]);
+            choose_folder(1, deep);
+            tap_widget(MODS_UI_CLOSE); /* Cancel the question for the right */
+            on_screen(sizes[i][0], sizes[i][1]);
+            assert(message_lines(hint) >= 1 && message_lines(hint) <= 4); /* the hint is whole too */
+            access_possible = 0;
+            ModsWindow_Init();
+            ModsWindow_Resize(sizes[i][0], sizes[i][1]);
+            on_screen(sizes[i][0], sizes[i][1]);
+            assert(message_lines(cannot) >= 1 && message_lines(cannot) <= 4);
+            access_possible = 1;
+            ModsWindow_Init();
+            ModsWindow_Resize(sizes[i][0], sizes[i][1]);
+            tap_widget(MODS_UI_MODSDIR);
+            said = on_screen(sizes[i][0], sizes[i][1]);
+            assert(strstr(said, "Choose another folder, or use none?") && strstr(said, "Use no folder"));
+            snprintf(question, sizeof(question), "Mods folder: %s The game cannot read it yet. Choose another folder, "
+                     "or use none?", deep);
+            assert(message_lines(question) >= 1 && message_lines(question) <= 4);
+            assert(ModsWindow_Locate(MODS_UI_MODSDIR, &x, &y) && !ModsWindow_Locate(MODS_UI_FOLDER, &x, &y));
+            tap_widget(MODS_UI_CLOSE);
+        }
+        test_scale = 1;
+        ModsWindow_Resize(1600, 900);
+    }
+    assert(restarts == before + 1);
+    ModsWindow_SetFolderAccess(NULL, NULL, NULL, NULL, NULL);
     ModsWindow_SetFolderPicker(NULL, NULL);
     test_touch = 0;
 }
@@ -1057,6 +1288,7 @@ static int folder_main(void)
     assert(Mods_Count() == 2);
     folder_choices(0);
     folder_choices(48);
+    folder_access_case();
     return 0;
 }
 int main(int argc, char **argv)

@@ -102,6 +102,7 @@ typedef struct {
     char status[STATUS_MAX];
     char warnings[STATUS_MAX];   /* what the manifest got wrong: shown again whenever status is reset */
     const char *origin;          /* "shipped", "folder" or "installed", for the window */
+    int code_skipped;            /* its code is not run: it comes from the chosen folder (Mods_SetFolderCode) */
     int restart;                 /* the manifest asks for a fresh process */
     int default_enabled;
     int enabled;                 /* the player's choice, from the settings */
@@ -452,6 +453,18 @@ static void *host_packet_area(const MemoriesModHost *host, size_t bytes)
     return Memories_TakeModPackets(bytes);
 #endif
 }
+
+/* Whether a mod read from the mods folder the player chose ("folder") may run
+ * its code. On Android it may not: shared storage is written to by every app
+ * that holds the same right, and the game's own folders are not, so a mod there
+ * is read for its data only (read_manifest) and Import mod... copies it to
+ * where its code may run. Elsewhere the folder is the player's own. */
+#ifdef __ANDROID__
+static int folder_code;
+#else
+static int folder_code = 1;
+#endif
+void Mods_SetFolderCode(int allowed) { folder_code = allowed; }
 
 static int (*card_resolver)(const char *);
 static unsigned card_signature;
@@ -1889,8 +1902,14 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
             }
         }
     }
+    if (mod->library[0] && !folder_code && !strcmp(origin, "folder")) {
+        mod->library[0] = '\0';   /* data only, as far as loading goes */
+        mod->code_skipped = 1;
+        warn(mod, 1, "Code not run: import it to run its code");
+    }
     mod->restart = Json_Bool(Json_Member(root, "restart"), 0);
-    mod->default_enabled = Json_Bool(Json_Member(root, "enabled"), 0);
+    /* Any app can write a phone's shared storage: nothing there turns itself on. */
+    mod->default_enabled = Json_Bool(Json_Member(root, "enabled"), 0) && (folder_code || strcmp(origin, "folder"));
     text = Json_String(Json_Member(root, "textures"), NULL);
     if (text && *text) {
         if (!Paths_Contained(text)) {
@@ -3015,6 +3034,8 @@ const char *Mods_Origin(int index) { return at(index) ? mods[index].origin : "";
 int Mods_Active(int index) { return at(index) && mods[index].active; }
 int Mods_Failed(int index) { return at(index) && (mods[index].broken || mods[index].failed); }
 int Mods_HasCode(int index) { return at(index) && Manifest_HasCode(Mods_Manifest(index)); }
+
+int Mods_CodeSkipped(int index) { return at(index) && mods[index].code_skipped; }
 
 unsigned Mods_CodeHash(int index) { return at(index) ? mods[index].code_hash : 0; }
 
