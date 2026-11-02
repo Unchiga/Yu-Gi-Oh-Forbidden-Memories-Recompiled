@@ -498,6 +498,13 @@ CI can hold retail inputs.
   the opponent's monster came, a second played and an attack on the
   opponent's defending monster (6500 LP after it, the attacker kept), and
   a fusion of two hand cards.
+- **A 3D battle without a duel:** from the debug menu (`goto("debug")`),
+  poke the two model records into `D_800EF658` (card id, then who wins,
+  defense and the guardian star), the mode to come back to into
+  `D_8009B269` and 1 into `D_8009B26C`; the battle runs as the duel's
+  Square would start it and ends when the mode byte leaves 1.
+  `tools/pc/model_oracle.py` runs every MODEL.MRG record's battle this way
+  (notes/pc-build.md, "The model modules' oracle").
 - **Acceptance rewrites:** see Acceptance below.
 
 ### 6. Jump to

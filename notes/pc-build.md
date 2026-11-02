@@ -655,11 +655,53 @@ is retail (the reference for comparisons); `MEMORIES_DUEL_EFFECTS=skip`
 (called `native` before the bank ran as native C; `native` now means the
 default) restores the bring-up behaviour
 (ids 1-3 interpreted, others complete at once); `MEMORIES_FRAME_HASHES=<file>`
-writes a hash of VRAM per presented frame for comparing two runs; `MEMORIES_MODEL_MODULES=native`
-uses the resident spark burst instead of the monster's module; an effect or
-module the interpreter cannot run is reported once on stderr and falls back
-the same way. `MEMORIES_TRACE_MIPS_PRINTF=1` prints the modules' own
-`printf` format strings.
+writes a hash of VRAM per presented frame for comparing two runs;
+`MEMORIES_MODEL_MODULES=interpreter` interprets every battle model module
+even one native C stands in for (the reference, as the duel effects'
+switch; with no native C linked in for the models yet it is the default);
+`MEMORIES_MODEL_MODULES=spark` puts the resident spark burst in place of
+every monster's module (it was called `native`; `native` now means the
+default, as for the duel effects, so that it names the native C once there
+is some); an effect or module the interpreter cannot run is reported once on
+stderr and falls back the same way. `MEMORIES_TRACE=model` logs every call
+of a model module with the module's identifier, its slot and what ran it
+(`variant slot=0 command=1 module 418 in A: interpreter`; `slot=` is the
+active model, `D_8009AFA0`). `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
+modules' own `printf` format strings.
+
+**The model modules' oracle** (`tools/pc/model_oracle.py`): before native C
+replaces any variant module, every MODEL.MRG record's 3D battle run two
+ways, frame for frame. A record holds four variant images: one per guardian
+star of the card (the "alternative": `D_800EF658`'s last byte, set by the
+duel from the card's `DUEL_CARD_FLAG_USE_GUARDIAN_STAR_2`) in each slot
+(stages 7-10 of the load, `func_80056D7C`: alternative 0 slot A, 0 B, 1 A,
+1 B; ten sectors each from sector 180 of the record). On the disc that is
+1,181 distinct images per slot (595 and 602 per alternative in slot A, 595
+and 600 in slot B). The script drives one battle per alternative with the
+record's monster on both sides, no duel needed: from a state saved at the
+debug menu (`goto("debug")`) it pokes the two model records into
+`D_800EF658`, the mode to come back to into `D_8009B269` and the animated
+battle (1) into `D_8009B26C`, as the duel's phase 5 does
+(`duel_scene_battle.c`), and steps until the mode byte leaves 1. Each battle
+starts from that state, so none depends on what ran before it. Which slot
+runs: the attacker's (A) always; the defender's (B) only when the attacker
+does not win (`field_02`: 1 is the side that wins), so the default outcome
+is a tie (both modules run; `--outcomes attacker,defender` adds the other
+paths). Every battle runs twice, by default the build's default against
+`MEMORIES_MODEL_MODULES=interpreter`, in games of their own (`--jobs`), and
+the two must agree on every frame hash and every module call the trace logs
+(setup commands by frame, updates by count). The report gives per record
+identical or the first differing frame counted from the battle's start, the
+modules that ran (identifier and slot) and those that cannot run. Coverage:
+the modules do not write into their images, so after each battle the
+script peeks both slots' 0x5000 bytes and hashes them against the disc's
+image for that record, alternative and slot; an image counts when its slot
+held the disc's bytes and its module was called there on both sides, and
+every distinct image of the records asked for must count. The primary
+modules are reported too: they are not called in these battles (one record
+of 24 tried calls its own). The VRAM hash covers the frame being drawn, so
+it differs a frame before the screen does: `--shots N` pictures the first
+differing frame, the one before and the one after.
 
 ### Credits
 

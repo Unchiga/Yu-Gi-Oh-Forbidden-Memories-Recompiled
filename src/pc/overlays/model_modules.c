@@ -17,18 +17,37 @@
  * 1,181 distinct variant modules, so they are not translated one by one:
  * the default runs the loaded module through the interpreter, which keeps
  * every monster's own attack movement. A module the interpreter cannot run
- * (reported once per loaded module) falls back to the native approximation
- * below, as does MEMORIES_MODEL_MODULES=native. */
+ * (reported once per loaded module) falls back to the stand-in below.
+ *
+ * MEMORIES_MODEL_MODULES picks:
+ *   unset, `native`  the default: the interpreter (native C for the modules
+ *                    the decomp's C is linked in for, once there are any);
+ *   `interpreter`    every module interpreted, even one native C exists for:
+ *                    the reference tools/pc/model_oracle.py compares against.
+ *                    Today it is the default;
+ *   `spark`          the stand-in for every module (the resident spark burst,
+ *                    called `native` before native C was planned).
+ * Anything else is the default, as MEMORIES_DUEL_EFFECTS takes its values. */
+
+enum { MODE_DEFAULT, MODE_INTERPRETER, MODE_SPARK };
+
+static int model_mode(void)
+{
+    static int mode = -1;
+    if (mode < 0) {
+        const char *setting = getenv("MEMORIES_MODEL_MODULES");
+        mode = !setting ? MODE_DEFAULT
+             : strcmp(setting, "interpreter") == 0 ? MODE_INTERPRETER
+             : strcmp(setting, "spark") == 0 ? MODE_SPARK
+             : MODE_DEFAULT;
+    }
+    return mode;
+}
 
 typedef struct {
     ModelSparkEffect effect;
     int age;
 } MemoriesModelImpact;
-
-static void trace_model_command(const char *kind, int command)
-{
-    LOG(LOG_MODEL, "%s slot=%u command=%d", kind, (unsigned)D_8009AFA0, command);
-}
 
 static int native_primary(void *context, int command)
 {
@@ -82,21 +101,19 @@ static int native_variant(void *context, int command)
     return result;
 }
 
-/* module: the slot base (the identifier word; the entry is at +4). */
+/* module: the slot base (the identifier word; the entry is at +4). The
+ * trace names the module by its slot and identifier, and what runs it. */
 static int run_module(uint32_t module, int variant, void *context, int command)
 {
-    static int native = -1;
     static uint32_t failed[2][2]; /* [slot][variant]: identifier of a module that failed */
     int slot = module >= 0x8017A000u;
     uint32_t identifier = *(const uint32_t *)(uintptr_t)module;
     uint32_t entry = *(const uint32_t *)(uintptr_t)(module + 4);
+    int interpret = model_mode() != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
 
-    trace_model_command(variant ? "variant" : "primary", command);
-    if (native < 0) {
-        const char *mode = getenv("MEMORIES_MODEL_MODULES");
-        native = mode && strcmp(mode, "native") == 0;
-    }
-    if (!native && entry != 0 && failed[slot][variant] != identifier) {
+    LOG(LOG_MODEL, "%s slot=%u command=%d module %u in %c: %s", variant ? "variant" : "primary",
+        (unsigned)D_8009AFA0, command, (unsigned)identifier, slot ? 'B' : 'A', interpret ? "interpreter" : "stand-in");
+    if (interpret) {
         uint32_t args[2], result;
         args[0] = (uint32_t)(uintptr_t)context;
         args[1] = (uint32_t)command;
@@ -104,7 +121,7 @@ static int run_module(uint32_t module, int variant, void *context, int command)
         if (!Memories_MipsTry(module + 4, args, 2, &result)) {
             return (int)result;
         }
-        fprintf(stderr, "memories-pc: model %s module %u (slot %c) cannot run; using the native stand-in\n",
+        fprintf(stderr, "memories-pc: model %s module %u (slot %c) cannot run; using the stand-in\n",
                 variant ? "variant" : "primary", (unsigned)identifier, slot ? 'B' : 'A');
         failed[slot][variant] = identifier;
     }
