@@ -749,7 +749,17 @@ the attacker wins) is an error, not a match: two battles that never started
 would agree on everything. Slot B's images are asked for only from battles
 that run it. The report gives per record
 identical or the first differing frame counted from the battle's start, the
-modules that ran (identifier and slot) and those that cannot run. Coverage:
+modules that ran (identifier and slot) and those that cannot run. **What ran
+each module is checked, not assumed:** the trace names the backend of every
+call (`native`, `interpreter`, `stand-in`), and a default-mode side must have
+run native C in exactly the slots whose disc image is a native row's code of
+`config/pc/model_gate.csv` (its first `span` bytes by SHA-256), and the
+interpreter in the others; a reference in `interpreter` mode that ran native C
+is as much an error as a gated shape that ran interpreted, so a gate that
+silently stopped matching cannot pass as "identical". The summary counts the
+battle slots by backend (`backends ...: subject interpreter 65, native 65`),
+and `--records gated` selects the records that have a native image
+(`tools/pc/test_model_gate.py` holds the check's cases). Coverage:
 the script steps a VBlank at a time while the two models load and peeks
 each slot's 0x5000 bytes once its transfer has landed (the slot's load step,
 `field_E14`, past 0) and before step 9, the first that can call the module;
@@ -773,9 +783,13 @@ about 7 s alone; 1.2 s a battle and side with eleven games at once). It catches 
 it is: a build whose default skipped the 200th update of module 418 in slot
 A (that call at frame +836 of record 34's battle) was reported "first
 differing frame +838" for that battle only, and its pictures differ from
-+839 on (the stand-in: +639, its first update at +637). The 418 experiment
-(that shape linked as native C, gated by hash) against the interpreter: the
-13 records with it in slot A identical. **Battles are only comparable with
++839 on (the stand-in: +639, its first update at +637). With shape 418
+linked as native C (the gate above): all 621 records, both alternatives, tie,
+the default against `interpreter`: 1,242 of 1,242 identical in 41 min with
+`--jobs 11`, 1,181 of 1,181 images covered in each slot, native C in the 26
+battle slots that hold shape 418's code and the interpreter in the other
+2,458 (the 13 records, all three outcomes, 78 battles: 78 identical, native in
+65 slots, on the 32-bit and the 64-bit Windows game). **Battles are only comparable with
 the same history:** the interpreter's stack (`0x9FF00000`, mips.c) is not in
 save states, and a module that reads a stack word it never wrote sees what
 the battle before left there. With `--reverse-reference` (the reference

@@ -9,8 +9,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from array import array  # noqa: E402
 import build_config  # noqa: E402
 import model_gate  # noqa: E402
+import model_oracle  # noqa: E402
 
 
 class ModelGate(unittest.TestCase):
@@ -52,6 +54,54 @@ class ModelGate(unittest.TestCase):
         kept = [row for row in self.rows if row["backend"] == "keep"]
         for row in kept:
             self.assertTrue(row["note"].strip())
+
+
+def side(name, ways_a, ways_b="interpreter"):
+    """A battle's run as model_oracle.read_traces gives it, for a tie."""
+    return {"side": name, "battle": "34/0/tie", "start": 0, "end": 3, "hashes": array("Q", [1, 2, 3]),
+            "calls": [(1, "variant", "A", 418, 1), (1, "variant", "B", 568, 1)],
+            "updates": {"variant A": 2, "variant B": 2}, "cannot_run": [],
+            "paths": {"variant 418 in A": [ways_a], "variant 568 in B": [ways_b]}}
+
+
+class OracleBackends(unittest.TestCase):
+    """The oracle's check that native C ran exactly where the table says."""
+
+    def verdict(self, subject, reference, holds=None, allowed=(True, False)):
+        return model_oracle.compare(subject, reference, holds or {"A": True, "B": False}, allowed)
+
+    def test_native_where_the_table_says_is_a_match(self):
+        verdict = self.verdict(side("subject", "native"), side("reference", "interpreter"))
+        self.assertEqual(verdict["status"], "identical")
+
+    def test_interpreter_where_native_is_expected_is_an_error(self):
+        verdict = self.verdict(side("subject", "interpreter"), side("reference", "interpreter"))
+        self.assertEqual(verdict["status"], "error")
+        self.assertIn("slot A holds a module the table runs as native C", verdict["why"])
+
+    def test_native_where_the_table_says_interpreter_is_an_error(self):
+        verdict = self.verdict(side("subject", "native", "native"), side("reference", "interpreter"))
+        self.assertEqual(verdict["status"], "error")
+        self.assertIn("slot B ran native C", verdict["why"])
+
+    def test_a_reference_in_interpreter_mode_never_runs_native(self):
+        verdict = self.verdict(side("subject", "native"), side("reference", "native"))
+        self.assertEqual(verdict["status"], "error")
+        self.assertIn("reference", verdict["why"])
+
+    def test_an_image_of_other_code_is_no_native_row(self):
+        class Disc:
+            def __init__(self, image):
+                self.image = image
+
+            def variant(self, record, alternative, slot):
+                return self.image
+
+        row = model_gate.native_rows()[0]
+        image = bytes(range(256)) * 80
+        # Whatever the code is, an image of other bytes is no native row's.
+        self.assertIsNone(model_oracle.native_row(Disc(image), 0, 0, "A"))
+        self.assertEqual(row["backend"], "native")   # and the one table row there is has no image here
 
 
 if __name__ == "__main__":
