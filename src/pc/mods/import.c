@@ -729,18 +729,23 @@ static int first_visible(const char *directory, char *name, size_t size)
  * there: the new mod did not get in. A <target> that is there is the new mod
  * (which may have another name than the one it replaced: the same id under
  * another folder), so the old copy is left to be deleted. The number of old
- * mods that could not go back. */
+ * mods that could not go back, or could not be looked at: their folder stays. */
 static int restore_old(const char *mods, const char *temporary)
 {
-    char old[2048], targets[64][256];
+    char old[2048], targets[MODS_IMPORT_MAX][256];
     DIR *directory;
     struct dirent *entry;
     int n = 0, lost = 0;
     if (snprintf(old, sizeof(old), "%s/old", temporary) >= (int)sizeof(old) || !(directory = opendir(old)))
         return 0;
-    while ((entry = readdir(directory)) && n < 64)
-        if (entry->d_name[0] != '.')
+    while ((entry = readdir(directory)))
+        if (entry->d_name[0] != '.') {
+            if (n == MODS_IMPORT_MAX) {
+                lost++; /* more than one import makes: keep them all */
+                break;
+            }
             copy(targets[n++], sizeof(targets[0]), entry->d_name);
+        }
     closedir(directory);
     for (int i = 0; i < n; i++) {
         char inner[2400], replaced[256], from[2700], to[2400], target[2400];
@@ -750,8 +755,12 @@ static int restore_old(const char *mods, const char *temporary)
             snprintf(from, sizeof(from), "%s/%s", inner, replaced) >= (int)sizeof(from) ||
             snprintf(to, sizeof(to), "%s/%s", mods, replaced) >= (int)sizeof(to) ||
             snprintf(target, sizeof(target), "%s/%s", mods, targets[i]) >= (int)sizeof(target) ||
-            (!stat(to, &info) || errno != ENOENT) || (!stat(target, &info) || errno != ENOENT))
+            !stat(target, &info))
             continue;
+        if (errno != ENOENT || !stat(to, &info) || errno != ENOENT) {
+            lost++;
+            continue;
+        }
         lost += rename(from, to) != 0;
     }
     return lost;
