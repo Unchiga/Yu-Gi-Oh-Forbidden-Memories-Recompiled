@@ -27,7 +27,8 @@
  *                    Today it is the default;
  *   `spark`          the stand-in for every module (the resident spark burst,
  *                    called `native` before native C was planned).
- * Anything else is the default, as MEMORIES_DUEL_EFFECTS takes its values. */
+ * Anything else is the default, as MEMORIES_DUEL_EFFECTS takes its values,
+ * and says so once on stderr. */
 
 enum { MODE_DEFAULT, MODE_INTERPRETER, MODE_SPARK };
 
@@ -40,6 +41,10 @@ static int model_mode(void)
              : strcmp(setting, "interpreter") == 0 ? MODE_INTERPRETER
              : strcmp(setting, "spark") == 0 ? MODE_SPARK
              : MODE_DEFAULT;
+        if (setting && *setting && mode == MODE_DEFAULT && strcmp(setting, "native") != 0) {
+            fprintf(stderr, "memories-pc: MEMORIES_MODEL_MODULES=%s is not native, interpreter or spark; "
+                    "using the default\n", setting);
+        }
     }
     return mode;
 }

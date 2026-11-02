@@ -99,6 +99,16 @@ def comparing(first):
     check("calls that differ with the same pictures", verdict["status"] == "differs"
           and "first_differing_frame" not in verdict and "call 1" in verdict["why"], verdict)
     check("an error is neither", oracle.compare(same, dict(other, error="GameHung: no reply"))["status"] == "error")
+    idle = dict(other, calls=[], updates={})
+    verdict = oracle.compare(dict(same, calls=[], updates={}), idle)
+    check("two runs where no module ran are an error, not a match",
+          verdict["status"] == "error" and "slot A" in verdict["why"], verdict)
+    only_a = [call for call in first["calls"] if call[2] == "A"]
+    check("a tie without slot B's module is an error",
+          oracle.compare(dict(same, calls=only_a), dict(other, calls=only_a))["status"] == "error")
+    check("an attacker's win runs slot A's module only",
+          oracle.compare(dict(same, calls=only_a, battle="0/0/attacker"),
+                         dict(other, calls=only_a, battle="0/0/attacker"))["status"] == "identical")
     check("a battle without its frame hashes is an error, not a match",
           oracle.compare(dict(same, hashes=array("Q")), dict(other, hashes=array("Q")))["status"] == "error" and
           oracle.compare(same, dict(other, hashes=array("Q", [0] * len(first["hashes"]))))["status"] == "error")
@@ -139,6 +149,11 @@ def covering():
     check("a slot that held other bytes is named and not covered",
           report["mismatched"] == ["1/1/tie slot A (x): not the disc's stage 9 image"] and
           report["variant"]["A"]["missing"] == ["record 1 stage 9"], report)
+    attacks = [oracle.Battle(r, a, "attacker") for r in (0, 1, 2) for a in (0, 1)]
+    won = {b.key: ran(b, "A") for b in attacks}
+    report = oracle.coverage(attacks, won, won, disc)
+    check("attacker-only battles ask for no slot B image", report["variant"]["B"] ==
+          {"distinct": 0, "covered": 0, "missing": []} and report["variant"]["A"]["covered"] == 4, report["variant"])
     late = dict(ran(only_a), captured={"A": 0, "B": 1})
     report = oracle.coverage(battles, dict(subject, **{only_a.key: late}), subject, disc)
     check("an image hashed only after its module ran does not count (a module may write into it)",

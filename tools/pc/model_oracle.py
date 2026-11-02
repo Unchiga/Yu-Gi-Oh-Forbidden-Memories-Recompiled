@@ -77,6 +77,12 @@ PROPERTIES = struct.Struct("<HhhBB")
 # module's setup.
 MODEL_SLOTS, MODEL_SLOT_SIZE, LOAD_STEP, FIRST_CALLING_STEP = "D_800F2C40", 0xE20, 0xE14, 9
 OUTCOMES = {"tie": (0, 0), "attacker": (1, 0), "defender": (0, 1)}
+
+
+def running_slots(outcome: str) -> str:
+    """The slots whose variant module a battle runs: the attacker's (A)
+    always, the defender's (B) unless the attacker wins."""
+    return "A" if outcome == "attacker" else "AB"
 ANIMATED_BATTLE = 1
 CALL = re.compile(r"frame (\d+) vb \d+ model\] (primary|variant) slot=(\d) command=(-?\d+)"
                   r"(?: module (\d+) in ([AB]): (\S+))?")
@@ -366,6 +372,14 @@ def compare(subject: dict, reference: dict) -> dict:
     errors += [f"{side['side']}: no frame hash for {side['hashes'].count(0)} of its {len(side['hashes'])} frames"
                for side in (subject, reference) if not side.get("error") and
                (not side.get("hashes") or 0 in side["hashes"])]
+    if not errors:
+        # Two runs where no module ran (a battle that never started) agree
+        # on everything: such a battle is an error, not a match.
+        expected = running_slots(subject["battle"].split("/")[-1])
+        for side in (subject, reference):
+            called = {where for _, kind, where, _, _ in side["calls"] if kind == "variant"}
+            errors += [f"{side['side']}: no variant module called in slot {slot}"
+                       for slot in expected if slot not in called]
     if errors:
         verdict.update(status="error", why="; ".join(errors))
         return verdict
@@ -398,14 +412,15 @@ def compare(subject: dict, reference: dict) -> dict:
 
 def coverage(battles: list[Battle], subject: dict, reference: dict, disc: Disc) -> dict:
     """Which distinct variant (and primary) images of the records asked for
-    were in their slot and called there, on both sides."""
+    were in their slot and called there, on both sides; slot B's only from
+    battles whose outcome runs it."""
     on_disc = {"A": {}, "B": {}}
     covered = {"A": set(), "B": set()}
     primary_disc = {"A": set(), "B": set()}
     primary_seen = {"A": set(), "B": set()}
     mismatched = []
     for battle in battles:
-        for slot in "AB":
+        for slot in running_slots(battle.outcome):   # slot B's image only where its module runs
             image = sha(disc.variant(battle.record, battle.alternative, slot))
             on_disc[slot].setdefault(image, f"record {battle.record} stage {stage_of(battle.alternative, slot)}")
             primary = sha(disc.primary(battle.record, slot))

@@ -662,8 +662,9 @@ switch; with no native C linked in for the models yet it is the default);
 `MEMORIES_MODEL_MODULES=spark` puts the resident spark burst in place of
 every monster's module (it was called `native`; `native` now means the
 default, as for the duel effects, so that it names the native C once there
-is some); an effect or module the interpreter cannot run is reported once on
-stderr and falls back the same way. `MEMORIES_TRACE=model` logs every call
+is some; any other value is the default too, and says so once on stderr);
+an effect or module the interpreter cannot run is reported once on stderr
+and falls back the same way. `MEMORIES_TRACE=model` logs every call
 of a model module with the module's identifier, its slot and what ran it
 (`variant slot=0 command=1 module 418 in A: interpreter`; `slot=` is the
 active model, `D_8009AFA0`). `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
@@ -690,7 +691,11 @@ is a tie (both modules run; `--outcomes attacker,defender` adds the other
 paths). Every battle runs twice, by default the build's default against
 `MEMORIES_MODEL_MODULES=interpreter`, in games of their own (`--jobs`), and
 the two must agree on every frame hash and every module call the trace logs
-(setup commands by frame, updates by count). The report gives per record
+(setup commands by frame, updates by count). A battle where either run did
+not call the variant module of a slot its outcome runs (A always, B unless
+the attacker wins) is an error, not a match: two battles that never started
+would agree on everything. Slot B's images are asked for only from battles
+that run it. The report gives per record
 identical or the first differing frame counted from the battle's start, the
 modules that ran (identifier and slot) and those that cannot run. Coverage:
 the script steps a VBlank at a time while the two models load and peeks
