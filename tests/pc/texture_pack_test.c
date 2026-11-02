@@ -32,6 +32,7 @@ int Memories_DiscReadSectors(int lba, int sectors, void *out)
     memcpy(out, disc + lba * 2048, (size_t)sectors * 2048);
     return sectors;
 }
+int Memories_DiscReadSectorsUntracked(int lba, int sectors, void *out) { return Memories_DiscReadSectors(lba, sectors, out); }
 
 static int disc_file(const char *path, int *lba, unsigned *size)
 {

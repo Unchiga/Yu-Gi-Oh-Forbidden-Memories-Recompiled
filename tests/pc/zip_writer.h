@@ -30,12 +30,18 @@ static void put32(FILE *f, unsigned long v)
     put16(f, (unsigned)(v >> 16 & 0xFFFF));
 }
 
+#define ZIP_ITEMS_MAX 512 /* entries in one .zip written here */
+
 static void write_zip(const char *path, const ZipItem *items, int n)
 {
     FILE *f = fopen(path, "wb");
-    unsigned long offsets[64], packed[64], crcs[64], sizes[64], start, end;
-    unsigned methods[64];
-    unsigned char *bodies[64];
+    unsigned long offsets[ZIP_ITEMS_MAX], packed[ZIP_ITEMS_MAX], crcs[ZIP_ITEMS_MAX], sizes[ZIP_ITEMS_MAX], start, end;
+    unsigned methods[ZIP_ITEMS_MAX];
+    unsigned char *bodies[ZIP_ITEMS_MAX];
+    if (n > ZIP_ITEMS_MAX) {
+        fprintf(stderr, "write_zip: more than %d entries\n", ZIP_ITEMS_MAX);
+        exit(2);
+    }
     if (!f) {
         perror(path);
         exit(2);

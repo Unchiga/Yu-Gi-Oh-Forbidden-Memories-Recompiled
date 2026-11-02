@@ -37,6 +37,7 @@ static int index_reads;           /* CardArt_IndexedImage calls */
 static unsigned char disk_index;  /* what a "decoded" picture holds right now */
 
 int Memories_DiscReadSectors(int lba, int sectors, void *out) { (void)lba; (void)sectors; (void)out; return 0; }
+int Memories_DiscReadSectorsUntracked(int lba, int sectors, void *out) { return Memories_DiscReadSectors(lba, sectors, out); }
 unsigned Mods_Changes(void) { return mod_changes; }
 int Log_Wanted(LogChannel channel) { (void)channel; return 0; }
 void Log_Printf(LogChannel channel, const char *format, ...) { (void)channel; (void)format; }

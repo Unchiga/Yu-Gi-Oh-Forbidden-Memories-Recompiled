@@ -807,7 +807,7 @@ if(BUILD_TESTING)
     # Import mod... (src/pc/mods/import.c) inflates with zlib.
     find_package(ZLIB REQUIRED)
     add_executable(memories_mods_window_test tests/pc/mods_window_test.c src/pc/platform/mods_window.c
-        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
+        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/mods/import_job.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
     target_link_libraries(memories_mods_window_test PRIVATE m Threads::Threads ZLIB::ZLIB)
     target_include_directories(memories_mods_window_test PRIVATE src)
     if(NOT MSVC)
@@ -819,7 +819,7 @@ if(BUILD_TESTING)
     # The same with no code mod loader (MEMORIES_NO_CODE_MODS, which no game
     # build sets now): what an import says about a code mod there.
     add_executable(memories_mods_window_no_code_test tests/pc/mods_window_test.c src/pc/platform/mods_window.c
-        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
+        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/mods/import_job.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
     target_compile_definitions(memories_mods_window_no_code_test PRIVATE MEMORIES_NO_CODE_MODS)
     target_link_libraries(memories_mods_window_no_code_test PRIVATE m Threads::Threads ZLIB::ZLIB)
     target_include_directories(memories_mods_window_no_code_test PRIVATE src)
@@ -936,6 +936,19 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME pc_card_plate COMMAND memories_card_plate_test)
         set_tests_properties(pc_card_plate PROPERTIES SKIP_RETURN_CODE 77)
+        # The records art.c makes of a PNG, byte for byte (card picture,
+        # thumbnail, field cutout, portrait) against hashes held.
+        add_executable(memories_card_art_test tests/pc/card_art_test.c src/pc/cards/art.c)
+        target_include_directories(memories_card_art_test PRIVATE src ${MEMORIES_FREETYPE_INCLUDE})
+        target_link_libraries(memories_card_art_test PRIVATE ${MEMORIES_FREETYPE_LIBRARY} ${memories_plate_fonts}
+            PNG::PNG)
+        if(WIN32)
+            target_link_libraries(memories_card_art_test PRIVATE memories_pc_fs)
+        endif()
+        if(NOT MSVC)
+            target_compile_options(memories_card_art_test PRIVATE -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME pc_card_art COMMAND memories_card_art_test "${CMAKE_CURRENT_BINARY_DIR}/card-art-test")
         # What a duelist's bust costs the start (busts.c Busts_Make with the
         # real art.c): the biggest bust and a typical one, drawn at runtime.
         add_executable(memories_busts_make_test tests/pc/busts_make_test.c src/pc/cards/art.c src/pc/mods/json.c)
