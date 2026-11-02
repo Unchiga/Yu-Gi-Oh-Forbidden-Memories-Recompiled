@@ -1218,7 +1218,7 @@ static void folder_access_case(void)
         static const char hint[] = "Without All files access the game cannot read it. Allow it in this app's settings.",
                           cannot[] = "This device cannot give the game All files access. Use Import mod... instead.";
         char deep[1024], question[1400];
-        snprintf(deep, sizeof(deep), "%s/second", root);
+        snprintf(deep, sizeof(deep), "/storage/emulated/0/Download/Second"); /* a phone's, not the test's long scratch path */
         access_held = 0;
         for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
             test_scale = sizes[i][2];
