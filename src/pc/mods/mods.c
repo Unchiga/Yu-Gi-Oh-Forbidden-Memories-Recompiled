@@ -2152,17 +2152,18 @@ __declspec(dllimport) unsigned long __stdcall GetLongPathNameW(const wchar_t *, 
 /* The folder `path` names, spelled one way: absolute, without "." and ".."
  * (from the current directory if it is not absolute), and, where it exists,
  * with its links followed (realpath). On Windows: without the prefix of a
- * "\\?\" or "\\.\" path, with "\\?\UNC\" as "\\", and, where it exists, with
- * its long names (GetLongPathNameW, for an 8.3 short one); a junction or a
- * link is not followed there, nor is a difference in the case of a non-ASCII
- * letter. For comparing two folders. -1 if it does not fit or is not a name. */
+ * "\\?\" or "\\.\" path, with "\\?\UNC\" as "\\", and with the long names
+ * of its longest part that exists (GetLongPathNameW, for an 8.3 short one); a
+ * junction or a link is not followed there, nor is a difference in the case
+ * of a non-ASCII letter. For comparing two folders. -1 if it does not fit or is not a name. */
 static int canon_folder(const char *path, char *out, size_t size)
 {
     char work[PATH_MAX_];
 #ifdef _WIN32
-    wchar_t *wide, full[PATH_MAX_], longer[PATH_MAX_];
+    wchar_t *wide, full[PATH_MAX_], head[PATH_MAX_], longer[PATH_MAX_];
     char plain[PATH_MAX_], *narrow;
     unsigned long length;
+    size_t cut;
     if (snprintf(plain, sizeof(plain), "%s", path) >= (int)sizeof(plain)) return -1;
     tidy_folder(plain);   /* '/' for '\' */
     if (!strncmp(plain, "//?/UNC/", 8)) memmove(plain + 2, plain + 8, strlen(plain + 8) + 1);
@@ -2171,8 +2172,19 @@ static int canon_folder(const char *path, char *out, size_t size)
     length = GetFullPathNameW(wide, PATH_MAX_, full, NULL);
     free(wide);
     if (!length || length >= PATH_MAX_) return -1;
-    length = GetLongPathNameW(full, longer, PATH_MAX_);
-    if (length && length < PATH_MAX_) memcpy(full, longer, ((size_t)length + 1) * sizeof(wchar_t));
+    /* A folder not made yet under a short name still compares by the long one. */
+    for (cut = wcslen(full); cut > 3;) {
+        memcpy(head, full, cut * sizeof(wchar_t));
+        head[cut] = 0;
+        length = GetLongPathNameW(head, longer, PATH_MAX_);
+        if (length && length < PATH_MAX_ && length + wcslen(full + cut) < PATH_MAX_) {
+            memcpy(longer + length, full + cut, (wcslen(full + cut) + 1) * sizeof(wchar_t));
+            memcpy(full, longer, (wcslen(longer) + 1) * sizeof(wchar_t));
+            break;
+        }
+        while (cut > 3 && full[cut - 1] != L'\\') cut--;
+        if (cut > 3) cut--;
+    }
     if (!(narrow = Memories_WideToUtf8(full))) return -1;
     length = (unsigned long)snprintf(work, sizeof(work), "%s", narrow);
     free(narrow);
