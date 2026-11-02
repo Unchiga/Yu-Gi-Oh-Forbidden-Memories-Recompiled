@@ -6,6 +6,7 @@
 #include "pc/platform/mods_window.h"
 #include "pc/mods/overlap.h"
 #include "pc/mods/hd_pack.h"
+#include "pc/mods/import_job.h"
 #include "zip_writer.h"
 #include <limits.h>
 #ifndef _WIN32
@@ -77,6 +78,12 @@ static int click(int x, int y) { return input(MENU_EVENT_BUTTON_DOWN, x, y, MENU
  * the test wrote (ModsWindow_SetImport), and what the window then says. */
 static char import_source[1024];
 static int picks;
+/* A millisecond (POSIX's nanosleep: usleep is not in every libc's C11 mode). */
+static void nap(void)
+{
+    struct timespec t = {0, 1000000L};
+    nanosleep(&t, NULL);
+}
 static int fake_pick(char *why, size_t size)
 {
     (void)why;
@@ -90,11 +97,33 @@ static int fake_picked(char *why, size_t size)
     (void)size;
     return 1;
 }
-static int fake_fetch(char *path, size_t size, char *why, size_t why_size)
+/* The copy, on the import's thread: the test's .zip stays where it is and
+ * the progress is that of a 1000 MB file in ten pieces. Its sixth piece
+ * waits while copy_gate is 0 (or a Stop comes), the file's size is not
+ * given while copy_unknown is set, and copy_error is the reason it fails
+ * with. */
+static int copy_gate = 1, copy_unknown;
+static const char *copy_error;
+static int fake_fetch(char *path, size_t size, char *why, size_t why_size, unsigned *done, unsigned *total,
+                      const int *cancel)
 {
-    (void)why;
-    (void)why_size;
+    if (copy_error) {
+        snprintf(why, why_size, "%s", copy_error);
+        return 0;
+    }
     snprintf(path, size, "%s", import_source);
+    if (!copy_unknown)
+        __atomic_store_n(total, 1000000000u, __ATOMIC_RELEASE);
+    for (int piece = 1; piece <= 10; piece++) {
+        while (piece == 6 && !__atomic_load_n(&copy_gate, __ATOMIC_ACQUIRE) && !__atomic_load_n(cancel, __ATOMIC_ACQUIRE))
+            nap();
+        if (__atomic_load_n(cancel, __ATOMIC_ACQUIRE)) {
+            snprintf(why, why_size, "Cancelled.");
+            remove(path); /* as the platform's copy removes what it wrote */
+            return 0;
+        }
+        __atomic_add_fetch(done, 100000000u, __ATOMIC_RELEASE);
+    }
     return 1;
 }
 static void tap_widget(int id)
@@ -104,16 +133,11 @@ static void tap_widget(int id)
     click(x, y);
     input(MENU_EVENT_BUTTON_UP, x, y, MENU_KEY_OTHER, NULL);
 }
-/* Writes `items` as the picked .zip, taps Import mod... and runs the ticks
- * (the picker's answer, then the import); what the footer says. */
-static const char *import_zip(const ZipItem *items, int n)
+/* What the window says: every line it draws, text only. */
+static const char *said_now(void)
 {
     static char said[4096];
     const char *line;
-    write_zip(import_source, items, n);
-    tap_widget(MODS_UI_FOLDER);
-    while (ModsWindow_Tick()) {
-    }
     draw(1600, 900);
     said[0] = 0;
     for (line = drawn; *line; line = strchr(line, '\n') + 1) {
@@ -125,6 +149,28 @@ static const char *import_zip(const ZipItem *items, int n)
         }
     }
     return said;
+}
+/* Ticks, and waits for the import's thread, until the import is over or at
+ * its question (Replace). */
+static void import_pump(void)
+{
+    for (int idle = 0; idle < 3;) {
+        if (ModsWindow_Tick() || ImportJob_State() != IMPORT_JOB_IDLE)
+            idle = 0;
+        else
+            idle++;
+        nap();
+    }
+}
+/* Writes `items` as the picked .zip, taps Import mod... and runs the ticks
+ * (the picker's answer, the copy and the reading, the unpacking); what the
+ * footer says. */
+static const char *import_zip(const ZipItem *items, int n)
+{
+    write_zip(import_source, items, n);
+    tap_widget(MODS_UI_FOLDER);
+    import_pump();
+    return said_now();
 }
 static int folder_has(const char *relative)
 {
@@ -175,7 +221,8 @@ static void test_import(void)
     tap_widget(MODS_UI_CLOSE); /* Cancel */
     assert(Mods_Count() == count + 1 && folder_has("mods/newmod/name.txt") && !folder_has("picked.zip"));
     said = import_zip(good, 2);
-    tap_widget(MODS_UI_APPLY); /* Replace */
+    tap_widget(MODS_UI_APPLY); /* Replace: the unpacking, on its thread */
+    import_pump();
     draw(1600, 900);
     assert(strstr(drawn, "Replaced New mod.") && Mods_Count() == count + 1);
     /* Code: imported, off; where the game has no code mod loader
@@ -237,6 +284,175 @@ static void test_import(void)
     said = import_zip(slip, 2);
     assert(strstr(said, "points outside its folder") && Mods_Count() == count);
     assert(!folder_has("escaped.txt") && !folder_has("mods/escaped.txt"));
+    ModsWindow_SetImport(NULL, NULL, NULL);
+    test_touch = 0;
+}
+/* What an import leaves in the mods folder besides the mods: the hidden
+ * ".import-*" folders and the ".incoming*.zip" copies. */
+static int import_leftovers(void)
+{
+    char path[2048];
+    DIR *directory;
+    struct dirent *entry;
+    int n = 0;
+    snprintf(path, sizeof(path), "%s/mods", root);
+    if (!(directory = opendir(path)))
+        return 0;
+    while ((entry = readdir(directory)))
+        n += !strncmp(entry->d_name, ".import-", 8) || !strncmp(entry->d_name, ".incoming", 9);
+    closedir(directory);
+    return n;
+}
+/* The unpacking's pause: after chunk step_pause (a chunk is 64 KB at most),
+ * on the job's thread, until step_gate is 1. */
+static int step_calls, step_pause, step_gate = 1;
+static void step_hook(void)
+{
+    int n = __atomic_add_fetch(&step_calls, 1, __ATOMIC_ACQ_REL);
+    while (n == step_pause && !__atomic_load_n(&step_gate, __ATOMIC_ACQUIRE))
+        nap();
+}
+/* Ticks (the window shows what the thread has done) until `done` bytes of
+ * the step are in, then once more to say them. */
+static void import_until(unsigned long done)
+{
+    while (ImportJob_Done() < done) {
+        ModsWindow_Tick();
+        nap();
+    }
+    for (int idle = 0; idle < 3;) {
+        idle = ModsWindow_Tick() ? 0 : idle + 1;
+        nap();
+    }
+}
+/* Import mod... on its thread: how far it is, Stop at every step, what a
+ * failure says, and nothing left behind. */
+static void test_import_job(void)
+{
+    static const ZipItem small[] = {{"jobmod/mod.json", "{\"id\": \"jobmod\", \"name\": \"Job mod\"}", 0, 0, 0, 0, 0, 0}};
+    static const ZipItem again[] = {{"jobagain/mod.json", "{\"id\": \"jobagain\", \"name\": \"Again job\"}", 0, 0, 0, 0, 0, 0}};
+    static char big[400001];
+    ZipItem large[3] = {{"jobbig/mod.json", "{\"id\": \"jobbig\", \"name\": \"Big job\"}", 0, 0, 0, 0, 0, 0},
+                        {"jobbig/one.bin", big, 0, 0, 0, 0, 0, 0},
+                        {"jobbig/two.bin", big, 0, 0, 0, 0, 0, 0}};
+    static const ZipItem damaged[] = {{"jobbad/mod.json", "{\"id\": \"jobbad\", \"name\": \"Bad job\"}", 0, 0, 0, 0, 0, 0},
+                                      {"jobbad/data.bin", "0123456789", 0, 0, 0, 0, 1, 0}};
+    int count, x, y;
+    const char *said;
+    memset(big, 'A', sizeof(big) - 1);
+    snprintf(import_source, sizeof(import_source), "%s/picked.zip", root);
+    test_touch = 48;
+    ModsWindow_SetImport(fake_pick, fake_picked, fake_fetch);
+    ModsWindow_Init();
+    ModsWindow_Resize(1600, 900);
+    count = Mods_Count();
+    /* The copy: the share is said as it grows, Import mod... is Stop, and
+     * Apply waits; the window is not blocked meanwhile. */
+    write_zip(import_source, small, 1);
+    copy_gate = 0;
+    tap_widget(MODS_UI_FOLDER);
+    import_until(500000000u);
+    said = said_now();
+    assert(strstr(said, "Copying the .zip: 50% of 1000 MB.") && strstr(said, "Stop") && !strstr(said, "Import mod..."));
+    assert(ImportJob_State() == IMPORT_JOB_READING);
+    tap_widget(MODS_UI_APPLY);
+    assert(strstr(said_now(), "Wait for the import to finish, or stop it, before applying changes."));
+    /* Stop in the copy: nothing is imported, the copy is gone. */
+    tap_widget(MODS_UI_FOLDER);
+    assert(strstr(said_now(), "Stopping..."));
+    __atomic_store_n(&copy_gate, 1, __ATOMIC_RELEASE);
+    import_pump();
+    said = said_now();
+    assert(strstr(said, "The import was stopped. Nothing was imported.") && strstr(said, "Import mod..."));
+    assert(Mods_Count() == count && !folder_has("picked.zip") && !folder_has("mods/jobmod") && !import_leftovers());
+    /* A size the provider does not give: the megabytes so far. */
+    write_zip(import_source, small, 1);
+    copy_gate = 0;
+    copy_unknown = 1;
+    tap_widget(MODS_UI_FOLDER);
+    import_until(500000000u);
+    assert(strstr(said_now(), "Copying the .zip: 500 MB."));
+    __atomic_store_n(&copy_gate, 1, __ATOMIC_RELEASE);
+    import_pump();
+    copy_unknown = 0;
+    assert(strstr(said_now(), "Imported Job mod.") && find("jobmod") == count);
+    /* The panel closed and opened again during the copy: the import goes on,
+     * and the panel shows it. */
+    write_zip(import_source, again, 1);
+    count = Mods_Count();
+    copy_gate = 0;
+    tap_widget(MODS_UI_FOLDER);
+    import_until(500000000u);
+    ModsWindow_Init();
+    ModsWindow_Resize(1600, 900);
+    assert(strstr(said_now(), "Stop") && ImportJob_State() == IMPORT_JOB_READING);
+    import_until(0); /* the message the opening cleared is said again */
+    assert(strstr(said_now(), "Copying the .zip: 50% of 1000 MB."));
+    __atomic_store_n(&copy_gate, 1, __ATOMIC_RELEASE);
+    import_pump();
+    assert(strstr(said_now(), "Imported Again job.") && find("jobagain") == count);
+    /* A failure of the copy says what it always said. */
+    copy_error = "Could not read that file: boom";
+    write_zip(import_source, small, 1);
+    tap_widget(MODS_UI_FOLDER);
+    import_pump();
+    assert(strstr(said_now(), "Could not read that file: boom") && !import_leftovers());
+    copy_error = NULL;
+    /* A failure of the unpacking: the same words, and nothing left. */
+    count = Mods_Count();
+    said = import_zip(damaged, 2);
+    assert(strstr(said, "Nothing was imported. The .zip is damaged: jobbad/data.bin does not match its checksum."));
+    assert(Mods_Count() == count && !folder_has("mods/jobbad") && !folder_has("picked.zip") && !import_leftovers());
+    /* A Stop that comes after the unpacking's last check is not why it
+     * failed: the checksum's reason stays, not "The import was stopped.". */
+    ImportJob_SetStepHook(step_hook);
+    step_calls = 0;
+    step_pause = 2; /* the manifest is chunk 1, data.bin chunk 2: written, not yet checked */
+    step_gate = 0;
+    write_zip(import_source, damaged, 2);
+    tap_widget(MODS_UI_FOLDER);
+    while (__atomic_load_n(&step_calls, __ATOMIC_ACQUIRE) < 2) {
+        ModsWindow_Tick();
+        nap();
+    }
+    tap_widget(MODS_UI_FOLDER);
+    assert(strstr(said_now(), "Stopping..."));
+    __atomic_store_n(&step_gate, 1, __ATOMIC_RELEASE);
+    import_pump();
+    ImportJob_SetStepHook(NULL);
+    said = said_now();
+    assert(strstr(said, "Nothing was imported. The .zip is damaged: jobbad/data.bin does not match its checksum."));
+    assert(!strstr(said, "stopped") && !ImportJob_Cancelled());
+    assert(Mods_Count() == count && !folder_has("mods/jobbad") && !folder_has("picked.zip") && !import_leftovers());
+    /* The unpacking: its share, and a Stop in the middle of a file leaves
+     * nothing in the mods folder (the hidden folder holds the half-written
+     * file meanwhile). */
+    write_zip(import_source, large, 3);
+    ImportJob_SetStepHook(step_hook);
+    step_calls = 0;
+    step_pause = 5; /* the manifest is chunk 1, one.bin the next seven */
+    step_gate = 0;
+    tap_widget(MODS_UI_FOLDER);
+    import_until(30 + 4 * 65536);
+    said = said_now();
+    assert(strstr(said, "Unpacking the mod: 32% of 1 MB.") && strstr(said, "Stop"));
+    assert(ImportJob_State() == IMPORT_JOB_UNPACKING && import_leftovers() == 1 && !folder_has("mods/jobbig"));
+    assert(ModsWindow_Locate(MODS_UI_REMOVE, &x, &y));
+    tap_widget(MODS_UI_REMOVE);
+    assert(strstr(said_now(), "Wait for the import or the HD pack to finish first."));
+    tap_widget(MODS_UI_FOLDER);
+    __atomic_store_n(&step_gate, 1, __ATOMIC_RELEASE);
+    import_pump();
+    said = said_now();
+    assert(strstr(said, "The import was stopped. Nothing was imported.") && strstr(said, "Import mod..."));
+    assert(Mods_Count() == count && find("jobbig") < 0 && !folder_has("mods/jobbig") && !folder_has("picked.zip"));
+    assert(!import_leftovers());
+    /* And the same import, not stopped, to the end: "Imported ...". */
+    step_gate = 1;
+    said = import_zip(large, 3);
+    ImportJob_SetStepHook(NULL);
+    assert(strstr(said, "Imported Big job.") && find("jobbig") == count && folder_has("mods/jobbig/two.bin"));
+    assert(!import_leftovers() && !folder_has("picked.zip"));
     ModsWindow_SetImport(NULL, NULL, NULL);
     test_touch = 0;
 }
@@ -369,12 +585,6 @@ static void test_remove(void)
 }
 /* HD pack... with a fake network (HdNet): GitHub's answer and the .zip
  * are the test's, served in small pieces on the job's thread. */
-/* A millisecond (POSIX's nanosleep: usleep is not in every libc's C11 mode). */
-static void nap(void)
-{
-    struct timespec t = {0, 1000000L};
-    nanosleep(&t, NULL);
-}
 #define FAKE_SHA "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 static char fake_api[4096], fake_zip[1024];
 static int fake_status = 200, fake_error, fake_opens, fake_files, fake_forgets;
@@ -997,6 +1207,7 @@ int main(void)
         test_touch = 0;
     }
     test_import();
+    test_import_job();
     test_remove();
     test_hd_pack();
     ModsWindow_Init();

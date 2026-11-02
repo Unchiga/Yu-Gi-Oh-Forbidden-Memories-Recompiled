@@ -744,7 +744,13 @@ int Platform_PickedModZip(char *why, size_t why_size)
     return 1;
 }
 
-int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size)
+/* On the import's thread (import_job.h), never the game's: the copy of a
+ * big document takes minutes. The document is opened through SDL, which
+ * attaches the thread to Java itself (SDL_IOFromFile -> Android_JNI_GetEnv,
+ * detached when the thread ends), so no call here needs the game thread's
+ * JNIEnv. */
+int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size, unsigned *done, unsigned *total_size,
+                         const int *cancel)
 {
     static unsigned char buffer[1 << 16];
     char folder[1024];
@@ -774,6 +780,8 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size)
             SDL_CloseIO(stream);
             return 0;
         }
+        if (known > 0)
+            __atomic_store_n(total_size, (unsigned)known, __ATOMIC_RELEASE);
         if (known > 0 && !statvfs(folder, &space) &&
             (Sint64)space.f_bavail * (Sint64)space.f_frsize < known + (16 << 20)) {
             snprintf(why, why_size, "There is not enough free space to copy the .zip: it needs %lld MB, and %lld MB "
@@ -789,6 +797,11 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size)
         return 0;
     }
     while ((got = SDL_ReadIO(stream, buffer, sizeof(buffer))) > 0) {
+        if (__atomic_load_n(cancel, __ATOMIC_ACQUIRE)) {
+            snprintf(why, why_size, "Cancelled.");
+            ok = 0;
+            break;
+        }
         if (!total && (got < 4 || memcmp(buffer, "PK", 2) || (buffer[2] != 3 && buffer[2] != 5))) {
             snprintf(why, why_size, "That file is not a .zip.");
             ok = 0;
@@ -806,6 +819,7 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size)
             ok = 0;
             break;
         }
+        __atomic_add_fetch(done, (unsigned)got, __ATOMIC_RELEASE);
     }
     if (ok && SDL_GetIOStatus(stream) == SDL_IO_STATUS_ERROR) {
         snprintf(why, why_size, "Could not read that file: %s", SDL_GetError());
