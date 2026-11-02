@@ -14,6 +14,11 @@ void Memories_MdecService(void);
  * Native extras (src/pc/mods) fetch whole records with it. Returns the number
  * of sectors read. */
 int Memories_DiscReadSectors(int lba, int sectors, void *out);
+/* The same, for bytes the port only looks at (a texture pack's hashes):
+ * not a delivery to the game, so the texture tracing does not take them for
+ * one (TextureDump_Delivered, which on the translated game first searches
+ * every registered region for the buffer). */
+int Memories_DiscReadSectorsUntracked(int lba, int sectors, void *out);
 /* The first sector of a file, by its retail path ("\\DATA\\MODEL.MRG;1"),
  * or -1. */
 int Memories_DiscFileStart(const char *path);

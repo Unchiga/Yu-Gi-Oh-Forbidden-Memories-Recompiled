@@ -25,6 +25,13 @@ void CrashTest_Present(void) {}
 int Platform_ClockRate(void) { return 0; }
 void Platform_SetClockRate(int percent) { (void)percent; }
 void ModsWindow_Init(void) {}
+/* The pump sets up the desktop window's folder picker and ticks the window. */
+void ModsWindow_SetFolderPicker(int (*pick)(char *, size_t), int (*picked)(char *, size_t, char *, size_t))
+{
+    (void)pick;
+    (void)picked;
+}
+int ModsWindow_Tick(void) { return 0; }
 void ModsWindow_Size(int *w, int *h)
 {
     *w = 780;
