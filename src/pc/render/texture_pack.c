@@ -1158,7 +1158,7 @@ static int read_head(uint32_t offset, unsigned char *out)
 {
     unsigned char sectors[2 * 2048];
     int at = (int)(offset % 2048), count = at + RECALL_BYTES > 2048 ? 2 : 1, i;
-    if (Memories_DiscReadSectors((int)(offset / 2048), count, sectors) != count) return 0;
+    if (Memories_DiscReadSectorsUntracked((int)(offset / 2048), count, sectors) != count) return 0;
     memcpy(out, sectors + at, RECALL_BYTES);
     for (i = 1; i < RECALL_BYTES && out[i] == out[0]; i++) {}
     return i < RECALL_BYTES;
@@ -1180,7 +1180,7 @@ static uint32_t hash_disc(uint32_t offset, uint32_t bytes)
     uint32_t hash = 0;
     unsigned char *data = malloc((size_t)sectors * 2048);
     if (!data) return 0;
-    if (Memories_DiscReadSectors((int)(offset / 2048), sectors, data) == sectors) hash = hash_bytes(data + first, bytes);
+    if (Memories_DiscReadSectorsUntracked((int)(offset / 2048), sectors, data) == sectors) hash = hash_bytes(data + first, bytes);
     free(data);
     return hash;
 }
@@ -1596,7 +1596,7 @@ static int holds_disc(const uint16_t *vram, uint32_t disc, const unsigned char *
     }
     data = malloc((size_t)sectors * 2048);
     if (!data) return 0;
-    if (Memories_DiscReadSectors((int)(disc / 2048), sectors, data) != sectors) same = 0;
+    if (Memories_DiscReadSectorsUntracked((int)(disc / 2048), sectors, data) != sectors) same = 0;
     for (j = 0; same && j < rows; j++)
         same = memcmp(vram + (size_t)(y + j) * SOFT_GPU_WIDTH + x, data + first + (size_t)j * words * 2,
                       (size_t)words * 2) == 0;
