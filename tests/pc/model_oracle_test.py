@@ -5,8 +5,9 @@ The record-to-card mapping must follow model.h's gaps as the loader's
 inverse (test_mod_models.py, disc_record) does; a game's files must split
 into its battles by frame; and the comparison must name the first frame two
 battles differ at, a battle that ran longer, and calls that differ, while
-the coverage counts an image only when its slot held the disc's bytes and
-its module was called there on both sides."""
+the coverage counts an image only when its slot held the disc's bytes,
+hashed before its module ran, and its module was called there on both
+sides."""
 from array import array
 import hashlib
 from pathlib import Path
@@ -98,6 +99,9 @@ def comparing(first):
     check("calls that differ with the same pictures", verdict["status"] == "differs"
           and "first_differing_frame" not in verdict and "call 1" in verdict["why"], verdict)
     check("an error is neither", oracle.compare(same, dict(other, error="GameHung: no reply"))["status"] == "error")
+    check("a battle without its frame hashes is an error, not a match",
+          oracle.compare(dict(same, hashes=array("Q")), dict(other, hashes=array("Q")))["status"] == "error" and
+          oracle.compare(same, dict(other, hashes=array("Q", [0] * len(first["hashes"]))))["status"] == "error")
 
 
 class FakeDisc:
@@ -115,7 +119,7 @@ def covering():
     def ran(battle, slots="AB", images=None):
         return {"side": "x", "images": images or {s: oracle.sha(disc.variant(battle.record, battle.alternative, s))
                                                    for s in "AB"},
-                "primary_images": {s: "" for s in "AB"},
+                "primary_images": {s: "" for s in "AB"}, "captured": {"A": 0, "B": 0},
                 "calls": [(1, "variant", s, 1, 0) for s in slots]}
 
     subject = {b.key: ran(b) for b in battles}
@@ -135,6 +139,11 @@ def covering():
     check("a slot that held other bytes is named and not covered",
           report["mismatched"] == ["1/1/tie slot A (x): not the disc's stage 9 image"] and
           report["variant"]["A"]["missing"] == ["record 1 stage 9"], report)
+    late = dict(ran(only_a), captured={"A": 0, "B": 1})
+    report = oracle.coverage(battles, dict(subject, **{only_a.key: late}), subject, disc)
+    check("an image hashed only after its module ran does not count (a module may write into it)",
+          report["mismatched"] == ["1/1/tie slot B (x): its image was not hashed before its module ran"] and
+          report["variant"]["B"]["missing"] == ["record 1 stage 10"], report)
 
 
 with tempfile.TemporaryDirectory() as temporary:

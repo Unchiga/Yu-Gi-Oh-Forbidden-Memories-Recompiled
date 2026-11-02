@@ -21,10 +21,11 @@ interpreter). For each battle they must agree on every frame hash
 setup command, its slot, module and frame; the updates by count). The
 report gives, per record: identical, or the first differing frame counted
 from the battle's start; the modules that ran (identifier and slot); and any
-the interpreter could not run. The coverage check hashes the variant images
-each slot held after the battle (the modules do not write into their own
-images) against the disc's: every distinct image of the records asked for
-must have been in its slot and called there, on both sides.
+the interpreter could not run. The coverage check hashes the variant image
+each slot holds once its load has landed and before its module can run
+(record 40's second-star modules write a variable inside their own image)
+against the disc's: every distinct image of the records asked for must
+have been in its slot and called there, on both sides.
 
     python tools/pc/model_oracle.py --disc game/disc.bin                # all 621 records
     python tools/pc/model_oracle.py --records 34,100-119 --jobs 8
@@ -70,6 +71,11 @@ PRIMARY_BASE = {"A": 0x8013A000, "B": 0x8017A000}
 # sets it), field_04, field_06 (the defender in defense), field_07 (the
 # alternative: the card's second guardian star).
 PROPERTIES = struct.Struct("<HhhBB")
+# The model slots (model.h, ModelSlot): field_E14 is the slot's load step, 0
+# while its disc transfer runs, 1 once every stage has landed (stage 16), then
+# one more a frame through func_80056828's steps; step 9 may call the variant
+# module's setup.
+MODEL_SLOTS, MODEL_SLOT_SIZE, LOAD_STEP, FIRST_CALLING_STEP = "D_800F2C40", 0xE20, 0xE14, 9
 OUTCOMES = {"tie": (0, 0), "attacker": (1, 0), "defender": (0, 1)}
 ANIMATED_BATTLE = 1
 CALL = re.compile(r"frame (\d+) vb \d+ model\] (primary|variant) slot=(\d) command=(-?\d+)"
@@ -194,7 +200,8 @@ class Side:
 
     def __init__(self, name: str, executable: Path | None, env: dict[str, str], out: Path, disc: Path,
                  chunk: int, cap: int):
-        self.name, self.executable, self.env, self.out = name, executable, env, out
+        self.name, self.executable, self.env = name, executable, env
+        self.out = out.resolve()   # the game runs elsewhere: MEMORIES_FRAME_HASHES must be absolute
         self.disc, self.chunk, self.cap = disc, chunk, cap
         self.games = 0
         self.lock = threading.Lock()
@@ -230,14 +237,33 @@ class Side:
                 game.poke("D_8009B269", bytes([0]))          # back to the debug menu after
                 game.poke("D_8009B26C", bytes([ANIMATED_BATTLE]))
                 start, vblank = game.frame, game.vblank
+                # Each slot's images are hashed once its transfer has landed
+                # and before its modules can have run (one module writes a
+                # variable inside its own image): a VBlank at a time until then.
+                slots = game.address(MODEL_SLOTS)
+                requested, images, primary, captured = set(), {}, {}, {}
                 while game.u8("D_8009B26C") & 0x1F == ANIMATED_BATTLE:
                     if game.vblank - vblank >= self.cap:
                         raise TimeoutError(f"the battle did not end in {self.cap} VBlanks")
-                    game.step(self.chunk)
-                result.update(start=start, end=game.frame)
-                result["images"] = {slot: sha(game.peek(base, 0x4000) + game.peek(base + 0x4000, 0x1000))
-                                    for slot, base in VARIANT_BASE.items()}
-                result["primary_images"] = {slot: sha(game.peek(base, 0x1000)) for slot, base in PRIMARY_BASE.items()}
+                    for index, slot in enumerate("AB"):
+                        if slot in captured:
+                            continue
+                        step = game.u8(slots + index * MODEL_SLOT_SIZE + LOAD_STEP)
+                        if step == 0:
+                            requested.add(slot)
+                        elif slot in requested and step < FIRST_CALLING_STEP:
+                            base = VARIANT_BASE[slot]
+                            images[slot] = sha(game.peek(base, 0x4000) + game.peek(base + 0x4000, 0x1000))
+                            primary[slot] = sha(game.peek(PRIMARY_BASE[slot], 0x1000))
+                            captured[slot] = game.frame - start
+                    game.step(1 if len(captured) < 2 else self.chunk)
+                result.update(start=start, end=game.frame, captured=captured)
+                for slot in "AB":   # not seen loading (a step missed): as the battle left them
+                    if slot not in captured:
+                        base = VARIANT_BASE[slot]
+                        images[slot] = sha(game.peek(base, 0x4000) + game.peek(base + 0x4000, 0x1000))
+                        primary[slot] = sha(game.peek(PRIMARY_BASE[slot], 0x1000))
+                result["images"], result["primary_images"] = images, primary
             except (GameHung, RuntimeError, OSError) as error:   # ControlError and TimeoutError among them
                 result["error"] = f"{type(error).__name__}: {str(error).splitlines()[0]}"
                 if game is not None:
@@ -337,6 +363,9 @@ def compare(subject: dict, reference: dict) -> dict:
     """What one battle's two runs say: its verdict and why."""
     verdict = {"battle": subject["battle"], "frames": [len(subject.get("hashes", ())), len(reference.get("hashes", ()))]}
     errors = [f"{side['side']}: {side['error']}" for side in (subject, reference) if side.get("error")]
+    errors += [f"{side['side']}: no frame hash for {side['hashes'].count(0)} of its {len(side['hashes'])} frames"
+               for side in (subject, reference) if not side.get("error") and
+               (not side.get("hashes") or 0 in side["hashes"])]
     if errors:
         verdict.update(status="error", why="; ".join(errors))
         return verdict
@@ -386,11 +415,18 @@ def coverage(battles: list[Battle], subject: dict, reference: dict, disc: Disc) 
                 if side.get("error"):
                     ran = False
                     continue
-                if side["images"][slot] != image:
+                first_call = min((at for at, kind, where, _, _ in side["calls"]
+                                  if kind == "variant" and where == slot), default=None)
+                taken = side.get("captured", {}).get(slot)
+                if taken is None or (first_call is not None and first_call <= taken):
+                    mismatched.append(f"{battle.key} slot {slot} ({side['side']}): its image was not hashed "
+                                      f"before its module ran")
+                    ran = False
+                elif side["images"][slot] != image:
                     mismatched.append(f"{battle.key} slot {slot} ({side['side']}): not the disc's stage "
                                       f"{stage_of(battle.alternative, slot)} image")
                     ran = False
-                if not any(kind == "variant" and where == slot for _, kind, where, _, _ in side["calls"]):
+                if first_call is None:
                     ran = False
                 if side["primary_images"][slot] == primary and \
                         any(kind == "primary" and where == slot for _, kind, where, _, _ in side["calls"]):
@@ -452,7 +488,8 @@ def main() -> int:
     parser.add_argument("--reference-mode", default="interpreter",
                         help="the reference's MEMORIES_MODEL_MODULES (default interpreter; \"\" for unset)")
     parser.add_argument("--reverse-reference", action="store_true",
-                        help="the reference runs the battles in the opposite order, in other games")
+                        help="the reference runs the battles in the opposite order, in other games (a battle "
+                             "whose module reads stack it never wrote then differs: notes/pc-build.md)")
     parser.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1), help="games at once")
     parser.add_argument("--shard", type=int, default=12, help="battles per game (default 12)")
     parser.add_argument("--chunk", type=int, default=16, help="VBlanks a step (default 16)")

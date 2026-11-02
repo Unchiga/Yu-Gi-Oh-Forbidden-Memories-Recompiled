@@ -693,15 +693,41 @@ the two must agree on every frame hash and every module call the trace logs
 (setup commands by frame, updates by count). The report gives per record
 identical or the first differing frame counted from the battle's start, the
 modules that ran (identifier and slot) and those that cannot run. Coverage:
-the modules do not write into their images, so after each battle the
-script peeks both slots' 0x5000 bytes and hashes them against the disc's
-image for that record, alternative and slot; an image counts when its slot
-held the disc's bytes and its module was called there on both sides, and
-every distinct image of the records asked for must count. The primary
-modules are reported too: they are not called in these battles (one record
-of 24 tried calls its own). The VRAM hash covers the frame being drawn, so
+the script steps a VBlank at a time while the two models load and peeks
+each slot's 0x5000 bytes once its transfer has landed (the slot's load step,
+`field_E14`, past 0) and before step 9, the first that can call the module;
+it hashes them against the disc's image for that record, alternative and
+slot. An image counts when its slot held the disc's bytes, hashed before its
+module's first call, and its module was called there on both sides, and
+every distinct image of the records asked for must count. Hashing after the
+battle is not enough: record 40's second-star modules (762 in slot A, 859
+in B) write six bytes at +0x1FFC inside their own image. The primary
+modules are reported too: 10 of the 605 distinct ones in slot A (604 in B)
+are called in these battles. The VRAM hash covers the frame being drawn, so
 it differs a frame before the screen does: `--shots N` pictures the first
 differing frame, the one before and the one after.
+
+Checked on Windows (i7-8700K, 6 cores): all 621 records, both
+alternatives, tie, the default against `interpreter` (on master the same
+code, so this is the determinism check at scale): 1,242 of 1,242 battles
+identical, 1,181 of 1,181 distinct images covered in each slot, in 40 min
+with `--jobs 11` (a battle is 1,053 to 2,544 frames, 1,559 on average,
+about 7 s alone; 1.2 s a battle and side with eleven games at once). It catches a difference where
+it is: a build whose default skipped the 200th update of module 418 in slot
+A (that call at frame +836 of record 34's battle) was reported "first
+differing frame +838" for that battle only, and its pictures differ from
++839 on (the stand-in: +639, its first update at +637). The 418 experiment
+(that shape linked as native C, gated by hash) against the interpreter: the
+13 records with it in slot A identical. **Battles are only comparable with
+the same history:** the interpreter's stack (`0x9FF00000`, mips.c) is not in
+save states, and a module that reads a stack word it never wrote sees what
+the battle before left there. With `--reverse-reference` (the reference
+runs the battles in the opposite order) record 330's second-star battle
+differed at +679 (a few sparks) whenever record 320's second-star battle
+came just before it, and was identical with the interpreter's stack zeroed
+before each outermost call (a diagnostic build). The sweep's two sides run
+the same battles in the same order, so they compare alike; native C for such
+a module would read the host's stack instead, and differ.
 
 ### Credits
 
