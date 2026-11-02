@@ -171,11 +171,18 @@ def _windows_documents():
 def user_dir() -> Path:
     """The port's user directory (src/pc/platform/paths.c): MEMORIES_USER_DIR,
     else Documents/My Games on Windows, ~/Library/Application Support on macOS,
-    else an absolute XDG_DATA_HOME or ~/.local/share. (A portable build's
-    user/ is beside the game, which candidates() looks in anyway.)"""
+    else user/ in the program directory when portable.txt is there (portable
+    mode), else Documents/My Games on Windows, ~/Library/Application Support
+    on macOS, an absolute XDG_DATA_HOME or ~/.local/share."""
     named = os.environ.get("MEMORIES_USER_DIR")
     if named:
         return Path(named)
+    program = program_dir()
+    try:
+        if (program / "portable.txt").exists():
+            return program / "user"
+    except OSError:
+        pass
     if sys.platform == "win32":
         return _windows_documents() / "My Games" / "YFM Re-Decomp"
     if sys.platform == "darwin":
@@ -190,7 +197,11 @@ def program_dir() -> Path:
     beside it. A packed program is its executable's folder, except in a macOS
     app (X.app/Contents/MacOS/exe), where it is the folder holding X.app: the
     app's inside is no place a player puts game/ or mods/. From the source it
-    is the script's folder."""
+    is the script's folder, which is not where a game is: MEMORIES_PROGRAM_DIR
+    names it there (paths.c Paths_ProgramDir, which it wins in the game too)."""
+    named = os.environ.get("MEMORIES_PROGRAM_DIR")
+    if named and len(named.encode("utf-8", "surrogateescape")) < 1024:
+        return Path(named)
     if not getattr(sys, "frozen", False):
         return Path(sys.argv[0] or ".").resolve().parent
     folder = Path(sys.executable).resolve().parent
