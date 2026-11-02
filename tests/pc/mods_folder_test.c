@@ -246,8 +246,10 @@ static void file_case(void)
     write_text("user/mods-folder.txt", "from-file\n");
     assert(!setenv("MEMORIES_MODS_FOLDER", "/from/env/", 1));
     assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, "/from/env"));
+#ifndef _WIN32   /* there, setting a variable to nothing removes it */
     assert(!setenv("MEMORIES_MODS_FOLDER", "", 1));
     assert(Mods_Folder(out, sizeof(out)) == -1);
+#endif
     unsetenv("MEMORIES_MODS_FOLDER");
     snprintf(expected, sizeof(expected), "%s/prog/from-file", root);
     assert(!Mods_Folder(out, sizeof(out)) && !strcmp(out, expected));
@@ -369,6 +371,12 @@ static void owned_case(const char *spelling)
 
 static void env_case(int empty)
 {
+#ifdef _WIN32
+    if (empty) {   /* a variable set to nothing is removed on Windows: there is no such state to test */
+        puts("envempty: skipped on Windows");
+        exit(77);   /* CTest's skip code, set on the test in CMakeLists.txt */
+    }
+#endif
     mod_at("chosen/from-file", "{\"id\":\"from-file\"}");
     make_dir("other");
     mod_at("other/from-env", "{\"id\":\"from-env\"}");
@@ -409,6 +417,10 @@ int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "";
     assert(scratch_dir(root, sizeof(root), "memories-modfolder"));
+#ifdef _WIN32
+    for (char *c = root; *c; c++)   /* Mods_Folder gives a path with slashes; so must the paths compared to it */
+        if (*c == '\\') *c = '/';
+#endif
     layout();
     if (!strcmp(what, "file")) file_case();
     else if (!strcmp(what, "precedence")) precedence_case();
