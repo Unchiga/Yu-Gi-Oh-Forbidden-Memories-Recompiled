@@ -162,6 +162,13 @@ static void import_pump(void)
         nap();
     }
 }
+/* The ticks (the picker's answer, then the import); what the panel's texts
+ * say. */
+static const char *settle(void)
+{
+    import_pump();
+    return said_now();
+}
 /* Writes `items` as the picked .zip, taps Import mod... and runs the ticks
  * (the picker's answer, the copy and the reading, the unpacking); what the
  * footer says. */
@@ -171,6 +178,14 @@ static const char *import_zip(const ZipItem *items, int n)
     tap_widget(MODS_UI_FOLDER);
     import_pump();
     return said_now();
+}
+/* The same for a .zip the player opened with the game (ModsWindow_ImportOpened):
+ * the platform's picker has the file already. */
+static const char *open_zip(const ZipItem *items, int n)
+{
+    write_zip(import_source, items, n);
+    assert(ModsWindow_ImportOpened(NULL));
+    return settle();
 }
 static int folder_has(const char *relative)
 {
@@ -453,6 +468,108 @@ static void test_import_job(void)
     ImportJob_SetStepHook(NULL);
     assert(strstr(said, "Imported Big job.") && find("jobbig") == count && folder_has("mods/jobbig/two.bin"));
     assert(!import_leftovers() && !folder_has("picked.zip"));
+    ModsWindow_SetImport(NULL, NULL, NULL);
+    test_touch = 0;
+}
+/* A .zip opened with the game: the same checks and messages as Import
+ * mod..., but the player is asked before anything is installed. */
+static void test_import_opened(void)
+{
+    static const ZipItem good[] = {{"opened/mod.json", "{\"id\": \"opened\", \"name\": \"Opened mod\"}", 1, 0, 0, 0, 0, 0},
+                                   {"opened/name.txt", "hello", 1, 0, 0, 0, 0, 0}};
+    static const ZipItem two[] = {{"o1/mod.json", "{\"name\": \"Open one\"}", 0, 0, 0, 0, 0, 0},
+                                  {"o2/mod.json", "{\"name\": \"Open two\"}", 0, 0, 0, 0, 0, 0}};
+    static const ZipItem none[] = {{"readme.txt", "no mod here", 0, 0, 0, 0, 0, 0}};
+    static const ZipItem fresh[] = {{"fresh/mod.json", "{\"id\": \"fresh\", \"name\": \"Fresh\"}", 0, 0, 0, 0, 0, 0}};
+    static const ZipItem later[] = {{"later/mod.json", "{\"id\": \"later\", \"name\": \"Later\"}", 0, 0, 0, 0, 0, 0}};
+    int count, x, y, before;
+    const char *said;
+    snprintf(import_source, sizeof(import_source), "%s/picked.zip", root);
+    test_touch = 48;
+    /* No picker, nothing to start. */
+    ModsWindow_SetImport(NULL, NULL, NULL);
+    ModsWindow_Init();
+    ModsWindow_Resize(1600, 900);
+    assert(!ModsWindow_ImportOpened(NULL));
+    ModsWindow_SetImport(fake_pick, fake_picked, fake_fetch);
+    ModsWindow_Init();
+    ModsWindow_Resize(1600, 900);
+    count = Mods_Count();
+    before = picks;
+    /* A new mod: asked first, and Cancel installs nothing. */
+    said = open_zip(good, 2);
+    assert(picks == before + 1);
+    assert(strstr(said, "Import Opened mod from the .zip you opened with the game?") && strstr(said, "Import"));
+    assert(Mods_Count() == count && find("opened") < 0 && !folder_has("mods/opened") && folder_has("picked.zip"));
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    draw(1600, 900);
+    assert(Mods_Count() == count && !folder_has("mods/opened") && !folder_has("picked.zip"));
+    assert(!strstr(drawn, "Import Opened mod"));
+    /* Yes: as Import mod... says it, off. */
+    said = open_zip(good, 2);
+    assert(strstr(said, "Import Opened mod from"));
+    tap_widget(MODS_UI_APPLY); /* Import */
+    settle();
+    assert(strstr(drawn, "Imported Opened mod.") && Mods_Count() == count + 1);
+    assert(!Mods_Enabled(find("opened")) && folder_has("mods/opened/name.txt") && !folder_has("picked.zip"));
+    /* Already installed: the Replace question Import mod... asks, not another. */
+    said = open_zip(good, 2);
+    assert(strstr(said, "Opened mod is already installed. Replace it") && !strstr(said, "you opened with the game"));
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    assert(Mods_Count() == count + 1 && !folder_has("picked.zip"));
+    said = open_zip(good, 2);
+    tap_widget(MODS_UI_APPLY); /* Replace */
+    settle();
+    assert(strstr(drawn, "Replaced Opened mod."));
+    /* Several mods in one .zip. */
+    said = open_zip(two, 2);
+    assert(strstr(said, "Import Open one and Open two from the .zip you opened with the game?"));
+    tap_widget(MODS_UI_APPLY);
+    settle();
+    assert(strstr(drawn, "Imported 2 mods: Open one and Open two."));
+    /* A file that is no mod gets the usual refusal, with no question. */
+    said = open_zip(none, 1);
+    assert(strstr(said, "This .zip has no mod in it.") && !strstr(said, "you opened with the game"));
+    assert(!folder_has("picked.zip"));
+    /* The question is gone with the panel's Escape too. */
+    said = open_zip(good, 2);
+    assert(strstr(said, "Replace it"));
+    input(MENU_EVENT_KEY_DOWN, 0, 0, MENU_KEY_ESCAPE, NULL);
+    draw(1600, 900);
+    assert(!strstr(drawn, "Replace it") && !folder_has("picked.zip"));
+    /* The platform could not take the file: its reason, and no import. */
+    before = picks;
+    assert(!ModsWindow_ImportOpened("That is not a file the game can read."));
+    draw(1600, 900);
+    assert(strstr(drawn, "That is not a file the game can read.") && picks == before);
+    /* A question waiting: the file is not started, and the question stays. */
+    write_zip(import_source, good, 2);
+    tap_widget(MODS_UI_FOLDER);
+    settle();
+    assert(ModsWindow_Locate(MODS_UI_APPLY, &x, &y));
+    assert(ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0)); /* a closed panel's question is no more */
+    assert(!ModsWindow_ImportOpened(NULL) && picks == before + 1);
+    draw(1600, 900);
+    assert(strstr(drawn, "Opened mod is already installed. Replace it with the one in this .zip?"));
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    assert(!ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0));
+    /* An import under way (the picker open) holds it up, shown or not. */
+    tap_widget(MODS_UI_FOLDER);
+    assert(ModsWindow_ImportBusy(1) && ModsWindow_ImportBusy(0) && !ModsWindow_ImportOpened(NULL));
+    settle();
+    tap_widget(MODS_UI_CLOSE); /* Cancel the Replace question it ended in */
+    assert(!ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0));
+    /* Import mod... after an opened one is its own again: no question for a
+     * new mod, and the refusals as ever. */
+    said = open_zip(fresh, 1);
+    assert(strstr(said, "Import Fresh from the .zip you opened with the game?"));
+    tap_widget(MODS_UI_CLOSE); /* Cancel */
+    said = import_zip(fresh, 1);
+    assert(strstr(said, "Imported Fresh.") && !strstr(said, "you opened with the game") && find("fresh") >= 0);
+    said = open_zip(none, 1);
+    assert(strstr(said, "This .zip has no mod in it."));
+    said = import_zip(later, 1);
+    assert(strstr(said, "Imported Later.") && !strstr(said, "you opened with the game") && find("later") >= 0);
     ModsWindow_SetImport(NULL, NULL, NULL);
     test_touch = 0;
 }
@@ -833,6 +950,9 @@ static void test_hd_pack(void)
     said = hd_said();
     assert(strstr(said, "Download the HD pack (v9.0.0)? 0 MB; Wi-Fi recommended. Needs ~34 MB free."));
     assert(strstr(said, "Download") && fake_files == 0);
+    /* A file opened with the game waits for it while the panel shows; closed,
+     * the question goes with the panel (Init), so nothing waits. */
+    assert(ModsWindow_ImportBusy(1) && !ModsWindow_ImportBusy(0));
     tap_widget(MODS_UI_CLOSE); /* Cancel */
     assert(HdPack_State() == HD_IDLE && fake_files == 0);
     /* A damaged download: nothing installed, nothing left. */
@@ -886,6 +1006,9 @@ static void test_hd_pack(void)
     while (HdPack_Done() == 0)
         nap();
     assert(HdPack_Busy());
+    /* A job running holds a file opened with the game up, the panel shown or
+     * not: sdl.c then neither opens the panel nor takes the record. */
+    assert(ModsWindow_ImportBusy(1) && ModsWindow_ImportBusy(0));
     tap_widget(MODS_UI_APPLY); /* Apply waits for it */
     draw(1600, 900);
     assert(strstr(drawn, "Wait for the HD pack to finish") && strstr(drawn, "Stop"));
@@ -1208,6 +1331,7 @@ int main(void)
     }
     test_import();
     test_import_job();
+    test_import_opened();
     test_remove();
     test_hd_pack();
     ModsWindow_Init();

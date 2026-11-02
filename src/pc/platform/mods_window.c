@@ -65,6 +65,11 @@ static int (*import_pick)(char *, size_t), (*import_picked)(char *, size_t),
 static int import_step, import_shown = -1;
 static char import_zip[1024];
 static ModsImport *import_waiting;
+/* A .zip the player opened with the game (ModsWindow_ImportOpened) is
+ * imported as the picked one is, but asks first, whether it replaces a mod
+ * or not: import_outside while the import is under way, import_plain while
+ * the question is not a Replace one. */
+static int import_outside, import_plain;
 /* Remove (touch panels with Import mod...): the mod its question (pending
  * 5) is about. */
 static int remove_target = -1;
@@ -362,6 +367,7 @@ void ModsWindow_Init(void)
     if (import_waiting && import_step != 3) { /* a Replace question the last showing left open */
         Mods_ImportClose(import_waiting);
         import_waiting = NULL;
+        import_plain = 0;
         Mods_ImportRemoveTree(import_zip);
     }
     if (hd_step == 2) { /* the HD pack's Download question, left open */
@@ -837,7 +843,7 @@ static void draw_details(MenuCanvas *c, const Layout *l)
 }
 static const char *apply_label(void)
 {
-    return pending == 5 ? "Remove" : pending == 4 ? "Download" : pending == 3 ? "Replace" : pending == 2 ? "Discard changes" : pending == 1 ? "Apply & restart" : "Apply changes";
+    return pending == 5 ? "Remove" : pending == 4 ? "Download" : pending == 3 ? (import_plain ? "Import" : "Replace") : pending == 2 ? "Discard changes" : pending == 1 ? "Apply & restart" : "Apply changes";
 }
 /* With a finger: the fields and the list, the details (side by side or the
  * page shown), and the footer: the message (or the counts) beside Close and
@@ -1032,6 +1038,7 @@ static void import_done(void)
 {
     Mods_ImportClose(import_waiting);
     import_waiting = NULL;
+    import_plain = 0;
     Mods_ImportRemoveTree(import_zip);
 }
 /* The names of the mods of `import` that `pick` picks, "A", "A and B",
@@ -1137,6 +1144,7 @@ static void import_failed(void)
         put(status, sizeof(status), "%s", why);
     ImportJob_Reset();
     import_step = 0;
+    import_outside = 0;
     if (import_waiting)
         import_done();
 }
@@ -1271,7 +1279,8 @@ static int import_target(ModsImport *import, int index, const char *folder)
 static void import_opened(void)
 {
     char folder[1024], names[300];
-    int taken = 0, fresh = 0;
+    int taken = 0, fresh = 0, outside = import_outside;
+    import_outside = 0;
     import_step = 0;
     import_waiting = ImportJob_Take(); /* with at least one mod */
     if (ImportJob_StopAsked()) { /* a Stop that came as the reading ended */
@@ -1302,11 +1311,17 @@ static void import_opened(void)
         import_done();
         return;
     }
-    if (!taken) {
+    if (!taken && !outside) {
         import_install();
         return;
     }
     pending = 3;
+    if (!taken) {
+        import_plain = 1;
+        import_names(import_waiting, any_mod, names, sizeof(names));
+        put(status, sizeof(status), "Import %s from the .zip you opened with the game?", names);
+        return;
+    }
     import_names(import_waiting, replacing, names, sizeof(names));
     if (taken == 1)
         put(status, sizeof(status), "%s is already installed. Replace it with the one in this .zip?", names);
@@ -1333,10 +1348,33 @@ static void import_begin(void)
         put(status, sizeof(status), "%s", ImportJob_State() == IMPORT_JOB_FAILED ? ImportJob_Why()
                                                                                   : "Could not start importing.");
         ImportJob_Reset();
+        import_outside = 0;
         return;
     }
     import_step = 2;
     put(status, sizeof(status), "Importing...");
+}
+int ModsWindow_ImportBusy(int shown)
+{
+    /* a question the panel left open (the HD pack's Download, a Replace) is
+     * answered no when it shows again (Init): it holds nothing up */
+    return (hd_step && (shown || hd_step != 2)) || import_step || (shown && (import_waiting || pending));
+}
+int ModsWindow_ImportOpened(const char *refusal)
+{
+    if (!import_pick)
+        return 0;
+    if (refusal) {
+        put(status, sizeof(status), "%s", refusal);
+        return 0;
+    }
+    if (ModsWindow_ImportBusy(1)) /* the caller waits for it (sdl.c); its question stays as it is */
+        return 0;
+    import_outside = 1;
+    import_start();
+    if (!import_step)
+        import_outside = 0;
+    return import_step != 0;
 }
 /* --- Remove ------------------------------------------------------------ */
 
@@ -1708,6 +1746,8 @@ int ModsWindow_Tick(void)
     if (!result)
         return 0;
     import_step = 0;
+    if (result <= 0)
+        import_outside = 0;
     if (result > 0)
         import_begin();
     else if (result == -1)
