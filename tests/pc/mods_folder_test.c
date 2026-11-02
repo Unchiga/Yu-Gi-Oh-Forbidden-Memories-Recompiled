@@ -424,10 +424,14 @@ static void code_case(int allowed)
 {
     int chosen, own;
     mod_at("chosen/coded", "{\"id\":\"coded\",\"name\":\"Coded\",\"enabled\":true,\"library\":\"coded\"}");
+    mod_at("chosen/self-on", "{\"id\":\"self-on\",\"name\":\"Self on\",\"enabled\":true}");
     mod_at("user/mods/own", "{\"id\":\"own\",\"name\":\"Own\",\"enabled\":true,\"library\":\"own\"}");
+    assert(!setenv("MEMORIES_MOD_CODED", "1", 1));   /* the player turned it on */
     choose("chosen");
     Mods_SetFolderCode(allowed);
     load();
+    /* Where any app can write the folder, a manifest does not turn itself on. */
+    assert(Mods_Active(find("self-on")) == allowed);
     chosen = find("coded");
     own = find("own");
     assert(chosen >= 0 && own >= 0 && !strcmp(Mods_Origin(chosen), "folder") && Mods_HasCode(chosen));
