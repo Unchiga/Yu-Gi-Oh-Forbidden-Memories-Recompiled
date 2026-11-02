@@ -1908,7 +1908,8 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         warn(mod, 1, "Code not run: import it to run its code");
     }
     mod->restart = Json_Bool(Json_Member(root, "restart"), 0);
-    mod->default_enabled = Json_Bool(Json_Member(root, "enabled"), 0);
+    /* Any app can write a phone's shared storage: nothing there turns itself on. */
+    mod->default_enabled = Json_Bool(Json_Member(root, "enabled"), 0) && (folder_code || strcmp(origin, "folder"));
     text = Json_String(Json_Member(root, "textures"), NULL);
     if (text && *text) {
         if (!Paths_Contained(text)) {
