@@ -227,7 +227,7 @@ static int read_one_condition(const char *mod, int index, int n, int c_idx, cons
     switch (type) {
     case MONSTER_COND_NAMED_CARD:
         v = Cards_Reference(Json_Member(entry, "card"));
-        if (v < 1 || v > CARD_COUNT) {
+        if (!Cards_Valid(v)) {
             Mods_Note(mod, "cards[%d]: monster_effects[%d]: conditions[%d]: \"card\" must name a valid card",
                       index, n, c_idx);
             return 0;

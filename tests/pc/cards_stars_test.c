@@ -667,6 +667,41 @@ static void monster_effect_conditions_and_battle_immunity(void)
     assert(effects_ex[2].attacker_type == 130);
     assert(effects_ex[3].battle_modifier == MONSTER_PIERCING_MOD_MONSTER);
     assert(effects_ex[3].attacker_type == 255);
+    /* named_card accepts cards added past CARD_COUNT (Cards_Valid), and rejects invalid card IDs */
+    assert(gCard_nCount > CARD_COUNT);
+    char buf_named[256];
+    snprintf(buf_named, sizeof(buf_named),
+             "[{\"replace\":34,\"monster_effects\":["
+             "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+             "   \"conditions\":["
+             "     {\"type\":\"named_card\",\"card\":%d},"
+             "     {\"type\":\"named_card\",\"card\":%d}]}]}]",
+             gCard_nCount, gCard_nCount + 1);
+    JsonDocument *doc_named_added = Json_Parse(buf_named, error, sizeof(error));
+    assert(doc_named_added);
+    before = effect_notes;
+    for (i = 0, entry = Json_At(Json_Root(doc_named_added), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    /* Card gCard_nCount + 1 is invalid, so the effect was rejected and emitted a note */
+    assert(Cards_MonsterEffects(34, &effects) == 0);
+    assert(effect_notes > before);
+
+    /* When only referencing valid added card gCard_nCount, it succeeds */
+    snprintf(buf_named, sizeof(buf_named),
+             "[{\"replace\":34,\"monster_effects\":["
+             "  {\"when\":\"face_up\",\"do\":\"battle_immunity\","
+             "   \"conditions\":[{\"type\":\"named_card\",\"card\":%d}]}]}]",
+             gCard_nCount);
+    doc_named_added = Json_Parse(buf_named, error, sizeof(error));
+    assert(doc_named_added);
+    for (i = 0, entry = Json_At(Json_Root(doc_named_added), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(34, &effects) == 1);
+    assert(Cards_MonsterEffectsEx(34, &effects_ex) == 1);
+    assert(effects_ex[0].cond_count == 1);
+    assert(effects_ex[0].conditions[0].type == MONSTER_COND_NAMED_CARD);
+    assert(effects_ex[0].conditions[0].card == gCard_nCount);
+
     type_names[130] = NULL;
     type_names[255] = NULL;
 }
