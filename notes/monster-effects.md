@@ -215,7 +215,7 @@ Continuous effects under `when: "face_up"` (`boost`, `battle_immunity`, and `pie
 | Condition Type | Parameters | Evaluation Summary |
 | -------------- | ---------- | ------------------ |
 | **`named_card`** | `card`<br>`whose`: `"all"`, `"own"`, `"opponent"` | True if designated card is face-up in the specified field zone. |
-| **`stat_threshold`** | `stat`: `"atk"` or `"def"`<br>`op`: `"<"`, `"<="`, `">"`, `">="`, `"=="`<br>`value`: integer | Compares this monster's current effective stat against `value`. |
+| **`stat_threshold`** | `stat`: `"atk"` or `"def"`<br>`op`: `"<"`, `"<="`, `">"`, `">="`, `"=="`<br>`value`: integer | Compares this monster's stats before monster-effect boosts (base + equip/permanent modifiers + terrain) against `value`. |
 | **`lowest_atk`** | _(none)_ | True if this monster has strictly lower ATK than every other face-up monster on the board. Ties disqualify. |
 | **`highest_atk`** | _(none)_ | True if this monster has strictly higher ATK than every other face-up monster on the board. Ties disqualify. |
 | **`fewer_monsters`** | _(none)_ | True if controller controls strictly fewer monsters than opponent (`own < opp`). Zero monsters handled explicitly; ties disqualify. |
