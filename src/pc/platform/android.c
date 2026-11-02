@@ -828,7 +828,16 @@ int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size, un
         return 0;
     }
     Mods_ImportCleanup(folder); /* what an import cut short left */
-    if (!(stream = SDL_IOFromFile(mod_pick.uri, "rb"))) {
+    /* A provider's SecurityException (a read right lost with a restart, or
+     * refused by the sender) is not caught by SDL and stays pending. */
+    stream = SDL_IOFromFile(mod_pick.uri, "rb");
+    if (java_failed((JNIEnv *)SDL_GetAndroidJNIEnv())) {
+        if (stream)
+            SDL_CloseIO(stream);
+        snprintf(why, why_size, "Could not read that file: the game may not open it any more.");
+        return 0;
+    }
+    if (!stream) {
         snprintf(why, why_size, "Could not read that file: %s", SDL_GetError());
         return 0;
     }
