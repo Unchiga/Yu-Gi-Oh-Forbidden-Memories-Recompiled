@@ -700,20 +700,42 @@ so a mod that zeroed such a word must get the interpreter. The batch's
 reviewer greps the shape's C for `/`, `%` and `[` on values derived from the
 slot, and the row's note says which words the widening covers. `check --disc`
 fails when the images of a row differ anywhere inside its span, and
-`problems` when a span is wider than the data start with no note. The rows are written from the disc by
-`tools/pc/model_gate.py update --disc` (never by hand: only `backend`, the
-note and a native or kept row's span are), which also writes the table the
-game is built with, `src/pc/overlays/model_gate_table.h`; `check` verifies
+`problems` when a span is wider than the data start with no note. The rows
+are written from the disc by `tools/pc/model_gate.py update --disc` (never by
+hand; only `backend`, `note`, `data_start`, `sources`, `command_table` and a
+native or kept row's `span` are kept from the row), which also writes the
+table the game is built with, `src/pc/overlays/model_gate_table.h`; `check` verifies
 the table, that file and the address sections against each other, and
 against the disc with `--disc` (the images of a shape must agree over its
 span; the report says how far beyond it they agree). Shape 418 is the
 example of a widened span: its data start is `0x396C`, but
-`variant418_bands.c` and `variant418_quad.c` divide by the attack's
-frame-timing words at `D_8013E96C + 0xFC + cmd * 0x44` (`+0x2C`,
-`+0x30 - 0x2C`, `+0x38 - 0x34`), so its span is `0x3F60`, the common prefix
+`variant418_bands.c`, `variant418_sheet.c` and `variant418_quad.c` divide by
+the timing words of the attack's config entry (`+0x28..+0x3C` of the entry at
+`D_8013E96C + 0xFC + cmd * 0x44`), so its span is `0x3F60`, the common prefix
 of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
 those 1,524 bytes runs the interpreter, and one that changes anything after
-them (the model's tables and textures) still runs the C. The gate only
+them (the model's tables and textures) still runs the C.
+
+**The command is an index too, and the caller chooses it.** The setup of a
+variant module is called with a word of the record `% 1000`
+(`model_control.c`, `model_load_step.c`), which a MODEL.MRG mod controls, and
+418's setup takes `D_8013E96C + 0xFC + command * 0x44` as its config entry
+without a bound. The retail table has 18 entries (commands 0 to 17, ending
+at `0x3F30`, inside the span). A native row therefore has a `command_table`
+(`table:stride:count:field`, or `none` when its C takes no command index; for
+418 `0x3A68:0x44:18:0x1B74`): `problems` fails when the entries are not
+inside the span, and `model_modules.c` sends to the interpreter a setup whose
+command is `>= count` and any update whose entry pointer (the work area's word
+at `field`, where the setup stored its choice) is not one of the `count`
+entries. That makes the decision stateless: an attack the interpreter set up
+stays with it, so does one a saved state resumes, and an update with no setup
+before it. The first such call of a slot's code is logged under
+`MEMORIES_TRACE=mods`; the model trace shows `interpreter` for each. The
+batch reviewer therefore greps the shape's C for an index taken from the
+command or the work area, as well as from slot data, and sets `command_table`
+by hand from the C (`count` is where the retail table ends; the gated oracle
+fails a retail record whose command or entry pointer a wrong `count` or
+`field` would send to the interpreter). The gate only
 matches the US disc's modules: the other regions' 418 images differ and are
 interpreted. To port a shape:
 copy the decomp's `variant<shape>_*.c` into `src/native_overlays/model_variant` (not

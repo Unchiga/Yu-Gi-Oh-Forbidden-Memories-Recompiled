@@ -8,6 +8,7 @@
 #include "game/model_slot_properties.h"
 #include "pc/guest/mips.h"
 #include "pc/guest/sha256.h"
+#include "pc/overlays/model_gate_command.h"
 #include "pc/debug/log.h"
 
 /* Each MODEL.MRG record carries two small MIPS control modules that the
@@ -119,7 +120,8 @@ static int native_variant(void *context, int command)
  * slot, which the build links under the module's prefix (GATED_MODULES). */
 typedef int (*ModelEntry)(void *context, int command);
 
-#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry) extern int entry(void *context, int command);
+#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field) \
+    extern int entry(void *context, int command);
 #include "pc/overlays/model_gate_table.h"
 #undef MODEL_GATE_ROW
 
@@ -129,13 +131,15 @@ typedef struct {
     uint32_t span;       /* the bytes from the slot base the hash covers */
     const char *sha256;
     ModelEntry entry;
+    uint32_t entries, table, stride, field; /* the command bound: model_gate_command.h */
 } ModelGateRow;
 
 static const ModelGateRow gate_rows[] = {
-#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry) {slot, identifier, span, sha256, entry},
+#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field) \
+    {slot, identifier, span, sha256, entry, entries, table, stride, field},
 #include "pc/overlays/model_gate_table.h"
 #undef MODEL_GATE_ROW
-    {0, 0, 0, NULL, NULL}};
+    {0, 0, 0, NULL, NULL, 0, 0, 0, 0}};
 
 #define IMAGE_WORDS (0x5000u / 4)
 
@@ -148,7 +152,8 @@ static const ModelGateRow gate_rows[] = {
 typedef struct {
     uint32_t words[IMAGE_WORDS];
     uint32_t span; /* the words compared; 0: no verdict yet */
-    ModelEntry entry;
+    const ModelGateRow *row; /* the native row they hash to, NULL: interpret */
+    int outside_logged;      /* a call outside the row's commands was logged for these words */
 } ModelVerdict;
 
 static ModelVerdict verdicts[2];
@@ -163,20 +168,20 @@ static int hex_equal(const uint8_t digest[32], const char *hex)
     return strcmp(text, hex) == 0;
 }
 
-/* The decomp's C for the variant module in a slot, NULL to interpret it. */
-static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t identifier)
+/* The native row for the variant module in a slot, NULL to interpret it. */
+static const ModelGateRow *native_variant_row(uint32_t module, int slot, uint32_t identifier)
 {
     ModelVerdict *verdict = &verdicts[slot];
     const uint32_t *guest = (const uint32_t *)(uintptr_t)module;
     const ModelGateRow *row;
     uint32_t i, span = 0;
-    ModelEntry entry = NULL;
+    const ModelGateRow *found = NULL;
 
     if (verdict->span) {
         for (i = 0; i < verdict->span / 4 && guest[i] == verdict->words[i]; i++) {
         }
         if (i == verdict->span / 4) {
-            return verdict->entry;
+            return verdict->row;
         }
     }
     for (row = gate_rows; row->sha256; row++) {
@@ -189,7 +194,7 @@ static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t ident
         }
         Sha256(guest, row->span, digest);
         if (hex_equal(digest, row->sha256)) {
-            entry = row->entry;
+            found = row;
             span = row->span;
             break;
         }
@@ -197,13 +202,46 @@ static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t ident
     /* The verdict covers the identifier's longest span, so that the next call
      * compares what it was taken from. */
     verdict->span = span ? span : 4;
-    verdict->entry = entry;
+    verdict->row = found;
+    verdict->outside_logged = 0;
     for (i = 0; i < verdict->span / 4; i++) {
         verdict->words[i] = guest[i];
     }
     LOG(LOG_MODS, "model variant module %u in slot %c: %s", (unsigned)identifier, slot ? 'B' : 'A',
-        entry ? "retail code, native C" : span ? "changed code, interpreter" : "interpreter");
-    return entry;
+        found ? "retail code, native C" : span ? "changed code, interpreter" : "interpreter");
+    return found;
+}
+
+/* Whether the native C may take this call: the retail code is in the slot
+ * (native_variant_row) and the call stays within the entries the hash covers
+ * (model_gate_command.h). A call outside them, which only a mod's record can
+ * make, is interpreted, and logged once for the code in the slot. */
+static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t identifier, void *context, int command)
+{
+    const ModelGateRow *row = native_variant_row(module, slot, identifier);
+    uint32_t pointer = 0;
+    if (!row) {
+        return NULL;
+    }
+    if (row->entries != MODEL_GATE_NO_TABLE && command < 0) {
+        pointer = *(const uint32_t *)((uintptr_t)context + row->field);
+    }
+    if (!ModelGate_CommandCovered(row->entries, row->table, row->stride, module, command, pointer)) {
+        if (!verdicts[slot].outside_logged) {
+            verdicts[slot].outside_logged = 1;
+            if (command >= 0) {
+                LOG(LOG_MODS, "model variant module %u in slot %c: command %d is past the %u entries of its table "
+                    "the hash covers, interpreter", (unsigned)identifier, slot ? 'B' : 'A', command,
+                    (unsigned)row->entries);
+            } else {
+                LOG(LOG_MODS, "model variant module %u in slot %c: an attack whose entry (0x%08X) is not one of the "
+                    "%u the hash covers, interpreter", (unsigned)identifier, slot ? 'B' : 'A', (unsigned)pointer,
+                    (unsigned)row->entries);
+            }
+        }
+        return NULL;
+    }
+    return row->entry;
 }
 
 /* module: the slot base (the identifier word; the entry is at +4). The
@@ -217,7 +255,7 @@ static int run_module(uint32_t module, int variant, void *context, int command)
     uint32_t entry = *(const uint32_t *)(uintptr_t)(module + 4);
     int mode = model_mode();
     int interpret = mode != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
-    ModelEntry native = variant && mode == MODE_DEFAULT && entry != 0 ? native_variant_entry(module, slot, identifier) : NULL;
+    ModelEntry native = variant && mode == MODE_DEFAULT && entry != 0 ? native_variant_entry(module, slot, identifier, context, command) : NULL;
 
     LOG(LOG_MODEL, "%s slot=%u command=%d module %u in %c: %s", variant ? "variant" : "primary",
         (unsigned)D_8009AFA0, command, (unsigned)identifier, slot ? 'B' : 'A',

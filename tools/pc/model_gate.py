@@ -20,6 +20,14 @@ word of its own):
                  (see below). A row that is not native gets the code the
                  images have in common, the most a hash can cover
     data_start   the decomp's data start for the shape (native rows)
+    command_table  where the C indexes the slot's data by the command its
+                 caller passes (a native row's `table:stride:count:field`,
+                 or `none` when it does not): the table's offset from the
+                 slot base, the entry size, how many entries the hash
+                 covers, and the offset in the work area of the pointer to
+                 the entry the setup chose. A setup command past `count`, or
+                 an update whose entry pointer is not one of the covered
+                 entries, runs the interpreter (model_modules.c)
     sources      the numbers of the upstream headers whose C the module is
                  made of (variant<N>_*.c), separated by `;`; empty: the
                  shape's own number. A few modules mix two
@@ -40,8 +48,11 @@ elsewhere. Then the span grows to cover those words (up to what every retail
 image agrees on: `check --disc` fails when the images of a row differ inside
 its span), so that a mod that changes them gets the interpreter, and the
 row's note says which words and why. The reviewer of a batch greps the
-shape's C for `/`, `%` and `[` on values derived from the slot. Everything but backend, note
-and a native row's span is written from the disc by `update`, never by hand.
+shape's C for `/`, `%` and `[` on values derived from the slot, **and on the
+command**, which the caller takes from the record (a mod controls it): an
+index from the caller is bounded by `command_table`, not by the span.
+Everything but backend, note, data_start, sources, command_table and a
+native row's span is written from the disc by `update`, never by hand.
 
     python tools/pc/model_gate.py check                  # the table, the header and the address sections agree
     python tools/pc/model_gate.py check --disc game/rpg-yfm.bin   # and the disc: hashes, spans, boundaries
@@ -73,8 +84,9 @@ ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "config/pc/model_gate.csv"
 HEADER = ROOT / "src/pc/overlays/model_gate_table.h"
 ADDRESSES = ROOT / "config/pc/guest_addresses.txt"
-COLUMNS = ("shape", "backend", "span", "data_start", "sources", "identifier_a", "identifier_b", "images",
-           "sha256_a", "sha256_b", "note")
+COLUMNS = ("shape", "backend", "span", "data_start", "sources", "command_table", "identifier_a", "identifier_b",
+           "images", "sha256_a", "sha256_b", "note")
+NO_TABLE = 0xFFFFFFFF   # model_modules.c: the C takes no command index
 BACKENDS = ("native", "interpret", "keep")
 IMAGE_SIZE = 0x5000        # the ten sectors a variant image is (model_oracle.py, VARIANT_SECTORS)
 BASE = {"A": 0x8013B000, "B": 0x8017B000}
@@ -100,6 +112,16 @@ class Row(dict):
     def sources(self) -> list[int]:
         """The upstream header numbers the module's C is named after."""
         return [int(number) for number in self["sources"].split(";")] if self["sources"] else [self.shape]
+
+    @property
+    def command_table(self) -> tuple[int, int, int, int] | None:
+        """(table offset, entry size, entries covered, work-area offset of the
+        entry pointer), None for `none` or no table."""
+        text = self["command_table"]
+        if text in ("", "none"):
+            return None
+        table, stride, count, field = (int(part, 0) for part in text.split(":"))
+        return table, stride, count, field
 
     def identifier(self, slot: str) -> int:
         return int(self["identifier_" + slot.lower()])
@@ -132,10 +154,13 @@ def native_rows(path: Path = TABLE) -> list[Row]:
 
 
 def write_table(rows: list[Row], path: Path = TABLE) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    """Written whole or not at all: to a temporary file, then in place."""
+    temporary = path.with_suffix(".csv.new")
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, COLUMNS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(sorted(rows, key=lambda row: row.shape))
+    temporary.replace(path)
 
 
 # --- what the build needs ---------------------------------------------------------
@@ -181,13 +206,19 @@ def address_sections(root: Path = ROOT) -> dict[str, dict[str, int]]:
 def header_text(rows: list[Row]) -> str:
     lines = ["/* Written by tools/pc/model_gate.py from config/pc/model_gate.csv: do not edit.\n",
              " * One row for each variant module the decomp's C stands in for:\n",
-             " * MODEL_GATE_ROW(slot, identifier, span, sha256, entry). */\n"]
+             " * MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field):\n",
+             " * entries is NO_TABLE for a C that takes no command index; otherwise the setup command\n",
+             " * must be below it, and an update's entry pointer (at `field` in the work area) one\n",
+             " * of the `entries` of `stride` bytes from `table` (offsets from the slot base). */\n"]
     for row in sorted(rows, key=lambda row: row.shape):
         if row["backend"] != "native":
             continue
         for slot in "AB":
+            table = row.command_table
+            bound = (f"0x{table[2]:X}u, 0x{table[0]:X}u, 0x{table[1]:X}u, 0x{table[3]:X}u" if table
+                     else f"0x{NO_TABLE:X}u, 0u, 0u, 0u")
             lines.append(f'MODEL_GATE_ROW({"AB".index(slot)}, {row.identifier(slot)}u, 0x{row.span:X}u, '
-                         f'"{row.sha256(slot)}", {row.entry(slot)}) /* shape {row.shape} */\n')
+                         f'"{row.sha256(slot)}", {row.entry(slot)}, {bound}) /* shape {row.shape} */\n')
     return "".join(lines)
 
 
@@ -268,6 +299,7 @@ def rewrite(shapes: dict[int, Shape], old: list[Row]) -> list[Row]:
         span = row.span if row and backend in ("native", "keep") else provisional
         rows.append(Row(shape=number, backend=backend, span=f"0x{span:X}",
                         data_start=row["data_start"] if row else "", sources=row["sources"] if row else "",
+                        command_table=row["command_table"] if row else "",
                         identifier_a=number, identifier_b=shape.identifier_b,
                         images=len(shape.images["A"]),
                         sha256_a=hashed(shape, "A", span), sha256_b=hashed(shape, "B", span),
@@ -317,7 +349,23 @@ def problems(rows: list[Row]) -> list[str]:
             row.sources
         except ValueError:
             bad.append(f"{where}: sources {row['sources']!r} is not header numbers separated by ;")
+        try:
+            table = row.command_table
+        except ValueError:
+            bad.append(f"{where}: command_table {row['command_table']!r} is not table:stride:count:field")
+            table = None
         if row["backend"] == "native":
+            if row["command_table"] == "":
+                bad.append(f"{where}: a native row gives its command_table, or `none` when its C takes no command index")
+            if table:
+                offset, stride, count, field = table
+                if count <= 0 or stride <= 0:
+                    bad.append(f"{where}: command_table has no entries")
+                elif offset + stride * count > span:
+                    bad.append(f"{where}: the {count} command_table entries end at 0x{offset + stride * count:X}, "
+                               f"past the span 0x{span:X}: the hash must cover every entry the commands can pick")
+                elif row["data_start"] != "" and offset < row.data_start:
+                    bad.append(f"{where}: command_table starts before the data start")
             if row["data_start"] == "":
                 bad.append(f"{where}: a native row gives the decomp's data start")
             elif row.data_start > span:

@@ -86,7 +86,7 @@ class SpanRules(unittest.TestCase):
 
     def row(self, **fields):
         base = dict(shape="418", backend="native", span="0x3F60", data_start="0x396C", sources="",
-                    identifier_a="418", identifier_b="568", images="11", sha256_a="a" * 64,
+                    command_table="0x3A68:0x44:18:0x1B74", identifier_a="418", identifier_b="568", images="11", sha256_a="a" * 64,
                     sha256_b="b" * 64, note="widened: divides by slot words")
         base.update(fields)
         return model_gate.Row(base)
@@ -100,6 +100,33 @@ class SpanRules(unittest.TestCase):
 
     def test_a_native_row_gives_its_data_start(self):
         self.assertTrue(model_gate.problems([self.row(data_start="")]))
+
+    def test_a_native_row_bounds_its_commands_or_says_it_takes_none(self):
+        self.assertTrue(model_gate.problems([self.row(command_table="")]))
+        self.assertEqual(model_gate.problems([self.row(command_table="none")]), [])
+        self.assertIsNone(self.row(command_table="none").command_table)
+        self.assertEqual(self.row().command_table, (0x3A68, 0x44, 18, 0x1B74))
+
+    def test_the_hash_must_cover_every_entry_the_commands_can_pick(self):
+        # 19 entries of 0x44 from 0x3A68 end at 0x3F74, past the span 0x3F60.
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:19:0x1B74")]))
+        self.assertEqual(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x1B74")]), [])
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3000:0x44:18:0x1B74")]))
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:x:0x1B74")]))
+
+    def test_the_header_carries_the_bound(self):
+        text = model_gate.header_text([self.row(), self.row(shape="500", command_table="none", sha256_a="c" * 64,
+                                                            sha256_b="d" * 64, identifier_a="500",
+                                                            identifier_b="650")])
+        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x1B74u)", text)
+        self.assertIn("0xFFFFFFFFu, 0u, 0u, 0u)", text)
+
+    def test_the_committed_418_row_bounds_to_the_retail_table(self):
+        row = model_gate.native_rows()[0]
+        table, stride, count, field = row.command_table
+        self.assertEqual((count, stride), (18, 0x44))
+        self.assertEqual(table + count * stride, 0x3F30)   # where the retail table ends, inside the span
+        self.assertLessEqual(table + count * stride, row.span)
 
     def test_a_module_may_be_made_of_two_headers(self):
         row = self.row(sources="433;450")
