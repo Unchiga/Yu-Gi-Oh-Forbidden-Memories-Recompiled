@@ -15,6 +15,9 @@
  *    has no saves but saves/ beside the game does (where the port keeps
  *    everything when it cannot make the folder), what is there is copied
  *    in, and used where it is only when it cannot be.
+ *    A mods folder the player chose (mods-folder.txt, Mods_SetFolder in
+ *    mods.h) is read but never written; what the game stores for mods is
+ *    here: imports, the HD pack, mod-data/ and the settings.
  *
  * MEMORIES_PROGRAM_DIR names the program directory where there is no
  * executable to find it by (an Android app is the system's app_process;
