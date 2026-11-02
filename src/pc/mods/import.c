@@ -46,7 +46,8 @@ struct ModsImport {
     ModsImportMod mods[MODS_IMPORT_MAX];
     int mod_count;
     unsigned *done;     /* Mods_ImportWatch: bytes unpacked so far (atomic), or NULL */
-    const int *cancel;  /* and nonzero (atomic) to stop between files */
+    const int *cancel;  /* and nonzero (atomic) to stop, at the next chunk */
+    void (*stepped)(void); /* Mods_ImportStepped: called after each chunk written */
 };
 
 static unsigned le16(const unsigned char *p) { return p[0] | (unsigned)p[1] << 8; }
@@ -175,7 +176,14 @@ typedef struct {
     FILE *out;
     unsigned char *memory;
     unsigned long written, size, crc;
+    unsigned *progress; /* bytes written so far (atomic, added to as they are), or NULL */
+    void (*stepped)(void); /* Mods_ImportStepped, or NULL */
 } Sink;
+/* Whether Mods_ImportWatch's cancel is set (the game thread's Stop). */
+static int stop_asked(const ModsImport *import)
+{
+    return import->cancel && __atomic_load_n(import->cancel, __ATOMIC_ACQUIRE);
+}
 static int emit(Sink *sink, const unsigned char *bytes, size_t n)
 {
     if (n > sink->size - sink->written)
@@ -184,16 +192,22 @@ static int emit(Sink *sink, const unsigned char *bytes, size_t n)
     if (sink->out ? fwrite(bytes, 1, n, sink->out) != n : (memcpy(sink->memory + sink->written, bytes, n), 0))
         return 0;
     sink->written += (unsigned long)n;
+    if (sink->progress)
+        __atomic_add_fetch(sink->progress, (unsigned)n, __ATOMIC_RELEASE);
+    if (sink->stepped)
+        sink->stepped();
     return 1;
 }
 static int unpack(ModsImport *import, const Entry *e, FILE *out, unsigned char *memory, char *why, size_t why_size)
 {
     unsigned char header[30], *in = NULL, *buffer = NULL;
     unsigned long data, left = e->packed;
-    Sink sink = {out, memory, 0, e->size, 0};
+    Sink sink = {out, memory, 0, e->size, 0, NULL, NULL};
     z_stream stream;
     int ok = 0, started = 0, status = Z_OK, wrote;
     sink.crc = crc32(0L, Z_NULL, 0);
+    sink.progress = out ? import->done : NULL;
+    sink.stepped = out ? import->stepped : NULL;
     if (!read_at(import->file, e->offset, header, sizeof(header)) || le32(header) != 0x04034b50u) {
         snprintf(why, why_size, "The .zip is damaged (%s).", e->name);
         return 0;
@@ -222,6 +236,10 @@ static int unpack(ModsImport *import, const Entry *e, FILE *out, unsigned char *
     }
     for (;;) {
         size_t got = 0;
+        if (stop_asked(import)) { /* a big file stops too */
+            snprintf(why, why_size, "Cancelled.");
+            goto done;
+        }
         if (left) {
             got = fread(in, 1, left < CHUNK ? left : CHUNK, import->file);
             if (!got) {
@@ -240,6 +258,10 @@ static int unpack(ModsImport *import, const Entry *e, FILE *out, unsigned char *
         stream.next_in = in;
         stream.avail_in = (uInt)got;
         do {
+            if (stop_asked(import)) { /* a chunk of the .zip can unpack to many */
+                snprintf(why, why_size, "Cancelled.");
+                goto done;
+            }
             stream.next_out = buffer;
             stream.avail_out = CHUNK;
             status = inflate(&stream, Z_NO_FLUSH);
@@ -607,6 +629,11 @@ void Mods_ImportWatch(ModsImport *import, unsigned *done, const int *cancel)
     import->done = done;
     import->cancel = cancel;
 }
+void Mods_ImportStepped(ModsImport *import, void (*stepped)(void))
+{
+    if (import)
+        import->stepped = stepped;
+}
 ModsImportMod *Mods_ImportMod(ModsImport *import, int index)
 {
     return import && index >= 0 && index < import->mod_count ? &import->mods[index] : NULL;
@@ -679,6 +706,66 @@ int Mods_ImportFolderId(const char *directory, char *id, size_t size)
     return 1;
 }
 
+/* The first name in `directory` that is not hidden, in `name`; 0 if none. */
+static int first_visible(const char *directory, char *name, size_t size)
+{
+    DIR *handle = opendir(directory);
+    struct dirent *entry;
+    int found = 0;
+    if (!handle)
+        return 0;
+    while (!found && (entry = readdir(handle)))
+        if (entry->d_name[0] != '.' && strlen(entry->d_name) < size) {
+            copy(name, size, entry->d_name);
+            found = 1;
+        }
+    closedir(handle);
+    return found;
+}
+
+/* The old mods a cut-short import had moved aside (Mods_ImportInstall puts
+ * the old <replaced> of the new <target> in <temporary>/old/<target>/<replaced>)
+ * go back to <mods>/<replaced> when neither it nor <mods>/<target> is
+ * there: the new mod did not get in. A <target> that is there is the new mod
+ * (which may have another name than the one it replaced: the same id under
+ * another folder), so the old copy is left to be deleted. The number of old
+ * mods that could not go back, or could not be looked at: their folder stays. */
+static int restore_old(const char *mods, const char *temporary)
+{
+    char old[2048], targets[MODS_IMPORT_MAX][256];
+    DIR *directory;
+    struct dirent *entry;
+    int n = 0, lost = 0;
+    if (snprintf(old, sizeof(old), "%s/old", temporary) >= (int)sizeof(old) || !(directory = opendir(old)))
+        return 0;
+    while ((entry = readdir(directory)))
+        if (entry->d_name[0] != '.') {
+            if (n == MODS_IMPORT_MAX) {
+                lost++; /* more than one import makes: keep them all */
+                break;
+            }
+            copy(targets[n++], sizeof(targets[0]), entry->d_name);
+        }
+    closedir(directory);
+    for (int i = 0; i < n; i++) {
+        char inner[2400], replaced[256], from[2700], to[2400], target[2400];
+        struct stat info;
+        if (snprintf(inner, sizeof(inner), "%s/%s", old, targets[i]) >= (int)sizeof(inner) ||
+            !first_visible(inner, replaced, sizeof(replaced)) ||
+            snprintf(from, sizeof(from), "%s/%s", inner, replaced) >= (int)sizeof(from) ||
+            snprintf(to, sizeof(to), "%s/%s", mods, replaced) >= (int)sizeof(to) ||
+            snprintf(target, sizeof(target), "%s/%s", mods, targets[i]) >= (int)sizeof(target) ||
+            !stat(target, &info))
+            continue;
+        if (errno != ENOENT || !stat(to, &info) || errno != ENOENT) {
+            lost++;
+            continue;
+        }
+        lost += rename(from, to) != 0;
+    }
+    return lost;
+}
+
 void Mods_ImportCleanup(const char *mods)
 {
     DIR *directory = opendir(mods);
@@ -693,8 +780,13 @@ void Mods_ImportCleanup(const char *mods)
     closedir(directory);
     for (int i = 0; i < n; i++) {
         char path[2048];
-        if (snprintf(path, sizeof(path), "%s/%s", mods, names[i]) < (int)sizeof(path))
-            Mods_ImportRemoveTree(path);
+        if (snprintf(path, sizeof(path), "%s/%s", mods, names[i]) >= (int)sizeof(path))
+            continue;
+        /* a removed mod's own folder (Mods_ImportRemoveInstalled) is not an
+         * import's: nothing in it goes back */
+        if (strncmp(names[i], ".import-removing-", 17) && restore_old(mods, path))
+            continue; /* an old mod that cannot go back is not deleted */
+        Mods_ImportRemoveTree(path);
     }
 }
 
@@ -785,7 +877,6 @@ int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t w
         char number[16];
         snprintf(number, sizeof(number), "%d", m);
         snprintf(at->staged, sizeof(at->staged), "%s/%d", temporary, m);
-        snprintf(at->aside, sizeof(at->aside), "%s/old-%d", temporary, m);
         if (snprintf(at->target, sizeof(at->target), "%s/%s", mods, mod->folder) >= (int)sizeof(at->target) ||
             make_below(temporary, number, 1)) {
             snprintf(why, why_size, "Could not write in the mods folder: %s.", strerror(errno));
@@ -800,7 +891,7 @@ int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t w
              * case-blind file system) */
             if (skipped(e->name) || !prefixed(e->name, mod->prefix) || !e->name[plen])
                 continue;
-            if (import->cancel && __atomic_load_n(import->cancel, __ATOMIC_ACQUIRE)) {
+            if (stop_asked(import)) {
                 snprintf(why, why_size, "Cancelled.");
                 goto done;
             }
@@ -835,11 +926,9 @@ int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t w
             }
             if (!written)
                 goto done;
-            if (import->done)
-                __atomic_add_fetch(import->done, e->size, __ATOMIC_RELEASE);
         }
     }
-    if (import->cancel && __atomic_load_n(import->cancel, __ATOMIC_ACQUIRE)) {
+    if (stop_asked(import)) {
         snprintf(why, why_size, "Cancelled."); /* the last file came with the cancel */
         goto done;
     }
@@ -850,7 +939,19 @@ int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t w
         Place *at = &places[placed];
         struct stat info;
         if (mod->replace[0] && !stat(mod->replace, &info)) {
-            if (rename(mod->replace, at->aside)) {
+            /* Under its own name, in "old/<the new mod's folder>": if the
+             * process ends between this rename and the new mod's (or before
+             * the folder is removed), Mods_ImportCleanup knows where the old
+             * mod goes back, and whether the new one got in. */
+            char old[1200], inner[1200];
+            const char *name = mod->replace + strlen(mod->replace);
+            while (name > mod->replace && name[-1] != '/' && name[-1] != '\\')
+                name--;
+            if (snprintf(old, sizeof(old), "%s/old", temporary) >= (int)sizeof(old) ||
+                snprintf(inner, sizeof(inner), "%s/%s", old, mod->folder) >= (int)sizeof(inner) ||
+                snprintf(at->aside, sizeof(at->aside), "%s/%s", inner, name) >= (int)sizeof(at->aside) ||
+                (mkdir(old, 0777) && errno != EEXIST) || (mkdir(inner, 0777) && errno != EEXIST) ||
+                rename(mod->replace, at->aside)) {
                 snprintf(why, why_size, "Could not move the old %s aside: %s.", mod->folder, strerror(errno));
                 goto undo;
             }

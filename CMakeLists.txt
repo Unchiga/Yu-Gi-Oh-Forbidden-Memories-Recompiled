@@ -796,7 +796,7 @@ if(BUILD_TESTING)
     # Import mod... (src/pc/mods/import.c) inflates with zlib.
     find_package(ZLIB REQUIRED)
     add_executable(memories_mods_window_test tests/pc/mods_window_test.c src/pc/platform/mods_window.c
-        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
+        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/mods/import_job.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
     target_link_libraries(memories_mods_window_test PRIVATE m Threads::Threads ZLIB::ZLIB)
     target_include_directories(memories_mods_window_test PRIVATE src)
     if(NOT MSVC)
@@ -806,7 +806,7 @@ if(BUILD_TESTING)
     # The same with no code mod loader (MEMORIES_NO_CODE_MODS, which no game
     # build sets now): what an import says about a code mod there.
     add_executable(memories_mods_window_no_code_test tests/pc/mods_window_test.c src/pc/platform/mods_window.c
-        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
+        src/pc/mods/import.c src/pc/mods/hd_pack.c src/pc/mods/import_job.c src/pc/platform/update.c ${MOD_TEST_SOURCES})
     target_compile_definitions(memories_mods_window_no_code_test PRIVATE MEMORIES_NO_CODE_MODS)
     target_link_libraries(memories_mods_window_no_code_test PRIVATE m Threads::Threads ZLIB::ZLIB)
     target_include_directories(memories_mods_window_no_code_test PRIVATE src)

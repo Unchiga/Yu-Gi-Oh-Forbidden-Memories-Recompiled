@@ -21,11 +21,15 @@ void Platform_OpenMods(void);
  * or -1 with why); Platform_PickedModZip is 0 while it is open, 1 once a
  * file was chosen, -1 when none was, -2 on a failure (why);
  * Platform_FetchModZip then copies the chosen file to `path` in the mods
- * folder (1; 0 with why). MEMORIES_IMPORT_ZIP=<file> takes that file
+ * folder (1; 0 with why), on the import's thread (import_job.h), never the
+ * game's: it adds the bytes copied to *done, sets *total to the file's size
+ * when the provider gives it, and a nonzero *cancel stops it, the copy
+ * removed (all three atomic). MEMORIES_IMPORT_ZIP=<file> takes that file
  * instead of opening the picker (tests). */
 int Platform_PickModZip(char *why, size_t why_size);
 int Platform_PickedModZip(char *why, size_t why_size);
-int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size);
+int Platform_FetchModZip(char *path, size_t size, char *why, size_t why_size, unsigned *done, unsigned *total,
+                         const int *cancel);
 /* Android only (android.c; sdl.c hands it to HdPack_SetNet there): the
  * network for the Mods panel's HD pack... (src/pc/mods/hd_pack.h), Java's
  * HttpURLConnection on the download's own thread. */

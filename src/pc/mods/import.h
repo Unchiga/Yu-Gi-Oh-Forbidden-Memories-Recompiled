@@ -18,12 +18,13 @@
  * Mods_ImportInstall unpacks them into a new hidden folder of the mods
  * folder (".import-XXXXXX", which the mod scan skips), checking each
  * entry's size and CRC, and then renames each mod into place, after moving
- * the folder it replaces (ModsImportMod.replace) aside. Any failure puts
- * back what it moved and removes the hidden folder: nothing is written
- * outside the mods folder, and nothing half unpacked is left in it. An old
- * folder that cannot be put back is kept in ".recovered-XXXXXX" (named in
- * the reason), never removed. Names are at most 32 folders deep; two mods
- * with one folder or one id are refused. */
+ * the folder it replaces (ModsImportMod.replace) aside, into the hidden
+ * folder's "old/<new folder>/<old folder>". Any failure puts back what it
+ * moved and removes the hidden folder: nothing is written outside the mods
+ * folder, and nothing half unpacked is left in it. An old folder that cannot
+ * be put back is kept in ".recovered-XXXXXX" (named in the reason), never
+ * removed. Names are at most 32 folders deep; two mods with one folder or one
+ * id are refused. */
 #include <limits.h>
 #include <stddef.h>
 
@@ -57,12 +58,17 @@ ModsImportMod *Mods_ImportMod(ModsImport *import, int index);
 int Mods_ImportInstall(ModsImport *import, const char *mods, char *why, size_t why_size);
 /* The bytes its mods take unpacked (what Mods_ImportInstall writes). */
 unsigned long long Mods_ImportBytes(const ModsImport *import);
-/* For Mods_ImportInstall on a thread of its own (the HD pack's download,
- * hd_pack.h): it adds each file's size to *done as it is written, and a
- * nonzero *cancel stops it before the next file (0, "Cancelled.", the mods
- * folder as it was). Both are read and written with atomic operations;
+/* For Mods_ImportInstall on a thread of its own (the HD pack's unpacking,
+ * hd_pack.h; Import mod...'s, import_job.h): it adds the bytes it writes to
+ * *done as it writes them, and a nonzero *cancel stops it at the next chunk
+ * of a file (64 KB of what it unpacks), even in the middle of a big one (0,
+ * "Cancelled.", the mods folder as it was). Both are read and written with atomic operations;
  * NULL for neither. */
 void Mods_ImportWatch(ModsImport *import, unsigned *done, const int *cancel);
+/* `stepped` is called by Mods_ImportInstall after each chunk of a file it
+ * wrote (64 KB at most), on its thread: the tests pause or stop an
+ * unpacking in the middle of a file, at a chunk they know. */
+void Mods_ImportStepped(ModsImport *import, void (*stepped)(void));
 void Mods_ImportClose(ModsImport *import);
 /* Whether `mods`/`folder` is taken (a folder or a file is there); its
  * path in `path` either way. */
@@ -71,7 +77,9 @@ int Mods_ImportTaken(const char *mods, const char *folder, char *path, size_t si
  * manifest's, else the folder's name, as the loader takes it. */
 int Mods_ImportFolderId(const char *directory, char *id, size_t size);
 /* Removes what an import cut short left in the mods folder (".import-*"
- * folders and ".incoming*.zip" files). */
+ * folders and ".incoming*.zip" files). An old mod it had moved aside for a
+ * new one that never got in (the process ended between the two renames) goes
+ * back to its place first, when neither its place nor the new mod's is taken. */
 void Mods_ImportCleanup(const char *mods);
 /* Removes a folder and everything in it, never following a link (on
  * Windows, where only the tests run it, a junction is followed). 0 when it
