@@ -26,6 +26,7 @@ from build_config import (
     GATED_MODULES,
     MODULE_CONFIG,
     MODULES,
+    SOURCE_ADDRESSED_MODULES,
     TARGETS,
     game_sources,
     native_sources,
@@ -273,6 +274,8 @@ def prepare_guest_units(jobs, groups, natives, ordinary, path_for, address_table
     for row in rows:
         row["name"] = host_renames.get(row["name"], row["name"])
     for name, _, identifier, bank in MODULES:
+        if name in SOURCE_ADDRESSED_MODULES:
+            continue  # gated, with no function list of its own
         for row in csv.DictReader(
             (
                 ROOT

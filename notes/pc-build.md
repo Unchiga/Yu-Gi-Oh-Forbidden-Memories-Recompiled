@@ -658,17 +658,69 @@ default) restores the bring-up behaviour
 writes a hash of VRAM per presented frame for comparing two runs;
 `MEMORIES_MODEL_MODULES=interpreter` interprets every battle model module
 even one native C stands in for (the reference, as the duel effects'
-switch; with no native C linked in for the models yet it is the default);
+switch);
 `MEMORIES_MODEL_MODULES=spark` puts the resident spark burst in place of
 every monster's module (it was called `native`; `native` now means the
-default, as for the duel effects, so that it names the native C once there
-is some; any other value is the default too, and says so once on stderr);
+default, as for the duel effects: the decomp's C for the shapes the gate
+table ports, the interpreter for the rest; any other value is the default
+too, and says so once on stderr);
 an effect or module the interpreter cannot run is reported once on stderr
 and falls back the same way. `MEMORIES_TRACE=model` logs every call
 of a model module with the module's identifier, its slot and what ran it
-(`variant slot=0 command=1 module 418 in A: interpreter`; `slot=` is the
-active model, `D_8009AFA0`). `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
+(`variant slot=0 command=1 module 418 in A: native`, or `interpreter` or
+`stand-in`; `slot=` is the active model, `D_8009AFA0`); with
+`MEMORIES_TRACE=mods` each slot logs once, when its module's code changes,
+whether it is the retail code of a native shape (`model variant module 418
+in slot A: retail code, native C`) or not. `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
 modules' own `printf` format strings.
+
+**The model modules in native C** (the gate, `src/pc/overlays/model_modules.c`).
+Upstream matched every variant module (2,362 distinct images, #8531); the
+port links the decomp's C for the shapes `config/pc/model_gate.csv` lists
+as `native` and interprets the rest. A **shape** is a code layout: the
+first word of the slot A image names one (418 is one; slot B's image of the
+same code is linked at `0x8017B000` and its first word is 568), and the disc
+has 324 of them, 183 on more than one image. A row has the shape, its
+`backend` (`native`; `interpret`, the default of a shape not ported yet;
+`keep`, a shape that must stay interpreted, with the reason in its note:
+shape 128 reads stack bytes it never wrote, which native C would take from
+the host's stack), its `span`, the SHA-256 of the first `span` bytes of each
+slot's image, and the images and identifiers it was written from.
+`span` is where the decomp's layout starts the module's data: the hash covers
+code and constants only, so a mod that changes a model's tables or textures
+(`MODEL.MRG` data, #398/#399) still runs the C, and one that changes the
+code is interpreted. The rows are written from the disc by
+`tools/pc/model_gate.py update --disc` (never by hand: only `backend`, the
+note and a native or kept row's span are), which also writes the table the
+game is built with, `src/pc/overlays/model_gate_table.h`; `check` verifies
+the table, that file and the address sections against each other, and
+against the disc with `--disc` (the images of a shape must agree over its
+span; the report says how far beyond it: for 418, `0x3F60` in both slots
+against a span of `0x396C`, the 1,524 bytes between being per-record data
+that happens to be equal on the 11 retail images). To port a shape:
+copy the decomp's `variant<shape>_*.c` into `src/native_overlays/model_variant` (not
+`src/overlays`: every C file there must be a subsegment of a split, which
+these modules do not have here; the headers' relative includes are the
+same depth) and
+the slot B wrappers (the same C under `#define`s of the `0x8017Bxxx`
+names) into `src/native_overlays/model_variant_slot1`, set the row to `native` with
+the decomp's data start as its span, run `update --disc` and a build.
+`build_config.py` makes two gated modules of it (`model_variant_<shape>` and
+`_slot1`, banks `0x8013B000` and `0x8017B000`, every name prefixed as for the
+effect bank), and their entry is the function at the slot base + 4. These
+modules have no retail ELF, so `config/pc/guest_addresses.txt` gets their
+sections from the C's own names (`func_8013B004`, `D_8013E96C`: the decomp
+names things by address), which `build_game32.py` writes after the ELF-derived
+ones whenever it runs; the committed file has them, and
+`tools/pc/test_model_gate.py` fails when it does not. At run time a slot's
+verdict (native entry or none) is kept with a copy of the words it was taken
+from and stands while the slot holds them: the gate costs one pass over about
+3,600 words a call, and sees every way a module arrives. Shape 418 was
+ported first: 13 records have it (Dark Magician, Cocoon of Evolution, Faith
+Bird, Ancient Jar, Lucky Trinket, Ray & Temperature, Protector of the
+Throne, Millennium Shield, Magical Ghost, Hoshiningen, Takuhee, Morphing Jar
+and Invader of the Throne), on the first guardian star's image for nine of
+them and the second's for four (records 166, 275, 419 and 540).
 
 **The model modules' oracle** (`tools/pc/model_oracle.py`): before native C
 replaces any variant module, every MODEL.MRG record's 3D battle run two

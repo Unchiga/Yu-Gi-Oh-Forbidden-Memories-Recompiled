@@ -7,6 +7,7 @@
 #include "game/model_spark_effect.h"
 #include "game/model_slot_properties.h"
 #include "pc/guest/mips.h"
+#include "pc/guest/sha256.h"
 #include "pc/debug/log.h"
 
 /* Each MODEL.MRG record carries two small MIPS control modules that the
@@ -19,12 +20,19 @@
  * every monster's own attack movement. A module the interpreter cannot run
  * (reported once per loaded module) falls back to the stand-in below.
  *
+ * The decomp's C for a code shape runs in its place where the table says so
+ * (config/pc/model_gate.csv, written into model_gate_table.h by
+ * tools/pc/model_gate.py): when the module in the slot is that shape's
+ * retail code and constants, the first `span` bytes of its image by SHA-256.
+ * What follows is the record's own data, which the C reads where the disc
+ * put it, so a mod that changes only a model's tables or textures still runs
+ * the C, and one that changes the code gets the interpreter.
+ *
  * MEMORIES_MODEL_MODULES picks:
- *   unset, `native`  the default: the interpreter (native C for the modules
- *                    the decomp's C is linked in for, once there are any);
+ *   unset, `native`  the default: the decomp's C for the shapes the table
+ *                    ports, the interpreter for the rest;
  *   `interpreter`    every module interpreted, even one native C exists for:
- *                    the reference tools/pc/model_oracle.py compares against.
- *                    Today it is the default;
+ *                    the reference tools/pc/model_oracle.py compares against;
  *   `spark`          the stand-in for every module (the resident spark burst,
  *                    called `native` before native C was planned).
  * Anything else is the default, as MEMORIES_DUEL_EFFECTS takes its values,
@@ -106,18 +114,117 @@ static int native_variant(void *context, int command)
     return result;
 }
 
+/* The variant modules the decomp's C stands in for: the table's native rows
+ * (MODEL_GATE_ROW, model_gate_table.h), each the entry of the C built for its
+ * slot, which the build links under the module's prefix (GATED_MODULES). */
+typedef int (*ModelEntry)(void *context, int command);
+
+#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry) extern int entry(void *context, int command);
+#include "pc/overlays/model_gate_table.h"
+#undef MODEL_GATE_ROW
+
+typedef struct {
+    int slot;
+    uint32_t identifier; /* the first word of the image */
+    uint32_t span;       /* the bytes from the slot base the hash covers */
+    const char *sha256;
+    ModelEntry entry;
+} ModelGateRow;
+
+static const ModelGateRow gate_rows[] = {
+#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry) {slot, identifier, span, sha256, entry},
+#include "pc/overlays/model_gate_table.h"
+#undef MODEL_GATE_ROW
+    {0, 0, 0, NULL, NULL}};
+
+#define IMAGE_WORDS (0x5000u / 4)
+
+/* What a slot's verdict was taken from: while the slot still holds those
+ * words the verdict stands. Comparing them costs less than hashing, and it
+ * catches every way a module arrives (a disc delivery, a mod's copy, a
+ * state) since none has to say so. Word loops, not memcmp: in the translated
+ * build each guest access is resolved. A module no row can stand in for is
+ * compared by its identifier word alone. */
+typedef struct {
+    uint32_t words[IMAGE_WORDS];
+    uint32_t span; /* the words compared; 0: no verdict yet */
+    ModelEntry entry;
+} ModelVerdict;
+
+static ModelVerdict verdicts[2];
+
+static int hex_equal(const uint8_t digest[32], const char *hex)
+{
+    char text[65];
+    unsigned i;
+    for (i = 0; i < 32; i++) {
+        snprintf(text + 2 * i, 3, "%02x", digest[i]);
+    }
+    return strcmp(text, hex) == 0;
+}
+
+/* The decomp's C for the variant module in a slot, NULL to interpret it. */
+static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t identifier)
+{
+    ModelVerdict *verdict = &verdicts[slot];
+    const uint32_t *guest = (const uint32_t *)(uintptr_t)module;
+    const ModelGateRow *row;
+    uint32_t i, span = 0;
+    ModelEntry entry = NULL;
+
+    if (verdict->span) {
+        for (i = 0; i < verdict->span / 4 && guest[i] == verdict->words[i]; i++) {
+        }
+        if (i == verdict->span / 4) {
+            return verdict->entry;
+        }
+    }
+    for (row = gate_rows; row->sha256; row++) {
+        uint8_t digest[32];
+        if (row->slot != slot || row->identifier != identifier) {
+            continue;
+        }
+        if (row->span > span) {
+            span = row->span;
+        }
+        Sha256(guest, row->span, digest);
+        if (hex_equal(digest, row->sha256)) {
+            entry = row->entry;
+            span = row->span;
+            break;
+        }
+    }
+    /* The verdict covers the identifier's longest span, so that the next call
+     * compares what it was taken from. */
+    verdict->span = span ? span : 4;
+    verdict->entry = entry;
+    for (i = 0; i < verdict->span / 4; i++) {
+        verdict->words[i] = guest[i];
+    }
+    LOG(LOG_MODS, "model variant module %u in slot %c: %s", (unsigned)identifier, slot ? 'B' : 'A',
+        entry ? "retail code, native C" : span ? "changed code, interpreter" : "interpreter");
+    return entry;
+}
+
 /* module: the slot base (the identifier word; the entry is at +4). The
- * trace names the module by its slot and identifier, and what runs it. */
+ * trace names the module by its slot and identifier, and what runs it:
+ * "native" (the decomp's C), "interpreter" or "stand-in". */
 static int run_module(uint32_t module, int variant, void *context, int command)
 {
     static uint32_t failed[2][2]; /* [slot][variant]: identifier of a module that failed */
     int slot = module >= 0x8017A000u;
     uint32_t identifier = *(const uint32_t *)(uintptr_t)module;
     uint32_t entry = *(const uint32_t *)(uintptr_t)(module + 4);
-    int interpret = model_mode() != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
+    int mode = model_mode();
+    int interpret = mode != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
+    ModelEntry native = variant && mode == MODE_DEFAULT && entry != 0 ? native_variant_entry(module, slot, identifier) : NULL;
 
     LOG(LOG_MODEL, "%s slot=%u command=%d module %u in %c: %s", variant ? "variant" : "primary",
-        (unsigned)D_8009AFA0, command, (unsigned)identifier, slot ? 'B' : 'A', interpret ? "interpreter" : "stand-in");
+        (unsigned)D_8009AFA0, command, (unsigned)identifier, slot ? 'B' : 'A',
+        native ? "native" : interpret ? "interpreter" : "stand-in");
+    if (native) {
+        return native(context, command);
+    }
     if (interpret) {
         uint32_t args[2], result;
         args[0] = (uint32_t)(uintptr_t)context;

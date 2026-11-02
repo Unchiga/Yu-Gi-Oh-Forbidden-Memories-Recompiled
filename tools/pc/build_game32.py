@@ -44,7 +44,9 @@ sections cannot be placed at chosen addresses (as on Windows). The APK is packag
 package_android.py) with the SDK's build tools; notes/pc-build.md, "Android"."""
 import argparse, concurrent.futures, csv, filecmp, glob, hashlib, json, os, re, shutil, struct, subprocess, sys
 import build_process
-from build_config import BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, TARGETS, game_sources, native_sources
+from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURCE_ADDRESSED_MODULES, TARGETS,
+                          game_sources, native_sources)
+import model_gate
 import ptr32_stores
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -616,13 +618,31 @@ def write_mod_exports(build, names, aliases):
         del flags[flags.index(ANDROID_COMPAT) - 1:flags.index(ANDROID_COMPAT) + 1]   # and its -include
     run([CC, *flags, "-fno-builtin", "-w", "-c", f"{build}/mod_exports.c", "-o", f"{build}/mod_exports.o"])
 
+def with_source_addressed(lines):
+    """The file's lines with the sections of the modules that have no retail
+    ELF (SOURCE_ADDRESSED_MODULES: MODEL.MRG's variant modules, which the
+    table config/pc/model_gate.csv ports) written from their C, at the end,
+    as tools/pc/model_gate.py gives them."""
+    kept, skipping = [], False
+    for line in lines:
+        if line.startswith("["):
+            skipping = line.strip()[1:-1] in SOURCE_ADDRESSED_MODULES
+        if not skipping:
+            kept.append(line.replace("\r\n", "\n"))
+    for name, found in model_gate.address_sections().items():
+        kept.append(f"[{name}]\n")
+        kept.extend(f"{symbol} {address:08X}\n" for symbol, address in sorted(found.items()))
+    return kept
+
+
 def guest_addresses():
     """The retail address of every global in the resident image and in each
     module, and the resident .text range: from the matching build's ELFs
     when they are here, which also refreshes ADDRESSES, else from ADDRESSES.
     Returns ({name: address}, {module: {name: address}}, (start, end))."""
     elfs = {"SLUS_014.11": ELF}
-    elfs.update((name, "tmp/overlays/{0}/build/{0}.elf".format(MODULE_CONFIG.get(name, name))) for name, _, _, _ in MODULES)
+    elfs.update((name, "tmp/overlays/{0}/build/{0}.elf".format(MODULE_CONFIG.get(name, name))) for name, _, _, _ in MODULES
+                if name not in SOURCE_ADDRESSED_MODULES)
     if all(os.path.exists(path) for path in elfs.values()):
         tables = {}
         for name, path in elfs.items():
@@ -643,6 +663,7 @@ def guest_addresses():
         for name, found in tables.items():
             lines.append(f"[{name}]\n")
             lines.extend(f"{symbol} {address:08X}\n" for symbol, address in sorted(found.items()))
+        lines = with_source_addressed(lines)
         current = open(ADDRESSES).read() if os.path.exists(ADDRESSES) else None
         if current != "".join(lines):
             with open(ADDRESSES, "w", newline="\n") as handle:
@@ -650,6 +671,15 @@ def guest_addresses():
             print(f"{ADDRESSES}: updated from the matching build; commit it")
     elif not os.path.exists(ADDRESSES):
         sys.exit(f"{ADDRESSES} is missing, and so are the matching build's ELFs (make match match-overlays)")
+    else:
+        # No ELFs here: the file stands, but the sections of the modules that
+        # have none follow their C, as they do with the ELFs.
+        with open(ADDRESSES) as handle:
+            lines = handle.readlines()
+        if with_source_addressed(lines) != lines:
+            with open(ADDRESSES, "w", newline="\n") as handle:
+                handle.writelines(with_source_addressed(lines))
+            print(f"{ADDRESSES}: the model modules' sections updated from their C; commit it")
     tables, text, section = {}, (0, 0), None
     with open(ADDRESSES) as handle:
         for line in handle:
@@ -662,7 +692,7 @@ def guest_addresses():
                 section = tables.setdefault(parts[0][1:-1], {})
             else:
                 section[parts[0]] = int(parts[1], 16)
-    missing = [name for name in elfs if name not in tables]
+    missing = [name for name in [*elfs, *sorted(SOURCE_ADDRESSED_MODULES)] if name not in tables]
     if missing:
         sys.exit(f"{ADDRESSES} has no section for {', '.join(missing)}")
     return tables["SLUS_014.11"], {name: tables[name] for name, _, _, _ in MODULES}, text
@@ -1287,7 +1317,8 @@ def main():
     # A shared object (Android) is loaded where the system chooses, so its
     # sections cannot be fixed either.
     fixed = dict(FIXED_SECTIONS) if not WINDOWS and not ANDROID else {}
-    for index, (name, _, _, bank) in enumerate(module for module in MODULES if module[3] and fixed):
+    for index, (name, _, _, bank) in enumerate(
+            module for module in MODULES if module[3] and fixed and module[0] not in SOURCE_ADDRESSED_MODULES):
         fixed[f"ovl_{name}_data"] = MODULE_SECTIONS + index * 0x400000
         fixed[f"ovl_{name}_bss"] = MODULE_SECTIONS + index * 0x400000 + 0x200000
     digest = hashlib.sha256()
@@ -1309,6 +1340,8 @@ def main():
     functions = {row["name"]: row["status"] for row in rows}
     overlay_rows = []
     for name, _, identifier, bank in MODULES:
+        if name in SOURCE_ADDRESSED_MODULES:
+            continue   # gated, with no function list of its own
         with open(f"config/slus_01411/overlays/{MODULE_CONFIG.get(name, name)}_functions.csv") as handle:
             for row in csv.DictReader(handle):
                 row["name"] = renamed.get(name, {}).get(row["name"], row["name"])
