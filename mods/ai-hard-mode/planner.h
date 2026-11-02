@@ -7,8 +7,8 @@
 #define HM_USED 0x4000
 #define HM_DOWN 0x1000
 #define HM_DEFENSE 0x0800
-#define HM_IMMUNE 0x0100
-#define HM_PIERCE 0x0200
+#define HM_IMMUNE 0x0010
+#define HM_PIERCE 0x0020
 #define HM_WIN 1000000
 
 #define HM_RESET_COPY 0

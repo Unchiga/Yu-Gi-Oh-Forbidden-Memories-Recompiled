@@ -304,6 +304,24 @@ static void immunity_and_piercing_cases(void)
     d = Hm_PlanField(&b, &o, &rules, 0);
     assert(d.selection[9] == 1 && d.selection[10] == 56 && d.score >= HM_WIN);
 
+    /* Regression test: non-piercing attacker and raw 0x0200 (DUEL_CARD_FLAG_USE_GUARDIAN_STAR_2)
+     * do not deal piercing damage against a defense monster. */
+    b.own[0].flags &= ~HM_PIERCE;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.score < HM_WIN);
+    b.own[0].flags = 0x0200;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.score < HM_WIN);
+
+    /* Regression test: enemy with 0x0200 does not pierce defenders (planner.c:98). */
+    b = empty();
+    b.enemy_lp = 8000;
+    b.enemy[0] = monster(20, 2500, 1000);
+    b.enemy[0].flags = 0x0200;
+    b.own[0] = monster(2, 500, 3000);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[11] == 1);
+
     /* Prefer the piercing attacker against a defense target so the other can attack directly. */
     b = empty();
     b.own[0] = monster(1, 2000, 1500);

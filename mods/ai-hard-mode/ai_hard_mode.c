@@ -129,7 +129,7 @@ static HmCard card_info(int id)
     c.star = (stats >> CARD_STAT_GUARDIAN_STAR_1_SHIFT) & 15;
     c.star2 = (stats >> CARD_STAT_GUARDIAN_STAR_2_SHIFT) & 15;
     if (c.type < CARD_TYPE_MAGIC) {
-        if (MonsterEffects_BattleImmunity(-1, -id)) c.flags |= HM_IMMUNE;
+        if (MonsterEffects_BattleImmunity(-1, -id) < 0) c.flags |= HM_IMMUNE;
         if (MonsterEffects_HasPiercingDamage(-id, -1)) c.flags |= HM_PIERCE;
     }
     return c;
@@ -153,12 +153,12 @@ static HmCard snapshot(int index, int effective, int secret)
     if (!a.card_id) return c;
     /* Redact before looking up metadata, including custom effect identities. */
     if (secret && !sees_hidden() && (a.flags & HM_DOWN)) {
-        c.id = -1; c.flags = a.flags;
+        c.id = -1; c.flags = a.flags & (HM_USED | HM_DOWN | HM_DEFENSE);
         c.type = index >= 61 ? 21 : 0;
         return c;
     }
     c = card_info(a.card_id);
-    c.flags = a.flags;
+    c.flags = (c.flags & (HM_IMMUNE | HM_PIERCE)) | (a.flags & (HM_USED | HM_DOWN | HM_DEFENSE));
     if (effective) { c.attack = a.attack; c.defense = a.defense; }
     c.star = a.guardian_star;
     return c;

@@ -242,6 +242,17 @@ int main(void)
     immune_record = -10; immune_return = -1; pierce_record = -10; pierce_defender = -1;
     assert((card_info(10).flags & (HM_IMMUNE | HM_PIERCE)) == (HM_IMMUNE | HM_PIERCE));
 
+    /* Regression test: DUEL_CARD_FLAG_USE_GUARDIAN_STAR_2 (0x0200) in guest
+     * flags must not leak through snapshot() as HM_PIERCE. */
+    reset();
+    gDuel_aActiveCards[1] = (AiActiveCard){5, 1000, 1000, 0x0200, 0, 1, 0, 0};
+    assert(!(snapshot(1, 0, 0).flags & HM_PIERCE));
+    o = options(); b = board(&o);
+    assert(!(b.own[0].flags & HM_PIERCE));
+    gDuel_aActiveCards[56] = (AiActiveCard){5, 1000, 1000, 0x0200, 0, 1, 0, 0};
+    b = board(&o);
+    assert(!(b.enemy[0].flags & HM_PIERCE));
+
     reset(); gDuel_aActiveCards[11].card_id = 10;
     assert(run() == 1 && D_800EAE88[0] == 11 && !original_calls);
     retail_hand = 0; assert(run() == 1 && original_calls == 1);
