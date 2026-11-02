@@ -46,7 +46,10 @@ not booleans, another folder with the same id, a replacement larger than the
 file it replaces, and texture pack entries that were left out, counted, with
 the first file named.
 **Open mods folder** shows the folder new mods go in (`MEMORIES_MODS_DIR`, else
-the user `mods` folder, created if missing) in the system file manager.
+the user `mods` folder, created if missing) in the system file manager. A mods
+folder the player chose (`mods-folder.txt`, [Mods](modding.md#your-own-mods-folder))
+is read as well but is not where mods go: imports and the HD pack still go to
+the user folder, and a mod found in the chosen folder has the origin `folder`.
 
 The profile field accepts a name (letters, digits, spaces, `_`, `-`). Save writes
 the currently applied preferences to `mod-profiles/<name>.txt` in the user
@@ -156,6 +159,14 @@ and with the buttons as for Replace ("Remove <name>? Its folder is deleted
 from the mods folder, with everything in it. This cannot be undone."; Apply
 reads Remove, Close reads Cancel; Enter says yes and Escape no); the second
 deletes.
+- **A mod in the player's own mods folder** (origin `folder`): Remove is still
+  shown, and pressing it only answers in the message line ("... is in your own
+  mods folder, which the game does not delete from. Delete it there."); no
+  question is asked and nothing is touched. (A refusal rather than a hidden
+  button, because the selected mod decides it and the button is the same for
+  every mod.) A copy imported with the same id lands in the user folder and wins
+  over it; removing that copy brings the chosen folder's back at the next
+  launch.
 - **What it deletes**: `Mods_ImportRemoveInstalled` (`import.c`) removes the
   mod's folder only when it is `<mods folder>/<one plain name>`: not the
   mods folder itself, not a path with `..`, a separator, a `:` or a leading

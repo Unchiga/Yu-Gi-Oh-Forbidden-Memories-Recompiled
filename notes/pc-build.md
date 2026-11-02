@@ -733,6 +733,7 @@ under it:
 | `states/slot1.state` ... | save states (`MEMORIES_STATE_DIR`) |
 | `screenshots/` | F12 and **File > Screenshot** (`MEMORIES_SCREENSHOT_DIR`) |
 | `mods/` | mods the player installed (`notes/modding.md`) |
+| `mods-folder.txt` | the path of a mods folder the player chose, read but never written to (`MEMORIES_MODS_FOLDER` names another for one run; `notes/modding.md`, "Your own mods folder") |
 | `mod-data/<id>/` | whatever a mod stores, the only place one may write |
 
 Portable mode: when a file named `portable.txt` sits beside the executable
@@ -852,7 +853,7 @@ move, Enter activates, Esc closes (with no menu open it is Exit game, asking fir
 | Video | Window scale and Menu size submenus, window mode, scaling/aspect/filter/VSync choices |
 | View | Fusion helper (`fusion_helper`, [notes/fusion-helper.md](fusion-helper.md)), Card passwords, Library: show every card, Free Duel progress (see [View > Free Duel progress](#view--free-duel-progress)); Duel rank submenu: Off, Rank, Rank and score (`rank_meter` 0/1/2, see [Duel rank](#duel-rank)); Opponent's name for COM; Japanese buttons |
 | Game | Game speed, Frame rate and Cheats submenus (see [Cheats](#cheats)), Card drops, Deck slots, card browsing, Restart game |
-| Mods | opens the mods window, which lists every mod found in `mods/` beside the executable and in the user directory (`notes/modding.md`) |
+| Mods | opens the mods window, which lists every mod found in `mods/` beside the executable, in the player's mods folder if they chose one, and in the user directory (`notes/modding.md`) |
 | Debug | HUD levels, pause/step, frame and VRAM dumps |
 | Trace | Live frames, disc, SPU, input and state log-channel switches |
 
