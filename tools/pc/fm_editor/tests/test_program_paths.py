@@ -1,5 +1,6 @@
 """Where the editor looks beside its program, and the port's user directory,
-on each platform (disc.program_dir, disc.user_dir, disc.candidates)."""
+on each platform (disc.program_dir, disc.user_dir, disc.candidates), and the
+mods folders the game reads (validate.mod_folders, chosen_folder)."""
 import os
 import sys
 import tempfile
@@ -101,6 +102,257 @@ class UserDir(unittest.TestCase):
 
     def test_windows_is_documents_my_games(self):
         self.assertEqual(self.where("win32").parts[-2:], ("My Games", "YFM Re-Decomp"))
+
+
+class ChosenFolder(unittest.TestCase):
+    """validate.chosen_folder and mod_folders: the player's mods folder, which
+    the game reads between the release's mods/ and the user directory's
+    (mods.c Mods_Folder, notes/modding.md "Your own mods folder")."""
+
+    def setUp(self):
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        for name in ("MEMORIES_MODS_FOLDER", "MEMORIES_MODS_DIR"):
+            os.environ.pop(name, None)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.user = self.root / "user"
+        self.user.mkdir()
+        os.environ["MEMORIES_USER_DIR"] = str(self.user)
+        self.program = self.root / "program"
+        self.program.mkdir()
+        patch = mock.patch.object(disc, "program_dir", lambda: self.program)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def sidecar(self, data):
+        (self.user / "mods-folder.txt").write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+
+    def on(self, platform):
+        patch = mock.patch.object(sys, "platform", platform)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def mod(self, folder, name, mod_id=None):
+        (folder / name).mkdir(parents=True, exist_ok=True)
+        (folder / name / "mod.json").write_text('{"id": "%s", "name": "%s"}' % (mod_id or name, name), encoding="utf-8")
+
+    def test_none_without_file_or_variable(self):
+        self.assertIsNone(validate.chosen_folder())
+
+    def test_sidecar_names_it(self):
+        self.sidecar("/packs/mine\n")
+        self.assertEqual(validate.chosen_folder(), Path("/packs/mine"))
+
+    def test_first_line_that_says_anything(self):
+        self.sidecar("\n  \r\n\t\n/packs/first\n/packs/second\n")
+        self.assertEqual(validate.chosen_folder(), Path("/packs/first"))
+
+    def test_bom_whitespace_and_crlf_are_dropped(self):
+        self.sidecar(b"\xef\xbb\xbf  \t/packs/mine \t\r\n/other\r\n")
+        self.assertEqual(validate.chosen_folder(), Path("/packs/mine"))
+
+    def test_quotes_are_dropped_with_the_space_inside_them(self):
+        self.sidecar('"/packs/with space "  \r\n')
+        self.assertEqual(validate.chosen_folder(), Path("/packs/with space"))
+
+    def test_one_quote_is_part_of_the_name(self):
+        self.sidecar('"/packs/mine')
+        self.assertIn('"', str(validate.chosen_folder()))
+
+    def test_nothing_but_quotes_or_space_is_none(self):
+        for text in ("", "   \r\n", '""', '" "\n'):
+            self.sidecar(text)
+            self.assertIsNone(validate.chosen_folder(), repr(text))
+
+    def test_trailing_separators_are_dropped_but_a_root_stays(self):
+        self.on("win32")
+        self.sidecar("D:\\Mods\\Pack\\\\\n")
+        self.assertEqual(validate.chosen_folder(), Path("D:/Mods/Pack"))
+        self.sidecar("D:\\\n")
+        self.assertEqual(validate.chosen_folder(), Path("D:/"))
+
+    def test_backslash_is_a_separator_on_windows_only(self):
+        self.on("win32")
+        self.sidecar('"C:\\Users\\p\\My Mods\\"')
+        self.assertEqual(validate.chosen_folder(), Path("C:/Users/p/My Mods"))
+        self.on("linux")
+        self.sidecar("/a\\b\n")
+        self.assertEqual(validate.chosen_folder(), Path("/a\\b"))
+
+    def test_relative_path_is_from_the_program_directory(self):
+        self.sidecar("mods-extra\n")
+        self.assertEqual(validate.chosen_folder(), self.program / "mods-extra")
+        self.on("win32")
+        self.sidecar("..\\sibling/\n")
+        self.assertEqual(validate.chosen_folder(), self.program / ".." / "sibling")
+
+    def test_a_drive_letter_is_absolute_on_windows_only(self):
+        self.sidecar("C:/Mods\n")
+        self.on("win32")
+        self.assertEqual(validate.chosen_folder(), Path("C:/Mods"))
+        self.on("linux")
+        self.assertIn("program", str(validate.chosen_folder()))   # a file name with a colon, under the program
+
+    def test_a_name_too_long_for_the_game_is_none(self):
+        self.sidecar("/" + "a" * 1023)
+        self.assertIsNone(validate.chosen_folder())
+        self.sidecar("/" + "a" * 1021)   # the game's longest line: fgets keeps 1023 bytes
+        self.assertIsNotNone(validate.chosen_folder())
+        os.environ["MEMORIES_MODS_FOLDER"] = "/" + "a" * 1023
+        self.assertIsNone(validate.chosen_folder())
+
+    def test_variable_wins_over_the_file(self):
+        self.sidecar("/from/file")
+        os.environ["MEMORIES_MODS_FOLDER"] = '  "/from/env/"  '
+        self.assertEqual(validate.chosen_folder(), Path("/from/env"))
+
+    def test_variable_set_to_nothing_says_there_is_none(self):
+        self.sidecar("/from/file")
+        for empty in ("", "  ", '""'):
+            os.environ["MEMORIES_MODS_FOLDER"] = empty
+            self.assertIsNone(validate.chosen_folder(), repr(empty))
+
+    def test_variable_relative_is_from_the_program_directory(self):
+        os.environ["MEMORIES_MODS_FOLDER"] = "extra"
+        self.assertEqual(validate.chosen_folder(), self.program / "extra")
+
+    def test_order_is_shipped_then_chosen_then_user(self):
+        shipped, chosen = self.root / "shipped", self.root / "pack"
+        self.sidecar(str(chosen))
+        with mock.patch.object(validate, "shipped_folder", lambda: shipped):
+            self.assertEqual(validate.mod_folders(), [shipped, chosen, self.user / "mods"])
+
+    def test_no_chosen_folder_leaves_the_old_order(self):
+        shipped = self.root / "shipped"
+        with mock.patch.object(validate, "shipped_folder", lambda: shipped):
+            self.assertEqual(validate.mod_folders(), [shipped, self.user / "mods"])
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertEqual(validate.mod_folders(), [self.user / "mods"])
+
+    def test_chosen_without_shipped(self):
+        chosen = self.root / "pack"
+        os.environ["MEMORIES_MODS_FOLDER"] = str(chosen)
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertEqual(validate.mod_folders(), [chosen, self.user / "mods"])
+
+    def test_mods_dir_is_the_only_folder_and_wins(self):
+        self.sidecar(str(self.root / "pack"))
+        os.environ["MEMORIES_MODS_FOLDER"] = str(self.root / "pack")
+        os.environ["MEMORIES_MODS_DIR"] = str(self.root / "only")
+        with mock.patch.object(validate, "shipped_folder", lambda: self.root / "shipped"):
+            self.assertEqual(validate.mod_folders(), [self.root / "only"])
+
+    def test_empty_mods_dir_is_not_set(self):
+        os.environ["MEMORIES_MODS_DIR"] = ""
+        os.environ["MEMORIES_MODS_FOLDER"] = str(self.root / "pack")
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertEqual(validate.mod_folders(), [self.root / "pack", self.user / "mods"])
+
+    def test_the_games_own_folders_are_left_out_as_the_game_does(self):
+        shipped = self.program / "mods"
+        for own in (shipped, shipped / "inner", self.user, self.user / "mods", self.user / "downloads"):
+            os.environ["MEMORIES_MODS_FOLDER"] = str(own)
+            with mock.patch.object(validate, "shipped_folder", lambda: shipped):
+                self.assertEqual(validate.mod_folders(), [shipped, self.user / "mods"], str(own))
+
+    def test_the_mod_being_edited_is_still_added_last(self):
+        chosen, elsewhere = self.root / "pack", self.root / "elsewhere"
+        elsewhere.mkdir()
+        os.environ["MEMORIES_MODS_FOLDER"] = str(chosen)
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            project = mock.Mock(source_dir=elsewhere / "mine")
+            self.assertEqual(validate.mod_folders(project), [chosen, self.user / "mods", elsewhere])
+            project = mock.Mock(source_dir=chosen / "mine")
+            self.assertEqual(validate.mod_folders(project), [chosen, self.user / "mods"])
+
+    def test_chosen_mods_are_installed_and_the_user_folder_wins_an_id(self):
+        from fm_editor import overlaps
+        shipped, chosen = self.root / "shipped", self.root / "pack"
+        self.mod(shipped, "base", "same")
+        self.mod(chosen, "pack-only")
+        self.mod(chosen, "dup", "same")
+        self.mod(self.user / "mods", "dup", "same")
+        os.environ["MEMORIES_MODS_FOLDER"] = str(chosen)
+        with mock.patch.object(validate, "shipped_folder", lambda: shipped):
+            found = {m.id: Path(m.directory) for m in overlaps.installed(validate.mod_folders())}
+            self.assertEqual(found["pack-only"], chosen / "pack-only")
+            self.assertEqual(found["same"], self.user / "mods" / "dup")
+            os.environ["MEMORIES_MODS_FOLDER"] = ""
+            self.assertNotIn("pack-only", {m.id for m in overlaps.installed(validate.mod_folders())})
+    def test_a_nul_ends_the_line_as_it_does_for_the_game(self):
+        self.sidecar(b"/packs/mine\0junk\n/other\n")
+        self.assertEqual(validate.chosen_folder(), Path("/packs/mine"))
+        self.sidecar("﻿/packs/utf16".encode("utf-16"))   # Notepad's "Unicode": NULs between the letters
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            validate.mod_folders()   # a name nothing can open, but no error
+        self.sidecar(b"\0/packs/mine")
+        self.assertIsNone(validate.chosen_folder())
+
+    def test_a_folder_is_tidied_again_after_the_program_directory_is_joined(self):
+        self.sidecar("/mods /\n")
+        self.assertEqual(validate.chosen_folder(), Path("/mods"))
+        self.sidecar('"/mods " \n')
+        self.assertEqual(validate.chosen_folder(), Path("/mods"))
+
+    def test_mods_dir_set_means_no_chosen_folder_is_read(self):
+        chosen = self.root / "pack"
+        os.environ["MEMORIES_MODS_FOLDER"] = str(chosen)
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertEqual(validate.chosen_in_use(), chosen)
+            os.environ["MEMORIES_MODS_DIR"] = str(self.root / "only")
+            self.assertIsNone(validate.chosen_in_use())
+
+    def test_a_folder_the_game_reads_already_is_not_in_use(self):
+        os.environ["MEMORIES_MODS_FOLDER"] = str(self.user / "mods")
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertIsNone(validate.chosen_in_use())
+            self.assertEqual(validate.chosen_folder(), self.user / "mods")
+
+
+class Portable(unittest.TestCase):
+    """The game's own program and user directories (paths.c Paths_ProgramDir,
+    Paths_UserDir): portable.txt beside the program puts the player's files in
+    its user/, which is where mods-folder.txt and user/mods are."""
+
+    def setUp(self):
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        for name in ("MEMORIES_MODS_FOLDER", "MEMORIES_MODS_DIR", "MEMORIES_USER_DIR"):
+            os.environ.pop(name, None)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.program = Path(tmp.name).resolve() / "game"
+        self.program.mkdir()
+        os.environ["MEMORIES_PROGRAM_DIR"] = str(self.program)
+
+    def test_program_dir_variable_names_the_program_directory(self):
+        self.assertEqual(disc.program_dir(), self.program)
+
+    def test_empty_program_dir_variable_is_ignored(self):
+        os.environ["MEMORIES_PROGRAM_DIR"] = ""
+        self.assertNotEqual(disc.program_dir(), Path(""))
+
+    def test_portable_txt_puts_the_user_directory_beside_the_program(self):
+        (self.program / "portable.txt").write_text("", encoding="utf-8")
+        self.assertEqual(disc.user_dir(), self.program / "user")
+
+    def test_user_dir_variable_wins_over_portable_txt(self):
+        (self.program / "portable.txt").write_text("", encoding="utf-8")
+        os.environ["MEMORIES_USER_DIR"] = str(self.program / "named")
+        self.assertEqual(disc.user_dir(), self.program / "named")
+
+    def test_without_portable_txt_it_is_the_platforms(self):
+        self.assertNotEqual(disc.user_dir(), self.program / "user")
+
+    def test_portable_user_directory_holds_the_sidecar_and_the_mods(self):
+        (self.program / "portable.txt").write_text("", encoding="utf-8")
+        (self.program / "user").mkdir()
+        (self.program / "user" / "mods-folder.txt").write_text("mods-extra\n", encoding="utf-8")
+        with mock.patch.object(validate, "shipped_folder", lambda: None):
+            self.assertEqual(validate.mod_folders(), [self.program / "mods-extra", self.program / "user" / "mods"])
+
 
 
 if __name__ == "__main__":
