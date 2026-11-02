@@ -710,6 +710,11 @@ int Platform_SelectDisc(char *path, size_t size, char *why, size_t why_size)
 static Picked mod_pick;
 static int mod_picking;
 
+/* A .zip the player opened with the game (OpenWith.java: "Open with" or
+ * Share in another app) is the picker's answer before the picker is asked:
+ * Platform_TakeOpenedMod keeps its URI here for the next Platform_PickModZip. */
+static char opened_uri[2048];
+
 int Platform_PickModZip(char *why, size_t why_size)
 {
     /* Any document, as for the disc: a .zip's type is not the same with
@@ -721,6 +726,13 @@ int Platform_PickModZip(char *why, size_t why_size)
     if (mod_picking) return 0;
     memset(&mod_pick, 0, sizeof(mod_pick));
     mod_picking = 1;
+    if (opened_uri[0]) {
+        snprintf(mod_pick.uri, sizeof(mod_pick.uri), "%s", opened_uri);
+        opened_uri[0] = '\0';
+        mod_pick.result = 1;
+        SDL_SetAtomicInt(&mod_pick.done, 1);
+        return 0;
+    }
     if (test && *test) {
         snprintf(mod_pick.uri, sizeof(mod_pick.uri), "%s", test);
         mod_pick.result = 1;
@@ -729,6 +741,57 @@ int Platform_PickModZip(char *why, size_t why_size)
     }
     SDL_ShowOpenFileDialog(picked, &mod_pick, NULL, filters, 1, NULL, false);
     return 0;
+}
+
+static int opened_record(char *path, size_t size)
+{
+    const char *internal = SDL_GetAndroidInternalStoragePath();
+    return internal && *internal && snprintf(path, size, "%s/open-with.txt", internal) < (int)size;
+}
+
+int Platform_OpenedModWaiting(void)
+{
+    char record[1100];
+    struct stat seen;
+    return opened_record(record, sizeof(record)) && !stat(record, &seen);
+}
+
+int Platform_TakeOpenedMod(char *why, size_t why_size)
+{
+    char record[1100], taken[1110], *text;
+    int what;
+    opened_uri[0] = '\0';
+    if (!opened_record(record, sizeof(record)) || snprintf(taken, sizeof(taken), "%s.taken", record) >= (int)sizeof(taken)) {
+        snprintf(why, why_size, "Could not find the file that was opened with the game.");
+        return 0;
+    }
+    /* renamed before it is read, so that a record OpenWith writes while it
+     * is read is a new one, not removed with this one */
+    if (rename(record, taken)) {
+        snprintf(why, why_size, "Could not find the file that was opened with the game.");
+        return 0;
+    }
+    what = take_pick(taken, NULL, &text);
+    if (what == PICK_CHOSEN && strncmp(text, "content://", 10)) {
+        snprintf(why, why_size, "The game cannot read that file; open it from a file manager or the Downloads app.");
+    } else if (what == PICK_CHOSEN && strlen(text) < sizeof(opened_uri)) {
+        snprintf(opened_uri, sizeof(opened_uri), "%s", text);
+        free(text);
+        fprintf(stderr, "memories-pc: opened with the game: a URI of %u characters\n", (unsigned)strlen(opened_uri));
+        return 1;
+    } else if (what == PICK_CHOSEN)
+        snprintf(why, why_size, "The address of that file is too long to open.");
+    else if (what == PICK_NONE)
+        snprintf(why, why_size, "That file was opened too long ago. Open it with the game again.");
+    else
+        snprintf(why, why_size, "%s", text ? text : "That file could not be opened.");
+    free(text);
+    return 0;
+}
+
+void Platform_DropOpenedMod(void)
+{
+    opened_uri[0] = '\0';
 }
 
 int Platform_PickedModZip(char *why, size_t why_size)
@@ -740,7 +803,7 @@ int Platform_PickedModZip(char *why, size_t why_size)
         return -2;
     }
     if (!mod_pick.result) return -1;
-    fprintf(stderr, "memories-pc: mod chosen: %s\n", mod_pick.uri);
+    fprintf(stderr, "memories-pc: mod chosen: a URI of %u characters\n", (unsigned)strlen(mod_pick.uri));
     return 1;
 }
 
