@@ -83,6 +83,8 @@ with `cards` needs a restart to apply or remove, like a data override: the
 cards are counted once, when the game starts. The window and the log
 (`MEMORIES_TRACE=mods`) say which ids each entry got.
 
+**What a card's art costs the start.** Each `art` PNG is read, averaged down and reduced to its colors when the game starts (`art.c`), once for the picture and once for the thumbnail. The Android build keeps a registry of every allocation the game makes, searched in a line, so the reduction takes its working memory in a few chunks rather than a block for each cut: 2,000 cards with their own 408x384 art took ten minutes on a Galaxy A22 (about 300 ms a card) and now take a minute (about 32 ms, most of it reading the PNG). The palettes and indices are the same, byte for byte (`pc_card_art`, `tests/pc/card_art_test.c`).
+
 ## Changing a card of the disc
 
 `"replace": <id or name>` in place of `copy` changes the retail card itself,
