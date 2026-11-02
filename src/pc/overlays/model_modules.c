@@ -215,11 +215,15 @@ static const ModelGateRow *native_variant_row(uint32_t module, int slot, uint32_
 /* Whether the native C may take this call: the retail code is in the slot
  * (native_variant_row) and the call stays within the entries the hash covers
  * (model_gate_command.h). A call outside them, which only a mod's record can
- * make, is interpreted, and logged once for the code in the slot. */
-static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t identifier, void *context, int command)
+ * make, is interpreted, and logged once for the code in the slot. *field is
+ * the work area's entry word for such a setup (else -1), for run_module to
+ * clear if the stand-in takes it. */
+static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t identifier, void *context, int command,
+                                       int *field)
 {
     const ModelGateRow *row = native_variant_row(module, slot, identifier);
     uint32_t pointer = 0;
+    *field = -1;
     if (!row) {
         return NULL;
     }
@@ -239,6 +243,9 @@ static ModelEntry native_variant_entry(uint32_t module, int slot, uint32_t ident
                     (unsigned)row->entries);
             }
         }
+        if (command >= 0) {
+            *field = (int)row->field;
+        }
         return NULL;
     }
     return row->entry;
@@ -255,7 +262,8 @@ static int run_module(uint32_t module, int variant, void *context, int command)
     uint32_t entry = *(const uint32_t *)(uintptr_t)(module + 4);
     int mode = model_mode();
     int interpret = mode != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
-    ModelEntry native = variant && mode == MODE_DEFAULT && entry != 0 ? native_variant_entry(module, slot, identifier, context, command) : NULL;
+    int field = -1;
+    ModelEntry native = variant && mode == MODE_DEFAULT && entry != 0 ? native_variant_entry(module, slot, identifier, context, command, &field) : NULL;
 
     LOG(LOG_MODEL, "%s slot=%u command=%d module %u in %c: %s", variant ? "variant" : "primary",
         (unsigned)D_8009AFA0, command, (unsigned)identifier, slot ? 'B' : 'A',
@@ -274,6 +282,11 @@ static int run_module(uint32_t module, int variant, void *context, int command)
         fprintf(stderr, "memories-pc: model %s module %u (slot %c) cannot run; using the stand-in\n",
                 variant ? "variant" : "primary", (unsigned)identifier, slot ? 'B' : 'A');
         failed[slot][variant] = identifier;
+    }
+    /* The stand-in does not write the entry word: one left by an earlier
+     * attack would send this attack's updates to the native C. */
+    if (field >= 0) {
+        *(uint32_t *)((uintptr_t)context + (uint32_t)field) = 0;
     }
     return variant ? native_variant(context, command) : native_primary(context, command);
 }

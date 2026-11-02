@@ -729,7 +729,10 @@ command is `>= count` and any update whose entry pointer (the work area's word
 at `field`, where the setup stored its choice) is not one of the `count`
 entries. That makes the decision stateless: an attack the interpreter set up
 stays with it, so does one a saved state resumes, and an update with no setup
-before it. The first such call of a slot's code is logged under
+before it. When such a setup falls to the stand-in (the interpreter could not
+run it), the stand-in does not write the entry word, so `model_modules.c`
+clears it: one left by an earlier attack would send the updates to the C.
+The first such call of a slot's code is logged under
 `MEMORIES_TRACE=mods`; the model trace shows `interpreter` for each. The
 batch reviewer therefore greps the shape's C for an index taken from the
 command or the work area, as well as from slot data, and sets `command_table`
