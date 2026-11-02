@@ -2815,6 +2815,20 @@ class MonsterEffectsGuiTest(GuiCase):
             "modifier": "destroyed_after_2_attacks",
             "reset": "copy",
         })
+        # Change reset to "In a duel (counts for all copies in player's deck summoned to field)"
+        dialog = EffectDialog(app, app.project, dialog.result, str)
+        self.assertEqual(dialog.vars["modifier_reset"].get(), "This card copy")
+        dialog.vars["modifier_reset"].set(fx.RESET_LABELS[2])
+        dialog.ok()
+        self.assertEqual(dialog.result, {
+            "when": "face_up",
+            "do": "battle_immunity",
+            "target": "self",
+            "modifier": "destroyed_after_2_attacks",
+            "reset": "duel",
+        })
+        dialog = EffectDialog(app, app.project, dialog.result, str)
+        self.assertEqual(dialog.vars["modifier_reset"].get(), fx.RESET_LABELS[2])
 
         # 4. Modifiers and reset are hidden for other effects like "boost"
         dialog = EffectDialog(app, app.project, {"when": "face_up", "do": "boost", "target": "self", "attack": 500}, str)

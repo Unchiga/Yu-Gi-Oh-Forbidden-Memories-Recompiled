@@ -47,6 +47,8 @@ int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record)
 int Cards_Valid(int id) { return id > 0 && id < 1024; }
 int Cards_EffectId(int id) { if (id == 999) hidden_lookups++; return id; }
 int Cards_AiId(int id) { return id == ai_card ? ai_value : id; }
+int Cards_MonsterEffects(int card, const MonsterEffect **effects) { (void)card; if (effects) *effects = 0; return 0; }
+int Cards_MonsterEffectsEx(int card, const MonsterEffectEx **effects_ex) { (void)card; if (effects_ex) *effects_ex = 0; return 0; }
 int Tables_TerrainBonus(int field, int type, int *bonus)
 {
     if (!terrain_override || field != 2 || type != 3) return 0;

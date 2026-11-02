@@ -581,7 +581,7 @@ class EffectDialog(FormDialog):
         line("modifier", "Modifiers", ttk.Combobox(body, textvariable=self.vars["modifier"],
                                                    values=list(fx.MODIFIER_LABELS), state="readonly", width=48))
         line("modifier_reset", "Resets", ttk.Combobox(body, textvariable=self.vars["modifier_reset"],
-                                                      values=list(fx.RESET_LABELS), state="readonly", width=48))
+                                                      values=list(fx.RESET_LABELS), state="readonly", width=62))
         line("attacker_type", "Attacker type", self.choice(body, "attacker_type", [ANY] + attacker_types, type_icon))
         line("attacker_attribute", "Attacker attribute", self.choice(body, "attacker_attribute", self.attribute_names(),
                                                                      self.attribute_icon))

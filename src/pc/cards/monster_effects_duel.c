@@ -86,6 +86,33 @@ static int monster_zone(int record)
     return record >= 0 && record < MONSTER_RECORDS && record % 15 >= 5 && record % 15 < 10;
 }
 static int owner(int record) { return record / 15; }
+int MonsterEffects_DuelCardAttacks(int side, int card_id)
+{
+    int i;
+    if (side < 0 || card_id <= 0) return 0;
+    for (i = 0; i < S.duel_attack_total; i++) {
+        if (S.duel_attack_side[i] == (unsigned char)side && S.duel_attack_card[i] == (short)card_id)
+            return S.duel_attack_count[i];
+    }
+    return 0;
+}
+static void add_duel_card_attack(int side, int card_id)
+{
+    int i;
+    if (side < 0 || card_id <= 0) return;
+    for (i = 0; i < S.duel_attack_total; i++) {
+        if (S.duel_attack_side[i] == (unsigned char)side && S.duel_attack_card[i] == (short)card_id) {
+            if (S.duel_attack_count[i] < 255) S.duel_attack_count[i]++;
+            return;
+        }
+    }
+    if (S.duel_attack_total < MONSTER_DUEL_ATTACKS_MAX) {
+        i = S.duel_attack_total++;
+        S.duel_attack_side[i] = (unsigned char)side;
+        S.duel_attack_card[i] = (short)card_id;
+        S.duel_attack_count[i] = 1;
+    }
+}
 static int phase(void) { return gDuel_wSceneStateFlags & DUEL_SCENE_PHASE_MASK; }
 
 static void trace(const char *what, int card, int record, const MonsterEffect *effect)
@@ -535,7 +562,7 @@ static void look(void)
         }
         if (now != before || S.placed[record]) {
             S.attacked_summon[record] = 0;
-            S.attacked_duel[record] = 0;
+            S.attacked_duel[record] = (unsigned char)MonsterEffects_DuelCardAttacks(owner(record), now);
             if (!now) S.attacked_turn[record] = 0;
         }
         S.card[record] = (short)now;
@@ -795,9 +822,19 @@ void MonsterEffects_Battle(void)
     S.piercing_applied = 0;
     S.piercing_damage = 0;
     if (monster_zone(records[1])) {
-        S.attacked_summon[records[1]]++;
-        S.attacked_turn[records[1]]++;
-        S.attacked_duel[records[1]]++;
+        int def_rec = records[1];
+        int def_card = D_801A7AD8[def_rec].card_id;
+        int def_owner = owner(def_rec);
+        if (!def_card && S.card[def_rec]) def_card = S.card[def_rec];
+        S.attacked_summon[def_rec]++;
+        S.attacked_turn[def_rec]++;
+        add_duel_card_attack(def_owner, def_card);
+        S.attacked_duel[def_rec] = (unsigned char)MonsterEffects_DuelCardAttacks(def_owner, def_card);
+        for (i = 15 * def_owner + 5; i < 15 * def_owner + 10; i++) {
+            if (S.card[i] == def_card) {
+                S.attacked_duel[i] = (unsigned char)MonsterEffects_DuelCardAttacks(def_owner, def_card);
+            }
+        }
     }
     /* A face-down defender is flipped by the battle: as Yu-Gi-Oh! has it,
      * its flip resolves after the damage is worked out (with the card as
@@ -1266,9 +1303,15 @@ int MonsterEffects_BattleImmunity(int attacker_record, int defender_record)
             if (effects[e].action != MONSTER_DO_BATTLE_IMMUNITY) continue;
             if (ex && ex->cond_count > 0) continue;
             if (!ex || ex->battle_modifier == MONSTER_BATTLE_MOD_ALWAYS) return -1;
-            if (ex->battle_modifier == MONSTER_BATTLE_MOD_FIRST_ATTACKED && shields < 1) shields = 1;
-            else if (ex->battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS && shields < 2) shields = 2;
-            else if (ex->battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS && shields < 3) shields = 3;
+            int target_count = 1;
+            if (ex->battle_modifier == MONSTER_BATTLE_MOD_AFTER_2_ATTACKS) target_count = 2;
+            else if (ex->battle_modifier == MONSTER_BATTLE_MOD_AFTER_3_ATTACKS) target_count = 3;
+            if (ex->battle_reset == MONSTER_RESET_DUEL) {
+                int count = MonsterEffects_DuelCardAttacks(D_8009B1D5, card);
+                if (target_count - count > shields) shields = target_count - count;
+            } else {
+                if (target_count > shields) shields = target_count;
+            }
         }
         return shields;
     }

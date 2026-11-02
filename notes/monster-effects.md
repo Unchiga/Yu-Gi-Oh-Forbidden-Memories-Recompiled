@@ -97,6 +97,14 @@ Modifiers define specific combat conditions under which battle immunity applies.
 | `"attacked_by_level"` | If attacked by monster with Level threshold | `attacker_level_op`, `attacker_level` |
 | `"attacked_by_monster"` | If attacked by monster (Combined criteria) | All configured attacker fields |
 
+### Multi-Hit Shield Reset Policies
+
+When an attack-count modifier (`first_attacked`, `destroyed_after_2_attacks`, `destroyed_after_3_attacks`) is configured, its `reset` parameter controls how attack counters accumulate and reset:
+
+- **`"turn"`** (`"In a turn"`): The counter resets at the start of each turn. The monster must be attacked `N` times within the same turn to be destroyed.
+- **`"copy"`** (`"This card copy"`): The counter is tied to that specific individual card instance on the field. When that card leaves the field (destroyed, tributed, fused, etc.), any newly played or summoned monster in that zone or another zone (even another copy of the same card) starts fresh with 0 attacks.
+- **`"duel"`** (`"In a duel (counts for all copies in player's deck summoned to field)"`): The counter persists across the entire duel for that card ID for that player. The number of times that card has been attacked counts toward every copy of that card in the player's deck that is summoned to the field. If a copy is attacked and leaves the field, subsequent copies of that card summoned by the player inherit the accumulated duel attack count. Once the attack threshold is exhausted across the duel, any subsequent copy of that card summoned to the field has 0 shields remaining and can be destroyed immediately by battle. Each player's deck and field track duel attack counts independently.
+
 ### Attacker Filtering Criteria
 
 Attacker criteria dynamically inspect the attacking monster during damage calculation via `Duel_CalcCardStats()` and `Cards_Level()`:
@@ -228,7 +236,7 @@ The FM Editor (`tools/pc/fm_editor`) provides complete graphical configuration f
 
 ### Action Pickers & Dynamic Modifiers Block
 - Selecting `"Cannot be destroyed by battle"` or `"Piercing damage"` reveals the dedicated **Modifiers** panel directly above the Conditions section.
-- For `"battle_immunity"`, options include unconditional protection, attack-count survival limits (with reset policies), and attacker filtering criteria.
+- For `"battle_immunity"`, options include unconditional protection, attack-count survival limits (with reset policies: `"In a turn"`, `"This card copy"`, and `"In a duel (counts for all copies in player's deck summoned to field)"`), and attacker filtering criteria.
 - For `"piercing"`, options include unconditional piercing and defender filtering criteria.
 - Attacker and defender filtering dynamically toggle Type, Attribute, Stat operator/threshold, and Level operator/threshold pickers.
 

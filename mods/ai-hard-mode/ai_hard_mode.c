@@ -64,6 +64,7 @@ static HmOptions options(void)
     o.blind_risk = setting("blind_risk", 50, 0, 100);
     o.material_cost = setting("material_cost", 150, 0, 1000);
     o.trades = setting("equal_trades", 1, 0, 1);
+    o.persistent_shield_attacks = setting("persistent_shield_attacks", 1, 0, 1);
     return o;
 }
 static int actual_hand(int side)
@@ -162,6 +163,24 @@ static HmCard snapshot(int index, int effective, int secret)
     c.star = a.guardian_star;
     return c;
 }
+static unsigned char card_shield_reset(int card_id)
+{
+    const MonsterEffect *effects;
+    const MonsterEffectEx *effects_ex = NULL;
+    int n, e;
+    if (card_id <= 0) return HM_RESET_TURN;
+    n = Cards_MonsterEffects(card_id, &effects);
+    Cards_MonsterEffectsEx(card_id, &effects_ex);
+    for (e = 0; e < n; e++) {
+        const MonsterEffectEx *ex = effects_ex ? &effects_ex[e] : NULL;
+        if (effects[e].when == MONSTER_WHEN_FACE_UP &&
+            effects[e].action == MONSTER_DO_BATTLE_IMMUNITY &&
+            ex && ex->battle_modifier <= MONSTER_BATTLE_MOD_AFTER_3_ATTACKS)
+            return ex->battle_reset;
+    }
+    return HM_RESET_TURN;
+}
+
 static HmBoard board(const HmOptions *o)
 {
     HmBoard b = {0};
@@ -188,13 +207,19 @@ static HmBoard board(const HmOptions *o)
         if (b.own[i].id > 0) {
             int imm = MonsterEffects_BattleImmunity(-1, own_rec);
             if (imm < 0) b.own[i].flags |= HM_IMMUNE;
-            else if (imm > 0) b.own_shields[i] = (unsigned char)imm;
+            else if (imm > 0) {
+                b.own_shields[i] = (unsigned char)imm;
+                b.own_shield_reset[i] = card_shield_reset(b.own[i].id);
+            }
             if (MonsterEffects_HasPiercingDamage(own_rec, -1)) b.own[i].flags |= HM_PIERCE;
         }
         if (b.enemy[i].id > 0) {
             int imm = MonsterEffects_BattleImmunity(-1, enemy_rec);
             if (imm < 0) b.enemy[i].flags |= HM_IMMUNE;
-            else if (imm > 0) b.enemy_shields[i] = (unsigned char)imm;
+            else if (imm > 0) {
+                b.enemy_shields[i] = (unsigned char)imm;
+                b.enemy_shield_reset[i] = card_shield_reset(b.enemy[i].id);
+            }
             if (MonsterEffects_HasPiercingDamage(enemy_rec, -1)) b.enemy[i].flags |= HM_PIERCE;
         }
         for (j = 0; j < 5; j++) {

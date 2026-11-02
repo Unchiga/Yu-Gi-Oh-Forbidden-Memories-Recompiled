@@ -29,14 +29,19 @@ static int custom_matchup(int a, int d) { return a == 11 && d == 3 ? 1000 : a ==
 static const HmRules rules = {card, fusion, equip, terrain, ritual};
 static HmOptions opts(void)
 {
-    HmOptions o = {1,1,1,1,1,1,1,4,6000,50,150,1};
+    HmOptions o = {1,1,1,1,1,1,1,4,6000,50,150,1,1};
     return o;
 }
 static HmBoard empty(void)
 {
     HmBoard b = {0};
+    int i;
     b.lp = b.max_lp = b.enemy_lp = 8000;
     b.spellbinding = 500; b.shadow_spell = 1000;
+    for (i = 0; i < 5; i++) {
+        b.enemy_shield_reset[i] = HM_RESET_TURN;
+        b.own_shield_reset[i] = HM_RESET_TURN;
+    }
     return b;
 }
 static HmCard monster(int id, int atk, int def)
@@ -333,6 +338,32 @@ static void immunity_and_piercing_cases(void)
     b.own[2] = monster(4, 1900, 1500);
     d = Hm_PlanField(&b, &o, &rules, 0);
     assert(d.selection[9] == 2 && d.selection[10] == 56);
+
+    /* Persistent shields (copy / duel): when persistent_shield_attacks is
+     * enabled, a single attacker chips the shield across turns if it takes
+     * 0 recoil (ATK > DEF); when disabled, it holds back. */
+    b = empty();
+    b.own[0] = monster(1, 3000, 2500);
+    b.enemy[0] = monster(2, 1000, 1500); b.enemy[0].flags = HM_DEFENSE;
+    b.enemy_shields[0] = 1;
+    b.enemy_shield_reset[0] = HM_RESET_COPY;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[10] == 56);
+
+    b.enemy_shield_reset[0] = HM_RESET_DUEL;
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[9] == 1 && d.selection[10] == 56);
+
+    {
+        HmOptions no_chip = o;
+        no_chip.persistent_shield_attacks = 0;
+        d = Hm_PlanField(&b, &no_chip, &rules, 0);
+        assert(d.selection[10] == 0);
+    }
+
+    b.own[0] = monster(1, 1400, 1000);
+    d = Hm_PlanField(&b, &o, &rules, 0);
+    assert(d.selection[10] == 0);
 
     /* Attacker-specific immunity: skip the blocked attacker and clear the
      * target with the unblocked one. */

@@ -29,6 +29,7 @@
 
 #define MONSTER_RECORDS 30
 #define MONSTER_QUEUE_MAX 48
+#define MONSTER_DUEL_ATTACKS_MAX 64
 
 /* `effect` is the index in the card's list; MONSTER_TRIGGER_CARD_EFFECT set
  * means its "card_effects" (a Magic/Trap's), not its "monster_effects". The
@@ -85,6 +86,11 @@ typedef struct {
     /* API 19: piercing damage applied flag and damage value for current combat exchange */
     unsigned char piercing_applied;
     short piercing_damage;
+    /* API 19: duel attack counts per card ID across all copies in a player's deck summoned to field */
+    short duel_attack_card[MONSTER_DUEL_ATTACKS_MAX];
+    unsigned char duel_attack_side[MONSTER_DUEL_ATTACKS_MAX];
+    unsigned char duel_attack_count[MONSTER_DUEL_ATTACKS_MAX];
+    unsigned char duel_attack_total;
 } MonsterEffectsState;
 
 extern MonsterEffectsState gMonsterEffects;
@@ -130,6 +136,8 @@ int MonsterEffects_BattleImmunity(int attacker_record, int defender_record);
 int MonsterEffects_HasPiercingDamage(int attacker_record, int defender_record);
 /* Whether conditions on an effect are currently met for a monster. */
 int MonsterEffects_ConditionsMet(int record, const MonsterEffectEx *effect_ex);
+/* How many times a card has been attacked in the current duel on the given side. */
+int MonsterEffects_DuelCardAttacks(int side, int card_id);
 
 #endif
 

@@ -207,9 +207,11 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, unsigne
                 move.damage = def_pos ? (pierce ? diff : 0) : diff;
                 if (!kills && move.damage <= 0) {
                     /* A 0-damage hit on an immune monster is only worthwhile when it strips
-                     * an N-hit shield and enough unused attackers remain to finish it this turn. */
+                     * an N-hit shield and enough unused attackers remain to finish it this turn,
+                     * OR if the shield is persistent (copy/duel) and persistent_shield_attacks is enabled. */
                     int shields = s->b->enemy_shields[j];
                     int need = shields - hits_j + 1, avail = 0, k;
+                    int is_persistent = s->b->enemy_shield_reset[j] != HM_RESET_TURN;
                     if (enemy_perm_immune(s->b, i, j) || shields <= hits_j) continue;
                     for (k = 0; k < 5; k++) {
                         HmCard c = s->b->own[k];
@@ -221,10 +223,16 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, unsigne
                             (s->o->trades || own_perm_immune(s->b, c, k, j) || s->b->own_shields[k] > 0)))
                             avail++;
                     }
-                    if (avail < need) continue;
+                    if (avail < need) {
+                        /* Cannot finish this monster in the current turn. */
+                        if (!is_persistent || !s->o->persistent_shield_attacks) continue;
+                        /* When chipping persistent shields across turns, only attack if
+                         * the attacker takes zero recoil damage (diff >= 0, checked above).
+                         * Award high-priority progress gain (+500 minus risk) to wear down the shield. */
+                    }
                     move.removed = 0;
                     move.lost = exposed(s->b, i, dead | (1u << j));
-                    move.gain = -move.lost;
+                    move.gain = (avail < need) ? (500 - move.lost) : (-move.lost);
                 } else {
                     unsigned next_dead = kills ? (dead | (1u << j)) : dead;
                     move.removed = kills ? value(e) + 400 : 0;
@@ -270,7 +278,7 @@ static void attack_search(AttackSearch *s, unsigned used, unsigned dead, unsigne
         int next_damage = damage + m.damage;
         int next_score = score + m.gain;
         int ranked = next_score + (next_damage >= s->b->enemy_lp ? HM_WIN : 0);
-        if ((m.damage > 0 || m.removed > 0 || m.uncertain) &&
+        if ((m.damage > 0 || m.removed > 0 || m.uncertain || m.gain > 0) &&
             (ranked > s->best.score || (ranked == s->best.score && ranked > 0 &&
             s->best.selection[9] && s->b->own[root.a].attack <
             s->b->own[s->best.selection[9]-1].attack))) {

@@ -85,7 +85,7 @@ CONDITION_HINTS = (
     "A field spell is active, or a specific field spell is active or not active (Forest, Wasteland, Mountain, Sogen, Umi, Yami).",
 )
 RESET = ("turn", "copy", "duel")
-RESET_LABELS = ("In a turn", "This card copy", "In a duel")
+RESET_LABELS = ("In a turn", "This card copy", "In a duel (counts for all copies in player's deck summoned to field)")
 OPS = ("<", "<=", ">", ">=", "==")
 OP_LABELS = ("Lower than (<)", "Lower or equal (<=)", "Higher than (>)", "Higher or equal (>=)", "Equal to (=)")
 STATS = ("atk", "def")

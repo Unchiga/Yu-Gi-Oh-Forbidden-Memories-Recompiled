@@ -410,12 +410,63 @@ static void test_first_second_third_attacked_sequence(void)
     s_test_effects_ex[0] = ex_copy;
     assert(MonsterEffects_HasBattleImmunity(5) == 1);
 
-    /* Also test re-placing the same card ID into zone 5 via MonsterEffects_Placed(5, 0) */
+    /* Also test re-placing Card 19 into zone 5 via MonsterEffects_Placed(5, 0):
+     * attacked_summon[5] resets to 0 (new card copy), but attacked_duel[5]
+     * retains 1 because Card 19 was already attacked once in this duel! */
     MonsterEffects_Placed(5, 0);
     gDuel_wSceneStateFlags = PHASE_FIELD;
     MonsterEffects_Update();
     assert(gMonsterEffects.attacked_summon[5] == 0);
+    assert(gMonsterEffects.attacked_duel[5] == 1);
+
+    /* Before the attack:
+     * ex_copy has 1 shield remaining (new copy has 0 hits on this summon);
+     * ex_duel has 0 shields remaining (Card 19 already absorbed 1 hit in this duel)! */
+    s_test_effects_ex[0] = ex_copy;
+    assert(MonsterEffects_BattleImmunity(-1, 5) == 1);
+    s_test_effects_ex[0] = ex_duel;
+    assert(MonsterEffects_BattleImmunity(-1, 5) == 0);
+
+    /* When attacked, MonsterEffects_Battle() increments the hit counts:
+     * attacked_summon[5] becomes 1 (immune under copy reset);
+     * attacked_duel[5] becomes 2 (exceeds target_count 1, NOT immune under duel reset)! */
+    gDuel_wSceneStateFlags = PHASE_BATTLE;
+    MonsterEffects_Battle();
+    assert(gMonsterEffects.attacked_summon[5] == 1);
+    assert(gMonsterEffects.attacked_duel[5] == 2);
+    s_test_effects_ex[0] = ex_copy;
+    assert(MonsterEffects_HasBattleImmunity(5) == 1);
+    s_test_effects_ex[0] = ex_duel;
+    assert(MonsterEffects_HasBattleImmunity(5) == 0);
+
+    /* If a 3rd different monster (card 20) is played into zone 5:
+     * Card 20 has not been attacked in this duel, so both counts are 0! */
+    D_801A7AD8[5].card_id = 20;
+    D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    MonsterEffects_Update();
+    assert(gMonsterEffects.card[5] == 20);
+    assert(gMonsterEffects.attacked_summon[5] == 0);
     assert(gMonsterEffects.attacked_duel[5] == 0);
+
+    /* If Card 18 is summoned back into zone 5 from the player's deck:
+     * Card 18 was attacked 2 times earlier in the duel, so attacked_duel[5] is 2! */
+    D_801A7AD8[5].card_id = 18;
+    D_801A7AD8[5].flags = DUEL_CARD_FLAG_OCCUPIED;
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    MonsterEffects_Update();
+    assert(gMonsterEffects.card[5] == 18);
+    assert(gMonsterEffects.attacked_summon[5] == 0);
+    assert(gMonsterEffects.attacked_duel[5] == 2);
+
+    /* Opponent's side (zone 20) summoning Card 18 is tracked independently:
+     * Opponent's Card 18 has not been attacked in this duel, so its duel count is 0! */
+    D_801A7AD8[20].card_id = 18;
+    D_801A7AD8[20].flags = DUEL_CARD_FLAG_OCCUPIED;
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    MonsterEffects_Update();
+    assert(gMonsterEffects.card[20] == 18);
+    assert(gMonsterEffects.attacked_duel[20] == 0);
 
     /* Phase 12 (DuelScene_UpdateResultOutro) is NOT a battle phase: immunity must be 0 */
     gMonsterEffects.trap_battle_record[0] = 20;
