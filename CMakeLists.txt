@@ -423,7 +423,7 @@ if(BUILD_TESTING)
     # Guest addresses are 32-bit words: a 32-bit build only.
     if(NOT MSVC AND (CMAKE_SIZEOF_VOID_P EQUAL 4 OR NOT WIN32))
         add_executable(memories_mips_varargs_test tests/pc/mips_varargs_test.c src/pc/guest/mips.c
-            src/game/func_80058838.c)
+            src/pc/guest/state_io.c src/game/func_80058838.c)
         target_include_directories(memories_mips_varargs_test PRIVATE src)
         target_compile_definitions(memories_mips_varargs_test PRIVATE MEMORIES_PC _LANGUAGE_C LANGUAGE_C)
         target_compile_options(memories_mips_varargs_test PRIVATE -Wall)
@@ -437,8 +437,9 @@ if(BUILD_TESTING)
             target_compile_options(memories_mips_varargs_test PRIVATE -mno-ms-bitfields)
         endif()
         add_test(NAME pc_mips_varargs COMMAND memories_mips_varargs_test)
-        # The interpreter's stack as save states carry it (Memories_MipsStack).
-        add_executable(memories_mips_stack_test tests/pc/mips_stack_test.c src/pc/guest/mips.c)
+        # The interpreter's stack as save states carry it (chunk "mips-stack").
+        add_executable(memories_mips_stack_test tests/pc/mips_stack_test.c src/pc/guest/mips.c
+            src/pc/guest/state_io.c)
         target_include_directories(memories_mips_stack_test PRIVATE src)
         target_compile_definitions(memories_mips_stack_test PRIVATE MEMORIES_PC _LANGUAGE_C LANGUAGE_C)
         target_compile_options(memories_mips_stack_test PRIVATE -Wall)

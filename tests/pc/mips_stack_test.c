@@ -1,13 +1,17 @@
 /* The stack the interpreter (src/pc/guest/mips.c) runs MIPS code on, as save
- * states carry it (Memories_MipsStack, state_subsystems.c "mips-stack").
+ * states carry it (Memories_MipsStackState: the chunk "mips-stack").
  * Retail variant modules read locals they never wrote, which hold what an
  * earlier routine left at that depth: one routine stores a word in its frame,
- * another of the same frame size reads it there without writing it. A state
- * restores the stack's bytes, so after a copy of them is put back the read
- * gives the saved word again whatever ran in between; a state from before
- * the stack was carried clears it, and the read gives 0. */
+ * another of the same frame size reads it there without writing it. Loading
+ * a state restores the stack's bytes, so the read gives the saved word again
+ * whatever ran in between; a state without the chunk, or with one of another
+ * size, clears the stack, and the read gives 0. Where 0x9FF00000 cannot be
+ * mapped (Windows i686 without large-address awareness) the interpreter runs
+ * on host memory instead, and so does this test. */
+#include "scratch.h"
 #include "pc/guest/image.h"
 #include "pc/guest/mips.h"
+#include "pc/guest/state_io.h"
 #include "pc/debug/log.h"
 #include <assert.h>
 #include <stdint.h>
@@ -51,9 +55,9 @@ enum { V0 = 2, A0 = 4, SP = 29, RA = 31 };
 #define LW(rt, offset, base) I(0x23, base, rt, offset)
 #define JR(rs) ((uint32_t)(rs) << 21 | 8)
 
-/* store(a0): a local at sp+8 of a 32-byte frame. load(): the same local, never written. */
+/* store(a0): a local at sp+8 of a 32-byte frame. load_local(): the same local, never written. */
 static uint32_t store[] = {ADDIU(SP, SP, -32), SW(A0, 8, SP), JR(RA), ADDIU(SP, SP, 32)};
-static uint32_t load[] = {ADDIU(SP, SP, -32), LW(V0, 8, SP), JR(RA), ADDIU(SP, SP, 32)};
+static uint32_t load_local[] = {ADDIU(SP, SP, -32), LW(V0, 8, SP), JR(RA), ADDIU(SP, SP, 32)};
 
 static uint32_t run(uint32_t *code, uint32_t argument)
 {
@@ -62,27 +66,74 @@ static uint32_t run(uint32_t *code, uint32_t argument)
     return result;
 }
 
+/* Windows tmpfile() uses the drive root, which CI cannot write (state_io_test.c). */
+static FILE *state_file(void)
+{
+    static char directory[SCRATCH_MAX];
+    static unsigned count;
+    char path[SCRATCH_MAX + 32];
+    if (!*directory && !scratch_dir(directory, sizeof(directory), "memories-mips-stack")) return NULL;
+    snprintf(path, sizeof(path), "%s/state%u.bin", directory, count++);
+    return fopen(path, "w+b");
+}
+
+/* A state of a 16-byte header and the stack's chunk; *size its length. */
+static uint8_t *saved_state(size_t *size)
+{
+    static const uint8_t header[16];
+    MemoriesState save = {0, state_file(), NULL, 0};
+    uint8_t *image;
+    long length;
+    assert(save.file);
+    Memories_StateWrite(&save, header, sizeof(header));
+    Memories_MipsStackState(&save);
+    assert(!ferror(save.file));
+    length = ftell(save.file);
+    assert(length > 16);
+    image = malloc((size_t)length);
+    assert(image);
+    rewind(save.file);
+    assert(fread(image, 1, (size_t)length, save.file) == (size_t)length);
+    fclose(save.file);
+    *size = (size_t)length;
+    return image;
+}
+
+static void load(const uint8_t *image, size_t size)
+{
+    MemoriesState state = {1, NULL, image, size};
+    Memories_MipsStackState(&state);
+}
+
 int main(void)
 {
-    size_t size = 0;
-    uint8_t *stack, *saved;
+    size_t size = 0, length;
+    uint8_t *stack, *image, other[16 + 20 + 8];
+    uint32_t chunk_size = 8;
 
     run(store, 0x12345678u);
-    assert(run(load, 0) == 0x12345678u);   /* what the earlier routine left there */
-
+    assert(run(load_local, 0) == 0x12345678u);   /* what the earlier routine left there */
     stack = Memories_MipsStack(&size);
     assert(stack && size >= 0x1000);
-    saved = malloc(size);
-    assert(saved);
-    memcpy(saved, stack, size);            /* a state saved here */
-    run(store, 0xdeadbeefu);
-    assert(run(load, 0) == 0xdeadbeefu);
-    memcpy(stack, saved, size);            /* ... and loaded */
-    assert(run(load, 0) == 0x12345678u);
 
-    memset(stack, 0, size);                /* a state from before the stack was in them */
-    assert(run(load, 0) == 0);
-    free(saved);
+    image = saved_state(&length);              /* a state saved here */
+    assert(length == 16 + 20 + size);
+    run(store, 0xdeadbeefu);
+    assert(run(load_local, 0) == 0xdeadbeefu);
+    load(image, length);                       /* ... and loaded */
+    assert(run(load_local, 0) == 0x12345678u);
+
+    load(image, 16);                           /* a state from before the chunk */
+    assert(run(load_local, 0) == 0);
+
+    run(store, 0xdeadbeefu);                   /* one whose chunk has another size */
+    memset(other, 0, sizeof(other));
+    memcpy(other + 16, "mips-stack", 10);
+    memcpy(other + 32, &chunk_size, 4);
+    memset(other + 36, 0x5a, 8);
+    load(other, sizeof(other));
+    assert(run(load_local, 0) == 0);
+    free(image);
     puts("mips stack: ok");
     return 0;
 }
