@@ -828,7 +828,7 @@ def main():
     fingerprint_inputs.extend(
         path
         for path in (ROOT / "src").rglob("*")
-        if path.is_file() and path.suffix in {".c", ".h", ".S"}
+        if path.is_file() and path.suffix in {".c", ".h", ".inc", ".S"}
     )
     fingerprint_inputs.extend(
         path

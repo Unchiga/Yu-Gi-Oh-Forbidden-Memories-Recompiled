@@ -704,8 +704,8 @@ fails when the images of a row differ anywhere inside its span, and
 are written from the disc by `tools/pc/model_gate.py update --disc` (never by
 hand; only `backend`, `note`, `data_start`, `sources`, `command_table` and a
 native or kept row's `span` are kept from the row), which also writes the
-table the game is built with, `src/pc/overlays/model_gate_table.h`; `check` verifies
-the table, that file and the address sections against each other, and
+table the game is built with, `src/pc/overlays/model_gate_table.inc`;
+`check` verifies the table, that file and the address sections against each other, and
 against the disc with `--disc` (the images of a shape must agree over its
 span; the report says how far beyond it they agree). Shape 418 is the
 example of a widened span: its data start is `0x396C`, but

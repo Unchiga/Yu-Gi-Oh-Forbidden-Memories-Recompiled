@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The model modules' gate table without a disc: config/pc/model_gate.csv is
-well formed, src/pc/overlays/model_gate_table.h is what it gives, the build
+well formed, src/pc/overlays/model_gate_table.inc is what it gives, the build
 has a gated module for each slot of each native shape, and the committed
 config/pc/guest_addresses.txt has the sections the C gives
 (tools/pc/model_gate.py; notes/pc-build.md, "MIPS-only effects")."""

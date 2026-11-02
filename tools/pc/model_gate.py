@@ -57,7 +57,7 @@ native row's span is written from the disc by `update`, never by hand.
     python tools/pc/model_gate.py check                  # the table, the header and the address sections agree
     python tools/pc/model_gate.py check --disc game/rpg-yfm.bin   # and the disc: hashes, spans, boundaries
     python tools/pc/model_gate.py update --disc game/rpg-yfm.bin  # rewrite the table from the disc
-    python tools/pc/model_gate.py write                  # rewrite src/pc/overlays/model_gate_table.h
+    python tools/pc/model_gate.py write                  # rewrite src/pc/overlays/model_gate_table.inc
 
 To port a shape: copy the decomp's C (variant<shape>_*.c; the slot B wrappers
 go to src/native_overlays/model_variant_slot1), set the row's backend to `native`
@@ -82,7 +82,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "config/pc/model_gate.csv"
-HEADER = ROOT / "src/pc/overlays/model_gate_table.h"
+HEADER = ROOT / "src/pc/overlays/model_gate_table.inc"
 ADDRESSES = ROOT / "config/pc/guest_addresses.txt"
 COLUMNS = ("shape", "backend", "span", "data_start", "sources", "command_table", "identifier_a", "identifier_b",
            "images", "sha256_a", "sha256_b", "note")

@@ -22,7 +22,7 @@
  * (reported once per loaded module) falls back to the stand-in below.
  *
  * The decomp's C for a code shape runs in its place where the table says so
- * (config/pc/model_gate.csv, written into model_gate_table.h by
+ * (config/pc/model_gate.csv, written into model_gate_table.inc by
  * tools/pc/model_gate.py): when the module in the slot is that shape's
  * retail code and constants, the first `span` bytes of its image by SHA-256.
  * What follows is the record's own data, which the C reads where the disc
@@ -116,13 +116,13 @@ static int native_variant(void *context, int command)
 }
 
 /* The variant modules the decomp's C stands in for: the table's native rows
- * (MODEL_GATE_ROW, model_gate_table.h), each the entry of the C built for its
+ * (MODEL_GATE_ROW, model_gate_table.inc), each the entry of the C built for its
  * slot, which the build links under the module's prefix (GATED_MODULES). */
 typedef int (*ModelEntry)(void *context, int command);
 
 #define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field) \
     extern int entry(void *context, int command);
-#include "pc/overlays/model_gate_table.h"
+#include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
 
 typedef struct {
@@ -137,7 +137,7 @@ typedef struct {
 static const ModelGateRow gate_rows[] = {
 #define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field) \
     {slot, identifier, span, sha256, entry, entries, table, stride, field},
-#include "pc/overlays/model_gate_table.h"
+#include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
     {0, 0, 0, NULL, NULL, 0, 0, 0, 0}};
 
