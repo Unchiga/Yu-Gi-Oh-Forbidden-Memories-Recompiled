@@ -4355,13 +4355,23 @@ untouched: with a mouse every path is the old one, pixel for pixel.
   a code mod staying off, what it refuses). `Platform_PickModZip`
   returns at once and the answer comes on the Java thread; the panel asks
   for it once per pump (`Panel_Tick`, `ModsWindow_Tick`,
-  `Platform_PickedModZip`), shows "Importing...", and then the document is
-  copied into the mods folder (`mods/.incoming.zip`, `Platform_FetchModZip`)
-  through `SDL_IOFromFile` before it is read, so a provider's stream that
-  cannot seek works too. A big `.zip` holds the frame while it is copied and
-  unpacked. `MEMORIES_IMPORT_ZIP=<file>` in `environment.txt` takes that file
+  `Platform_PickedModZip`), and then the document is copied into the mods
+  folder (`mods/.incoming.zip`, `Platform_FetchModZip`) through
+  `SDL_IOFromFile` before it is read, so a provider's stream that cannot
+  seek works too. The copy, the reading and the unpacking run on the import's
+  thread (`src/pc/mods/import_job.c`), never the game's: SDL attaches that
+  thread to Java by itself (`Android_JNI_GetEnv`), the panel shows the share
+  and Import mod... is Stop meanwhile. `MEMORIES_IMPORT_ZIP=<file>` in `environment.txt` takes that file
   instead of the picker. The picker puts the app in the background; coming
   back is as above (the panel repainted for a second).
+- **Open with** A mod's `.zip` opened with, or shared to, the game from a
+  browser, Discord or a file manager goes to the same import as Import
+  mod...: `OpenWith.java` (an exported translucent activity in its own
+  process, `:open`, with the `VIEW` and `SEND` filters for the zip types in
+  `tools/pc/package_android.py`; `content://` URIs only) writes the URI to
+  `open-with.txt` and brings `SDLActivity` forward; `open_with` in `sdl.c`
+  opens the Mods panel on it when nothing else of the game's is up, and the
+  panel asks before importing ([Mod manager](mods-window.md)).
 - **Remove** In the Mods panel's footer, left of Import mod... (on a phone,
   on the selected mod's page): deletes the selected mod's folder from
   `mods/` after a question, for a mod that is off or does not load (the
