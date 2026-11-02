@@ -94,6 +94,8 @@ the question has the footer's room (four lines on a phone) and Use no folder
 is in reach. Remove on a mod from that folder answers that it is in the
 player's own mods folder.
 
+On Android a mod from that folder starts off whatever its manifest says, as any
+app with the right can write there.
 On Android a mod from that folder is read for its data only: a mod with code
 is listed, its data applies, and its status says "Code not run: import it to
 run its code" (details: "Native code mod: only its data is used from your mods
