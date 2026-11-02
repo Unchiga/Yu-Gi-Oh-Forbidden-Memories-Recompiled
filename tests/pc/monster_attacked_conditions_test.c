@@ -1804,6 +1804,170 @@ static void test_piercing_damage(void)
     puts("test_piercing_damage: PASSED");
 }
 
+static void test_conditions_during_battle_deactivated_records(void)
+{
+    MonsterEffectEx eff_named, eff_type, eff_count, eff_stat, eff_lvl, eff_attr;
+    MonsterEffectEx eff_lowest, eff_highest;
+    MonsterCondition *cond;
+
+    reset_test_duel();
+
+    /* Set up named_card condition: requires Kuriboh (card 18) under own control */
+    memset(&eff_named, 0, sizeof(eff_named));
+    eff_named.cond_count = 1;
+    cond = &eff_named.conditions[0];
+    cond->type = MONSTER_COND_NAMED_CARD;
+    cond->card = 18;
+    cond->whose = MONSTER_EACH_OWN;
+
+    /* Set up control_type condition: requires Dragon (type 1) */
+    memset(&eff_type, 0, sizeof(eff_type));
+    eff_type.cond_count = 1;
+    cond = &eff_type.conditions[0];
+    cond->type = MONSTER_COND_CONTROL_TYPE;
+    cond->card_type = 1;
+    cond->whose = MONSTER_EACH_OPPONENT;
+    cond->presence = 1;
+    s_mock_type[1] = 1; /* Blue-Eyes is type 1 */
+
+    /* Set up control_stat condition: requires ATK >= 3000 under opponent control */
+    memset(&eff_stat, 0, sizeof(eff_stat));
+    eff_stat.cond_count = 1;
+    cond = &eff_stat.conditions[0];
+    cond->type = MONSTER_COND_CONTROL_STAT;
+    cond->stat = MONSTER_STAT_ATK;
+    cond->op = MONSTER_OP_GE;
+    cond->value = 3000;
+    cond->presence = 1;
+    gDuel_adwCardStats[20] = 3000 | (2500 << 16);
+    D_801A7AD8[20].attack = 3000;
+
+    /* Set up control_level condition: requires Level >= 8 under opponent control */
+    memset(&eff_lvl, 0, sizeof(eff_lvl));
+    eff_lvl.cond_count = 1;
+    cond = &eff_lvl.conditions[0];
+    cond->type = MONSTER_COND_CONTROL_LEVEL;
+    cond->op = MONSTER_OP_GE;
+    cond->value = 8;
+    cond->presence = 1;
+    s_mock_level[1] = 8;
+
+    /* Set up control_attribute condition: requires LIGHT (attr 1) under opponent control */
+    memset(&eff_attr, 0, sizeof(eff_attr));
+    eff_attr.cond_count = 1;
+    cond = &eff_attr.conditions[0];
+    cond->type = MONSTER_COND_CONTROL_ATTRIBUTE;
+    cond->attribute = 1;
+    cond->whose = MONSTER_EACH_OPPONENT;
+    cond->presence = 1;
+    s_mock_attr[1] = 1;
+
+    /* Set up lowest_atk and highest_atk conditions */
+    gDuel_adwCardStats[5] = 300 | (300 << 16);
+    D_801A7AD8[5].attack = 300;
+    memset(&eff_lowest, 0, sizeof(eff_lowest));
+    eff_lowest.cond_count = 1;
+    eff_lowest.conditions[0].type = MONSTER_COND_LOWEST_ATK;
+
+    memset(&eff_highest, 0, sizeof(eff_highest));
+    eff_highest.cond_count = 1;
+    eff_highest.conditions[0].type = MONSTER_COND_HIGHEST_ATK;
+
+    /* Set up more_monsters condition: own > opp */
+    memset(&eff_count, 0, sizeof(eff_count));
+    eff_count.cond_count = 1;
+    cond = &eff_count.conditions[0];
+    cond->type = MONSTER_COND_MORE_MONSTERS;
+
+    /* Simulate DuelScene_UpdateFieldActions deactivating both battlers */
+    D_801A7AD8[5].flags &= ~DUEL_CARD_FLAG_OCCUPIED;
+    D_801A7AD8[20].flags &= ~DUEL_CARD_FLAG_OCCUPIED;
+
+    /* 1. Outside PHASE_BATTLE, deactivated records are not treated as present */
+    gDuel_wSceneStateFlags = PHASE_FIELD;
+    MonsterEffects_TrackBattleParticipants(5, 20);
+    assert(MonsterEffects_ConditionsMet(5, &eff_named) == 0);
+    assert(MonsterEffects_ConditionsMet(5, &eff_type) == 0);
+    assert(MonsterEffects_ConditionsMet(20, &eff_stat) == 0);
+    assert(MonsterEffects_ConditionsMet(20, &eff_lvl) == 0);
+    assert(MonsterEffects_ConditionsMet(5, &eff_attr) == 0);
+
+    /* 2. During PHASE_BATTLE (phase 9), battle participants are recognized */
+    gDuel_wSceneStateFlags = 9;
+    assert(MonsterEffects_ConditionsMet(5, &eff_named) == 1);
+    assert(MonsterEffects_ConditionsMet(5, &eff_type) == 1);
+    assert(MonsterEffects_ConditionsMet(20, &eff_stat) == 1);
+    assert(MonsterEffects_ConditionsMet(20, &eff_lvl) == 1);
+    assert(MonsterEffects_ConditionsMet(5, &eff_attr) == 1);
+
+    /* lowest_atk and highest_atk compare against the opposing deactivated fighter */
+    assert(MonsterEffects_ConditionsMet(5, &eff_lowest) == 1);
+    assert(MonsterEffects_ConditionsMet(20, &eff_lowest) == 0);
+    assert(MonsterEffects_ConditionsMet(20, &eff_highest) == 1);
+    assert(MonsterEffects_ConditionsMet(5, &eff_highest) == 0);
+
+    /* Both deactivated records count toward monster counts (1 player vs 1 opp => not more) */
+    assert(MonsterEffects_ConditionsMet(5, &eff_count) == 0);
+
+    /* Add an ally monster to player's row */
+    D_801A7AD8[6].card_id = 50;
+    D_801A7AD8[6].flags = DUEL_CARD_FLAG_OCCUPIED;
+    gMonsterEffects.card[6] = 50;
+    gMonsterEffects.face_up[6] = 1;
+    /* Now player has 2 monsters (deactivated slot 5 + slot 6) and opp has 1 (deactivated slot 20) */
+    assert(MonsterEffects_ConditionsMet(5, &eff_count) == 1);
+    D_801A7AD8[6].flags = 0;
+    gMonsterEffects.card[6] = 0;
+
+    /* 3. Battle immunity with named_card naming itself in 2D battle (phase 9) */
+    s_test_effect_count = 1;
+    s_test_effects[0].when = MONSTER_WHEN_FACE_UP;
+    s_test_effects[0].action = MONSTER_DO_BATTLE_IMMUNITY;
+    s_test_effects_ex[0].battle_modifier = MONSTER_BATTLE_MOD_ALWAYS;
+    s_test_effects_ex[0].cond_count = 1;
+    s_test_effects_ex[0].conditions[0].type = MONSTER_COND_NAMED_CARD;
+    s_test_effects_ex[0].conditions[0].card = 1; /* Blue-Eyes naming itself */
+    s_test_effects_ex[0].conditions[0].whose = MONSTER_EACH_OWN;
+
+    assert(MonsterEffects_HasBattleImmunity(20) == 1);
+    /* In 2D battle resolution, retail marks defender for destruction: */
+    D_8009B1B0[1] = -1;
+    D_8009B174 = 4;
+    MonsterEffects_Update();
+    assert(D_8009B1B0[1] == 1); /* Spared by battle immunity! */
+
+    /* 4. Piercing damage with condition during phase 9 with deactivated records */
+    s_test_effects[0].action = MONSTER_DO_PIERCING;
+    s_test_effects_ex[0].battle_modifier = MONSTER_PIERCING_MOD_ALWAYS;
+    s_test_effects_ex[0].cond_count = 1;
+    s_test_effects_ex[0].conditions[0] = eff_type.conditions[0]; /* requires Dragon under opponent control */
+    assert(MonsterEffects_HasPiercingDamage(5, 20) == 1);
+
+    /* 5. Face-up boost with condition during phase 9 with deactivated records */
+    s_test_effects[0].action = MONSTER_DO_BOOST;
+    s_test_effects[0].target = MONSTER_TARGET_SELF;
+    s_test_effects[0].attack = 500;
+    s_test_effects[0].defense = 200;
+    s_test_effects[0].each = MONSTER_EACH_NONE;
+    s_test_effects_ex[0].cond_count = 1;
+    s_test_effects_ex[0].conditions[0] = eff_named.conditions[0]; /* named_card 18 */
+    {
+        int atk = 0, def = 0;
+        MonsterEffects_Stats(&D_801A7AD8[5], &atk, &def);
+        assert(atk == 500 && def == 200);
+    }
+    s_test_effect_count = 0;
+
+    /* 6. If an attack trap aborts attacker (slot 5), it is no longer treated as present */
+    gMonsterEffects.battle_abort |= 1; /* abort attacker (index 0) */
+    assert(MonsterEffects_ConditionsMet(5, &eff_named) == 0);
+    /* Defender (slot 20) is still valid, so opponent condition for slot 5 still holds */
+    assert(MonsterEffects_ConditionsMet(5, &eff_type) == 1);
+
+    gMonsterEffects.battle_abort = 0;
+    puts("test_conditions_during_battle_deactivated_records: PASSED");
+}
+
 int main(void)
 {
     test_attacker_vs_defender();
@@ -1819,6 +1983,7 @@ int main(void)
     test_lowest_and_highest_atk_condition();
     test_attacker_criteria_immunity();
     test_piercing_damage();
+    test_conditions_during_battle_deactivated_records();
     puts("\nAll monster attacked condition tests PASSED successfully!");
     return 0;
 }

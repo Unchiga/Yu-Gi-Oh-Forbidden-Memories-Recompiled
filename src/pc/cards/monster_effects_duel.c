@@ -215,6 +215,16 @@ static int trap_participant(int record)
     return 0;
 }
 
+static int battle_participant(int record)
+{
+    int i, now = phase();
+    if (now != PHASE_BATTLE && now != PHASE_RESUME) return 0;
+    for (i = 0; i < 2; i++) {
+        if (record == S.trap_battle_record[i] && !(S.battle_abort & (1 << i))) return 1;
+    }
+    return 0;
+}
+
 static int finish_attack_trap(void)
 {
     if (!S.trap_pending) return 0;
@@ -902,6 +912,11 @@ static int s_evaluating_stats = 0;
 static int slot_has_monster(int r)
 {
     if (!monster_zone(r)) return 0;
+    if (battle_participant(r)) {
+        int card = D_801A7AD8[r].card_id;
+        if (!Cards_Valid(card)) card = S.card[r];
+        return Cards_Valid(card);
+    }
     if (trap_participant(r)) return 1;
     if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_OCCUPIED) return Cards_Valid(D_801A7AD8[r].card_id);
     return 0;
@@ -926,10 +941,13 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
         case MONSTER_COND_NAMED_CARD: {
             int count = 0;
             for (r = 0; r < MONSTER_RECORDS; r++) {
+                int card_id;
                 if (!slot_has_monster(r) || !S.face_up[r]) continue;
                 if (cond->whose == MONSTER_EACH_OWN && owner(r) != owner(record)) continue;
                 if (cond->whose == MONSTER_EACH_OPPONENT && owner(r) == owner(record)) continue;
-                if (D_801A7AD8[r].card_id == cond->card) count++;
+                card_id = D_801A7AD8[r].card_id;
+                if (!Cards_Valid(card_id)) card_id = S.card[r];
+                if (card_id == cond->card) count++;
             }
             return count > 0;
         }
@@ -1002,7 +1020,7 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
                 if (!slot_has_monster(r)) continue;
                 if (owner(r) != owner(record)) continue;
                 if (cond->scope && r == record) continue;
-                if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN) continue;
+                if (!S.face_up[r] || (!battle_participant(r) && (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN))) continue;
                 saved = s_evaluating_stats;
                 s_evaluating_stats = 1;
                 packed = Duel_CalcCardStats(&D_801A7AD8[r]);
@@ -1032,8 +1050,9 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
                 if (!slot_has_monster(r)) continue;
                 if (owner(r) != owner(record)) continue;
                 if (cond->scope && r == record) continue;
-                if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN) continue;
+                if (!S.face_up[r] || (!battle_participant(r) && (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN))) continue;
                 card_id = D_801A7AD8[r].card_id;
+                if (!Cards_Valid(card_id)) card_id = S.card[r];
                 level = Cards_Level(card_id);
                 if (level < 1) continue;
                 match = 0;
@@ -1063,8 +1082,9 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
                     owner(r) != owner(record))
                     continue;
                 if (cond->scope && r == record) continue;
-                if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN) continue;
+                if (!S.face_up[r] || (!battle_participant(r) && (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN))) continue;
                 card_id = D_801A7AD8[r].card_id;
+                if (!Cards_Valid(card_id)) card_id = S.card[r];
                 total_monsters++;
                 if (cond->card_type < 0 || Cards_Type(card_id) == cond->card_type)
                     type_monsters++;
@@ -1087,8 +1107,9 @@ static int evaluate_condition(int record, const MonsterCondition *cond)
                     owner(r) != owner(record))
                     continue;
                 if (cond->scope && r == record) continue;
-                if (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN) continue;
+                if (!S.face_up[r] || (!battle_participant(r) && (D_801A7AD8[r].flags & DUEL_CARD_FLAG_FACE_DOWN))) continue;
                 card_id = D_801A7AD8[r].card_id;
+                if (!Cards_Valid(card_id)) card_id = S.card[r];
                 total_monsters++;
                 if (cond->attribute < 0 || Cards_Attribute(card_id) == cond->attribute)
                     attr_monsters++;
