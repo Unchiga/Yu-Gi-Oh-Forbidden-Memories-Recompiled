@@ -12,6 +12,7 @@
  * scrollbar is held at once instead (ModsWindow_Grabs). */
 #include "mods_window.h"
 #include "../../types.h"
+#include "pc/compat/fs.h"
 #include "pc/mods/hd_pack.h"
 #include "pc/mods/import.h"
 #include "pc/mods/json.h"
