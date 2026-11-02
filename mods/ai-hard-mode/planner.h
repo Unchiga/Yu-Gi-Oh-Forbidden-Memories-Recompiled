@@ -8,10 +8,16 @@
 #define HM_DOWN 0x1000
 #define HM_DEFENSE 0x0800
 #define HM_WIN 1000000
+#define HM_COMBAT_BATTLE_IMMUNE 1
+#define HM_COMBAT_DESTROY_NON_IMMUNE 2
+#define HM_COMBAT_DESTROY_BOTH 4
+#define HM_COMBAT_PIERCING 8
 
 typedef struct {
     int id, effect, type, attack, defense, star, star2, flags;
     int worth; /* what a stat cut took off value(): a kill is worth as much */
+    unsigned combat; /* MONSTER_COMBAT_* (mirrored here so fixtures stay standalone) */
+    int attack_limit, attacks_used; /* total and already-spent attacks this turn */
 } HmCard;
 typedef struct {
     HmCard own[5], enemy[5], back[5], enemy_back[5], hand[HM_HAND];

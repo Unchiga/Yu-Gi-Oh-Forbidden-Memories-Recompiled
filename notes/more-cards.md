@@ -381,6 +381,11 @@ Man-eater Bug as on the cards:
 | `damage` | the other side loses LP | `amount` (1 to 9999) |
 | `destroy` | the other side's monsters are destroyed, shown as Crush Card shows it | `target`: `opponent` (the default) or, on `flip`, `battle` (the monster attacking it, the default there); `type` and `attribute` keep it to those |
 | `change_field` | changes the active duel field and immediately recalculates every monster's terrain bonus | `field`: a retail or declared field id or name. It cannot run every frame (`face_up`) or during combat |
+| `cannot_be_destroyed_by_battle` | this monster cannot be destroyed in battle | `when`: `combat` |
+| `destroy_both_non_battle_immune` | after battle damage, destroys both battling cards unless they have `cannot_be_destroyed_by_battle` | `when`: `combat` |
+| `destroy_both` | after battle damage, destroys both battling cards even when either has `cannot_be_destroyed_by_battle` | `when`: `combat` |
+| `piercing` | when this monster attacks a defending monster with lower DEF, its owner loses the ATK−DEF difference as battle damage | `when`: `combat` |
+| `multiple_attacks` | this monster may attack more than once during its owner's turn | `when`: `combat`; `amount`: total attacks, 2–8 |
 
 `target` is `self` (the default), `own` (its side's monsters, itself too),
 `others` (its side's other monsters), `opponent`, `all`, or `battle` (the
@@ -391,7 +396,10 @@ monsters on the field then), one on `combat` lasts the battle, and one on
 `face_up` is worked out whenever the game asks a card's ATK and DEF, so the
 field, the battle, traps and the CPU all see it: it reaches each monster it
 names once, those put down later too, and goes with the card. `face_up` takes only
-boosts; `combat` takes a boost of `self` or `battle`, `heal` and `damage`.
+boosts; `combat` takes a boost of `self` or `battle`, `heal`, `damage`, the three battle outcomes above,
+`piercing` and `multiple_attacks`.
+Battle outcomes apply after normal combat damage, as the Phoenix Battlefield Demolisher tool did.
+`destroy_both_non_battle_immune` honors either combatant's `cannot_be_destroyed_by_battle`; `destroy_both` overrides it.
 `for_each` makes a `boost`, `heal` or `damage` once for each face-up
 monster it counts, on any `when` that takes the effect; the count is
 taken when the effect is made, and a `face_up` boost follows it as it

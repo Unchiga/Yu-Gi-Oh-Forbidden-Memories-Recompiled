@@ -28,10 +28,26 @@ static int spawned, released, original_calls, hidden_lookups, observed_visibilit
 static int deck_mode, hidden_mode, custom_window = 20, retail_hand = 1;
 static int terrain_override, terrain_points, star_points;
 static int ai_card, ai_value;
+static unsigned fake_combat[1024];
+static int fake_attack_limit[1024];
+static int fake_attacks_used[30];
 
 int Cards_Valid(int id) { return id > 0 && id < 1024; }
 int Cards_EffectId(int id) { if (id == 999) hidden_lookups++; return id; }
 int Cards_AiId(int id) { return id == ai_card ? ai_value : id; }
+unsigned MonsterEffects_CombatFlags(int card)
+{
+    return card > 0 && card < 1024 ? fake_combat[card] : 0;
+}
+int MonsterEffects_CombatAttackLimit(int card)
+{
+    return card > 0 && card < 1024 && fake_attack_limit[card] ?
+        fake_attack_limit[card] : 1;
+}
+int MonsterEffects_AttacksUsed(int record)
+{
+    return record >= 0 && record < 30 ? fake_attacks_used[record] : 0;
+}
 int Tables_TerrainBonus(int field, int type, int *bonus)
 {
     if (!terrain_override || field != 2 || type != 3) return 0;
@@ -101,6 +117,10 @@ static void reset(void)
     int i;
     memset(gDuel_aActiveCards,0,sizeof(gDuel_aActiveCards));
     memset(D_800EAE88,0,12); memset(D_800E9FF0,0,sizeof(D_800E9FF0));
+    memset(D_801A7AD8,0,sizeof(D_801A7AD8));
+    memset(fake_combat,0,sizeof(fake_combat));
+    memset(fake_attack_limit,0,sizeof(fake_attack_limit));
+    memset(fake_attacks_used,0,sizeof(fake_attacks_used));
     D_8009B1D5 = 1; D_8009B360[0] = -1; D_8009B360[1] = 8; gDuel_bOpponentID = 8;
     D_8009B1C8 = &D_800E9FF0[1];
     for (i = 0; i < 2; i++) {
@@ -189,6 +209,18 @@ int main(void)
     assert(card_info(500).effect == 0);
     gDuel_adwCardStats[499] = 0;
     assert(card_info(500).effect == 500);
+
+    /* The adapter carries combat rules and attacks already spent to the
+     * planner, using the current side's field-record mapping. */
+    reset();
+    gDuel_aActiveCards[1].card_id = 20;
+    D_801A7AD8[20].card_id = 20;
+    fake_combat[20] = HM_COMBAT_PIERCING;
+    fake_attack_limit[20] = 3;
+    fake_attacks_used[20] = 2;
+    o = options(); b = board(&o);
+    assert(b.own[0].combat == HM_COMBAT_PIERCING);
+    assert(b.own[0].attack_limit == 3 && b.own[0].attacks_used == 2);
 
     /* A selected held material is reserved. The lowest-value other held card
      * swaps with an upcoming card; both deck identity and art index follow. */

@@ -82,7 +82,7 @@ int Hm_ChooseStar(const HmBoard *b, HmCard c, int pinned)
     return answer;
 }
 
-typedef struct { int a, t, damage, removed, lost, gain, uncertain; } Attack;
+typedef struct { int a, t, damage, removed, lost, gain, uncertain, own_dead, enemy_dead; } Attack;
 typedef struct {
     const HmBoard *b;
     const HmOptions *o;
@@ -114,23 +114,62 @@ static int emptied(const HmBoard *b, int attacker, unsigned dead, unsigned targe
     return hit;
 }
 
-static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack *out)
+/* Four bits per field slot preserve attacks already spent before this plan.
+ * The data reader caps a card's configured allowance below sixteen. */
+static int attack_count(unsigned used, int slot) { return (used >> (slot * 4)) & 15; }
+static unsigned attack_used(unsigned used, int slot) { return used + (1u << (slot * 4)); }
+static unsigned attack_counts(const HmBoard *b)
+{
+    unsigned used = 0;
+    int i;
+    for (i = 0; i < 5; i++) {
+        int count = b->own[i].attacks_used;
+        if (count > 15) count = 15;
+        if (count > 0) used |= (unsigned)count << (i * 4);
+    }
+    return used;
+}
+
+/* Work out the post-damage battlefield.  The data effects intentionally run
+ * after normal battle maths: an unconditional destroy wins over immunity;
+ * the conditional variant preserves either immune participant. */
+static void battle_outcome(HmCard a, HmCard e, int defense, int diff, int *a_dead, int *e_dead)
+{
+    int force_all = (a.combat | e.combat) & HM_COMBAT_DESTROY_BOTH;
+    int force_non_immune = (a.combat | e.combat) & HM_COMBAT_DESTROY_NON_IMMUNE;
+    *a_dead = *e_dead = 0;
+    if (!defense) {
+        if (diff > 0) *e_dead = 1;
+        else if (diff < 0) *a_dead = 1;
+        else *a_dead = *e_dead = 1;
+    }
+    if (a.combat & HM_COMBAT_BATTLE_IMMUNE) *a_dead = 0;
+    if (e.combat & HM_COMBAT_BATTLE_IMMUNE) *e_dead = 0;
+    if (force_non_immune) {
+        if (!(a.combat & HM_COMBAT_BATTLE_IMMUNE)) *a_dead = 1;
+        if (!(e.combat & HM_COMBAT_BATTLE_IMMUNE)) *e_dead = 1;
+    }
+    if (force_all) *a_dead = *e_dead = 1;
+}
+
+static int attack_options(AttackSearch *s, unsigned used, unsigned own_dead, unsigned dead, Attack *out)
 {
     int i, j, n = 0, targets = 0;
     for (j = 0; j < 5; j++) if (s->b->enemy[j].id && !(dead & (1u << j))) targets++;
     for (i = 0; i < 5; i++) {
         HmCard a = s->b->own[i];
-        if (!monster(a) || (a.flags & HM_USED) || (used & (1u << i))) continue;
+        if (!monster(a) || (a.flags & HM_USED) || (own_dead & (1u << i)) ||
+            attack_count(used, i) >= (a.attack_limit > 0 ? a.attack_limit : 1)) continue;
         if (!targets) {
             /* A 0 ATK attack changes nothing and would tie any sequence. */
             if (a.attack > 0)
-                out[n++] = (Attack){i, -1, a.attack, 0, 0, a.attack * 4 - exposed(s->b, a, dead), 0};
+                out[n++] = (Attack){i, -1, a.attack, 0, 0, a.attack * 4 - exposed(s->b, a, dead), 0, 0, 0};
             continue;
         }
         for (j = 0; j < 5; j++) {
             HmCard e = s->b->enemy[j];
-            Attack move = {i, j, 0, 0, 0, 0, 0};
-            int diff;
+            Attack move = {i, j, 0, 0, 0, 0, 0, 0, 0};
+            int diff, a_dead, e_dead, defense;
             if (!e.id || (dead & (1u << j))) continue;
             if (e.id < 0) {
                 /* A declared risk policy, never a peek at the hidden card. */
@@ -138,13 +177,22 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
                 move.uncertain = 1;
                 move.gain = 100 + s->o->blind_risk * 3;
             } else {
-                diff = a.attack + Hm_StarBonus(a.star, e.star) -
-                    ((e.flags & HM_DEFENSE) ? e.defense : e.attack);
-                if (diff < 0 || (diff == 0 && ((e.flags & HM_DEFENSE) || !s->o->trades))) continue;
-                move.damage = (e.flags & HM_DEFENSE) ? 0 : diff;
-                move.removed = value(e) + 400;
-                move.lost = diff == 0 ? value(a) + 400 + emptied(s->b, i, dead, 1u << j) :
-                    exposed(s->b, a, dead | (1u << j));
+                defense = e.flags & HM_DEFENSE;
+                diff = a.attack + Hm_StarBonus(a.star, e.star) - (defense ? e.defense : e.attack);
+                battle_outcome(a, e, defense, diff, &a_dead, &e_dead);
+                /* A forced mutual destruction is useful even against a
+                 * stronger monster.  Otherwise do not spend an attack that
+                 * neither damages nor removes anything. */
+                /* An immune attack-position monster can still take combat
+                 * damage for its owner even though it remains on the field. */
+                if (!e_dead && !(diff > 0 && (!defense || (a.combat & HM_COMBAT_PIERCING)))) continue;
+                if (diff == 0 && !defense && !s->o->trades && a_dead && e_dead) continue;
+                move.damage = defense ? ((a.combat & HM_COMBAT_PIERCING) && diff > 0 ? diff : 0) : max(0, diff);
+                move.removed = e_dead ? value(e) + 400 : 0;
+                move.own_dead = a_dead;
+                move.enemy_dead = e_dead;
+                move.lost = a_dead ? value(a) + 400 + emptied(s->b, i, dead, e_dead ? 1u << j : 0) :
+                    exposed(s->b, a, dead | (e_dead ? 1u << j : 0));
                 move.gain = move.damage * 4 + move.removed - move.lost;
             }
             out[n++] = move;
@@ -163,14 +211,14 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
     return n;
 }
 
-static void attack_search(AttackSearch *s, unsigned used, unsigned dead,
+static void attack_search(AttackSearch *s, unsigned used, unsigned own_dead, unsigned dead,
                           int damage, int score, int depth, Attack first)
 {
     Attack moves[25];
     int n, i;
     if (s->nodes >= s->o->budget) return;
     s->nodes++;
-    n = attack_options(s, used, dead, moves);
+    n = attack_options(s, used, own_dead, dead, moves);
     /* All root alternatives, up to three promising continuations per node. */
     if (depth) n = min(n, 3);
     for (i = 0; i < n; i++) {
@@ -187,7 +235,8 @@ static void attack_search(AttackSearch *s, unsigned used, unsigned dead,
             s->best.selection[10] = (unsigned char)(root.t < 0 ? 58 : root.t + 56);
         }
         if (!m.uncertain && depth < 4 && next_damage < s->b->enemy_lp)
-            attack_search(s, used | (1u << m.a), dead | (m.t < 0 ? 0 : 1u << m.t),
+            attack_search(s, attack_used(used, m.a), own_dead | (m.own_dead ? 1u << m.a : 0),
+                          dead | (m.t < 0 || !m.enemy_dead ? 0 : 1u << m.t),
                           next_damage, next_score, depth + 1, root);
     }
 }
@@ -196,7 +245,7 @@ static HmDecision attacks(const HmBoard *b, const HmOptions *o)
 {
     AttackSearch s = {b, o, {{0}, 0, 0, 0}, 0};
     Attack first = {0};
-    if (!b->pinned) attack_search(&s, 0, 0, 0, 0, 0, first);
+    if (!b->pinned) attack_search(&s, attack_counts(b), 0, 0, 0, 0, 0, first);
     s.best.nodes = s.nodes;
     return s.best;
 }
