@@ -1,0 +1,3 @@
+# Upstream's names for resident functions the ported model modules call, which the port names
+# otherwise, with their address (tools/pc/model_gate.py port, from upstream's symbol files).
+# tools/pc/build_game32.py resolves them to the port's name at that address.

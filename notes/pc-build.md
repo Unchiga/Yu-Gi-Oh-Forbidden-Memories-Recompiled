@@ -770,14 +770,63 @@ by hand from the C (`count` is where the retail table ends; the gated oracle
 fails a retail record whose command or entry pointer a wrong `count` or
 `field` would send to the interpreter). The gate only
 matches the US disc's modules: the other regions' 418 images differ and are
-interpreted. To port a shape:
-copy the decomp's `variant<shape>_*.c` into `src/native_overlays/model_variant` (not
+interpreted. **To port a shape**, `python tools/pc/model_gate.py port <shape>...
+--disc <disc>` (tools/pc/model_gate_port.py) copies its C from the `upstream`
+remote (`--upstream`, default `upstream/master`), never by hand. The upstream
+layout of each US module (config/slus_01411/overlays/<module>.yaml, its `c`
+subsegments) names the files; the file names do not say the shape (shape 59
+is french_model_variant/variant76_entry.c, 433 has two of header 450's
+through a wrapper of spanish_model_variant's, 79 is variant96_entry_usa.c), so
+the module's list goes to `config/pc/model_gate_sources.txt`, which
+`build_config.py` compiles (a shape the list lacks falls back to
+`variant<sources>_*.c`). The copies are upstream's bytes but for these
+rules: (1) every file the layout names and every file it includes goes to
+the same folder under `src/native_overlays` it has under `src/overlays` (not
 `src/overlays`: every C file there must be a subsegment of a split, which
-these modules do not have here; the headers' relative includes are the
-same depth) and
-the slot B wrappers (the same C under `#define`s of the `0x8017Bxxx`
-names) into `src/native_overlays/model_variant_slot1`, set the row to `native` with
-the decomp's data start as its span, run `update --disc` and a build.
+these modules do not have here; the folders are one level below `src/` in
+both, so `../../types.h` stays right), and a header outside the overlay
+folders the port lacks is copied (`src/game/model_copy_slot_position.h`: one
+the port has stays the port's); (2) an include that reaches another overlay
+folder through `src/` is written relative to `src/native_overlays`; (3) slot
+B's files (`#define`s of the `0x8017Bxxx` names around an include of slot A's
+C) go to `<folder>_slot1`, an include of a file beside them written
+`../<folder>/`; (4) G32 on every cast `check_x64_casts.py` reports in a copied
+unit (a `widened` one too, as `T *G32`); (5) a copied file that calls a
+resident function its headers do not declare under that name includes
+`src/native_overlays/model_gate_names.h` first, which includes the port's
+header that declares it and, for a function the port names otherwise (the
+same address in upstream's symbol files: upstream's
+`ModelTexture_PackPageClutCopy` is the port's `func_80059A50`), `#define`s
+upstream's name as the port's. Upstream's names of those addresses are also
+in `config/pc/model_gate_names.txt`, which `build_game32.py` and
+`build_arm64.py` resolve to the port's name at the address, and a name a
+model module uses that no table places stops the build (it would be a
+stub). Regenerating shape 418 gives the committed files byte for byte.
+`port` refuses a shape whose images' layouts name different files (668: one
+image has `variant685_rings.c` at `0x3520`, past its data start; 552, 402's
+slot B, one with `variant552_strand.c`), and reports a unit that does not
+compile against the port's headers (a member upstream renamed in
+`ModelTintColor` or `ModelSlot`). It sets the row's `data_start` and
+`sources`; backend, span and command_table come from the scan:
+**`python tools/pc/model_gate_scan.py --disc <disc> --commands <counts.json>
+--out <report.json>`** walks clang's AST of each slot A unit for every `/`,
+`%` and index whose operand is not a constant and follows it back, through
+locals (a loop counter takes its bound's sources), the module's functions'
+parameters and the work area's fields (by byte offset, from clang's record
+layouts, so `work->config` and `MODEL_VARIANT_WORD(work, 0x1B74)` are one
+field), to a slot word at a fixed offset (the span covers it), a field of
+the entry of a slot table the command picks (`&D_8013C31C[command]`,
+`(T *)(D + K) + command`: the command table; the work field holding the
+entry's address is its `field`), the command itself, or nothing of the
+slot's data. Upstream does not size the tables (the data after the last
+named object is one symbol to the end of the image: `D_8013E96C`, 0x1694
+bytes), so `count` is the retail commands' (`max + 1` of the setup commands
+a full oracle run's traces show for the shape, both slots). A site from a
+slot word or entry where the retail images differ makes the row `keep`; one
+the scan cannot follow is listed for review. For 418 it finds table
+`0x3A68`, entry size `0x44` and field `0x1B74`, and the seven divisions of
+spiral, sheet, bands and quad by the entry's timing words. Then
+`update --disc` and a build.
 `build_config.py` makes two gated modules of it (`model_variant_<shape>` and
 `_slot1`, banks `0x8013B000` and `0x8017B000`, every name prefixed as for the
 effect bank), and their entry is the function at the slot base + 4. These

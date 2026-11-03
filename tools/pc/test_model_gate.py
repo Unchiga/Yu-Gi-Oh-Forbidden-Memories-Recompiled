@@ -129,10 +129,71 @@ class SpanRules(unittest.TestCase):
         self.assertLessEqual(table + count * stride, row.span)
 
     def test_a_module_may_be_made_of_two_headers(self):
-        row = self.row(sources="433;450")
+        # A shape config/pc/model_gate_sources.txt does not list (shape 9999)
+        # falls back to the globs of its headers.
+        row = self.row(shape="9999", sources="433;450")
         self.assertEqual(row.sources, [433, 450])
         self.assertEqual(len(model_gate.source_patterns(row, "A")), 2)
         self.assertEqual(self.row().sources, [418])
+
+
+class PortRules(unittest.TestCase):
+    """model_gate_port.py's rules for where upstream's files go, and the
+    addresses a module's C gives through a wrapper's #defines."""
+
+    def test_files_keep_their_folder_and_slot_b_wrappers_get_their_own(self):
+        import model_gate_port as port
+        self.assertEqual(port.port_path("src/overlays/model_variant/variant418_entry.c"),
+                         "src/native_overlays/model_variant/variant418_entry.c")
+        self.assertEqual(port.port_path("src/overlays/french_model_variant/variant76_entry_slot1.c", slot1=True),
+                         "src/native_overlays/french_model_variant_slot1/variant76_entry_slot1.c")
+        self.assertEqual(port.port_path("src/game/model_copy_slot_position.h"), "src/game/model_copy_slot_position.h")
+
+    def test_includes_into_an_overlay_folder_are_rewritten_by_rule(self):
+        import model_gate_port as port
+
+        class Tree:
+            files = {"src/overlays/model_variant/model_variant.h", "src/overlays/model_variant/variant1_entry.c",
+                     "src/overlays/french_model_variant/variant2_entry.h", "src/types.h"}
+
+            def read(self, path):
+                return b"" if path in self.files else None
+
+        tree = Tree()
+        header = '#include "../../overlays/model_variant/model_variant.h"\n#include "../../types.h"\n'
+        self.assertEqual(port.rewrite_includes(tree, "src/overlays/french_model_variant/variant2_entry.h", header, False),
+                         '#include "../model_variant/model_variant.h"\n#include "../../types.h"\n')
+        wrapper = '#include "../../types.h"\n#define func_8013B004 func_8017B004\n#include "variant1_entry.c"\n'
+        self.assertEqual(port.rewrite_includes(tree, "src/overlays/model_variant/variant1_entry_slot1.c", wrapper, True),
+                         wrapper.replace('"variant1_entry.c"', '"../model_variant/variant1_entry.c"'))
+        # Slot A's own includes stay as upstream wrote them.
+        self.assertEqual(port.rewrite_includes(tree, "src/overlays/model_variant/variant1_entry.c", wrapper, False),
+                         wrapper)
+
+    def test_a_wrapper_define_names_the_address_the_module_has(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config/pc").mkdir(parents=True)
+            (root / "src/native_overlays/model_variant").mkdir(parents=True)
+            (root / "src/native_overlays/spanish_model_variant").mkdir(parents=True)
+            (root / "src/native_overlays/spanish_model_variant/variant9_bands.c").write_text(
+                "/* func_8013C000 in a comment is no name */\nvoid func_8013CAC4(void) {}\nextern int D_8013D000;\n")
+            (root / "src/native_overlays/model_variant/variant7_bands.c").write_text(
+                '#define func_8013CAC4 func_8013CB18\n#include "../spanish_model_variant/variant9_bands.c"\n')
+            (root / "config/pc/model_gate_sources.txt").write_text(
+                "[model_variant_7]\nsrc/native_overlays/model_variant/variant7_bands.c\n")
+            row = SpanRules().row(shape="7", identifier_a="7")
+            self.assertEqual(model_gate.module_addresses(row, "A", root),
+                             {"func_8013CB18": 0x8013CB18, "D_8013D000": 0x8013D000})
+
+    def test_every_native_module_lists_its_files(self):
+        listed = model_gate.listed_sources()
+        for row in model_gate.native_rows():
+            for slot in "AB":
+                self.assertIn(row.module(slot), listed)
+                for path in listed[row.module(slot)]:
+                    self.assertTrue((model_gate.ROOT / path).is_file(), path)
 
 
 class OracleBackends(unittest.TestCase):
