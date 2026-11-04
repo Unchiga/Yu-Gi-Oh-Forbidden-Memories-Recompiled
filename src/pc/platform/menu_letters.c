@@ -503,6 +503,10 @@ int MenuLetters_Make(const char *text, int selected, int stand_in, int factor, c
         for (stand_in = 0; stand_in < ENTRIES && !entries[0][stand_in].letters; stand_in++) {
         }
     }
+    if (stand_in == ENTRIES) { /* no entry cut into letters (a label of spaces gets here) */
+        snprintf(why, why_size, "the game's entries could not be cut into letters");
+        return 0;
+    }
     frame = &entries[selected][stand_in];
     /* the frame's word, with a column of room either side */
     left = frame->first - 1;
