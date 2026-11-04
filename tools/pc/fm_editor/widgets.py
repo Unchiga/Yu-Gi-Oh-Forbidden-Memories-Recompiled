@@ -455,7 +455,7 @@ class TreeSort:
             tree.heading(key, text=label + arrow)
 
 
-def scrolled_tree(parent, columns, widths, height=20, selectmode="browse", *, sort_numeric=None):
+def scrolled_tree(parent, columns, widths, height=20, selectmode="browse", *, sort_numeric=None, horizontal=False):
     """A Treeview with a vertical scrollbar, in a frame of its own."""
     frame = ttk.Frame(parent)
     tree = ttk.Treeview(frame, columns=[c for c, _ in columns], show="headings", height=height, selectmode=selectmode)
@@ -464,18 +464,20 @@ def scrolled_tree(parent, columns, widths, height=20, selectmode="browse", *, so
     tree.widths = {key: px(frame, width) for (key, _), width in zip(columns, widths)}
     for (key, label), width in zip(columns, widths):
         tree.heading(key, text=label)
-        tree.column(key, width=tree.widths[key], stretch=width > 120, anchor="w")
+        tree.column(key, width=tree.widths[key], minwidth=tree.widths[key] if horizontal else 20,
+                    stretch=(width > 120 and not horizontal), anchor="w")
     bar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=bar.set)
     tree.grid(row=0, column=0, sticky="nsew")
     bar.grid(row=0, column=1, sticky="ns")
     frame.rowconfigure(0, weight=1)
     frame.columnconfigure(0, weight=1)
-    if sort_numeric is not None:
-        tree.sorting = TreeSort(tree, columns, sort_numeric)
-        horizontal = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
-        tree.configure(xscrollcommand=horizontal.set)
-        horizontal.grid(row=1, column=0, sticky="ew")
+    if sort_numeric is not None or horizontal:
+        if sort_numeric is not None:
+            tree.sorting = TreeSort(tree, columns, sort_numeric)
+        hbar = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(xscrollcommand=hbar.set)
+        hbar.grid(row=1, column=0, sticky="ew")
     for tag in theme.TAGS:
         tree.tag_configure(tag, foreground=theme.tag_color(tree, tag))
     tree.bind("<ButtonPress-1>", lambda e: _free_columns(tree, e), add=True)

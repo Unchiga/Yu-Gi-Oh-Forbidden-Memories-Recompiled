@@ -66,6 +66,13 @@
       "description": "Allow trades when the resulting attack sequence is worthwhile."
     },
     {
+      "key": "persistent_shield_attacks",
+      "label": "Chip persistent shields",
+      "type": "bool",
+      "default": 1,
+      "description": "Chip away at persistent multi-hit shields (per copy or duel) across turns if the attacker takes zero recoil damage."
+    },
+    {
       "key": "preserve_hand",
       "label": "Preserve valuable hand cards",
       "type": "bool",

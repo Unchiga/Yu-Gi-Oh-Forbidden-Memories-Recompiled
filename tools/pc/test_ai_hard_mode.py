@@ -37,10 +37,11 @@ def main():
             environment = dict(os.environ, TMPDIR=str(OUT))
             environment.update(WINEPREFIX=str(ROOT / "tmp/pc/wine-prefix"),
                                WINEDLLOVERRIDES="mscoree,mshtml=", WINEDEBUG="-all")
-        for fixture in ("ai_hard_mode_test", "ai_hard_mode_adapter_test"):
+        for fixture in ("ai_hard_mode_test", "ai_hard_mode_adapter_test", "combat_immunity_piercing_runtime"):
             program = OUT / (fixture + (".exe" if target == "windows" else ""))
+            extra = ["src/pc/cards/monster_effects_duel.c"] if fixture == "combat_immunity_piercing_runtime" else []
             subprocess.run([*compiler, *flags, f"tests/pc/{fixture}.c",
-                            "mods/ai-hard-mode/planner.c", "-o", str(program)], check=True)
+                            *extra, "mods/ai-hard-mode/planner.c", "-o", str(program)], check=True)
             subprocess.run([*launcher, str(program)], env=environment, check=True, timeout=60)
             print(f"AI hard mode: {target} {fixture} passed", flush=True)
 

@@ -7,7 +7,14 @@
 #define HM_USED 0x4000
 #define HM_DOWN 0x1000
 #define HM_DEFENSE 0x0800
+#define HM_IMMUNE 0x0010
+#define HM_PIERCE 0x0020
 #define HM_WIN 1000000
+
+#define HM_RESET_COPY 0
+#define HM_RESET_SUMMON 0
+#define HM_RESET_DUEL 1
+#define HM_RESET_TURN 2
 
 typedef struct {
     int id, effect, type, attack, defense, star, star2, flags;
@@ -17,10 +24,19 @@ typedef struct {
     HmCard own[5], enemy[5], back[5], enemy_back[5], hand[HM_HAND];
     int hand_count, lp, max_lp, enemy_lp, pinned, enemy_pinned, terrain;
     int spellbinding, shadow_spell; /* what each takes off ATK and DEF */
+    unsigned char enemy_immune[5];  /* bit i: enemy[j] cannot be destroyed by own[i] */
+    unsigned char enemy_shields[5]; /* attacks enemy[j] survives before N-hit immunity expires */
+    unsigned char enemy_shield_reset[5]; /* HM_RESET_* for enemy[j] multi-hit shield */
+    unsigned char own_pierce[5];    /* bit j: own[i] inflicts piercing damage against enemy[j] */
+    unsigned char own_immune[5];    /* bit j: own[i] cannot be destroyed by enemy[j] */
+    unsigned char own_shields[5];   /* attacks own[i] survives before N-hit immunity expires */
+    unsigned char own_shield_reset[5];   /* HM_RESET_* for own[i] multi-hit shield */
+    unsigned char enemy_pierce[5];  /* bit i: enemy[j] inflicts piercing damage against own[i] */
 } HmBoard;
 typedef struct {
     int hand, fusion, guardian, attacks, defense, spells, effective;
     int materials, budget, blind_risk, material_cost, trades;
+    int persistent_shield_attacks;
 } HmOptions;
 typedef struct {
     HmCard (*card)(int id);

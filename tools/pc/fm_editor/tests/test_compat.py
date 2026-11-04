@@ -171,15 +171,32 @@ class FeatureTest(unittest.TestCase):
     def test_monster_effect_filter_on_a_custom_type(self):
         # monster_effects.c filter(): a declared monster type filters, 255
         # (the filter's "any" byte) and an undeclared id do not.
+        # MonsterCondition.card_type and MonsterEffectEx.attacker_type are
+        # signed short (-1 = any), so custom types 128-255 (including 255) work.
         p = Project(fixture().game())
         manifest.apply(p, {"card_types": {"types": [{"id": 200, "name": "Titan"}, {"id": 255, "name": "Omega"}]}})
         boost = {"when": "face_up", "do": "boost", "attack": 100}
+        imm = {"when": "face_up", "do": "battle_immunity"}
+        pierce = {"when": "face_up", "do": "piercing"}
         for ok in ({**boost, "type": "Titan"}, {**boost, "type": 200}, {**boost, "type": "Dragon"},
-                   {**boost, "for_each": {"type": "titan"}}):
+                   {**boost, "for_each": {"type": "titan"}},
+                   {**imm, "conditions": [{"type": "control_type", "card_type": 200}]},
+                   {**imm, "conditions": [{"type": "control_type", "card_type": 255}]},
+                   {**imm, "modifier": "attacked_by_type", "attacker_type": 200},
+                   {**imm, "modifier": "attacked_by_type", "attacker_type": "Omega"},
+                   {**imm, "modifier": "attacked_by_monster", "attacker_type": 200},
+                   {**pierce, "modifier": "attacks_type", "defender_type": 200},
+                   {**pierce, "modifier": "attacks_monster", "defender_type": "Omega"}):
             with self.subTest(effect=ok):
                 self.assertEqual(monster_effects.problems([ok], p.resolve, type_names=p.type_names), [])
         self.assertEqual(monster_effects.normalize({**boost, "type": 200}, p.resolve, type_names=p.type_names)["type"], "Titan")
-        for bad in ({**boost, "type": "Omega"}, {**boost, "type": 201}, {**boost, "type": "Magic"}):
+        self.assertEqual(monster_effects.normalize_condition({"type": "control_type", "card_type": 200}, p.resolve, type_names=p.type_names)["card_type"], "Titan")
+        self.assertEqual(monster_effects.normalize({**imm, "modifier": "attacked_by_type", "attacker_type": 200}, p.resolve, type_names=p.type_names)["attacker_type"], "Titan")
+        self.assertEqual(monster_effects.normalize({**pierce, "modifier": "attacks_type", "defender_type": 200}, p.resolve, type_names=p.type_names)["defender_type"], "Titan")
+        for bad in ({**boost, "type": "Omega"}, {**boost, "type": 201}, {**boost, "type": "Magic"},
+                    {**imm, "conditions": [{"type": "control_type", "card_type": 201}]},
+                    {**imm, "modifier": "attacked_by_type", "attacker_type": 201},
+                    {**pierce, "modifier": "attacks_type", "defender_type": 201}):
             with self.subTest(effect=bad):
                 self.assertTrue(monster_effects.problems([bad], p.resolve, type_names=p.type_names))
 
@@ -227,6 +244,19 @@ class FeatureTest(unittest.TestCase):
         api, reasons = compat.required(style(hand_image="h.png", library_icon="l.png"))
         self.assertEqual((api, len(reasons)), (18, 2))
         self.assertIn("newer than v0.3.0", compat.release_text(18))
+
+    def test_api_19(self):
+        """Battle immunity, piercing and conditions: a game of API 18 notes the
+        unknown "do" and drops the effect, and plays conditions as if absent."""
+        effect = lambda **keys: {"cards": [{"replace": 1, "monster_effects": [{"when": "face_up", **keys}]}]}  # noqa: E731
+        for value in (effect(do="battle_immunity"), effect(do="piercing"),
+                      effect(do="boost", attack=100, conditions=[{"type": "lower_lp"}])):
+            with self.subTest(value=value):
+                self.assertEqual(self.needs(value), 19)
+        self.assertEqual(self.needs(effect(do="boost", attack=100)), 10)
+        # Keys/actions the game does not read ("piercing_damage", singular "condition") do not bump to 19
+        self.assertEqual(self.needs(effect(do="piercing_damage")), 10)
+        self.assertEqual(self.needs(effect(do="boost", attack=100, condition={"type": "lower_lp"})), 10)
 
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})
