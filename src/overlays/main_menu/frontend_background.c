@@ -26,6 +26,7 @@
 #include "../../game/sound.h"
 #ifdef MEMORIES_PC
 #include "pc/platform/title_screen.h"
+#include "pc/platform/title_menu.h"
 #endif
 
 void MainMenu_DrawFrontendBackground(void)
@@ -185,6 +186,9 @@ void MainMenu_StartFrontendEntryTransition(s32 mode)
     }
     D_80184596 = mode;
     D_80184599 = 1;
+#ifdef MEMORIES_PC
+    TitleMenu_StartSlide();
+#endif
 }
 
 void MainMenu_DestroyFrontendMenu(void)

@@ -252,7 +252,7 @@ int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
     /* The virtual clock (above). The frame-dump combination is kept as it
      * was; MEMORIES_DETERMINISTIC=1 alone needs neither a dump nor speed -1. */
     deterministic_dump = (getenv("MEMORIES_HEADLESS") != NULL || getenv("MEMORIES_DETERMINISTIC") != NULL) &&
-                         getenv("MEMORIES_DUMP_FRAME") != NULL;
+                         (getenv("MEMORIES_DUMP_FRAME") != NULL || getenv("MEMORIES_DUMP_FRAMES") != NULL);
     {
         const char *asked = getenv("MEMORIES_DETERMINISTIC");
         deterministic_asked = asked && *asked && strcmp(asked, "0") != 0;

@@ -8,6 +8,7 @@
 #include "pc/tower/tower.h"
 #include "pc/free_duel/duelists.h"
 #include "pc/cards/fusion_helper.h"
+#include "pc/mods/mods.h"
 #include "update_check.h"
 #include "pc/debug/log.h"
 #include "pc/debug/monitor.h"
@@ -352,7 +353,8 @@ static void present_frame(void)
     int hx, hy, hw, hh;
     scale_game(0, image_h);
     FusionHelper_Viewport(0, Menu_Height(), last.w * scale, last.h * scale);
-    if (Settings_Get(SET_SHOW_HUD) == 2 || Menu_IsOpen()) {
+    Mods_SetPicture(0, Menu_Height(), last.w * scale, last.h * scale, Platform_Widescreen() ? 426 : 320);
+    if (Settings_Get(SET_SHOW_HUD) == 2 || Menu_IsOpen() || Menu_NoticeShown()) { /* a question over all */
         Hud_Draw(&canvas);
         Menu_Draw(&canvas);
     } else {
@@ -383,7 +385,7 @@ static void repaint_menu(void)
     if (old_w && old_h) {
         scale_game(old_y, old_y + old_h);
     }
-    if (Settings_Get(SET_SHOW_HUD) == 2 || Menu_IsOpen()) {
+    if (Settings_Get(SET_SHOW_HUD) == 2 || Menu_IsOpen() || Menu_NoticeShown()) { /* a question over all */
         Hud_Draw(&canvas);
         Menu_Draw(&canvas);
     } else {

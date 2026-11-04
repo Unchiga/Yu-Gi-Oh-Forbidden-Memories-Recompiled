@@ -63,6 +63,22 @@ int SoftGpu_Widescreen(void);
  * a full screen, or no room in VRAM's width). The OpenGL picture draws its
  * own targets by it (gl_picture.c). */
 int SoftGpu_WideMargin(int x1, int y1, int x2, int y2);
+/* Full-width flat rectangles include the game's global fades, their wipe
+ * bands and tinted flashes. Extend only those in the widened replay;
+ * ordinary sprites and small UI rectangles retain the console's clip. */
+static inline int SoftGpu_WidenFill(const uint32_t *words, size_t count, int clip_x1, int clip_x2,
+                                  int offset_x, int margin, uint32_t out[3])
+{
+    int x, width;
+    if (count < 3 || (words[0] >> 24 != 0x60 && words[0] >> 24 != 0x62)) return 0;
+    x = (int32_t)(words[1] << 21) >> 21;
+    width = words[2] & 0x3ff;
+    if (x + offset_x > clip_x1 || x + offset_x + width <= clip_x2 || width + 2 * margin > 1023) return 0;
+    out[0] = words[0];
+    out[1] = (words[1] & 0xffff0000u) | (uint16_t)(x - margin);
+    out[2] = (words[2] & 0xffff0000u) | (uint32_t)(width + 2 * margin);
+    return 1;
+}
 /* The widened picture of the display area x,y,w,h, if it has a target:
  * VRAM-shaped pixels, and the x and width to show. Returns 0 otherwise. */
 int SoftGpu_WideFrame(int x, int y, int w, int h, const uint16_t **pixels, int *out_x, int *out_w);
@@ -93,6 +109,17 @@ const uint32_t *SoftGpu_WidePicture(int x, int y, int w, int h);
  * texture pack's images are sampled at their own resolution there
  * (texture_dump.h, `sample`). Returns 0 if the picture cannot be made. */
 int SoftGpu_SetScale(int scale);
+/* What is drawn through this palette shows only in the scaled picture: while
+ * the recorder draws that, it is not rastered into VRAM as well. For a
+ * full-screen picture nothing reads back, which would be most of a menu's
+ * frame on the CPU. */
+void SoftGpu_PictureOnlyClut(int clut_x, int clut_y);
+/* While on, nothing drawn into a full-screen drawing area is rastered into
+ * VRAM as well, while the recorder draws the scaled picture: for frames
+ * nothing reads back from the frame buffer (a mod's whole scene, which
+ * would otherwise cost the CPU its own pass at 1x). Set before each flush
+ * (libgpu.c, from Mods_PictureOnlyFrame). */
+void SoftGpu_PictureOnlyFrame(int on);
 int SoftGpu_Scale(void);
 /* The picture: SOFT_GPU_WIDTH * scale words per row, 0x00RRGGBB. */
 const uint32_t *SoftGpu_Picture(void);

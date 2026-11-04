@@ -47,6 +47,26 @@ void Mods_SetAudio(int (*load)(int mod, const char *id, const char *directory, c
 void Mods_SetAudioClips(int (*add)(int mod, const char *id, const int16_t *samples, size_t frames, int channels,
                                    unsigned rate),
                         int (*play)(int mod, int handle, int volume, int pan), void (*release)(int mod, int handle));
+/* The mouse for host->mouse and host->capture_mouse (API 23): the window's
+ * motion since the last call and the buttons held, with
+ * MEMORIES_MOUSE_ESCAPE taken in when `escape` (the mod is the one that
+ * claimed it); and the capture's mode, 0 none, 1 the pointer and Escape, 2
+ * Escape only. Without these the host answers no motion and captures
+ * nothing. */
+void Mods_SetMouse(void (*motion)(int *dx, int *dy, unsigned *buttons, int escape), void (*capture)(int mode));
+/* The MEMORIES_HUD_* parts the applied mods hide (host->hide_hud), or 0. */
+unsigned Mods_HiddenHud(void);
+/* Where the window shows the game's picture, for host->overlay_picture:
+ * its rectangle on the overlay's canvas and the game pixels across it (320,
+ * or 426 widened). The window sets it whenever it lays the picture out. */
+void Mods_SetPicture(int x, int y, int w, int h, int game_width);
+/* The applied mods' overlays drawn straight over a picture of w x h
+ * 0xFFRRGGBB pixels, as a window of its size shows them, with the port's
+ * menu text (MEMORIES_DUMP_OVERLAY's frame dumps). */
+struct MenuCanvas;
+void Mods_DrawPictureOverlay(uint32_t *pixels, int w, int h, int game_width,
+                             void (*text)(struct MenuCanvas *, int, int, const char *, uint32_t, int),
+                             int (*width)(const char *, int));
 void Mods_Shutdown(void);
 /* What a mod's host->pad reads; NULL: Platform_Pad. The game sets it
  * (libetc.c) so mods see the control client's bits and, while a recording
@@ -110,6 +130,9 @@ void Mods_Note(const char *id, const char *format, ...);
 /* Called once the game's frame is on its way to the GPU (libgpu's GsDrawOt),
  * which is where an extra pass can draw over the finished picture. */
 void Mods_DrawFrame(void);
+/* Whether a mod's frame callback, in the last Mods_DrawFrame, asked that
+ * its frame be drawn only in the scaled picture (host->picture_only_frame). */
+int Mods_PictureOnlyFrame(void);
 /* The applied mods' overlays (MemoriesMod.overlay), drawn with the port's
  * menu text; the rectangle they covered, or zeros. Their signature changes
  * whenever one of them would draw something else (`frame` for a mod that
@@ -119,6 +142,38 @@ void Mods_DrawOverlay(struct MenuCanvas *canvas, int scale,
                       void (*text)(struct MenuCanvas *, int, int, const char *, uint32_t, int),
                       int (*width)(const char *, int), int *x, int *y, int *w, int *h);
 unsigned Mods_OverlaySignature(unsigned frame);
+/* Where the overlays go instead of the canvas: with a sink set a pass of
+ * Mods_DrawOverlay rasters nothing, reports no rectangle, and hands the
+ * sink its calls in order. The sink keeps what it needs: between `begin`
+ * and `end` the pixels are the mod's and alive, after `end` they may not be.
+ * `clip` is x0, y0, x1, y1 of the canvas; `forget` says pixels are gone. */
+typedef struct ModsOverlaySink {
+    void (*begin)(void);
+    void (*fill)(const int clip[4], int x, int y, int w, int h, uint32_t rgb, unsigned alpha);
+    void (*image)(const int clip[4], const uint32_t *pixels, int w, int h, uint32_t hash, int x, int y, int dw, int dh,
+                  unsigned alpha);
+    void (*end)(void);
+    void (*forget)(const uint32_t *pixels);
+} ModsOverlaySink;
+void Mods_SetOverlaySink(const ModsOverlaySink *sink);
+/* The overlays once more, only listed, the canvas untouched, and compared
+ * with the calls that last drew it (Mods_DrawOverlay, or a
+ * Mods_RedrawOverlayIn after this): the rectangles of the canvas that
+ * differ, x, y, w, h each into `rects`, at most `max` of them. 0 when
+ * nothing differs; -1 when there is nothing to compare with (no pass on a
+ * canvas of this size yet, or one that could not be listed whole), and
+ * then everything is to be drawn again. */
+int Mods_OverlayChanges(struct MenuCanvas *canvas, int scale,
+                        void (*text)(struct MenuCanvas *, int, int, const char *, uint32_t, int),
+                        int (*width)(const char *, int), int *rects, int max);
+/* Then the overlays drawn in those rectangles alone, which the caller has
+ * cleared; outside them the canvas is left as it is, which is what this
+ * pass draws there. 0 when the pass was not the one listed (a mod that
+ * draws something else each time it is asked): nothing on the canvas can
+ * then be trusted, and it is to be drawn again whole. */
+int Mods_RedrawOverlayIn(struct MenuCanvas *canvas, int scale,
+                         void (*text)(struct MenuCanvas *, int, int, const char *, uint32_t, int),
+                         int (*width)(const char *, int), const int *rects, int count);
 /* Drop everything cached from the running game: a resumed save state is
  * another game. */
 void Mods_Reset(void);

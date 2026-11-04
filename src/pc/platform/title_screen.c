@@ -31,8 +31,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { ENTRY_X = 0xA0 };   /* frontend.c: the entries' middle */
-
 /* The middle of each of the game's three pictures, measured on the retail
  * title (2026-09-29): a picture of a mod's own stands there, moved by the
  * layer's x and y. */
@@ -45,8 +43,13 @@ static int open;                /* between TitleScreen_Opened and _Closed */
 /* View > Aspect 16:9: the picture has TITLE_WIDE_MARGIN more either side. */
 static int wide(void) { return Platform_Widescreen(); }
 static void show_layers(void);
+static void step_fade(void);
 static int prompt_level = 0x80; /* PRESS START's own pulse, under its tint */
 static int idle;
+/* A "fade" (title_config.h): the background drawn, the title's (0) or the
+ * menus' (1), lags the menu by a fade to black, then out of it; -1 takes
+ * the menu's at once (the title just opened). `fade` is the black, 0-255. */
+static int shown = -1, fade;
 
 int TitleScreen_Song(void)
 {
@@ -81,23 +84,6 @@ static DisplayObject *layer(int i)
 static DisplayObject *entry(int i)
 {
     return (DisplayObject *)gMain_apMenuEntries[i];
-}
-
-/* A slide MainMenu_StartFrontendEntryTransition has just begun (16 ticks
- * to go) runs to or from the entry's own x instead of the middle. */
-static void shift_slides(void)
-{
-    int i;
-    for (i = 0; i < TITLE_ENTRIES; i++) {
-        DisplayObject *object = entry(i);
-        int dx = TitleWide_X(&TitleConfig_Get()->items[i].wide, TitleConfig_Get()->items[i].x, wide());
-        if (!object || object->field_60 != 0x10 || !dx) continue;
-        if ((s16)object->field_38.h.field_38 == ENTRY_X) object->field_38.h.field_38 += dx;
-        if ((s16)object->field_34.h.field_36 == ENTRY_X) {
-            object->field_34.h.field_36 += dx;
-            object->field_30.h.field_30 = object->field_34.h.field_36;
-        }
-    }
 }
 
 static void tint_entries(void)
@@ -136,7 +122,6 @@ void TitleScreen_Opened(void)
     }
     Mods_SetMenuItemSource(TitleMenu_ItemName);
     TitleMenu_Opened();
-    shift_slides();
     TitleMenu_Place();
     tint_entries();
     show_layers();
@@ -145,6 +130,8 @@ void TitleScreen_Opened(void)
 void TitleScreen_Closed(void)
 {
     open = 0;
+    shown = -1;
+    fade = 0;
     TitleMenu_Closed();
 }
 
@@ -160,6 +147,8 @@ void TitleScreen_State(MemoriesState *state)
     open = 0;
     idle = 0;
     prompt_level = 0x80;
+    shown = -1;
+    fade = 0;
     if (Memories_StateChunk(state, "title-screen", fields, 3) && open) TitleImages_Prepare(TitleConfig_Load());
 }
 
@@ -202,6 +191,7 @@ int TitleScreen_Update(void)
     if (!open) return result;
     result = TitleMenu_After(result);
     if (result != -1) return result;
+    step_fade();
 
     if (prompt_showing() && tinted) {
         color = (u8 *)&prompt->field_0C;
@@ -213,17 +203,39 @@ int TitleScreen_Update(void)
         return -2;
     }
     if (!prompt_showing()) idle = 0;
-    shift_slides();
     TitleMenu_Place();
     tint_entries();
     show_layers();
     return result;
 }
 
-/* The background shown: the menus' while one is up, else the title's. */
+/* The background shown: the menus' while one is up, else the title's;
+ * with a "fade", the one the screen last went black to. */
 static int shown_background(void)
 {
-    return TitleMenu_Showing() >= 0;
+    return shown >= 0 ? shown : TitleMenu_Showing() >= 0;
+}
+
+/* A frame of the "fade": down to black while the background shown is not
+ * the one wanted, the switch at black, then back up. */
+static void step_fade(void)
+{
+    int target = TitleMenu_Showing() >= 0, frames = TitleConfig_Get()->fade, step;
+    if (frames <= 0 || shown < 0) {
+        shown = target;
+        fade = 0;
+        return;
+    }
+    step = (255 + frames - 1) / frames;
+    if (shown != target) {
+        fade += step;
+        if (fade >= 255) {
+            fade = 255;
+            shown = target;
+        }
+    } else if (fade > 0) {
+        fade = fade > step ? fade - step : 0;
+    }
 }
 
 static const TitleBackground *background(void)
@@ -340,7 +352,13 @@ void TitleScreen_DrawMenu(void)
  * no dark-to-light shade over it there. */
 int TitleScreen_ShowShade(void) { return !in_tower() && background()->shade; }
 long TitleScreen_BackgroundColour(void) { return background()->color; }
-int TitleScreen_Dim(int level) { return level * TitleConfig_Get()->dim / 0x80; }
+/* The menu's dimming, and the "fade"'s black with it: both a subtraction
+ * over the background, under the menus. */
+int TitleScreen_Dim(int level)
+{
+    int dim = level * TitleConfig_Get()->dim / 0x80;
+    return open && fade > dim ? fade : dim;
+}
 
 /* --- the text lines ------------------------------------------------------ */
 

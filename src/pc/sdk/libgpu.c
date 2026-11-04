@@ -8,6 +8,7 @@
 #include "pc/guest/image.h"
 #include "pc/memory.h"
 #include "pc/platform/platform.h"
+#include "pc/platform/menu.h"
 #include "pc/platform/credits.h"
 #include "pc/render/soft_gpu.h"
 #include "pc/sdk/display.h"
@@ -102,13 +103,18 @@ DISPENV *GetDispEnv(DISPENV *env)
 unsigned Memories_PresentedFrames(void) { return (unsigned)frames_presented; }
 unsigned Memories_ShownFrames(void) { return (unsigned)frames_shown; }
 
-void Memories_DumpFrame(const char *path, int full_vram)
+/* The picture the window shows, as 0xFFRRGGBB pixels (malloc'ed, *w x *h):
+ * the scaled one at SoftGpu_Scale() when `scaled` asks for it and there is
+ * one (*scale says which it is), else the display area at the console's
+ * resolution; the widened one in widescreen, the whole VRAM for
+ * `full_vram`. NULL when there is no memory for it. */
+static uint32_t *displayed_picture(int full_vram, int scaled, int *out_w, int *out_h, int *out_scale)
 {
-    FILE *file;
     int x, y, w = disp_env.disp.w > 0 ? disp_env.disp.w : 320;
     int h = disp_env.disp.h > 0 ? disp_env.disp.h : 240;
     int x0 = full_vram ? 0 : disp_env.disp.x, y0 = full_vram ? 0 : disp_env.disp.y, wide_view = 0;
     const uint16_t *source = SoftGpu_Vram();
+    uint32_t *out;
     flush_drawing();
     if (full_vram) {
         w = SOFT_GPU_WIDTH;
@@ -126,12 +132,7 @@ void Memories_DumpFrame(const char *path, int full_vram)
             w = wide_w;
         }
     }
-    file = fopen(path, "wb");
-    if (!file) {
-        LOG(LOG_FRAMES, "cannot dump %s", path);
-        return;
-    }
-    if (SoftGpu_Scale() > 1 && (getenv("MEMORIES_DUMP_PICTURE") || wide_view == 2) && !disp_env.isrgb24) {
+    if (SoftGpu_Scale() > 1 && (scaled || wide_view == 2) && !disp_env.isrgb24) {
         /* The scaled picture of the display area, as the window shows it. */
         int at_scale = SoftGpu_Scale(), stride = SOFT_GPU_WIDTH * at_scale;
         const uint32_t *picture = !full_vram && Platform_Widescreen()
@@ -159,20 +160,21 @@ void Memories_DumpFrame(const char *path, int full_vram)
             }
         }
         if (picture) {
-            fprintf(file, "P6\n%d %d\n255\n", w * at_scale, h * at_scale);
-            for (y = 0; y < h * at_scale; y++) {
-                for (x = 0; x < w * at_scale; x++) {
-                    uint32_t c = picture[(size_t)((y0 * at_scale + y) % (SOFT_GPU_HEIGHT * at_scale)) * stride +
-                                         (size_t)((x0 * at_scale + x) % stride)];
-                    fputc((c >> 16) & 0xff, file);
-                    fputc((c >> 8) & 0xff, file);
-                    fputc(c & 0xff, file);
+            out = malloc((size_t)w * at_scale * (size_t)h * at_scale * sizeof(*out));
+            if (out) {
+                for (y = 0; y < h * at_scale; y++) {
+                    for (x = 0; x < w * at_scale; x++) {
+                        out[(size_t)y * w * at_scale + x] =
+                            0xFF000000u | picture[(size_t)((y0 * at_scale + y) % (SOFT_GPU_HEIGHT * at_scale)) * stride +
+                                                  (size_t)((x0 * at_scale + x) % stride)];
+                    }
                 }
             }
-            fclose(file);
             free(read);
-            LOG(LOG_FRAMES, "dumped %s (picture at %dx)", path, at_scale);
-            return;
+            *out_w = w * at_scale;
+            *out_h = h * at_scale;
+            *out_scale = at_scale;
+            return out;
         }
     }
     if (wide_view == 2) { /* no picture to read: the display area, 4:3 */
@@ -180,22 +182,63 @@ void Memories_DumpFrame(const char *path, int full_vram)
         x0 = disp_env.disp.x;
         w = disp_env.disp.w > 0 ? disp_env.disp.w : 320;
     }
-    fprintf(file, "P6\n%d %d\n255\n", w, h);
+    out = malloc((size_t)w * (size_t)h * sizeof(*out));
+    if (!out) {
+        return NULL;
+    }
     for (y = 0; y < h; y++) {
         for (x = 0; x < w; x++) {
             uint16_t c = source[((y0 + y) & 511) * SOFT_GPU_WIDTH + ((x0 + x) & 1023)];
             if (disp_env.isrgb24 && !full_vram) {
-                fwrite((const uint8_t *)&SoftGpu_Vram()[((y0 + y) & 511) * SOFT_GPU_WIDTH + x0] + x * 3,
-                       1, 3, file);
+                const uint8_t *rgb = (const uint8_t *)&SoftGpu_Vram()[((y0 + y) & 511) * SOFT_GPU_WIDTH + x0] + x * 3;
+                out[(size_t)y * w + x] = 0xFF000000u | (uint32_t)rgb[0] << 16 | (uint32_t)rgb[1] << 8 | rgb[2];
                 continue;
             }
-            fputc((c & 0x1f) << 3, file);
-            fputc(((c >> 5) & 0x1f) << 3, file);
-            fputc(((c >> 10) & 0x1f) << 3, file);
+            out[(size_t)y * w + x] = 0xFF000000u | (uint32_t)((c & 0x1f) << 3) << 16 |
+                                     (uint32_t)(((c >> 5) & 0x1f) << 3) << 8 | (uint32_t)(((c >> 10) & 0x1f) << 3);
         }
     }
+    *out_w = w;
+    *out_h = h;
+    *out_scale = 1;
+    return out;
+}
+
+void Memories_DumpFrame(const char *path, int full_vram)
+{
+    FILE *file;
+    int w, h, scale;
+    size_t i, count;
+    uint32_t *picture = displayed_picture(full_vram, getenv("MEMORIES_DUMP_PICTURE") != NULL, &w, &h, &scale);
+    if (!picture) {
+        LOG(LOG_FRAMES, "cannot dump %s: no memory", path);
+        return;
+    }
+    if (!full_vram && getenv("MEMORIES_DUMP_OVERLAY")) {
+        /* The mods' overlays over it, as a window of the picture's own size
+         * shows them: for looking at a mod's screens frame by frame. */
+        Mods_DrawPictureOverlay(picture, w, h, Platform_Widescreen() ? 426 : 320, Menu_DrawTextScaled,
+                                Menu_TextWidthScaled);
+    }
+    file = fopen(path, "wb");
+    if (!file) {
+        LOG(LOG_FRAMES, "cannot dump %s", path);
+        free(picture);
+        return;
+    }
+    fprintf(file, "P6\n%d %d\n255\n", w, h);
+    count = (size_t)w * (size_t)h;
+    for (i = 0; i < count; i++) {
+        uint8_t rgb[3] = {(uint8_t)(picture[i] >> 16), (uint8_t)(picture[i] >> 8), (uint8_t)picture[i]};
+        fwrite(rgb, 1, 3, file);
+    }
     fclose(file);
-    LOG(LOG_FRAMES, "dumped %s", path);
+    free(picture);
+    if (scale > 1) {
+        LOG(LOG_FRAMES, "dumped %s (picture at %dx)", path, scale);
+    } else {
+        LOG(LOG_FRAMES, "dumped %s", path);
+    }
 }
 
 /* Widescreen shows the display area 4/3 as wide: the widened picture the GPU
@@ -364,6 +407,30 @@ void Memories_PresentDisplay(void)
         Platform_StopTimers();
         exit(0);
     }
+    {
+        /* MEMORIES_DUMP_FRAMES="<first>:<step>:<count>": frames first,
+         * first + step, ... (count of them) dumped as MEMORIES_DUMP_PATH does
+         * one, the path a printf pattern of the frame's number
+         * ("/tmp/x/f%05d.ppm"), and the game ends after the last: a sequence
+         * of frames for looking at motion, from one run. */
+        const char *frames = getenv("MEMORIES_DUMP_FRAMES");
+        unsigned first, step = 1, count = 1;
+        if (frames && *frames && sscanf(frames, "%u:%u:%u", &first, &step, &count) >= 1 && step > 0 && count > 0 &&
+            (unsigned)frames_presented >= first && ((unsigned)frames_presented - first) % step == 0) {
+            const char *pattern = getenv("MEMORIES_DUMP_PATH");
+            char path[1024];
+            unsigned index = ((unsigned)frames_presented - first) / step;
+            if (index < count) {
+                snprintf(path, sizeof(path), pattern && *pattern ? pattern : "tmp/pc/frame%05u.ppm",
+                         (unsigned)frames_presented);
+                Memories_DumpFrame(path, getenv("MEMORIES_DUMP_VRAM") != NULL);
+            }
+            if (index + 1 >= count) {
+                Platform_StopTimers();
+                exit(0);
+            }
+        }
+    }
     if (display_enabled && Platform_PresentDue()) {
         int at_scale = SoftGpu_Scale();
         frames_shown++;
@@ -409,6 +476,7 @@ static void flush_drawing(void)
     SoftGpu_PanelCut = SoftGpu_PanelName && HdText_PanelCut();
     SoftGpu_SetPrecise(frame_precise, pending_precise);
     pending_precise = 0;
+    SoftGpu_PictureOnlyFrame(Mods_PictureOnlyFrame());
     SoftGpu_Gp0(frame_words, count);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     {

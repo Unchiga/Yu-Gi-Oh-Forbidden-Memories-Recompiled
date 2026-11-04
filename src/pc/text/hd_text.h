@@ -24,6 +24,10 @@ int HdText_Enabled(void);
  * and again when the cell's pixels change. Returns 0 when there is none. */
 int HdText_Cell(int bank, int page_x, int page_y, int large, int u, int v, int factor, int *atlas_u, int *atlas_v);
 
+/* A read-only glyph picture for CPU overlays. Does not consume the atlas's
+ * dirty rows; valid until the next atlas operation. `stride` is bytes/row. */
+const uint8_t *HdText_CellPixels(int large, int u, int v, int factor, int *stride);
+
 /* Card titles: the game's plate for a card (96 x 14 texels, 4-bit) set
  * anew from the card's name (CardArt_TitlePicture) at `factor`, so a card
  * a mod adds and a translated name read like the rest. func_800289BC tells

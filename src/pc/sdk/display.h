@@ -1,5 +1,6 @@
 #ifndef MEMORIES_PC_SDK_DISPLAY_H
 #define MEMORIES_PC_SDK_DISPLAY_H
+#include <stdint.h>
 /* Show the area selected by the last PutDispEnv. Main thread only. */
 void Memories_PresentDisplay(void);
 /* The display area shown as it stands, menu and notices over it, no frame

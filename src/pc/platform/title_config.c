@@ -38,6 +38,7 @@ static void background_defaults(TitleBackground *background)
     background->picture = background->shade = 1;
     background->color = -1;
     background->tint = 0xFFFFFF;
+    background->frame_time = TITLE_FRAME_TIME;
 }
 
 static void defaults(void)
@@ -230,7 +231,7 @@ static int action_index(const char *name)
 
 /* The keys an entry and a button share. */
 static const char *const item_keys[] = {"hide", "x", "y", "tint", "image", "selected_image", "width", "height",
-                                        "label", "action", "value", "notice", "wide_x", "wide_y", "scale"};
+                                        "label", "font", "action", "value", "notice", "wide_x", "wide_y", "scale"};
 
 static void read_item(const char *mod, const char *directory, const JsonValue *part, TitleItem *item)
 {
@@ -253,6 +254,13 @@ static void read_item(const char *mod, const char *directory, const JsonValue *p
         else if (strlen(label) >= sizeof(item->label))
             Mods_Note(mod, "%s: %s \"label\" is longer than %d letters", reading, item->name, TITLE_LABEL - 1);
         snprintf(item->label, sizeof(item->label), "%s", label ? label : "");
+    }
+    if ((value = Json_Member(part, "font"))) {
+        /* "game": the label set in the game's own letters (menu_letters.h) */
+        const char *font = Json_String(value, "");
+        if (strcmp(font, "game") && strcmp(font, "serif"))
+            Mods_Note(mod, "%s: %s \"font\" is \"game\" or \"serif\"", reading, item->name);
+        item->font_game = !strcmp(font, "game");
     }
     if ((value = Json_Member(part, "action"))) {
         const char *name = Json_String(value, "");
@@ -324,8 +332,8 @@ static void read_buttons(const char *mod, const char *directory, const JsonValue
     }
     for (part = Json_At(list, 0); part; part = Json_Next(part)) {
         static const char *const button_keys[] = {"id", "menu", "hide", "x", "y", "tint", "image", "selected_image",
-                                                  "width", "height", "label", "action", "value", "notice", "wide_x",
-                                                  "wide_y", "scale"};
+                                                  "width", "height", "label", "font", "action", "value", "notice",
+                                                  "wide_x", "wide_y", "scale"};
         const char *id = Json_String(Json_Member(part, "id"), ""), *menu = Json_String(Json_Member(part, "menu"), NULL);
         const char *colon = strchr(id, ':');
         int i = item_index(mod, id);
@@ -472,11 +480,57 @@ static void read_pictures(const char *mod, const char *directory, const JsonValu
     }
 }
 
+/* An animation's "frames": a list of PNGs, as an "image" each, or one PNG
+ * with all of them one under another (`*sheet` set). A list given replaces
+ * the one before; an empty one leaves none. */
+static void read_frames(const char *mod, const char *directory, const JsonValue *part, const char *key,
+                        TitleImage *frames, int *count, int *sheet)
+{
+    const JsonValue *list = Json_Member(part, key);
+    int i, n;
+    if (!list) return;
+    *count = 0;
+    *sheet = 0;
+    if (Json_TypeOf(list) == JSON_STRING) {
+        read_image(mod, directory, "background", part, key, &frames[0]);
+        frames[0].width = frames[0].height = 0;
+        if (frames[0].file[0]) {
+            *count = 1;
+            *sheet = 1;
+        }
+        return;
+    }
+    if (Json_TypeOf(list) != JSON_ARRAY) {
+        Mods_Note(mod, "%s: \"%s\" is a PNG of the frames one under another, or a list of PNGs", reading, key);
+        return;
+    }
+    n = Json_Count(list);
+    if (n > TITLE_MAX_FRAMES) {
+        Mods_Note(mod, "%s: \"%s\": at most %d pictures; the rest are left out", reading, key, TITLE_MAX_FRAMES);
+        n = TITLE_MAX_FRAMES;
+    }
+    for (i = 0; i < n; i++) {
+        const char *file = Json_String(Json_At(list, i), NULL);
+        TitleImage *frame = &frames[*count];
+        memset(frame, 0, sizeof(*frame));
+        snprintf(frame->mod, sizeof(frame->mod), "%s", mod);
+        if (!file || !*file) {
+            Mods_Note(mod, "%s: \"%s\": picture %d is not a file name", reading, key, i + 1);
+        } else if (!Paths_Contained(file) ||
+                   snprintf(frame->file, sizeof(frame->file), "%s/%s", directory, file) >= (int)sizeof(frame->file)) {
+            Mods_Note(mod, "%s: \"%s\": %s is outside the mod", reading, key, file);
+        } else {
+            (*count)++;
+        }
+    }
+}
+
 /* A "background" object into `background`; `set` gets the parts it gave. */
 static void read_background(const char *mod, const char *directory, const JsonValue *part, TitleBackground *background,
                             unsigned *set)
 {
-    static const char *const known[] = {"picture", "shade", "tint", "color", "dim", "image", "wide", "wide_image"};
+    static const char *const known[] = {"picture", "shade", "tint", "color", "dim", "fade", "image", "wide", "wide_image",
+                                        "frames", "wide_frames", "frame_time"};
     if (Json_TypeOf(part) != JSON_OBJECT) {
         Mods_Note(mod, "%s: \"background\" is an object ({\"image\": \"art/bg.png\"})", reading);
         return;
@@ -487,6 +541,15 @@ static void read_background(const char *mod, const char *directory, const JsonVa
     if (Json_Member(part, "image")) *set |= TITLE_BACKGROUND_IMAGE;
     if (Json_Member(part, "wide")) *set |= TITLE_BACKGROUND_WIDE;
     if (Json_Member(part, "wide_image")) *set |= TITLE_BACKGROUND_WIDE_IMAGE;
+    if (Json_Member(part, "frames")) *set |= TITLE_BACKGROUND_FRAMES;
+    if (Json_Member(part, "wide_frames")) *set |= TITLE_BACKGROUND_WIDE_FRAMES;
+    if (Json_Member(part, "frame_time")) *set |= TITLE_BACKGROUND_FRAME_TIME;
+    read_frames(mod, directory, part, "frames", background->frames, &background->frame_count, &background->frame_sheet);
+    read_frames(mod, directory, part, "wide_frames", background->wide_frames, &background->wide_frame_count,
+                &background->wide_frame_sheet);
+    int_member(part, "frame_time", &background->frame_time);
+    if (background->frame_time < 1) background->frame_time = 1;
+    if (background->frame_time > 600) background->frame_time = 600;
     bool_member(part, "wide", &background->wide);
     read_image(mod, directory, "background", part, "wide_image", &background->wide_image);
     /* A picture for widescreen fills it. */
@@ -510,6 +573,9 @@ static void read_background(const char *mod, const char *directory, const JsonVa
     read_image(mod, directory, "background", part, "image", &background->image);
     if (config.dim < 0) config.dim = 0;
     if (config.dim > 0x80) config.dim = 0x80;
+    int_member(part, "fade", &config.fade);
+    if (config.fade < 0) config.fade = 0;
+    if (config.fade > 60) config.fade = 60;
     only(mod, "background", part, known, sizeof(known) / sizeof(known[0]));
 }
 
@@ -563,12 +629,19 @@ static void read_title(const char *mod, const char *directory, const JsonValue *
 
 static void read_menu(const char *mod, const char *directory, const JsonValue *menu)
 {
-    static const char *const known[] = {"background", "spacing", "scale", "entries", "buttons", "order"};
+    static const char *const known[] = {"background", "spacing", "scale", "entries", "buttons", "order", "slide"};
     const JsonValue *part;
     reading = "menu";
     if ((part = Json_Member(menu, "background"))) read_background(mod, directory, part, &config.background[1], &config.menu_set);
     int_member(menu, "spacing", &config.spacing);
     scale_member(mod, "", menu, &config.scale);
+    if ((part = Json_Member(menu, "slide"))) {
+        /* "smooth", or "game" (the game's own, as without it) */
+        const char *slide = Json_String(part, "");
+        if (!strcmp(slide, "smooth")) config.smooth_slide = 1;
+        else if (!strcmp(slide, "game")) config.smooth_slide = 0;
+        else Mods_Note(mod, "menu: \"slide\" is \"smooth\" or \"game\", not \"%s\"", slide);
+    }
     read_entries(mod, directory, Json_Member(menu, "entries"));
     read_buttons(mod, directory, Json_Member(menu, "buttons"));
     read_order(mod, Json_Member(menu, "order"));
@@ -740,6 +813,21 @@ void TitleConfig_Finish(void)
     if (config.menu_set & TITLE_BACKGROUND_WIDE_IMAGE) menu.wide_image = given->wide_image;
     /* A menu picture of its own without a wide one: not the title's wide one. */
     else if (config.menu_set & TITLE_BACKGROUND_IMAGE) menu.wide_image.file[0] = 0;
+    if (config.menu_set & TITLE_BACKGROUND_FRAMES) {
+        memcpy(menu.frames, given->frames, sizeof(menu.frames));
+        menu.frame_count = given->frame_count;
+        menu.frame_sheet = given->frame_sheet;
+    } else if (config.menu_set & TITLE_BACKGROUND_IMAGE) {
+        menu.frame_count = 0;   /* a still picture of its own: not the title's animation */
+    }
+    if (config.menu_set & TITLE_BACKGROUND_WIDE_FRAMES) {
+        memcpy(menu.wide_frames, given->wide_frames, sizeof(menu.wide_frames));
+        menu.wide_frame_count = given->wide_frame_count;
+        menu.wide_frame_sheet = given->wide_frame_sheet;
+    } else if (config.menu_set & (TITLE_BACKGROUND_IMAGE | TITLE_BACKGROUND_WIDE_IMAGE | TITLE_BACKGROUND_FRAMES)) {
+        menu.wide_frame_count = 0;
+    }
+    if (config.menu_set & TITLE_BACKGROUND_FRAME_TIME) menu.frame_time = given->frame_time;
     config.background[1] = menu;
     config.menu_set = 0;
 }

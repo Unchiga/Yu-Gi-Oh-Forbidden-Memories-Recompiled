@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Regression for rejected native-mod callbacks, with one object on both OSes.
+"""Regression for rejected native-mod callbacks, with one object on both OSes,
+and for the mods' overlay drawn again where it changed (mods_overlay_test.c).
 
 --target android-arm64 runs only the function hooks test, built with the NDK
 for the arm64 game's layout, on the device adb has (ANDROID_SERIAL picks one):
@@ -33,6 +34,8 @@ def main():
     build_mod.compile_object(["tests/pc/mod_fixtures/rejected.c"], str(fixture), str(OUT / "obj"))
     no_api = OUT / "no_api.o"
     build_mod.compile_object(["tests/pc/mod_fixtures/no_api.c"], str(no_api), str(OUT / "obj-no-api"))
+    overlay = OUT / "overlay.o"
+    build_mod.compile_object(["tests/pc/mod_fixtures/overlay.c"], str(overlay), str(OUT / "obj-overlay"))
     for target in ("linux", "windows") if args.target == "both" else (args.target,):
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Isrc"]
         environment = dict(os.environ, TMPDIR=str(OUT))
@@ -42,12 +45,16 @@ def main():
             # scan of the mods folder fails with EOVERFLOW on a file system whose
             # inode numbers need more than 32 bits (a mounted Windows drive in
             # WSL, btrfs, XFS, NFS) and finds no mods at all.
-            compile_cmd = ["gcc", "-m32", *flags, "-D_FILE_OFFSET_BITS=64", *SOURCES, "-lm", "-o", str(program)]
+            compile_cmd = ["gcc", "-m32", "-msse2", "-mfpmath=sse", *flags, "-D_FILE_OFFSET_BITS=64", *SOURCES, "-lpng", "-lm",
+                           "-o", str(program)]
             launch = [str(program)]
         else:
             build_win32_deps.use_toolchain()
             program = OUT / "lifecycle.exe"
-            compile_cmd = ["i686-w64-mingw32-clang", *flags, *SOURCES, "-static", "-lshell32", "-lole32", "-lwinpthread", "-o", str(program)]
+            deps = build_win32_deps.OUT  # libpng: a mod's pictures (host->load_image)
+            compile_cmd = ["i686-w64-mingw32-clang", *flags, "-I" + os.path.join(deps, "include"), *SOURCES, "-static",
+                           "-L" + os.path.join(deps, "lib"), "-lpng", "-lzs", "-lshell32", "-lole32", "-lwinpthread", "-o",
+                           str(program)]
             launch = [str(program)]
             if sys.platform != "win32":
                 launch = ["wine", str(program)]
@@ -55,6 +62,16 @@ def main():
         subprocess.run(compile_cmd, check=True)
         subprocess.run([*launch, str(fixture), str(no_api)], env=environment, check=True, timeout=60)
         print(f"mods lifecycle: {target} passed")
+        # The overlay drawn again in part: the same program with the overlay
+        # test in place of the lifecycle's.
+        overlay_program = program.with_name(program.name.replace("lifecycle", "overlay"))
+        overlay_cmd = [str(overlay_program) if part == str(program) else
+                       "tests/pc/mods_overlay_test.c" if part == "tests/pc/mods_lifecycle_test.c" else part
+                       for part in compile_cmd]
+        overlay_cmd.insert(1, "-DMEMORIES_TEST_OVERLAY_CACHE")
+        subprocess.run(overlay_cmd, check=True)
+        subprocess.run([*launch[:-1], str(overlay_program), str(overlay)], env=environment, check=True, timeout=120)
+        print(f"mods overlay: {target} passed")
         # Function hooks, on targets laid out as the game units are.
         hooks_program = str(OUT / program.name.replace("lifecycle", "hooks"))
         hooks_cmd = [compile_cmd[0], *compile_cmd[1:compile_cmd.index(SOURCES[0])], "-O0",

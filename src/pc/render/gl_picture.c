@@ -1050,6 +1050,7 @@ typedef struct Vertex {
 static const uint32_t *batch_words;
 static const PgxpVertex *batch_precise;
 static size_t batch_precise_count;
+static size_t batch_precise_next; /* where the last search ended: the next is usually just past it */
 
 /* The precise position of the vertex whose position word is `word`, if the
  * batch has one for it. */
@@ -1060,11 +1061,20 @@ static void find_precise(Vertex *vertex, const uint32_t *word)
     vertex->precise = 0;
     if (!batch_precise_count || !batch_words || word < batch_words) return;
     index = (uint32_t)(word - batch_words);
+    /* The words are read in order, so the vertex sought is mostly the one
+     * after the last found: a search over the batch's list only otherwise. */
+    if (batch_precise_next <= batch_precise_count &&
+        (batch_precise_next == 0 || batch_precise[batch_precise_next - 1].index < index)) {
+        low = batch_precise_next;
+        while (low < batch_precise_count && batch_precise[low].index < index) low++;
+        high = low;
+    }
     while (low < high) {
         size_t middle = (low + high) / 2;
         if (batch_precise[middle].index < index) low = middle + 1;
         else high = middle;
     }
+    batch_precise_next = low < batch_precise_count && batch_precise[low].index == index ? low + 1 : low;
     if (low < batch_precise_count && batch_precise[low].index == index && batch_precise[low].w > 0) {
         vertex->precise = 1;
         vertex->fx = batch_precise[low].x + (float)state.offset_x;
@@ -1775,10 +1785,13 @@ static void gp0(const uint32_t *words, size_t count)
             if (used && scale >= 2 && (t = wide_target()) >= 0) {
                 /* Again into the widescreen target, shifted, clipped as
                  * SoftGpu_Gp0 clips it there: polygons and lines past the
-                 * 4:3 edges, sprites to them. */
+                 * 4:3 edges, sprites to them; full-width flat fills cover
+                 * the sides as well. */
                 int clip_x1 = state.clip_x1, clip_x2 = state.clip_x2, offset_x = state.offset_x;
                 int margin = wide[t].margin;
-                if (command < 0x60) {
+                uint32_t fill[3];
+                int full_width = SoftGpu_WidenFill(words + at, count - at, clip_x1, clip_x2, offset_x, margin, fill);
+                if (command < 0x60 || full_width) {
                     state.clip_x2 += 2 * margin;
                 } else {
                     state.clip_x1 += margin;
@@ -1786,7 +1799,7 @@ static void gp0(const uint32_t *words, size_t count)
                 }
                 state.offset_x += margin;
                 wide_now = t;
-                draw(words + at, count - at);
+                draw(full_width ? fill : words + at, full_width ? 3 : count - at);
                 wide_now = -1;
                 state.clip_x1 = clip_x1;
                 state.clip_x2 = clip_x2;
@@ -2198,8 +2211,21 @@ static void group_runs(void)
             used += run->count;
         }
     }
-    memcpy(vertices, grouped, used * sizeof(*vertices));
-    memcpy(runs, grouped_runs, count * sizeof(*runs));
+    {
+        /* The grouped lists become the lists, the old ones the next
+         * grouping's room. */
+        GlVertex *old_vertices = vertices;
+        Run *old_runs = runs;
+        size_t old_room = vertex_room, old_run_room = run_room;
+        vertices = grouped;
+        vertex_room = grouped_room;
+        grouped = old_vertices;
+        grouped_room = old_room;
+        runs = grouped_runs;
+        run_room = grouped_run_room;
+        grouped_runs = old_runs;
+        grouped_run_room = old_run_room;
+    }
     run_count = count;
 }
 
@@ -2762,6 +2788,13 @@ static void apply_move(int sx, int sy, int dx, int dy, int w, int h)
     w = sw < dw ? sw : dw;
     h = sh < dh ? sh : dh;
     if (w <= 0 || h <= 0) return;
+    if (sx == dx && sy == dy) {
+        /* Onto itself (the game does so every frame): VRAM, the picture and
+         * the widescreen targets are as they were, and resolving the
+         * anti-aliased picture for it would hold the CPU until the GPU
+         * caught up. */
+        return;
+    }
     capture_touch(dx, dy, w, h);
     gl_BindFramebuffer(GL_READ_FRAMEBUFFER, vram_fbo);
     glBindTexture(GL_TEXTURE_2D, vram_scratch);
@@ -3006,6 +3039,7 @@ int GlPicture_Replay(void)
             if (at + used > count) { at = count; break; }
             batch_precise = (const PgxpVertex *)(op + 2);
             batch_precise_count = op[1];
+            batch_precise_next = 0;
             break;
         case OP_GP0:
             used = 2 + op[1];

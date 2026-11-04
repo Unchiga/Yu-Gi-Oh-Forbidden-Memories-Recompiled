@@ -55,6 +55,12 @@ int CardArt_IndexedImage(const char *path, int w, int h, unsigned char *indices,
  * busts.c, draws a talking frame's changes over its base by that). */
 int CardArt_IndexedImages(const char *const *paths, int count, int w, int h, unsigned char *const *indices,
                           unsigned short *clut, char *why, size_t why_size);
+/* A sheet of `count` pictures one under another, each its share of the
+ * sheet's rows, made into `count` sets of texels as CardArt_IndexedImage
+ * makes one, all through the one palette (title_images.c's animations):
+ * the sheet's own colors, exactly, when it has 255 or fewer. */
+int CardArt_IndexedSheet(const char *path, int count, int w, int h, unsigned char *const *indices,
+                         unsigned short *clut, char *why, size_t why_size);
 /* The PNG's size; 0 when it is not one. */
 int CardArt_ImageSize(const char *path, int *width, int *height);
 /* PORTRAIT_RECORD bytes: a duelist's face for the Free Duel grid. */

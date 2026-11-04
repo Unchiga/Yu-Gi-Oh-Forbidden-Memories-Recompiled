@@ -295,10 +295,21 @@ static void multiply(const int16_t *m, const int32_t *translation,
     const int16_t vector[3] = {input[0], input[1], input[2]};
     unsigned i;
     for (i = 0; i < 3; i++) {
-        int64_t sum = translation ? (int64_t)translation[i] * 0x1000 : 0;
-        sum = mac_check(i + 1, sum + (int64_t)m[i * 3 + 0] * vector[0]);
-        sum = mac_check(i + 1, sum + (int64_t)m[i * 3 + 1] * vector[1]);
-        sum = mac_check(i + 1, sum + (int64_t)m[i * 3 + 2] * vector[2]);
+        int32_t t = translation ? translation[i] : 0;
+        int64_t sum;
+        if (t > -0x7ff00000 && t < 0x7ff00000) {
+            /* No step can leave the 44 bits: |T| * 0x1000 < 2^43 - 2^32 and
+             * three products of 16 bits add under 2^32, so the checks below
+             * would neither flag nor wrap (and cost a 32-bit build dearly). */
+            sum = (int64_t)t * 0x1000 + ((int64_t)((int32_t)m[i * 3 + 0] * vector[0]) +
+                                         (int32_t)m[i * 3 + 1] * vector[1]) +
+                  (int32_t)m[i * 3 + 2] * vector[2];
+        } else {
+            sum = (int64_t)t * 0x1000;
+            sum = mac_check(i + 1, sum + (int64_t)m[i * 3 + 0] * vector[0]);
+            sum = mac_check(i + 1, sum + (int64_t)m[i * 3 + 1] * vector[1]);
+            sum = mac_check(i + 1, sum + (int64_t)m[i * 3 + 2] * vector[2]);
+        }
         row_sums[i] = sum;
         set_mac(i + 1, sum, shift);
         if (row3 && i == 2) {

@@ -21,6 +21,9 @@
 #include "../../overlays/main_menu/ordering_tables.h"
 #include "../../game/sound.h"
 #include "../../game/graphics_frame.h"
+#ifdef MEMORIES_PC
+#include "pc/platform/title_menu.h"
+#endif
 
 s32 MainMenu_UpdateFrontendMenu(void)
 {
@@ -208,6 +211,12 @@ s32 MainMenu_UpdateFrontendMenu(void)
         first = 0x10;
         frame = first - value;
         value = (u16)eloop->field_38.h.field_38;
+#ifdef MEMORIES_PC
+        if (TitleMenu_Smooth()) {
+            value = TitleMenu_SlidePosition(eloop->field_34.h.field_36,
+                                           eloop->field_38.h.field_38, eloop->field_60);
+        } else
+#endif
         if (frame != first) {
             product = rsin(frame << 6) * delta;
             eloop = (DisplayObject *)*slot;
@@ -219,6 +228,9 @@ s32 MainMenu_UpdateFrontendMenu(void)
             value = (u16)eloop->field_34.h.field_36 + product;
         }
         *(volatile s16 *)&eloop->field_30.h.field_30 = value;
+#ifdef MEMORIES_PC
+        if (!TitleMenu_Smooth())
+#endif
         if ((frame & 1) != 0) {
             MainMenu_SpawnFrontendEntryAfterimage((DisplayObject *)*slot);
         }

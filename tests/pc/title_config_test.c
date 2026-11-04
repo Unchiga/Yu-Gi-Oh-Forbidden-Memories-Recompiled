@@ -88,7 +88,7 @@ static void retail(void)
     int i;
     CHECK(notes == 0);
     CHECK(config->song == 0 && !config->skip_movie && config->press_start && config->idle_frames == -1);
-    CHECK(config->background[0].picture && config->background[0].shade && config->dim == 0x80 && config->background[0].color == -1);
+    CHECK(config->background[0].picture && config->background[0].shade && config->dim == 0x80 && !config->fade && config->background[0].color == -1);
     CHECK(config->background[0].tint == 0xFFFFFF && config->lines == 0);
     for (i = 0; i < TITLE_LAYERS; i++) CHECK(!config->layers[i].hidden && config->layers[i].tint == 0xFFFFFF);
     /* frontend.c's own places: 50 + 32i, then 42 + 32(i - 5). */
@@ -103,7 +103,7 @@ static void keys(void)
     const TitleConfig *config = one(
         "{\"title\": {\"music\": \"0x010\", \"skip_intro\": true, \"press_start\": false, \"idle_seconds\": 3,"
         " \"background\": {\"picture\": false, \"shade\": false, \"tint\": \"#9070FF\", \"color\": \"102040\","
-        "                  \"dim\": 64},"
+        "                  \"dim\": 64, \"fade\": 90},"
         " \"logo\": {\"x\": -10, \"y\": 4}, \"copyright\": {\"hide\": true}, \"prompt\": {\"tint\": 16769088},"
         " \"entries\": {\"options\": {\"x\": 80, \"tint\": \"#FF8080\"}, \"9\": {\"y\": 7}},"
         " \"text\": [{\"text\": \"v1\", \"x\": 316, \"y\": 232, \"align\": \"right\", \"color\": \"#FFD000\","
@@ -111,7 +111,7 @@ static void keys(void)
     CHECK(notes == 0);
     CHECK(config->song == 0x10 && config->skip_movie && !config->press_start && config->idle_frames == 180);
     CHECK(!config->background[0].picture && !config->background[0].shade && config->background[0].tint == 0x9070FF && config->background[0].color == 0x102040);
-    CHECK(config->dim == 64);
+    CHECK(config->dim == 64 && config->fade == 60);
     CHECK(config->layers[0].x == -10 && config->layers[0].y == 4 && config->layers[1].hidden);
     CHECK(config->layers[2].tint == 0xFFE040);
     CHECK(config->items[4].x == 80 && config->items[4].tint == 0xFF8080);
@@ -462,6 +462,42 @@ static void sizes(void)
     CHECK(notes == 1 && strstr(note, "test:b \"scale\"") && config->items[TITLE_ENTRIES].scale == 100);
 }
 
+/* An animated background: its frames, at most TITLE_MAX_FRAMES, and the
+ * menus' taking the title's unless they have a picture of their own. */
+static void frames(void)
+{
+    const TitleConfig *config = one(
+        "{\"title\": {\"background\": {\"frames\": [\"a.png\", \"b.png\"], \"frame_time\": 5,"
+        "                             \"wide_frames\": [\"wa.png\"]}}}");
+    CHECK(notes == 0);
+    CHECK(config->background[0].frame_count == 2 && config->background[0].frame_time == 5);
+    CHECK(!strcmp(config->background[0].frames[1].file, "/mods/test/b.png"));
+    CHECK(config->background[0].wide_frame_count == 1);
+    CHECK(config->background[1].frame_count == 2 && config->background[1].frame_time == 5);
+    config = one("{\"title\": {\"background\": {\"frames\": [\"a.png\"]}},"
+                 " \"menu\": {\"background\": {\"image\": \"m.png\"}}}");
+    CHECK(config->background[0].frame_count == 1 && !config->background[1].frame_count);
+    CHECK(config->background[1].frame_time == TITLE_FRAME_TIME);
+    config = one("{\"menu\": {\"background\": {\"frames\": [\"1.png\", \"2.png\", \"3.png\", \"4.png\", \"5.png\","
+                 " \"6.png\", \"7.png\", \"8.png\", \"9.png\", \"10.png\", \"11.png\", \"12.png\", \"13.png\"],"
+                 " \"frame_time\": 0}}}");
+    CHECK(notes == 1 && strstr(note, "at most"));
+    CHECK(config->background[1].frame_count == TITLE_MAX_FRAMES && config->background[1].frame_time == 1);
+    CHECK(!config->background[0].frame_count);
+    /* One PNG: a sheet of them, one under another. */
+    config = one("{\"title\": {\"background\": {\"frames\": \"sheet.png\", \"wide_frames\": \"wide.png\"}}}");
+    CHECK(notes == 0);
+    CHECK(config->background[0].frame_count == 1 && config->background[0].frame_sheet);
+    CHECK(!strcmp(config->background[0].frames[0].file, "/mods/test/sheet.png"));
+    CHECK(config->background[0].wide_frame_count == 1 && config->background[0].wide_frame_sheet);
+    CHECK(config->background[1].frame_sheet && config->background[1].wide_frame_sheet);
+    /* A list after a sheet is a list again. */
+    config = one("{\"title\": {\"background\": {\"frames\": [\"a.png\", \"b.png\"]}}}");
+    CHECK(!config->background[0].frame_sheet && config->background[0].frame_count == 2);
+    one("{\"title\": {\"background\": {\"frames\": 5}}}");
+    CHECK(notes == 1 && strstr(note, "one under another"));
+}
+
 int main(void)
 {
     retail();
@@ -478,6 +514,7 @@ int main(void)
     widescreen();
     added_pictures();
     sizes();
+    frames();
     while (document_count) Json_Free(documents[--document_count]);
     printf("title config: ok\n");
     return 0;
