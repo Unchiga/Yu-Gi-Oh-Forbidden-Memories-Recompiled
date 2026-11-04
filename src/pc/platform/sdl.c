@@ -142,6 +142,11 @@ static int pointer_x, pointer_y, pointer_inside, cursor_hidden;
  * kept, the whole pixels handed over. */
 static float mouse_dx, mouse_dy;
 static int mouse_wanted, mouse_relative;
+/* The frame a mod last read the mouse: motion is gathered only while one
+ * reads it (within a second), so the first call does not get all the
+ * motion since the game started. */
+static unsigned mouse_read_frame;
+static int mouse_read;
 static unsigned mouse_held;
 /* Escape claimed by that mod (capture_mouse 1 or 2): an Exit game press in
  * the game's window, no menu, notice or panel up, is its, kept here until
@@ -2154,6 +2159,16 @@ static bool SDLCALL app_event(void *userdata, SDL_Event *event)
     return true;
 }
 
+static void mouse_gather(float dx, float dy)
+{
+    if (!mouse_read || current_frame - mouse_read_frame > 60) {
+        mouse_dx = mouse_dy = 0;
+        return;
+    }
+    mouse_dx += dx;
+    mouse_dy += dy;
+}
+
 static void set_mouse_relative(int relative)
 {
     SDL_SetWindowRelativeMouseMode(window, relative);
@@ -2226,8 +2241,7 @@ static void pump(void)
             continue;
         if (mouse_relative && SDL_GetWindowFromEvent(&event) == window) {
             if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.which != SDL_TOUCH_MOUSEID) {
-                mouse_dx += event.motion.xrel;
-                mouse_dy += event.motion.yrel;
+                mouse_gather(event.motion.xrel, event.motion.yrel);
                 continue;
             }
             if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
@@ -2280,8 +2294,7 @@ static void pump(void)
         } else if (event.type == SDL_EVENT_MOUSE_MOTION) {
             static unsigned logged_frame = ~0u;
             if (event.motion.y >= Menu_Height() && !Menu_IsOpen()) {
-                mouse_dx += event.motion.xrel;
-                mouse_dy += event.motion.yrel;
+                mouse_gather(event.motion.xrel, event.motion.yrel);
             }
             pointer_is_mouse = 1;
             pointer_x = menu_event.x;
@@ -2336,6 +2349,9 @@ static void pump(void)
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             if(!controls_window)ControlsRuntime_ResetKeys(); mouse_bits=wheel_now=0;wheel_frames=0;
+            /* host->mouse's buttons too: a release away from the window is never seen */
+            mouse_held = 0;
+            mouse_dx = mouse_dy = 0;
             if (Settings_Get(SET_MUTE_ON_FOCUS_LOSS)) Spu_SetOutputVolume(0);
             if (Settings_Get(SET_PAUSE_ON_FOCUS_LOSS) && Platform_ClockRate() != 0) {
                 /* Turbo ends with the focus (the keys are let go), so
@@ -2815,6 +2831,8 @@ void HERE(Platform_ShowError)(const char *title, const char *message)
 
 static void mouse_motion(int *dx, int *dy, unsigned *buttons, int escape)
 {
+    mouse_read = 1;
+    mouse_read_frame = current_frame;
     *dx = (int)mouse_dx; /* toward 0: the rest waits for the next call */
     *dy = (int)mouse_dy;
     mouse_dx -= (float)*dx;
