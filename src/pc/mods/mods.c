@@ -1345,6 +1345,11 @@ int Mods_OverlayChanges(MenuCanvas *canvas, int scale, void (*text)(MenuCanvas *
     listed_valid = 0;
     if (!drawn_valid || !canvas || canvas->width != drawn.width || canvas->height != drawn.height || max < 1)
         return -1;
+    /* The extra calls are API 23's (modapi.h): a mod built for an older one
+     * may move on in its overlay, so it is drawn once a frame, all of it. */
+    for (i = 0; i < mod_count; i++) {
+        if (mods[i].active && mods[i].initialized && mods[i].hooks.overlay && mods[i].hooks.api < 23) return -1;
+    }
     if (!overlay_pass(canvas, scale, text, width, 0, NULL, 0, &listed, NULL) || !listed.whole) return -1;
     overlay_diff(&drawn, &listed, &damage);
     while (damage.count > max) { /* the last two together, which may meet others */
