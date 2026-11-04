@@ -3283,11 +3283,12 @@ static void run_event_script(unsigned frame)
             event.type = SDL_EVENT_FINGER_UP;
             if (strcmp(kind, "fdown") != 0) SDL_PushEvent(&event);
         } else if (strcmp(kind, "mdown") == 0 || strcmp(kind, "mup") == 0) {
-            const char *name = script + 1;
-            n = strcspn(name, ",");
+            /* "mdown:right"; a bare "mdown" is the left button. */
+            const char *name = *script == ':' ? script + 1 : script;
+            n = *script == ':' ? strcspn(name, ",") : 0;
             event.type = strcmp(kind, "mdown") == 0 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
             event.button.down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
-            event.button.button = *name == ':' || strncmp(name, "left", n) == 0 ? SDL_BUTTON_LEFT
+            event.button.button = n == 0 || strncmp(name, "left", n) == 0 ? SDL_BUTTON_LEFT
                                 : strncmp(name, "right", n) == 0 ? SDL_BUTTON_RIGHT : SDL_BUTTON_MIDDLE;
             event.button.clicks = 1;
             event.button.x = (float)(layout.dst.x + layout.dst.w / 2);

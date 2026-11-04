@@ -827,7 +827,7 @@ clock stays on the main thread; Windows will still need the clock replaced
 420:key:escape"` pushes pointer and key events at presented frames for
 tests: synthetic X input does not reach SDL correctly (XI2, and XTest is
 refused by this compositor), so the menu was verified that way. For a mod
-that steers with the mouse (mod API 19), `rel:dx:dy` moves it by dx, dy over
+that steers with the mouse (mod API 23), `rel:dx:dy` moves it by dx, dy over
 the middle of the picture and `mdown:left` / `mup:left` (`right`, `middle`)
 hold a button; key names (`w`, `a`, `d`, `e`, `q`, `f`, `v`, `space`,
 `lshift` and the rest) match whole, so `f` is F and not F10. With
