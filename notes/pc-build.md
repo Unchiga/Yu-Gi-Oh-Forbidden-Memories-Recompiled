@@ -757,8 +757,9 @@ names things by address), which `build_game32.py` writes after the ELF-derived
 ones whenever it runs; the committed file has them, and
 `tools/pc/test_model_gate.py` fails when it does not. At run time a slot's
 verdict (native entry or none) is kept with a copy of the words it was taken
-from and stands while the slot holds them: the gate costs one pass over about
-3,600 words a call, and sees every way a module arrives. Shape 418 was
+from and stands while the slot holds them: the gate costs one pass over the
+span a call (about 4,060 words for 418's `0x3F60` bytes), and sees every way a
+module arrives. Shape 418 was
 ported first: 13 records have it (Dark Magician, Cocoon of Evolution, Faith
 Bird, Ancient Jar, Lucky Trinket, Ray & Temperature, Protector of the
 Throne, Millennium Shield, Magical Ghost, Hoshiningen, Takuhee, Morphing Jar

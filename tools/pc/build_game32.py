@@ -1189,7 +1189,9 @@ def main():
               "ptr32: the compiler keeps store widths through __ptr32: the pass can be retired "
               "(notes/pc-build.md)" + ("; skipped" if skip else ""))
         PTR32_PASS = not skip
-    headers = glob.glob("src/**/*.h", recursive=True) + glob.glob("mods/**/*.h", recursive=True) + [__file__, "config/pc/host_symbol_renames.txt"]
+    # .inc: the X-macro tables units include (model_gate_table.inc among them).
+    headers = glob.glob("src/**/*.h", recursive=True) + glob.glob("src/**/*.inc", recursive=True) + \
+        glob.glob("mods/**/*.h", recursive=True) + [__file__, "config/pc/host_symbol_renames.txt"]
     if A64:
         headers.append("tools/pc/ptr32_stores.py")   # it rewrites every unit's IR (compile_unit)
     NEWEST_HEADER = max(os.path.getmtime(path) for path in headers)
