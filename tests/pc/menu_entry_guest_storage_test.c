@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 extern void MainMenu_StartFrontendEntryTransition(s32 mode);
+static int slide_hooks;
+/* The host owns timing/placement; this fixture checks the guest stores
+ * before that hook, especially the adjacent four-byte entry pointers. */
+void TitleMenu_StartSlide(void) { slide_hooks++; }
 static s16 half(const u8 *object, size_t offset)
 {
     s16 value;memcpy(&value, object + offset, sizeof(value));return value;
@@ -43,6 +47,7 @@ int main(void)
         assert(half(objects[i], offsetof(DisplayObject, field_30.h.field_30)) == 160);
     }
     assert(*(u8 *)Memories_Resolve(memory, 0x80184599u, 1, 1) == 1);
+    assert(slide_hooks == 2);
     GuestRuntime_Reset();free(memory);
     puts("Real menu entry transition: four-byte cursor preserves adjacent entries for entrance/exit");
     return 0;

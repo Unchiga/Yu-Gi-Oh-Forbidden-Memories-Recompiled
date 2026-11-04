@@ -91,6 +91,7 @@ BACKENDS = {
         "src/pc/platform/sdl.c",
         "src/pc/render/gl_picture.c",
         "src/pc/render/present_pass.c",
+        "src/pc/render/overlay_gl.c",
     ],
     "x11": [
         "src/pc/platform/x11.c",

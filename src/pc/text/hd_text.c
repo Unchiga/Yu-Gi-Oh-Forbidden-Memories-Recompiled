@@ -813,6 +813,14 @@ int HdText_Cell(int bank, int page_x, int page_y, int large, int u, int v, int w
     return 1;
 }
 
+const uint8_t *HdText_CellPixels(int large, int u, int v, int wanted, int *stride)
+{
+    int au, av;
+    if (!HdText_Cell(0, 10 * 64, 0, large, u, v, wanted, &au, &av)) return NULL;
+    *stride = side;
+    return atlas + (size_t)(av * factor) * side + au * factor;
+}
+
 const uint8_t *HdText_Atlas(int *size, int *first, int *last, unsigned *atlas_generation)
 {
     *size = side;

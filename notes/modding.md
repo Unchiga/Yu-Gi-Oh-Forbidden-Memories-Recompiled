@@ -174,6 +174,8 @@ checked as well, when it starts.
 | 18 | the release after v0.3.0 | the card frames' keys ([Frame styles](#frame-styles-and-the-rules-that-pick-them)): a card's `frame_style`; `card_layout`'s `default_styles`, `atk_label`, `dfd_label` and `type_label`; in a `frame_styles` entry `hand`, `hand_image`, `field_image`, `field_back_image`, `back_image`, `library_icon`, `full_bleed`, `atk_label`, `dfd_label`, `type_label`, `digits`, or a part of its own (`title`, `stars`, `attribute`, `spell`, `art`, `atk`, `def`); a `hide`, `hidden`, `show` or `color` on a card part; `digits`' own `atk` and `def` |
 | 20 | the release after v0.3.0 | `fields`: renamed retail fields, new fields and their pictures; a monster effect's `"do": "change_field"` |
 | 21 | the release after v0.3.0 | `models`: battle models the mod adds ([Battle models](#battle-models-monsters-the-disc-does-not-have)), a model entry's `texture_pages`, and a card's `model` naming one |
+| 22 | the release after v0.3.0 | for a code mod, `packet_area` ([below](#packets-of-the-mods-own-api-22)); nothing in mod.json |
+| 23 | the release after v0.3.0 | a `menu`'s `slide`; for a code mod, the mouse, the overlay's pictures and `clip` (`api` 23, [below](#code-mods)) |
 
 The FM Editor writes `min_api` on save as the lowest one of these that has
 everything the mod uses, never lowering one written higher, and its Mod
@@ -970,7 +972,7 @@ window and stays centred in widescreen.
 | `skip_intro` | `true`: go past the intro movie to the title at start-up and after a title jump |
 | `press_start` | `false`: open on the menu, without PUSH START BUTTON |
 | `idle_seconds` | seconds at PUSH START BUTTON before the intro plays again, `0` never (retail a little under a minute) |
-| `background` | `image` (a PNG drawn over the whole screen instead of the hieroglyph wall), `picture` and `shade` (`false` leaves out the wall, or the mod's image, and the dark-to-light shade over it), `tint` (the wall's color, `#FFFFFF` as it is), `color` (a solid color under them, seen where they are left out or see-through), `dim` (how far the menu darkens the screen, `0` to `128`, retail `128`), `wide` and `wide_image` (widescreen, [below](#widescreen)) |
+| `background` | `image` (a PNG drawn over the whole screen instead of the hieroglyph wall), `picture` and `shade` (`false` leaves out the wall, or the mod's image, and the dark-to-light shade over it), `tint` (the wall's color, `#FFFFFF` as it is), `color` (a solid color under them, seen where they are left out or see-through), `dim` (how far the menu darkens the screen, `0` to `128`, retail `128`), `fade` (frames, `0` to `60`: as a menu opens or closes the screen goes down to black over that many and comes back up on the other background, the menu's items over it; `0`, retail, none), `frames`, `wide_frames` and `frame_time` (an animated background, [below](#animated-backgrounds)), `wide` and `wide_image` (widescreen, [below](#widescreen)) |
 | `logo`, `copyright`, `prompt` | the three pictures: the logo, the (c) 1996 line and PUSH START BUTTON. `image` a PNG drawn instead, `width` and `height` its size, `x`, `y` move one from its place (`wide_x`, `wide_y` in widescreen), `tint` colors it, `hide` leaves it out (hiding `prompt` is `"press_start": false`), `show` when: `always`, `press_start` (not while a menu is up) or, for the logo and the copyright line, `menu` (only while one is) |
 | `entries` | the menu entries by name: `new_game`, `load`, `duel`, `trade`, `options` before a game is loaded; `campaign`, `free_duel`, `build_deck`, `library`, `password`, `save` after (or their numbers, 0 to 10). Each may have `hide`, `x` (moved from the middle), `y` (its place) and `tint`, and all the keys of [the menus](#the-titles-menus)' items |
 | `spacing` | how far apart the entries stand (retail 32) |
@@ -1023,97 +1025,39 @@ pressed. A PNG that cannot be read is noted beside the mod, and the game's
 own picture shows. The pictures take VRAM the intro movie uses and the
 title does not, uploaded again each time the title opens.
 
-## The title's menus
+### Animated backgrounds
 
-The two menus on the title -- the first, after PUSH START BUTTON (NEW GAME,
-LOAD, 2P DUEL, TRADE, OPTION), and the second, once a game is loaded
-(CAMPAIGN to SAVE) -- take a `"menu"` object: buttons of the mod's own, the
-game's entries changed, the order of both, and a background of their own.
+A background's `frames` are pictures drawn in turn in place of its
+`image`, each for `frame_time` of the game's frames (default 8, at least 1;
+the title runs at 60 a second), round and round; `wide_frames` the same
+for widescreen's `wide_image`. They are either
+
+- **one PNG with the frames one under another** (a sheet): as many as its
+  height holds of pictures the background's shape at its width -- 320 x 240
+  each for `frames`, 428 x 240 for `wide_frames`, or any multiple of that --
+  at most 64; or
+- **a list of PNGs**, one a frame, at most 12.
+
+All of an animation's frames share one palette, so what stays still in
+them stays the same color from frame to frame; a sheet of 255 colors or
+fewer keeps exactly its own. A 4:3 background with an `image` but no
+`frames` of its own, while the widescreen one has `wide_frames`, is animated
+with the middle 320 of those: one sheet, drawn at 428 x 240, serves both.
+The frames are made when the title opens and kept in memory (made again
+only when they change), and the one due is put in VRAM over the last, so an
+animation takes no more VRAM than a still picture and leaves the items
+theirs. Keep the `image` (and `wide_image`): a game without `frames` shows
+it still, and notes the key it does not know.
 
 ```json
-"menu": {
-    "background": {"image": "art/menu.png", "shade": false, "dim": 0},
-    "entries": {"trade": {"hide": true},
-                "options": {"label": "SETTINGS"},
-                "new_game": {"image": "art/new.png", "selected_image": "art/new-on.png"}},
-    "buttons": [
-        {"id": "credits", "label": "CREDITS", "notice": {"title": "Credits", "text": "Made by me."}},
-        {"id": "gallery", "image": "art/gallery.png", "selected_image": "art/gallery-on.png",
-         "action": "event", "value": 1},
-        {"id": "quick", "menu": "second", "label": "QUICK DUEL", "action": "free_duel"}
-    ],
-    "order": {"first": ["new_game", "load", "credits", "gallery", "duel", "options"]}
-}
+"menu": {"background": {"image": "art/bg/still.png", "wide_image": "art/bg/still-wide.png",
+                        "wide_frames": "art/bg/frames.png", "frame_time": 5, "fade": 12}}
 ```
 
-| Key | Meaning |
-|---|---|
-| `buttons` | buttons the mod adds, at most 16 in all: each an `id` of its own (letters, digits, `_`, `-`), `menu` `first` (the default) or `second`, and the item keys below. A button is known to others as `"<mod id>:<id>"`: a later mod changes or hides one with that as its `id` |
-| `entries` | the game's entries by name, as the title's `entries`, with the item keys below |
-| `order` | the items top to bottom, as the cursor goes: `{"first": [...], "second": [...]}`, or a list alone for the first. A name is an entry's, a button's id (the mod's own) or `"<mod id>:<id>"`; the items it leaves out follow in the game's order, then the buttons as the mods made them. A later mod's list replaces an earlier one's |
-| `spacing` | how far apart the items stand at their size 100 (retail 32; the same as the title's `spacing`) |
-| `scale` | every item's size in percent, 25 to 400, but those with a `scale` of their own (100 as the game has it) |
-| `background` | the background while a menu is up, as the title's `background` (`image`, `picture`, `shade`, `tint`, `color`, `dim`); what it leaves out is the title's |
-
-Each item -- button or entry -- may have:
-
-| Key | Meaning |
-|---|---|
-| `label` | its words, drawn on a frame in the entries' own look: dark in an olive rim, and red and orange with green letters while the cursor is on it. At most 31 letters, in the serif the card names are set in (Times; the system's sans without it) |
-| `image`, `selected_image` | a PNG drawn instead, and another while the cursor is on it. Without `selected_image` the one picture is drawn darker while the cursor is elsewhere. Sized as the title's pictures are: `width` and `height`, one of them and the PNG's shape, or the PNG's own size divided by the smallest whole number that brings it to 32 rows or fewer -- so a picture drawn at 4 times the entries' 28 rows comes out their size. At most 256 x 64 |
-| `action` | what choosing it does: an entry's name (what that entry does), `back`, `notice`, `quit`, `debug_menu`, `event`, `none` or `tower`. An entry does its own unless given one; a button without one does nothing, or shows its `notice` |
-| `notice` | the words of a `notice` action's box: text, or `{"title", "text"}` |
-| `value` | a number handed to a code mod with `event` |
-| `hide`, `x`, `y`, `tint` | as the title's entries: left out, moved from the middle (160), its middle's place, its colors multiplied |
-| `wide_x`, `wide_y` | its `x` and `y` in widescreen, [below](#widescreen) |
-| `scale` | its size in percent, 25 to 400, about its middle: the menu's `scale` without one. Words, frame and the cursor's look alike; a picture at that much of its size above |
-
-The actions:
-
-| Action | What it does |
-|---|---|
-| `new_game`, `options` | leaves the title for that, from either menu |
-| `load`, `duel`, `trade` | the game's own dialog for it, in the first menu only |
-| `campaign`, `free_duel`, `build_deck`, `library`, `password`, `save` | need a game loaded: in the second menu only |
-| `back` | the first menu back to PUSH START BUTTON (a buzz when the title has none), the second back to the first, as Circle does |
-| `notice` | a box over the picture with the item's `notice` and OK |
-| `quit` | asks, then quits the game |
-| `debug_menu` | the game's own debug menu |
-| `event` | nothing but a code mod's `MEMORIES_EVENT_MENU` (below); a buzz when no mod takes it |
-| `none` | a buzz |
-| `tower` | the [tower](tower-mode.md) of the mod that has one, in the second menu only; dimmed and a buzz while its `unlock` does not hold. The tower's mod gets a button for it of its own, `"<mod>:tower"` |
-
-An action a menu cannot take -- `campaign` in the first, say -- is noted
-beside the mod and does nothing. The items drawn by the port (the ones
-with a `label` or an `image`) slide in and out as the game's entries do,
-from alternate sides, leaving the same afterimages; the game's own entries
-are the game's sprites still, and a texture pack of `sheets/menu` changes
-their words. Places are in the game's 320 x 240, as on the title. The shown
-items stand `spacing` apart around the middle of the retail menu, closer
-together when they would not fit between y 16 and 204; a `y` of the mod's
-own stands. Each takes room as its size: two items' middles are `spacing`
-times the half of each one's `scale` apart (32 between two at 100, 48
-between two at 150, 40 between one at 100 and one at 150), so bigger
-buttons push the others apart rather than run into them -- until the menu
-would not fit, when all stand closer alike: kept between y 2 and 218 as
-the game's 28-row entries are, the top one's middle half of 28 rows at
-its size below y 2 (16 at 100) and the bottom one's as far above 218.
-Fresh from PUSH START BUTTON the first menu opens on its top row; back
-from a screen a choice opened, on the item it was chosen from.
-
-A label's frame is made once as a PNG four times its size (more for one
-drawn bigger: four times its size drawn), under the user directory's
-`cache/menu-labels/`, and like an `image` is drawn at the console's
-resolution as the game's own kind of texture and above it (View > Internal
-2x, 4x) from the PNG itself. A `scale` other than 100 draws an item at
-that size: a picture or a label made at it (at most 256 x 64 texels at the
-console's resolution, stretched past that), and an entry of the game's own
-by the port from the game's sprites -- the one it has while the cursor is
-on it too -- each stretched about the entry's middle, with its afterimages.
-A `scale` out of 25 to 400 is noted beside the mod and left out. The items' pictures share the
-VRAM the title's pictures leave: about a dozen items with two pictures
-each, more when the title has no background or logo picture of the mod's
-own; one that finds no room is noted beside the mod.
+Pixel art wants drawing at the console's size, 320 x 240 (428 x 240 for
+widescreen): above 1x the game draws such a picture with square pixels, as
+it does its own, and the PNGs stay small. A larger sheet or PNG is drawn at
+its own resolution above 1x, frame by frame, as a still one is.
 
 ### Widescreen
 
@@ -1160,6 +1104,12 @@ title then slides out with and returns -- one of the game's, or a number of
 the mod's own that its `MEMORIES_EVENT_SCENE` hook acts on (with `a` that
 number); unhandled, a number the game does not know opens the debug menu.
 The title comes back to the menu the choice was made in, on its item.
+
+The menus' entries slide in and out the game's way: 16 ticks, easing
+off as they arrive, with afterimages behind them. A mod's `menu` may say
+`"slide": "smooth"` for a 24-tick slide eased at both ends, without
+afterimages, every entry and button starting and ending past the screen's
+edge (widescreen's too); `"slide": "game"` is the game's again (API 23).
 
 Every applied mod's `menu` is read with its `title`, each time the title
 opens. How it is done: [`src/pc/platform/title_menu.c`](../src/pc/platform/title_menu.c)
@@ -2256,7 +2206,7 @@ the player's settings file as `mod.<id>.<key>`, and read from
 `MEMORIES_MOD_<ID>_<KEY>` first when that is set; a key is letters, digits,
 `_` and `-`, and `order` is the manager's), `disc_file_start`/
 `disc_read`, `pad`, and from mod API 2 `now_us` (a clock) and `map_fixed`
-(memory at an address the mod chooses, as 3D Monsters' model arenas need). API 4 adds `hook`/`unhook`/`symbol`, below; API 5 adds `duelist_id`, which resolves an added duelist's identity to the id it has this run as `card_id` does for a card. API 7 adds `card_notes` and `card_tag`, a card's [notes](more-cards.md#notes-on-a-card) and the `<tag: value>` tags in them. API 8 adds `limit`, the numbers the game caps and its other values as the mods' `limits` set them ([Gameplay tables](gameplay-tables.md#values-atk-def-lp-starchips-and-more)): `host->limit(host, "attack")` is 9999 without such a mod, `host->limit(host, "deck_copies")` 3. API 9 adds `menu_item`, the name of an item of the title's menus, and the event `MEMORIES_EVENT_MENU` ([The title's menus](#the-titles-menus)). API 10 adds the event `MEMORIES_EVENT_MONSTER`: a monster summoned, flipped, at its owner's draw, in a battle, destroyed or destroying the monster it battled, for every monster, with `handled` to skip a card's own `monster_effects` ([Monster effects](more-cards.md#monster-effects)). API 11 adds no entry or event; it marks the mod.json features a game of API 10 leaves out ([Which game a mod needs](#which-game-a-mod-needs)). API 12 adds `sound_add`, `sound_play` and `sound_free`, sounds of the mod's own: `sound_add` copies signed 16-bit PCM at any rate and channel count and returns a handle, and `sound_play(host, sound, volume, pan)` plays it once on the channels the audio replacement mixes the game's replaced sound effects on ([Audio](#audio-songs-voices-and-sounds-from-files)), under the player's sound-effect volume, restarting it if it is still playing, as a game sound effect takes its own voice again. Both work only while the mod is applied, not from `MemoriesModInit`: the host frees a mod's sounds when it is turned off, so a mod adds them when it needs them, or in `applied(1)`. 3D Monsters plays its fighters' arena sounds this way (`fight_sounds.c`). API 14 adds no entry or event either; it marks the [tower](tower-mode.md)'s mod.json features, API 17 a duelist's [bust](more-duelists.md#bust--the-large-character), and API 18 the [card frames](#frame-styles-and-the-rules-that-pick-them)'s keys.
+(memory at an address the mod chooses, as 3D Monsters' model arenas need). API 4 adds `hook`/`unhook`/`symbol`, below; API 5 adds `duelist_id`, which resolves an added duelist's identity to the id it has this run as `card_id` does for a card. API 7 adds `card_notes` and `card_tag`, a card's [notes](more-cards.md#notes-on-a-card) and the `<tag: value>` tags in them. API 8 adds `limit`, the numbers the game caps and its other values as the mods' `limits` set them ([Gameplay tables](gameplay-tables.md#values-atk-def-lp-starchips-and-more)): `host->limit(host, "attack")` is 9999 without such a mod, `host->limit(host, "deck_copies")` 3. API 9 adds `menu_item`, the name of an item of the title's menus, and the event `MEMORIES_EVENT_MENU` ([The title's menus](#the-titles-menus)). API 10 adds the event `MEMORIES_EVENT_MONSTER`: a monster summoned, flipped, at its owner's draw, in a battle, destroyed or destroying the monster it battled, for every monster, with `handled` to skip a card's own `monster_effects` ([Monster effects](more-cards.md#monster-effects)). API 11 adds no entry or event; it marks the mod.json features a game of API 10 leaves out ([Which game a mod needs](#which-game-a-mod-needs)). API 12 adds `sound_add`, `sound_play` and `sound_free`, sounds of the mod's own: `sound_add` copies signed 16-bit PCM at any rate and channel count and returns a handle, and `sound_play(host, sound, volume, pan)` plays it once on the channels the audio replacement mixes the game's replaced sound effects on ([Audio](#audio-songs-voices-and-sounds-from-files)), under the player's sound-effect volume, restarting it if it is still playing, as a game sound effect takes its own voice again. Both work only while the mod is applied, not from `MemoriesModInit`: the host frees a mod's sounds when it is turned off, so a mod adds them when it needs them, or in `applied(1)`. 3D Monsters plays its fighters' arena sounds this way (`fight_sounds.c`). API 14 adds no entry or event either; it marks the [tower](tower-mode.md)'s mod.json features, API 17 a duelist's [bust](more-duelists.md#bust--the-large-character), and API 18 the [card frames](#frame-styles-and-the-rules-that-pick-them)'s keys. API 23 adds the mouse, for a mod that steers with it: `mouse(host, &dx, &dy, &buttons)` gives the motion gathered since the last call, in window pixels, and the buttons held (bit 0 left, 1 right, 2 middle), over the picture only and nothing while a menu is open; `capture_mouse(host, 1)` hides the pointer and holds it in the window so the motion never stops at an edge, and while it is captured the mouse's buttons do nothing in the game itself (the right and middle buttons are otherwise Circle and Triangle). The capture lets go by itself while a menu, a notice or one of the port's windows has the mouse or the window loses focus, comes back after, and ends with `capture_mouse(host, 0)` or the mod being turned off. `capture_mouse(host, 1)` also takes Escape from the port, and `capture_mouse(host, 2)` takes only Escape and leaves the pointer free, for a pause screen where the player has the menu bar and their mouse: while a mod has Escape, pressing it (or whatever key or button the player gave Exit game in Game > Controls) in the game's window, with no menu, notice or port panel up, does not ask to quit; `mouse` sets `MEMORIES_MOUSE_ESCAPE` (0x100) in the buttons once for that press, on the claiming mod's next call. Under 1 the pointer is let go at that press, so the mod can switch to 2 for its pause screen and back to 1 to play on. Escape still leaves fullscreen and closes an open menu first, File > Exit still quits, and `capture_mouse(host, 0)` or the mod being turned off gives Escape back. API 23 also adds `overlay_picture(host, &x, &y, &w, &h, &game_width)`, where the game's picture is on the overlay's canvas and how many game pixels it is across (320, or 426 widened), so an overlay can put something over a point of the game's own picture; `overlay_size` is the whole window, menu bar included. And `draw_text_alpha`, `draw_text` blended in at an alpha (0-255), for text that should not hide what is under it. And `hide_hud(host, mask)`, for a mod that draws a battle of its own over the duel: while the mod is applied the parts of the port's HUD in `mask` are not drawn, `MEMORIES_HUD_FUSION_HELPER` (1) the fusion helper and `MEMORIES_HUD_RANK` (2) the duel rank meter, and `MEMORIES_HUD_FREE_DUEL_PROGRESS` (4) View > Free Duel progress's count over the Free Duel screen. `hide_hud(host, 0)` shows them again, and they come back when the mod is turned off. The player's settings stay as they are. With several mods, a part any of them hides is hidden. And pictures on the overlay: `load_image(host, "path.png", &w, &h)` reads a PNG under the mod's directory into `w` x `h` 0xAARRGGBB pixels (NULL when it cannot; `free_image` frees them), and `draw_image(host, pixels, w, h, x, y, dw, dh, alpha)` stretches such pixels, or any the mod made itself, smoothly over `dw` x `dh` at (`x`, `y`), blended by their own alpha times `alpha`. And `clip(host, x, y, w, h)`, which keeps the overlay's drawing inside a rectangle of the canvas until it is called again with no size or the callback returns (a list scrolling inside its panel). And for speed: `alloc_image(host, w, h)` gives a clear picture of the mod's own to draw into (freed with `free_image`); the host keeps what it made of a picture from `alloc_image` or `load_image` and does not compare its pixels again each time it is drawn, so after writing into one again the mod calls `image_changed(host, pixels)` (a picture made any other way is compared pixel by pixel on every draw). `prefetch_image(host, "path.png")` reads a PNG on another thread so the `load_image` that asks for it soon returns at once. `picture_only_frame(host)`, called from the frame callback, has this frame's full-screen drawing shown only in the GPU's raised-resolution picture and not also rastered by the CPU into VRAM, for a scene nothing reads back from the frame buffer; it lapses when the frame is shown. The frame dumps take the mods' overlays too with `MEMORIES_DUMP_OVERLAY=1`.
 A mod that uses an entry newer than API 1 should refuse to start when
 `host->api` is older.
 
@@ -2332,6 +2282,18 @@ same with no mod hooking anything (the smoke screenshots are unchanged).
   controls nothing else changes. The pad's buttons stay see-through, and
   a mod has no way yet to ask where they are (see "Touch pad's free span"
   in [PC build](pc-build.md)).
+  When the signature changes, the window draws the overlay again only
+  where its drawing changed: it calls `overlay` once just to list what it
+  draws, compares that with the last time, and calls it again to draw in
+  the rectangles that differ, which is all it clears and sends to the
+  screen. A cursor that moves over a full-screen panel then costs the
+  window the cursor's corner of it, not the window. So an overlay draws
+  from the mod's state, the same thing however many times it is called in
+  a frame, and changes none of that state as it draws (time a movement by
+  the clock, as `now_us` gives it, or by the game's frames, not by the
+  calls); one that draws something else the second time is drawn whole
+  again, which is only slower. A picture drawn with `draw_image` is known
+  by its pixels, so new pixels in the same buffer are seen as a change.
 * **Save slots.** The events `MEMORIES_EVENT_SLOT_SAVE` and
   `MEMORIES_EVENT_SLOT_LOAD` (after only) say that the running game was
   saved to, or loaded from, slot `a` (from 0); `b` is the slot's token and

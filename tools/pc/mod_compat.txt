@@ -157,3 +157,13 @@ accept v0.3.0 enum TOUCH_BUTTONS counts the touch controls' top row
 # platform's picker and copy); no mod calls it, and none could hand it the
 # platform's copy.
 accept v0.3.0 function ModsWindow_SetImport takes a fetch callback with the progress and Stop parameters after its sizes
+
+# The title's animated backgrounds, the fade through black, the game's own
+# letters on a button and the menus' "slide" (FPS Duels' title and menus):
+# TitleBackground holds its frames, TitleConfig gained fade and
+# smooth_slide, TitleItem gained font_game. Mods set these through the
+# "title" and "menu" keys; no mod reads a TitleConfig, which is the port's
+# title code's (as for v0.2.0 above).
+accept v0.3.0 record TitleBackground holds an animation's frames
+accept v0.3.0 record TitleConfig gained fade, smooth_slide and the larger TitleBackground and TitleItem
+accept v0.3.0 record TitleItem gained font_game before action

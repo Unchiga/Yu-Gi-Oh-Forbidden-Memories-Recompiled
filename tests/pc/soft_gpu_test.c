@@ -144,6 +144,47 @@ int main(void)
         SoftGpu_SetWidescreen(0);
     }
     SoftGpu_SetRecorder(NULL);
+    /* Global fades use full-width flat rectangles, including 8-line wipe
+     * bands. Both directions and tinted/additive flashes must reach every
+     * side pixel, once, at native and scaled resolutions. Smaller UI
+     * rectangles and textured sprites keep their existing clipping. */
+    for (int scale = 1; scale <= 4; scale *= 2) {
+        const uint32_t area[] = {0xe3000000u | (256 << 10), 0xe4000000u | 319 | (495 << 10),
+                                 0xe5000000u | (256 << 11)};
+        const uint32_t make_target[] = {0x60000000u, 0, 0x00010001u};
+        const uint32_t band[] = {0xe1000040u, 0x62404040u, 0x00180000u, (8u << 16) | 320};
+        const uint32_t tint[] = {0xe1000020u, 0x62000020u, 0, (240u << 16) | 320};
+        const uint32_t black[] = {0xe1000040u, 0x62ffffffu, 0, (240u << 16) | 320};
+        const uint32_t white[] = {0xe1000020u, 0x62ffffffu, 0, (240u << 16) | 320};
+        const uint16_t *pixels;
+        const uint32_t *picture;
+        int x, w;
+        CHECK(SoftGpu_SetScale(scale));
+        SoftGpu_Reset();
+        SoftGpu_SetWidescreen(1);
+        CHECK(SoftGpu_Gp0(area, 3) == 3);
+        CHECK(SoftGpu_Gp0(make_target, 3) == 3);
+        SoftGpu_Fill(0, 256, 320, 240, 0xffffff);
+        CHECK(SoftGpu_Gp0(band, 4) == 4);
+        CHECK(SoftGpu_WideFrameView(0, 256, 320, 240, &pixels, &x, &w) && w == 428);
+        picture = SoftGpu_WidePicture(0, 256, 320, 240);
+        for (int column = 0; column < w; column++) {
+            CHECK(pixels[280 * SOFT_GPU_WIDTH + column] == AT(0, 280));
+            CHECK(pixels[279 * SOFT_GPU_WIDTH + column] == 0x7fff);
+            CHECK(pixels[288 * SOFT_GPU_WIDTH + column] == 0x7fff);
+            if (picture) CHECK(picture[(size_t)(280 * scale) * SOFT_GPU_WIDTH * scale + column * scale] ==
+                               picture[(size_t)(280 * scale) * SOFT_GPU_WIDTH * scale + 160 * scale]);
+        }
+        CHECK(AT(0, 280) != AT(0, 279));
+        CHECK(SoftGpu_Gp0(black, 4) == 4);
+        for (int column = 0; column < w; column++) CHECK(pixels[300 * SOFT_GPU_WIDTH + column] == 0);
+        CHECK(SoftGpu_Gp0(tint, 4) == 4);
+        for (int column = 0; column < w; column++) CHECK(pixels[300 * SOFT_GPU_WIDTH + column] == 4);
+        CHECK(SoftGpu_Gp0(white, 4) == 4);
+        for (int column = 0; column < w; column++) CHECK(pixels[300 * SOFT_GPU_WIDTH + column] == 0x7fff);
+        SoftGpu_SetWidescreen(0);
+    }
+    CHECK(SoftGpu_SetScale(1));
 
     /* Texture banks: a polygon's page word names 1-15 by bits 11-14 and
      * 16-31 with bit 10 too; an E1 word's bit 10 names no bank. */

@@ -751,23 +751,19 @@ int CardArt_Crop(const char *path, int w, int h, int *x, int *y, int *cw, int *c
     return 1;
 }
 
-/* A PNG stretched to `w` x `h`, each texel the average of the pixels under
- * it: a texel under half covered is clear (0 in `indices`), the others 1,
- * their colors appended to `opaque` from `*count` on. */
-static int sample_indexed(const char *path, int w, int h, unsigned char *indices, Rgb *opaque, int *count,
-                          char *why, size_t why_size)
+/* A PNG's pixels, RGBA; NULL (and `why`) when it cannot be read. */
+static unsigned char *read_rgba(const char *path, int *sw, int *sh, char *why, size_t why_size)
 {
     png_image image;
     FILE *file;
     unsigned char *rgba;
-    int x, y, sw, sh;
     memset(&image, 0, sizeof(image));
     image.version = PNG_IMAGE_VERSION;
     file = fopen(path, "rb");
     if (!file || !png_image_begin_read_from_stdio(&image, file)) {
         if (file) fclose(file);
         snprintf(why, why_size, "%s is not a PNG it could read", path);
-        return 0;
+        return NULL;
     }
     image.format = PNG_FORMAT_RGBA;
     rgba = malloc(PNG_IMAGE_SIZE(image));
@@ -776,20 +772,31 @@ static int sample_indexed(const char *path, int w, int h, unsigned char *indices
         fclose(file);
         png_image_free(&image);
         snprintf(why, why_size, "%s is not a PNG it could read", path);
-        return 0;
+        return NULL;
     }
     fclose(file);
-    sw = (int)image.width;
-    sh = (int)image.height;
+    *sw = (int)image.width;
+    *sh = (int)image.height;
     png_image_free(&image);
+    return rgba;
+}
+
+/* The rows `ry` to `ry + rh` of a picture `sw` across stretched to `w` x
+ * `h`, each texel the average of the pixels under it: a texel under half
+ * covered is clear (0 in `indices`), the others 1, their colors appended to
+ * `opaque` from `*count` on. */
+static void sample_rows(const unsigned char *rgba, int sw, int ry, int rh, int w, int h, unsigned char *indices,
+                        Rgb *opaque, int *count)
+{
+    int x, y;
     for (y = 0; y < h; y++) {
-        int top = (int)((long)sh * y / h), bottom = (int)((long)sh * (y + 1) / h);
+        int top = ry + (int)((long)rh * y / h), bottom = ry + (int)((long)rh * (y + 1) / h);
         if (bottom <= top) bottom = top + 1;
         for (x = 0; x < w; x++) {
             int left = (int)((long)sw * x / w), right = (int)((long)sw * (x + 1) / w), sx, sy;
             unsigned long r = 0, g = 0, b = 0, a = 0, n = 0;
             if (right <= left) right = left + 1;
-            for (sy = top; sy < bottom && sy < sh; sy++) {
+            for (sy = top; sy < bottom && sy < ry + rh; sy++) {
                 for (sx = left; sx < right && sx < sw; sx++) {
                     const unsigned char *p = rgba + ((size_t)sy * sw + sx) * 4;
                     r += p[0] * p[3]; g += p[1] * p[3]; b += p[2] * p[3]; a += p[3]; n++;
@@ -806,8 +813,62 @@ static int sample_indexed(const char *path, int w, int h, unsigned char *indices
             (*count)++;
         }
     }
+}
+
+/* A PNG stretched to `w` x `h`, as sample_rows. */
+static int sample_indexed(const char *path, int w, int h, unsigned char *indices, Rgb *opaque, int *count,
+                          char *why, size_t why_size)
+{
+    int sw, sh;
+    unsigned char *rgba = read_rgba(path, &sw, &sh, why, why_size);
+    if (!rgba) return 0;
+    sample_rows(rgba, sw, 0, sh, w, h, indices, opaque, count);
     free(rgba);
     return 1;
+}
+
+/* `count` colors as a palette of their own when there are no more than
+ * `colors` different ones: each its own entry from 1 on, exactly, where
+ * the median cut would part and average them by how many pixels have each.
+ * 0 when there are more. */
+static int exact_palette(const Rgb *pixels, int count, int colors, unsigned short *clut, unsigned char *indices)
+{
+    unsigned char *entry = calloc((size_t)1 << 24, 1);
+    int k, used = 0;
+    if (!entry) return 0;
+    for (k = 0; k < count; k++) {
+        size_t key = (size_t)pixels[k].r << 16 | (size_t)pixels[k].g << 8 | pixels[k].b;
+        if (!entry[key]) {
+            if (used == colors) {
+                free(entry);
+                return 0;
+            }
+            entry[key] = (unsigned char)++used;
+            clut[used] = to555(pixels[k].r, pixels[k].g, pixels[k].b);
+        }
+        indices[k] = entry[key];
+    }
+    for (k = used + 1; k <= colors; k++) clut[k] = 0x8000;
+    free(entry);
+    return 1;
+}
+
+/* The opaque texels of `count` pictures numbered by one palette: `opaque`
+ * their colors in order, each picture's texels 1 where opaque. `exact`:
+ * their own colors when they are few enough (exact_palette). */
+static void number_texels(const Rgb *opaque, int opaque_count, int count, int w, int h, unsigned char *const *indices,
+                          unsigned char *opaque_indices, unsigned short *clut, int exact)
+{
+    int i, x, k;
+    memset(clut, 0, 256 * sizeof(*clut));
+    if (opaque_count && !(exact && exact_palette(opaque, opaque_count, 255, clut, opaque_indices)))
+        quantize(opaque, opaque_count, 255, clut, opaque_indices);
+    clut[0] = 0x0000;
+    for (k = 0, i = 0; i < count; i++) {
+        for (x = 0; x < w * h; x++) {
+            if (indices[i][x]) indices[i][x] = opaque_indices[k++];
+        }
+    }
 }
 
 /* A PNG with see-through parts as 8-bit texels (title_images.c): stretched
@@ -825,7 +886,7 @@ int CardArt_IndexedImages(const char *const *paths, int count, int w, int h, uns
 {
     Rgb *opaque;
     unsigned char *opaque_indices;
-    int x, i, opaque_count = 0, k;
+    int i, opaque_count = 0;
     opaque = malloc((size_t)w * h * (size_t)count * sizeof(*opaque));
     opaque_indices = malloc((size_t)w * h * (size_t)count);
     if (!opaque || !opaque_indices) {
@@ -841,14 +902,35 @@ int CardArt_IndexedImages(const char *const *paths, int count, int w, int h, uns
             return 0;
         }
     }
-    memset(clut, 0, 256 * sizeof(*clut));
-    if (opaque_count) quantize(opaque, opaque_count, 255, clut, opaque_indices);
-    clut[0] = 0x0000;
-    for (k = 0, i = 0; i < count; i++) {
-        for (x = 0; x < w * h; x++) {
-            if (indices[i][x]) indices[i][x] = opaque_indices[k++];
-        }
+    number_texels(opaque, opaque_count, count, w, h, indices, opaque_indices, clut, 0);
+    free(opaque);
+    free(opaque_indices);
+    return 1;
+}
+
+int CardArt_IndexedSheet(const char *path, int count, int w, int h, unsigned char *const *indices,
+                         unsigned short *clut, char *why, size_t why_size)
+{
+    Rgb *opaque;
+    unsigned char *opaque_indices, *rgba;
+    int i, sw, sh, opaque_count = 0;
+    rgba = read_rgba(path, &sw, &sh, why, why_size);
+    if (!rgba) return 0;
+    opaque = malloc((size_t)w * h * (size_t)count * sizeof(*opaque));
+    opaque_indices = malloc((size_t)w * h * (size_t)count);
+    if (!opaque || !opaque_indices || count < 1 || sh < count) {
+        free(rgba);
+        free(opaque);
+        free(opaque_indices);
+        snprintf(why, why_size, "out of memory for %s", path);
+        return 0;
     }
+    for (i = 0; i < count; i++) {
+        int top = (int)((long)sh * i / count), bottom = (int)((long)sh * (i + 1) / count);
+        sample_rows(rgba, sw, top, bottom - top, w, h, indices[i], opaque, &opaque_count);
+    }
+    free(rgba);
+    number_texels(opaque, opaque_count, count, w, h, indices, opaque_indices, clut, 1);
     free(opaque);
     free(opaque_indices);
     return 1;

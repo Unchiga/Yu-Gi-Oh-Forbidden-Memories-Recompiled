@@ -13,7 +13,8 @@ struct JsonValue;
  * (main_menu_selection.h), then the buttons the mods add. */
 enum { TITLE_LAYERS = 3, TITLE_ENTRIES = 11, TITLE_FIRST_MENU = 5, TITLE_MAX_LINES = 16, TITLE_LINE_TEXT = 96,
        TITLE_PATH = 1024, TITLE_MAX_BUTTONS = 16, TITLE_ITEMS = TITLE_ENTRIES + TITLE_MAX_BUTTONS,
-       TITLE_LABEL = 32, TITLE_NOTICE = 512, TITLE_NAME = 96, TITLE_MENUS = 2, TITLE_MAX_PICTURES = 8 };
+       TITLE_LABEL = 32, TITLE_NOTICE = 512, TITLE_NAME = 96, TITLE_MENUS = 2, TITLE_MAX_PICTURES = 8,
+       TITLE_MAX_FRAMES = 12, TITLE_MAX_SHEET_FRAMES = 64, TITLE_FRAME_TIME = 8 };
 enum { TITLE_SHOW_ALWAYS, TITLE_SHOW_PROMPT, TITLE_SHOW_MENU };
 enum { TITLE_ALIGN_LEFT, TITLE_ALIGN_CENTRE, TITLE_ALIGN_RIGHT };
 /* A hidden entry's y: off the screen, afterimages and all. */
@@ -76,11 +77,19 @@ typedef struct {
      * beside it), and a picture 4/3 as wide drawn instead. */
     int wide;
     TitleImage wide_image;
+    /* An animated picture: "frames" (and "wide_frames") drawn in turn in
+     * place of the image, each for frame_time of the game's frames; none,
+     * the image alone. Either a list of PNGs or, `frame_sheet` set, one PNG
+     * (frames[0]) with them one under another (title_images.c). */
+    TitleImage frames[TITLE_MAX_FRAMES], wide_frames[TITLE_MAX_FRAMES];
+    int frame_count, wide_frame_count, frame_time;
+    int frame_sheet, wide_frame_sheet;
 } TitleBackground;
 
 enum { TITLE_BACKGROUND_PICTURE = 1, TITLE_BACKGROUND_SHADE = 2, TITLE_BACKGROUND_COLOR = 4,
        TITLE_BACKGROUND_TINT = 8, TITLE_BACKGROUND_IMAGE = 16, TITLE_BACKGROUND_WIDE = 32,
-       TITLE_BACKGROUND_WIDE_IMAGE = 64,
+       TITLE_BACKGROUND_WIDE_IMAGE = 64, TITLE_BACKGROUND_FRAMES = 128, TITLE_BACKGROUND_WIDE_FRAMES = 256,
+       TITLE_BACKGROUND_FRAME_TIME = 512,
        /* The British spelling released SDKs had (v0.2.0); kept for mods built against them. */
        TITLE_BACKGROUND_COLOUR = TITLE_BACKGROUND_COLOR };
 
@@ -98,6 +107,7 @@ typedef struct {
     uint32_t tint;
     TitleImage image, selected; /* its picture, and the picture while the cursor is on it */
     char label[TITLE_LABEL];   /* or its words, on a frame of the game's look */
+    int font_game;             /* "font": "game": the words in the entries' own letters */
     int action, value;         /* TITLE_ACTION_*, and the number a code mod's event gets */
     char notice_title[64];
     char notice[TITLE_NOTICE];
@@ -118,6 +128,8 @@ typedef struct {
     int skip_movie, press_start;
     int idle_frames;           /* -1 retail, 0 never */
     int dim;                   /* dim 0-0x80, retail 0x80 */
+    int fade;                  /* frames each way through black as a menu opens or closes, 0 none (retail) */
+    int smooth_slide;          /* the menu's "slide": "smooth": a 24-tick eased slide, no afterimages; 0 the game's own */
     /* The title's background, then the one while a menu is up: the title's
      * but for what a mod's "menu" "background" set (TITLE_BACKGROUND_*). */
     TitleBackground background[TITLE_MENUS];

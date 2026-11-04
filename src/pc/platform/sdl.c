@@ -15,6 +15,8 @@
 #include "pc/render/present_pass.h"
 #include "mods_window.h"
 #include "pc/mods/hd_pack.h"
+#include "pc/mods/modapi.h"
+#include "pc/mods/mods.h"
 #include "controls_window.h"
 #include "controls_linux.h"
 #include "panel.h"
@@ -62,6 +64,7 @@
 #endif
 #include <SDL3/SDL_opengl.h>
 #include "pc/render/gl_picture.h"
+#include "pc/render/overlay_gl.h"
 #include "pc/render/texture_pack.h"
 #include "pc/compat/signal.h"
 #include <stdio.h>
@@ -77,6 +80,7 @@ static SDL_Renderer *renderer;
 static SDL_Texture *picture, *overlay;
 static SDL_GLContext gl_context;
 static GLuint gl_picture, gl_overlay;
+static int overlay_on_gpu; /* the mods' overlays are OverlayGl's, not the canvas's */
 static int gl_pass_shown, gl_pass_rect[4];
 /* A widened picture shown instead of the pass's own (0 for that one), and
  * its size in texels. */
@@ -113,6 +117,12 @@ static int menu_reveal_frames;
 /* 4 puts the 320x240 picture on screen at 1280x960. */
 static int scale = 4, pending_scale, quit, state_slot = 1;
 static struct { int x, y, w, h; } shown_menu; /* the menu's bounds as last painted */
+/* What of the last whole composition is not the mods' overlays (the menu,
+ * the port's HUD, the touch pad's art), valid while the canvas holds that
+ * composition and what has been drawn over it since: a frame where only the
+ * mods' overlays changed draws them again where they changed
+ * (compose_mods_changes) unless that is over one of these. */
+static struct { int valid, x, y, w, h; } others;
 static volatile uint16_t scripted_bits2, scripted_bits, mouse_bits;
 static uint16_t wheel_bits;
 static int wheel_frames;
@@ -123,6 +133,25 @@ static volatile uint16_t wheel_now;
 static volatile uint16_t touch_bits;
 static int touch_mouse_on_pad;
 static int pointer_x, pointer_y, pointer_inside, cursor_hidden;
+/* The mouse for a mod that steers with it (mod API 23, Mods_SetMouse): the
+ * motion gathered since the mod last asked and the buttons held, over the
+ * picture only; and the capture it asked for, which is SDL's relative mode
+ * while the game has the window to itself -- a menu, a notice, a panel or
+ * another window having it lets the pointer go until it is done. */
+/* The mouse's motion gathered for host->mouse: SDL's fractions of a pixel
+ * kept, the whole pixels handed over. */
+static float mouse_dx, mouse_dy;
+static int mouse_wanted, mouse_relative;
+/* The frame a mod last read the mouse: motion is gathered only while one
+ * reads it (within a second), so the first call does not get all the
+ * motion since the game started. */
+static unsigned mouse_read_frame;
+static int mouse_read;
+static unsigned mouse_held;
+/* Escape claimed by that mod (capture_mouse 1 or 2): an Exit game press in
+ * the game's window, no menu, notice or panel up, is its, kept here until
+ * its next host->mouse (claim_exit). */
+static int escape_claimed, escape_pressed;
 /* The pointer's place is a mouse's (it hovers): the mouse events SDL makes
  * of a touch move it only while the finger is down, and leave it where the
  * finger lifted, so they never reveal the bar by hovering. */
@@ -205,6 +234,8 @@ static void update_menu_scale(int window_h)
 static int bar_overlays(void) { return !Platform_HasWindowModes(); }
 static void relayout(void);
 static void show_cursor(void);
+static int fit_scale(int want, int pw, int ph);
+static void place_window(void);
 static void block_signals(sigset_t *previous);
 static void restore_signals(const sigset_t *previous);
 
@@ -680,9 +711,10 @@ static uint64_t real_now_us(void)
  * and present and gl_picture.c's replay: the events and the menu (pump),
  * the picture into the window's texture (the OpenGL picture's copy, or the
  * software picture's upload), and the swap, which waits while the GPU is
- * behind, or for the display with vsync on. Untimed while the channel is
- * off. */
-enum { PHASE_EVENTS, PHASE_COPY, PHASE_SWAP, PHASES };
+ * behind, or for the display with vsync on; and the menu, the HUD and the
+ * mods' overlays drawn on the CPU and uploaded (compose). Untimed while the
+ * channel is off. */
+enum { PHASE_EVENTS, PHASE_COPY, PHASE_COMPOSE, PHASE_SWAP, PHASES };
 static struct { uint64_t total[PHASES]; unsigned max[PHASES], frames; } phases;
 
 static uint64_t phase_start(void) { return Log_Enabled(LOG_FRAMES) ? real_now_us() : 0; }
@@ -712,11 +744,12 @@ static void phases_shown(void)
     }
     if (++phases.frames < 120) return;
     TexturePack_ReadStats(&images, &image_us, &image_max);
-    LOG(LOG_FRAMES, "present phases per shown frame: events %u us, copy %u us, swap %u us (max %u, %u, %u); "
-        "texture pack: %u images read in %u us (longest %u us)",
+    LOG(LOG_FRAMES, "present phases per shown frame: events %u us, copy %u us, compose %u us, swap %u us "
+        "(max %u, %u, %u, %u); texture pack: %u images read in %u us (longest %u us)",
         (unsigned)(phases.total[PHASE_EVENTS] / 120), (unsigned)(phases.total[PHASE_COPY] / 120),
-        (unsigned)(phases.total[PHASE_SWAP] / 120), phases.max[PHASE_EVENTS], phases.max[PHASE_COPY],
-        phases.max[PHASE_SWAP], images, image_us, image_max);
+        (unsigned)(phases.total[PHASE_COMPOSE] / 120), (unsigned)(phases.total[PHASE_SWAP] / 120),
+        phases.max[PHASE_EVENTS], phases.max[PHASE_COPY], phases.max[PHASE_COMPOSE], phases.max[PHASE_SWAP], images,
+        image_us, image_max);
     memset(&phases, 0, sizeof(phases));
 }
 
@@ -1415,6 +1448,7 @@ static void relayout(void)
         }
         overlay_pixels = realloc(overlay_pixels, (size_t)window_w * (size_t)window_h * 4);
         memset(overlay_pixels, 0, (size_t)window_w * (size_t)window_h * 4);
+        others.valid = 0; /* the mods' overlays are drawn whole on this canvas first */
         canvas.pixels = overlay_pixels;
         canvas.stride = window_w;
         canvas.width = window_w;
@@ -1468,13 +1502,12 @@ static void apply_display_settings(void)
         SDL_SetWindowFullscreenMode(window, NULL);
         SDL_SetWindowFullscreen(window, true);
     } else {
-        int x = Settings_Get(SET_WINDOW_X), y = Settings_Get(SET_WINDOW_Y);
+        int fitted = fit_scale(scale, pw, ph);
         SDL_SetWindowFullscreen(window, false);
         SDL_SetWindowBordered(window, true);
-        update_menu_scale(ph * scale + 26 * Menu_AutoScale(ph * scale));
-        SDL_SetWindowSize(window, pw * scale, ph * scale + Menu_Height());
-        SDL_SetWindowPosition(window, x == -1 ? SDL_WINDOWPOS_CENTERED : x,
-                              y == -1 ? SDL_WINDOWPOS_CENTERED : y);
+        update_menu_scale(ph * fitted + 26 * Menu_AutoScale(ph * fitted));
+        SDL_SetWindowSize(window, pw * fitted, ph * fitted + Menu_Height());
+        place_window();
     }
     if (use_gl && gl_picture) {
         glBindTexture(GL_TEXTURE_2D, gl_picture);
@@ -1642,10 +1675,27 @@ static int es_take_frame(void)
     return es_shown_last;
 }
 
+/* One rectangle over r and x, y, w, h. */
+static void bounds_grow(int *rx, int *ry, int *rw, int *rh, int x, int y, int w, int h)
+{
+    if (!w || !h) return;
+    if (*rw && *rh) {
+        int x1 = *rx + *rw > x + w ? *rx + *rw : x + w, y1 = *ry + *rh > y + h ? *ry + *rh : y + h;
+        x = *rx < x ? *rx : x;
+        y = *ry < y ? *ry : y;
+        w = x1 - x;
+        h = y1 - y;
+    }
+    *rx = x; *ry = y; *rw = w; *rh = h;
+}
+
 static void draw_overlay(int *x, int *y, int *w, int *h)
 {
     int hx, hy, hw, hh, tx, ty, tw, th, left, right, row;
+    others.valid = 0;
     FusionHelper_Viewport((int)layout.dst.x, (int)layout.dst.y, (int)layout.dst.w, (int)layout.dst.h);
+    Mods_SetPicture((int)layout.dst.x, (int)layout.dst.y, (int)layout.dst.w, (int)layout.dst.h,
+                    Platform_Widescreen() ? 426 : 320);
     if (Panel_Shown()) { /* the panel covers the window: nothing else shows */
         Panel_Draw(&canvas);
         *x = *y = 0;
@@ -1665,7 +1715,9 @@ static void draw_overlay(int *x, int *y, int *w, int *h)
     if (!TouchPad_FreeSpan(&left, &right)) left = right = 0;
     row = TouchPad_TopRowBottom();
     Menu_SetOverlayArea(left, right, row ? row : bar_overlays() && !menu_visible ? 0 : -1);
-    if (Settings_Get(SET_SHOW_HUD) == 2 || Menu_IsOpen()) {
+    /* A question (Menu_ShowNotice: Quit the game?, ...) is over everything
+     * too, a mod's full-screen overlay included (a battle's pause menu). */
+    if (Settings_Get(SET_SHOW_HUD) == 2 || Menu_IsOpen() || Menu_NoticeShown()) {
         Hud_Draw(&canvas);
         Menu_Draw(&canvas); /* dropdowns stay above the full statistics panel */
     } else {
@@ -1673,6 +1725,12 @@ static void draw_overlay(int *x, int *y, int *w, int *h)
         Hud_Draw(&canvas);
     }
     Menu_Bounds(x, y, w, h);
+    /* The mods' overlays sit between the HUD's parts, under the menu and
+     * under or over the pad: with the pad they are always drawn whole. */
+    Hud_OtherBounds(&others.x, &others.y, &others.w, &others.h);
+    bounds_grow(&others.x, &others.y, &others.w, &others.h, *x, *y, *w, *h);
+    bounds_grow(&others.x, &others.y, &others.w, &others.h, tx, ty, tw, th);
+    others.valid = !TouchPad_Shown();
     Hud_Bounds(&hx, &hy, &hw, &hh);
     if (tw && th) {
         if (!hw || !hh) { hx = tx; hy = ty; hw = tw; hh = th; }
@@ -1751,6 +1809,7 @@ static void show(void)
         }
         if (effects) PresentPass_End(); /* the menu and the HUD are not filtered */
         glEnable(GL_BLEND);
+        if (overlay_on_gpu) OverlayGl_Draw(layout.win_w, layout.win_h, output_w, output_h);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         gl_quad(gl_overlay, 0, 0, (float)layout.win_w, (float)layout.win_h);
         if (window_shot_pending) {
@@ -1805,6 +1864,7 @@ static unsigned compose_count; /* MEMORIES_TRACE=window: compositions per 120 fr
 static void compose_menu(void)
 {
     int x, y, w, h, x0, y0, x1, y1, row;
+    uint64_t started = phase_start();
     menu_dirty = 0;
     compose_count++;
     for (row = shown_menu.y; row < shown_menu.y + shown_menu.h && row < layout.win_h; row++) {
@@ -1820,6 +1880,7 @@ static void compose_menu(void)
     shown_menu.w = w;
     shown_menu.h = h;
     upload_overlay(x0, y0, x1 - x0, y1 - y0);
+    phase_end(PHASE_COMPOSE, started);
 }
 
 /* The menu changed under a still picture: repaint it and show the window. */
@@ -1829,15 +1890,89 @@ static void repaint_menu(void)
     show();
 }
 
+/* The mods' overlays alone changed: drawn again, and uploaded, only where
+ * their drawing differs from the last (Mods_OverlayChanges) -- a cursor
+ * moving over a screen a mod draws is a few small rectangles, where the
+ * whole composition is the window's worth of pixels blended on the CPU and
+ * sent to the texture. 0 when the whole composition is wanted instead. */
+static unsigned partial_count; /* MEMORIES_TRACE=window: of compose_count, those drawn in part */
+
+static int compose_mods_changes(void)
+{
+    enum { MOST = 8 };
+    static int whole_always = -1; /* MEMORIES_OVERLAY_WHOLE=1: never in part, to compare with */
+    /* An overlay that changes most of the window every frame (a battle's
+     * HUD over its moving picture, a fade) is drawn whole anyway: after a
+     * few such frames in a row the comparison is left out for half a second,
+     * as it is all cost there. */
+    static int whole_in_a_row;
+    static unsigned skip_until;
+    int rects[4 * MOST], count, i;
+    long long area = 0;
+    uint64_t started;
+    if (whole_always < 0) {
+        const char *whole = getenv("MEMORIES_OVERLAY_WHOLE");
+        whole_always = whole && *whole && strcmp(whole, "0") != 0;
+    }
+    if (whole_always || !others.valid || Panel_Shown() || TouchPad_Shown() || !overlay_pixels ||
+        canvas.pixels != overlay_pixels)
+        return 0;
+    if (skip_until && current_frame < skip_until) return 0;
+    skip_until = 0;
+    started = phase_start();
+    count = Mods_OverlayChanges(&canvas, Menu_Scale(), Menu_DrawTextScaled, Menu_TextWidthScaled, rects, MOST);
+    if (count < 0) return 0;
+    for (i = 0; i < count; i++) {
+        const int *r = rects + 4 * i;
+        if (others.w && others.h && r[0] < others.x + others.w && others.x < r[0] + r[2] &&
+            r[1] < others.y + others.h && others.y < r[1] + r[3])
+            return 0; /* under or over the menu or the HUD, which are not drawn again here */
+        area += (long long)r[2] * r[3];
+    }
+    if (area * 2 > (long long)layout.win_w * layout.win_h) { /* most of it: as dear drawn whole */
+        if (++whole_in_a_row >= 4) {
+            whole_in_a_row = 0;
+            skip_until = current_frame + 30;
+        }
+        return 0;
+    }
+    whole_in_a_row = 0;
+    for (i = 0; i < count; i++) {
+        const int *r = rects + 4 * i;
+        for (int row = r[1]; row < r[1] + r[3]; row++)
+            memset(overlay_pixels + (size_t)row * (size_t)layout.win_w + (size_t)r[0], 0, (size_t)r[2] * 4);
+    }
+    if (!Mods_RedrawOverlayIn(&canvas, Menu_Scale(), Menu_DrawTextScaled, Menu_TextWidthScaled, rects, count))
+        return 0; /* compose_menu draws all of it again, these rectangles too */
+    for (i = 0; i < count; i++) {
+        const int *r = rects + 4 * i;
+        upload_overlay(r[0], r[1], r[2], r[3]);
+        /* the next whole composition clears it */
+        bounds_grow(&shown_menu.x, &shown_menu.y, &shown_menu.w, &shown_menu.h, r[0], r[1], r[2], r[3]);
+    }
+    compose_count++;
+    partial_count++;
+    phase_end(PHASE_COMPOSE, started);
+    return 1;
+}
+
 /* The overlay only changes with the menu, or when the HUD's text does;
  * otherwise the texture already holds it. */
 static void compose_menu_if_changed(void)
 {
-    static unsigned hud_signature;
-    unsigned now = Hud_Signature();
-    if (menu_dirty || now != hud_signature) {
-        hud_signature = now;
+    static unsigned other_signature, mods_signature;
+    unsigned other = Hud_OtherSignature(), mods = Hud_ModsSignature();
+    if (menu_dirty || other != other_signature) {
+        other_signature = other;
+        mods_signature = mods;
         compose_menu();
+    } else if (mods != mods_signature) {
+        mods_signature = mods;
+        if (overlay_on_gpu) {
+            uint64_t started = phase_start();
+            Hud_ListMods(&canvas); /* the canvas holds nothing of theirs */
+            phase_end(PHASE_COMPOSE, started);
+        } else if (!compose_mods_changes()) compose_menu();
     }
 }
 
@@ -2024,6 +2159,27 @@ static bool SDLCALL app_event(void *userdata, SDL_Event *event)
     return true;
 }
 
+static void mouse_gather(float dx, float dy)
+{
+    if (!mouse_read || current_frame - mouse_read_frame > 60) {
+        mouse_dx = mouse_dy = 0;
+        return;
+    }
+    mouse_dx += dx;
+    mouse_dy += dy;
+}
+
+static void set_mouse_relative(int relative)
+{
+    SDL_SetWindowRelativeMouseMode(window, relative);
+    mouse_relative = relative;
+    mouse_held = 0;
+    mouse_bits = 0; /* the buttons are the mod's while it lasts */
+    mouse_dx = mouse_dy = 0;
+    if (!relative) show_cursor();
+    LOG(LOG_INPUT, "mouse %s", relative ? "captured" : "released");
+}
+
 static void pump(void)
 {
     SDL_Event event;
@@ -2083,6 +2239,20 @@ static void pump(void)
         if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.which == SDL_TOUCH_MOUSEID &&
             (touch_mouse_on_pad || TouchPad_Covers((int)event.motion.x, (int)event.motion.y)))
             continue;
+        if (mouse_relative && SDL_GetWindowFromEvent(&event) == window) {
+            if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.which != SDL_TOUCH_MOUSEID) {
+                mouse_gather(event.motion.xrel, event.motion.yrel);
+                continue;
+            }
+            if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+                event.button.which != SDL_TOUCH_MOUSEID) {
+                unsigned bit = event.button.button == SDL_BUTTON_LEFT ? 1u : event.button.button == SDL_BUTTON_RIGHT ? 2u
+                             : event.button.button == SDL_BUTTON_MIDDLE ? 4u : 0u;
+                mouse_held = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? mouse_held | bit : mouse_held & ~bit;
+                continue;
+            }
+            if (event.type == SDL_EVENT_MOUSE_WHEEL) continue;
+        }
         if (Panel_Shown() && dispatch_panel(&event, &menu_event)) continue;
         /* A tap at the top of the screen shows the hidden bar under it, so
          * the press lands on the bar's menu there. */
@@ -2123,6 +2293,9 @@ static void pump(void)
             if (!(event.motion.state & SDL_BUTTON_LMASK)) continue;
         } else if (event.type == SDL_EVENT_MOUSE_MOTION) {
             static unsigned logged_frame = ~0u;
+            if (event.motion.y >= Menu_Height() && !Menu_IsOpen()) {
+                mouse_gather(event.motion.xrel, event.motion.yrel);
+            }
             pointer_is_mouse = 1;
             pointer_x = menu_event.x;
             pointer_y = menu_event.y;
@@ -2176,6 +2349,9 @@ static void pump(void)
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             if(!controls_window)ControlsRuntime_ResetKeys(); mouse_bits=wheel_now=0;wheel_frames=0;
+            /* host->mouse's buttons too: a release away from the window is never seen */
+            mouse_held = 0;
+            mouse_dx = mouse_dy = 0;
             if (Settings_Get(SET_MUTE_ON_FOCUS_LOSS)) Spu_SetOutputVolume(0);
             if (Settings_Get(SET_PAUSE_ON_FOCUS_LOSS) && Platform_ClockRate() != 0) {
                 /* Turbo ends with the focus (the keys are let go), so
@@ -2199,6 +2375,12 @@ static void pump(void)
         case SDL_EVENT_GAMEPAD_ADDED: open_gamepad(event.gdevice.which); break;
         case SDL_EVENT_GAMEPAD_REMOVED: close_gamepad(event.gdevice.which); break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (event.button.which != SDL_TOUCH_MOUSEID) {
+                unsigned bit = event.button.button == SDL_BUTTON_LEFT ? 1u : event.button.button == SDL_BUTTON_RIGHT ? 2u
+                             : event.button.button == SDL_BUTTON_MIDDLE ? 4u : 0u;
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) mouse_held &= ~bit;
+                else if (event.button.y >= Menu_Height()) mouse_held |= bit;
+            }
             if (event.button.y >= Menu_Height() && menu_event.button >= 2 && menu_event.button <= 3) {
                 mouse_bits = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
                                  ? (uint16_t)(mouse_bits | mouse_buttons[menu_event.button])
@@ -2292,6 +2474,12 @@ static void pump(void)
     if (TouchPad_Block(Menu_IsOpen() || Menu_NoticeShown() || (bar_overlays() && menu_visible) || Panel_Shown()))
         menu_dirty = 1;
     touch_bits = TouchPad_Update();
+    {
+        int focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
+        int relative = mouse_wanted && focused && !Menu_IsOpen() && !Menu_NoticeShown() && !Panel_Shown() &&
+                       Platform_ClockRate() != 0; /* paused (P), the pointer is the player's */
+        if (relative != mouse_relative) set_mouse_relative(relative);
+    }
     Gamepad_Poll(current_frame);
     if (HostActions_Run(&quit)) menu_dirty = 1;
     /* A notice answers a controller and keeps the game's input at rest. */
@@ -2347,11 +2535,41 @@ static void ask_for_es3(void)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 }
 
+/* The largest scale up to `want` whose window (the picture, pw x ph, and
+ * the menu bar, with room for the title bar) fits the desktop's usable area:
+ * a window taller than the screen opens with its top, the title bar
+ * included, out of reach. The Video menu's scale stays the player's. */
+static int fit_scale(int want, int pw, int ph)
+{
+    SDL_Rect usable;
+    int s = want < 1 ? 1 : want;
+    if (!SDL_GetDisplayUsableBounds(window ? SDL_GetDisplayForWindow(window) : SDL_GetPrimaryDisplay(), &usable))
+        return s;
+    while (s > 1 && (pw * s > usable.w || ph * s + 26 * Menu_AutoScale(ph * s) + 40 > usable.h)) s--;
+    return s;
+}
+
+/* The saved position, kept on the desktop so the title bar can be reached. */
+static void place_window(void)
+{
+    SDL_Rect usable;
+    int x = Settings_Get(SET_WINDOW_X), y = Settings_Get(SET_WINDOW_Y), w = 0, h = 0;
+    if (x != -1 && y != -1 && SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable)) {
+        SDL_GetWindowSize(window, &w, &h);
+        if (x + w > usable.x + usable.w) x = usable.x + usable.w - w;
+        if (y + h > usable.y + usable.h) y = usable.y + usable.h - h;
+        if (x < usable.x) x = usable.x;
+        if (y < usable.y) y = usable.y;
+    }
+    SDL_SetWindowPosition(window, x == -1 ? SDL_WINDOWPOS_CENTERED : x, y == -1 ? SDL_WINDOWPOS_CENTERED : y);
+}
+
 static void create_window(const char *title)
 {
+    int fitted = fit_scale(scale, 320, 240);
     const char *gles = getenv("MEMORIES_GLES");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-    update_menu_scale(240 * scale + 26 * Menu_AutoScale(240 * scale));
+    update_menu_scale(240 * fitted + 26 * Menu_AutoScale(240 * fitted));
 #ifdef __APPLE__
     /* The default macOS context is 2.1. Integer textures need 3.2 core,
      * with shader-based presentation instead of immediate-mode quads. */
@@ -2362,7 +2580,7 @@ static void create_window(const char *title)
 #endif
     /* Desktop GL where the system has it (platform.h); else, or without a
      * context, the SDL renderer. */
-    window = Platform_HasDesktopGL() ? SDL_CreateWindow(title, 320 * scale, 240 * scale + Menu_Height(),
+    window = Platform_HasDesktopGL() ? SDL_CreateWindow(title, 320 * fitted, 240 * fitted + Menu_Height(),
                                                         flags | SDL_WINDOW_OPENGL) : NULL;
     gl_context = window ? SDL_GL_CreateContext(window) : NULL;
     use_gl = gl_context != NULL;
@@ -2388,19 +2606,25 @@ static void create_window(const char *title)
         gl_context = NULL;
         use_gl = 0;
     }
+    {   /* MEMORIES_OVERLAY_CPU=1: on the canvas, to compare with */
+        const char *cpu = getenv("MEMORIES_OVERLAY_CPU");
+        const ModsOverlaySink *sink = use_gl && !(cpu && *cpu && strcmp(cpu, "0")) ? OverlayGl_Sink() : NULL;
+        overlay_on_gpu = sink != NULL;
+        Mods_SetOverlaySink(sink);
+    }
     if (!use_gl) {
         if (window) SDL_DestroyWindow(window);
         window = NULL;
         if (es_wanted) {
             ask_for_es3();
-            window = SDL_CreateWindow(title, 320 * scale, 240 * scale + Menu_Height(), flags | SDL_WINDOW_OPENGL);
+            window = SDL_CreateWindow(title, 320 * fitted, 240 * fitted + Menu_Height(), flags | SDL_WINDOW_OPENGL);
             if (!window) {
                 fprintf(stderr, "memories-pc: no window for OpenGL ES 3 (%s)\n", SDL_GetError());
                 SDL_GL_ResetAttributes();
                 es_wanted = 0;
             }
         }
-        if (!window) window = SDL_CreateWindow(title, 320 * scale, 240 * scale + Menu_Height(), flags);
+        if (!window) window = SDL_CreateWindow(title, 320 * fitted, 240 * fitted + Menu_Height(), flags);
     }
 }
 
@@ -2489,7 +2713,10 @@ static void reset_renderer(void)
 
 static void destroy_window(void)
 {
-    if (gl_context) SDL_GL_DestroyContext(gl_context);
+    if (gl_context) {
+        OverlayGl_Lost();
+        SDL_GL_DestroyContext(gl_context);
+    }
     if (window) SDL_DestroyWindow(window);
     gl_context = NULL;
     window = NULL;
@@ -2602,6 +2829,45 @@ void HERE(Platform_ShowError)(const char *title, const char *message)
     }
 }
 
+static void mouse_motion(int *dx, int *dy, unsigned *buttons, int escape)
+{
+    mouse_read = 1;
+    mouse_read_frame = current_frame;
+    *dx = (int)mouse_dx; /* toward 0: the rest waits for the next call */
+    *dy = (int)mouse_dy;
+    mouse_dx -= (float)*dx;
+    mouse_dy -= (float)*dy;
+    *buttons = Menu_IsOpen() || Panel_Shown() ? 0 : mouse_held;
+    if (escape && escape_pressed) {
+        *buttons |= MEMORIES_MOUSE_ESCAPE;
+        escape_pressed = 0;
+    }
+}
+
+/* 0 nothing, 1 the pointer and Escape, 2 Escape only (host->capture_mouse). */
+static void mouse_capture(int mode)
+{
+    mouse_wanted = mode == 1;
+    escape_claimed = mode != 0;
+    if (!escape_claimed) escape_pressed = 0;
+}
+
+/* An Exit game press (host_actions.c): the claiming mod's while the game's
+ * window has the focus and nothing of the port's is up over it. Esc has
+ * already closed a menu or left fullscreen before it got here. Under mode 1
+ * the pointer goes at once, for the mod's pause screen. */
+static int claim_exit(void)
+{
+    int focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
+    if (!escape_claimed || !focused || Menu_IsOpen() || Menu_NoticeShown() || Panel_Shown() || DeckMenu_Active())
+        return 0;
+    escape_pressed = 1;
+    mouse_wanted = 0;
+    if (mouse_relative) set_mouse_relative(0);
+    LOG(LOG_INPUT, "Escape taken by a mod");
+    return 1;
+}
+
 int Platform_Open(const char *title)
 {
     sigset_t previous;
@@ -2616,6 +2882,8 @@ int Platform_Open(const char *title)
     if (getenv("MEMORIES_HEADLESS")) {
         return 0;
     }
+    Mods_SetMouse(mouse_motion, mouse_capture);
+    HostActions_SetExitClaim(claim_exit);
     /* Let SDL select the native backend. In particular, do not force an
      * XWayland window on a Wayland desktop: that gives the window a separate
      * cursor/DPI scale from the rest of the desktop. SDL_VIDEODRIVER remains
@@ -2649,11 +2917,7 @@ int Platform_Open(const char *title)
         }
         create_window(title);
     }
-    if (window) {
-        int x = Settings_Get(SET_WINDOW_X), y = Settings_Get(SET_WINDOW_Y);
-        SDL_SetWindowPosition(window, x == -1 ? SDL_WINDOWPOS_CENTERED : x,
-                              y == -1 ? SDL_WINDOWPOS_CENTERED : y);
-    }
+    if (window) place_window();
     open_renderer(1);
     restore_signals(&previous);
     if (!use_gl && !renderer) {
@@ -2942,7 +3206,12 @@ int Platform_PadConnected(int port) { return port == 0 || Gamepad_Connected(port
  * between two frames, so the game sees it ("600:keydown:s,606:keyup:s").
  * "tap:x:y", "fdown:x:y" and "fup:x:y" do the same with a finger, for the
  * touch controls. "300:shot" saves the composed window (menu included)
- * like Shift+F12. */
+ * like Shift+F12.
+ * "500:rel:40:-5" moves the mouse by 40,-5 over the middle of the picture,
+ * as a mod that steers with it sees motion (mod API 23), and "mdown",
+ * "mup" (":left", ":right", ":middle") hold and let go of a button. */
+/* The script's key names match whole: "f" is not "f10". */
+#define KEY_IS(text) (n == sizeof(text) - 1 && strncmp(name, text, n) == 0)
 static void run_event_script(unsigned frame)
 {
     static const char *script;
@@ -2984,24 +3253,35 @@ static void run_event_script(unsigned frame)
                 name += 4;
                 n -= 4;
             }
-            event.key.key = strncmp(name, "escape", n) == 0 ? SDLK_ESCAPE : strncmp(name, "f10", n) == 0 ? SDLK_F10
-                          : strncmp(name, "f3", n) == 0 ? SDLK_F3
-                          : strncmp(name, "f5", n) == 0 ? SDLK_F5
-                          : strncmp(name, "f6", n) == 0 ? SDLK_F6
-                          : strncmp(name, "f7", n) == 0 ? SDLK_F7
-                          : strncmp(name, "f8", n) == 0 ? SDLK_F8
-                          : strncmp(name, "f11", n) == 0 ? SDLK_F11
-                          : strncmp(name, "f12", n) == 0 ? SDLK_F12
-                          : strncmp(name, "left", n) == 0 ? SDLK_LEFT : strncmp(name, "right", n) == 0 ? SDLK_RIGHT
-                          : strncmp(name, "up", n) == 0 ? SDLK_UP : strncmp(name, "down", n) == 0 ? SDLK_DOWN
-                          : strncmp(name, "return", n) == 0 ? SDLK_RETURN
-                          : strncmp(name, "tab", n) == 0 ? SDLK_TAB : strncmp(name, "p", n) == 0 ? SDLK_P
-                          : strncmp(name, "m", n) == 0 ? SDLK_M
-                          : strncmp(name, "period", n) == 0 ? SDLK_PERIOD
-                          : strncmp(name, "kp_plus", n) == 0 ? SDLK_KP_PLUS
-                          : strncmp(name, "kp_minus", n) == 0 ? SDLK_KP_MINUS
-                          : strncmp(name, "s", n) == 0 ? SDLK_S /* Circle */
-                          : strncmp(name, "x", n) == 0 ? SDLK_X /* Cross */
+            event.key.key = KEY_IS("escape") ? SDLK_ESCAPE : KEY_IS("f10") ? SDLK_F10
+                          : KEY_IS("f3") ? SDLK_F3
+                          : KEY_IS("f5") ? SDLK_F5
+                          : KEY_IS("f6") ? SDLK_F6
+                          : KEY_IS("f7") ? SDLK_F7
+                          : KEY_IS("f8") ? SDLK_F8
+                          : KEY_IS("f11") ? SDLK_F11
+                          : KEY_IS("f12") ? SDLK_F12
+                          : KEY_IS("left") ? SDLK_LEFT : KEY_IS("right") ? SDLK_RIGHT
+                          : KEY_IS("up") ? SDLK_UP : KEY_IS("down") ? SDLK_DOWN
+                          : KEY_IS("return") ? SDLK_RETURN
+                          : KEY_IS("tab") ? SDLK_TAB : KEY_IS("p") ? SDLK_P
+                          : KEY_IS("m") ? SDLK_M
+                          : KEY_IS("period") ? SDLK_PERIOD
+                          : KEY_IS("kp_plus") ? SDLK_KP_PLUS
+                          : KEY_IS("kp_minus") ? SDLK_KP_MINUS
+                          : KEY_IS("space") ? SDLK_SPACE
+                          : KEY_IS("lshift") ? SDLK_LSHIFT
+                          : KEY_IS("s") ? SDLK_S /* Circle */
+                          : KEY_IS("x") ? SDLK_X /* Cross */
+                          : KEY_IS("w") ? SDLK_W
+                          : KEY_IS("a") ? SDLK_A
+                          : KEY_IS("d") ? SDLK_D
+                          : KEY_IS("e") ? SDLK_E
+                          : KEY_IS("q") ? SDLK_Q
+                          : KEY_IS("f") ? SDLK_F
+                          : KEY_IS("v") ? SDLK_V
+                          /* any other single letter, as itself */
+                          : n == 1 && name[0] >= 'a' && name[0] <= 'z' ? (SDL_Keycode)name[0]
                           : SDLK_UNKNOWN;
             event.key.scancode = SDL_GetScancodeFromKey(event.key.key, NULL);
             event.key.windowID = SDL_GetWindowID(window);
@@ -3024,6 +3304,31 @@ static void run_event_script(unsigned frame)
             if (strcmp(kind, "fup") != 0) SDL_PushEvent(&event);
             event.type = SDL_EVENT_FINGER_UP;
             if (strcmp(kind, "fdown") != 0) SDL_PushEvent(&event);
+        } else if (strcmp(kind, "mdown") == 0 || strcmp(kind, "mup") == 0) {
+            /* "mdown:right"; a bare "mdown" is the left button. */
+            const char *name = *script == ':' ? script + 1 : script;
+            n = *script == ':' ? strcspn(name, ",") : 0;
+            event.type = strcmp(kind, "mdown") == 0 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+            event.button.down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            event.button.button = n == 0 || strncmp(name, "left", n) == 0 ? SDL_BUTTON_LEFT
+                                : strncmp(name, "right", n) == 0 ? SDL_BUTTON_RIGHT : SDL_BUTTON_MIDDLE;
+            event.button.clicks = 1;
+            event.button.x = (float)(layout.dst.x + layout.dst.w / 2);
+            event.button.y = (float)(layout.dst.y + layout.dst.h / 2);
+            event.button.windowID = SDL_GetWindowID(window);
+            SDL_PushEvent(&event);
+            script = name + n;
+        } else if (strcmp(kind, "rel") == 0) {
+            x = (int)strtol(script + 1, &end, 10);
+            y = (int)strtol(end + 1, &end, 10);
+            script = end;
+            event.type = SDL_EVENT_MOUSE_MOTION;
+            event.motion.x = (float)(layout.dst.x + layout.dst.w / 2);
+            event.motion.y = (float)(layout.dst.y + layout.dst.h / 2);
+            event.motion.xrel = (float)x;
+            event.motion.yrel = (float)y;
+            event.motion.windowID = SDL_GetWindowID(window);
+            SDL_PushEvent(&event);
         } else {
             x = (int)strtol(script + 1, &end, 10);
             y = (int)strtol(end + 1, &end, 10);
@@ -3092,8 +3397,11 @@ void HERE(Platform_Frame)(unsigned frame)
     set_icon();
     Log_Drain();
     if (frame % 120 == 0) {
-        LOG(LOG_WINDOW, "overlay composed %u times in 120 frames", compose_count - composed_then);
+        static unsigned partial_then;
+        LOG(LOG_WINDOW, "overlay composed %u times in 120 frames (%u of them where the mods' changed)",
+            compose_count - composed_then, partial_count - partial_then);
         composed_then = compose_count;
+        partial_then = partial_count;
     }
     Gamepad_Poll(frame);
     Cheats_Frame();

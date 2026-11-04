@@ -506,6 +506,10 @@ stored volume and applies headless too), `MEMORIES_SETTINGS` (another
 settings file), `MEMORIES_HEADLESS=1`,
 `MEMORIES_DUMP_FRAME=N` with `MEMORIES_DUMP_PATH` and optional
 `MEMORIES_DUMP_VRAM=1` (write frame N as PPM and exit),
+`MEMORIES_DUMP_FRAMES=<first>:<step>:<count>` (frames first, first + step,
+... as PPMs, `MEMORIES_DUMP_PATH` a printf pattern of the frame number such
+as `/tmp/x/f%05d.ppm`, and exit after the last; selects the virtual clock as
+`MEMORIES_DUMP_FRAME` does),
 `MEMORIES_DETERMINISTIC=1` (the virtual clock for the whole run, headless
 or in a window, with no frame dump needed: two runs with the same input
 give the same frames; in a window the frames are shown at the game speed
@@ -921,7 +925,13 @@ clock stays on the main thread; Windows will still need the clock replaced
 (`platform_common.c`). `MEMORIES_SDL_SCRIPT="200:click:20:13,260:move:60:69,
 420:key:escape"` pushes pointer and key events at presented frames for
 tests: synthetic X input does not reach SDL correctly (XI2, and XTest is
-refused by this compositor), so the menu was verified that way.
+refused by this compositor), so the menu was verified that way. For a mod
+that steers with the mouse (mod API 23), `rel:dx:dy` moves it by dx, dy over
+the middle of the picture and `mdown:left` / `mup:left` (`right`, `middle`)
+hold a button; key names (`w`, `a`, `d`, `e`, `q`, `f`, `v`, `space`,
+`lshift` and the rest) match whole, so `f` is F and not F10. With
+`SDL_VIDEODRIVER=offscreen` the window is never shown, and the events and
+`shot` work the same.
 
 **X11** (`x11.c`, `audio_alsa.c`, `gamepad_evdev.c`) is the Linux-only
 fallback with no dependency beyond Xlib: it is plain Xlib. The frame it shows is one ARGB32 buffer the port

@@ -23,10 +23,15 @@ void HostActions_StepVolume(int up)
     LOG(LOG_MENU, "master volume %d%s", volume, Spu_Muted() ? " (muted)" : "");
 }
 
+static int (*exit_claim)(void);
+void HostActions_SetExitClaim(int (*claim)(void)) { exit_claim = claim; }
+
 static void press(int action, int *quit)
 {
     switch (action) {
-    case CTRL_HOST_EXIT: QuitPrompt_Request(quit); break; /* asks first, as File > Exit */
+    case CTRL_HOST_EXIT: /* asks first, as File > Exit, unless a mod's battle takes it */
+        if (!exit_claim || !exit_claim()) QuitPrompt_Request(quit);
+        break;
     case CTRL_HOST_FULLSCREEN:
         if (Platform_HasWindowModes()) {
             int on = Settings_Get(SET_FULLSCREEN) || Settings_Get(SET_BORDERLESS);

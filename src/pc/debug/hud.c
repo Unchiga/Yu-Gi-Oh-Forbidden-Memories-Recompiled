@@ -4,6 +4,7 @@
 #include "pc/cards/free_duel_progress.h"
 #include "pc/cards/rank_meter.h"
 #include "pc/audio/spu.h"
+#include "pc/mods/modapi.h"
 #include "pc/mods/mods.h"
 #include "pc/guest/state.h"
 #include "pc/platform/platform.h"
@@ -16,7 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static struct { int x, y, w, h; } bounds;
+static struct { int x, y, w, h; } bounds, others;
 /* The mods' overlays when Hud_DrawMods drew them ahead of the next Hud_Draw:
  * what they covered. */
 static struct { int drawn, x, y, w, h; } mods_first;
@@ -110,19 +111,31 @@ static void draw_stats(MenuCanvas *canvas)
     }
 }
 
-/* One rectangle over what has been drawn so far and x, y, w, h. */
-static void cover(int x, int y, int w, int h)
+/* One rectangle over what has been drawn so far and x, y, w, h: into the
+ * HUD's bounds, and when it is not the mods' into `others` too. */
+static void grow(int *bx, int *by, int *bw, int *bh, int x, int y, int w, int h)
 {
     if (!w || !h) return;
-    if (bounds.w && bounds.h) {
-        int right = bounds.x + bounds.w > x + w ? bounds.x + bounds.w : x + w;
-        int bottom = bounds.y + bounds.h > y + h ? bounds.y + bounds.h : y + h;
-        x = bounds.x < x ? bounds.x : x;
-        y = bounds.y < y ? bounds.y : y;
+    if (*bw && *bh) {
+        int right = *bx + *bw > x + w ? *bx + *bw : x + w;
+        int bottom = *by + *bh > y + h ? *by + *bh : y + h;
+        x = *bx < x ? *bx : x;
+        y = *by < y ? *by : y;
         w = right - x;
         h = bottom - y;
     }
-    bounds.x = x; bounds.y = y; bounds.w = w; bounds.h = h;
+    *bx = x; *by = y; *bw = w; *bh = h;
+}
+
+static void cover(int x, int y, int w, int h)
+{
+    grow(&bounds.x, &bounds.y, &bounds.w, &bounds.h, x, y, w, h);
+    grow(&others.x, &others.y, &others.w, &others.h, x, y, w, h);
+}
+
+static void cover_mods(int x, int y, int w, int h)
+{
+    grow(&bounds.x, &bounds.y, &bounds.w, &bounds.h, x, y, w, h);
 }
 
 void Hud_DrawMods(MenuCanvas *canvas)
@@ -132,26 +145,40 @@ void Hud_DrawMods(MenuCanvas *canvas)
     mods_first.drawn = 1;
 }
 
+void Hud_ListMods(MenuCanvas *canvas)
+{
+    int x, y, w, h;
+    Mods_DrawOverlay(canvas, Menu_Scale(), Menu_DrawTextScaled, Menu_TextWidthScaled, &x, &y, &w, &h);
+}
+
 /* The statistics, the fusion helper, duel rank and Free Duel progress, the
  * mods' overlays (unless Hud_DrawMods drew them first), then the save slot or
  * deck menu over them. */
 void Hud_Draw(MenuCanvas *canvas)
 {
     int x, y, w, h, mods_drawn = mods_first.drawn;
+    unsigned hidden = Mods_HiddenHud(); /* parts a mod hides (host->hide_hud) */
     mods_first.drawn = 0;
     draw_stats(canvas);
-    if (mods_drawn) cover(mods_first.x, mods_first.y, mods_first.w, mods_first.h);
-    FusionHelper_Draw(canvas, &x, &y, &w, &h);
-    cover(x, y, w, h);
-    RankMeter_Draw(canvas, &x, &y, &w, &h);
-    cover(x, y, w, h);
-    FreeDuelProgress_Draw(canvas, &x, &y, &w, &h);
-    cover(x, y, w, h);
+    others = bounds; /* the statistics' */
+    if (mods_drawn) cover_mods(mods_first.x, mods_first.y, mods_first.w, mods_first.h);
+    if (!(hidden & MEMORIES_HUD_FUSION_HELPER)) {
+        FusionHelper_Draw(canvas, &x, &y, &w, &h);
+        cover(x, y, w, h);
+    }
+    if (!(hidden & MEMORIES_HUD_RANK)) {
+        RankMeter_Draw(canvas, &x, &y, &w, &h);
+        cover(x, y, w, h);
+    }
+    if (!(hidden & MEMORIES_HUD_FREE_DUEL_PROGRESS)) {
+        FreeDuelProgress_Draw(canvas, &x, &y, &w, &h);
+        cover(x, y, w, h);
+    }
     TitleScreen_Draw(canvas, &x, &y, &w, &h);
     cover(x, y, w, h);
     if (!mods_drawn) {
         Mods_DrawOverlay(canvas, Menu_Scale(), Menu_DrawTextScaled, Menu_TextWidthScaled, &x, &y, &w, &h);
-        cover(x, y, w, h);
+        cover_mods(x, y, w, h);
     }
     SaveMenu_Draw(canvas, &x, &y, &w, &h);
     if (!w || !h) DeckMenu_Draw(canvas, &x, &y, &w, &h);
@@ -167,15 +194,32 @@ static unsigned stats_signature(void)
     return (stats->fps_tenths * 4096u + stats->shown_tenths) * 512u + (unsigned)(Platform_ClockRate() + 1) * 4u + 1u;
 }
 
+unsigned Hud_OtherSignature(void)
+{
+    unsigned hidden = Mods_HiddenHud();
+    return stats_signature() ^ SaveMenu_Signature() * 2654435761u ^ DeckMenu_Signature() * 40503u ^
+           (hidden & MEMORIES_HUD_FUSION_HELPER ? 0 : FusionHelper_Signature()) * 16777619u ^
+           (hidden & MEMORIES_HUD_RANK ? 0 : RankMeter_Signature()) * 3266489917u ^ hidden * 2654435741u ^
+           (hidden & MEMORIES_HUD_FREE_DUEL_PROGRESS ? 0 : FreeDuelProgress_Signature()) * 2654435789u ^
+           TitleScreen_Signature() * 2166136261u;
+}
+
+unsigned Hud_ModsSignature(void)
+{
+    return Mods_OverlaySignature(Memories_PresentedFrames()) * 2246822519u;
+}
+
 unsigned Hud_Signature(void)
 {
-    return stats_signature() ^ SaveMenu_Signature() * 2654435761u ^ DeckMenu_Signature() * 40503u ^
-           FusionHelper_Signature() * 16777619u ^ RankMeter_Signature() * 3266489917u ^
-           FreeDuelProgress_Signature() * 2654435789u ^ TitleScreen_Signature() * 2166136261u ^
-           Mods_OverlaySignature(Memories_PresentedFrames()) * 2246822519u;
+    return Hud_OtherSignature() ^ Hud_ModsSignature();
 }
 
 void Hud_Bounds(int *x, int *y, int *w, int *h)
 {
     *x = bounds.x; *y = bounds.y; *w = bounds.w; *h = bounds.h;
+}
+
+void Hud_OtherBounds(int *x, int *y, int *w, int *h)
+{
+    *x = others.x; *y = others.y; *w = others.w; *h = others.h;
 }

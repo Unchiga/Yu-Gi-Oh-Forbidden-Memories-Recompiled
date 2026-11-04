@@ -11,6 +11,14 @@
 
 struct MemoriesState;
 
+enum { TITLE_MENU_SLIDE_TICKS = 24 };
+/* Shared by the game's entries and the port's pictures. Smooth: the mods'
+ * menu "slide": "smooth" (TITLE_MENU_SLIDE_TICKS, eased, no afterimages);
+ * else the game's own 16-tick slide, which StartSlide leaves alone. */
+int TitleMenu_Smooth(void);
+void TitleMenu_StartSlide(void);
+int TitleMenu_SlidePosition(int from, int to, int timer);
+
 /* MainMenu_InitFrontendMenu has made the entries: parks the ones drawn
  * here, and puts the cursor back where it was before the menu was left. */
 void TitleMenu_Opened(void);

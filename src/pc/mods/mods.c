@@ -39,6 +39,7 @@
 #include "pc/debug/log.h"
 #include "pc/debug/symbols.h"
 #include "pc/sdk/disc.h"
+#include "pc/sdk/display.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -50,6 +51,12 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <limits.h>
+#include <png.h>
+#include <pthread.h>
+#include <signal.h>
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
 #include "pc/compat/mman.h"
 #include "pc/memory.h" /* the mods' packet area */
 #ifdef _WIN32
@@ -127,6 +134,7 @@ typedef struct {
     char asset_dir[PATH_MAX_];   /* "assets": a directory whose PNGs are named by their path */
     const JsonValue *audio;      /* the "audio" object: replacement sounds (src/pc/audio/replace.h) */
     int sounds;                  /* its code added sounds of its own (host->sound_add) */
+    unsigned hud_hidden;         /* MEMORIES_HUD_* parts it hides (host->hide_hud) */
 } Mod;
 
 /* One stretch of the disc a mod replaces, and one run of patched bytes
@@ -526,6 +534,62 @@ static void host_sound_free(const MemoriesModHost *host, int sound)
     Mod *mod = owner(host);
     if (mod && clip_free) clip_free((int)(mod - mods), sound);
 }
+/* The mouse (API 23): the window's own (Mods_SetMouse), and the mod that
+ * asked for it captured, or for Escape, which lets both go when it is
+ * turned off. Only that mod is given the Escape presses. */
+static void (*mouse_motion)(int *, int *, unsigned *, int);
+static void (*mouse_capture)(int);
+static int mouse_captor = -1;
+static void host_mouse(const MemoriesModHost *host, int *dx, int *dy, unsigned *buttons)
+{
+    Mod *mod = owner(host);
+    int x = 0, y = 0;
+    unsigned held = 0;
+    if (mod && mod->active && mouse_motion) mouse_motion(&x, &y, &held, (int)(mod - mods) == mouse_captor);
+    if (dx) *dx = x;
+    if (dy) *dy = y;
+    if (buttons) *buttons = held;
+}
+static void host_capture_mouse(const MemoriesModHost *host, int mode)
+{
+    Mod *mod = owner(host);
+    int index = mod ? (int)(mod - mods) : -1;
+    if (mode < 0 || mode > 2) mode = 1; /* any other truth value is 1, as it was */
+    if (!mod || (mode && !mod->active)) return;
+    if (mode) {
+        mouse_captor = index;
+    } else if (mouse_captor == index) {
+        mouse_captor = -1;
+    } else {
+        return; /* another mod has it */
+    }
+    if (mouse_capture) mouse_capture(mode);
+}
+static void release_mouse(int index)
+{
+    if (mouse_captor == index) {
+        mouse_captor = -1;
+        if (mouse_capture) mouse_capture(0);
+    }
+}
+void Mods_SetMouse(void (*motion)(int *dx, int *dy, unsigned *buttons, int escape), void (*capture)(int mode))
+{
+    mouse_motion = motion;
+    mouse_capture = capture;
+}
+/* The parts of the port's HUD the applied mods hide (host->hide_hud). */
+static void host_hide_hud(const MemoriesModHost *host, unsigned mask)
+{
+    Mod *mod = owner(host);
+    if (mod && mod->active) mod->hud_hidden = mask;
+}
+unsigned Mods_HiddenHud(void)
+{
+    unsigned mask = 0;
+    for (int i = 0; i < mod_count; i++)
+        if (mods[i].active) mask |= mods[i].hud_hidden;
+    return mask;
+}
 static const char *(*notes_source)(int);
 static int (*tag_source)(int, const char *, char *, size_t);
 void Mods_SetCardNotes(const char *(*notes)(int), int (*tag)(int, const char *, char *, size_t))
@@ -561,6 +625,39 @@ static void *host_find(const MemoriesModHost *host, const char *qualified)
 
 /* --- drawing over the picture ------------------------------------------ */
 
+/* The overlay's drawing calls, listed as a pass makes them: what each drew
+ * and the rectangle of the canvas it could touch. The list of the pass that
+ * drew the canvas last, compared with a new pass's, says which rectangles
+ * of the canvas differ, so a pass where only a cursor moved is drawn and
+ * uploaded there alone (Mods_OverlayChanges, Mods_RedrawOverlayIn). */
+enum { CALL_FILL, CALL_TEXT, CALL_IMAGE };
+typedef struct {
+    unsigned char kind;
+    int x, y, w, h;          /* fill: its rectangle; text: x, middle, the scale in w; image: x, y, dw, dh */
+    uint32_t rgb;            /* fill, text */
+    unsigned alpha;
+    const uint32_t *pixels;  /* image: its pixels, their size, and their hash */
+    int pw, ph;
+    uint32_t hash;           /* text: of its characters */
+    size_t text;             /* text: where its characters are in the list's */
+    int clip[4];             /* the mod's clip at the call (x0, y0, x1, y1) */
+    int box[4];              /* what it may touch, x0, y0, x1, y1 inside the clip; x0 >= x1 for nothing */
+} OverlayCall;
+typedef struct {
+    OverlayCall *calls;
+    int count, room;
+    char *chars;
+    size_t used, chars_room;
+    int width, height;       /* the canvas the calls were made on */
+    int whole;               /* every call listed (no allocation failed) */
+} OverlayList;
+/* drawn: the calls that drew the window's canvas as it stands; listed: a
+ * pass compared with it (Mods_OverlayChanges); check: that pass made again
+ * to draw (Mods_RedrawOverlayIn). */
+static OverlayList drawn, listed, check;
+static int drawn_valid;
+static uint32_t pixels_hash(const uint32_t *pixels, size_t count);
+
 /* Only while Mods_DrawOverlay runs a mod's overlay callback. */
 static struct {
     MenuCanvas *canvas;
@@ -568,29 +665,186 @@ static struct {
     void (*text)(MenuCanvas *, int, int, const char *, uint32_t, int);
     int (*width)(const char *, int);
     int x0, y0, x1, y1;   /* what the mods drew, to report as the overlay's bounds */
+    /* The drawing calls draw into `canvas`, the view of `whole` at (ox, oy)
+     * the call is drawn through (region_enter), and move what they are
+     * given by -ox, -oy into it: the mod's clip (host->clip, API 23), and
+     * in a pass drawn again in rectangles (Mods_RedrawOverlayIn) each of
+     * those inside it in turn. */
+    MenuCanvas *whole;
+    MenuCanvas view;
+    int ox, oy;
+    int clip[4];          /* the mod's clip, x0, y0, x1, y1 of the whole canvas */
+    const int *regions;   /* the rectangles a pass draws in (x, y, w, h each), or NULL for all of it */
+    int region_count;
+    int raster;           /* 0: the calls are listed and nothing is drawn */
+    OverlayList *list;    /* where the calls are listed, or NULL */
+    /* The pass this one makes again (Mods_RedrawOverlayIn): a picture at the
+     * same place in it, the same pixels and size, keeps its hash. */
+    const OverlayList *hashes;
 } overlay;
 
-static void overlay_touch(int x, int y, int w, int h)
+static void stretch_age(void);
+
+/* The clip taken away: the whole canvas again. */
+static void overlay_unclip(void)
 {
-    int x1 = x + w, y1 = y + h;
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x1 > overlay.canvas->width) x1 = overlay.canvas->width;
-    if (y1 > overlay.canvas->height) y1 = overlay.canvas->height;
-    if (x >= x1 || y >= y1) return;
-    if (overlay.x0 >= overlay.x1) { overlay.x0 = x; overlay.y0 = y; overlay.x1 = x1; overlay.y1 = y1; return; }
-    if (x < overlay.x0) overlay.x0 = x;
-    if (y < overlay.y0) overlay.y0 = y;
-    if (x1 > overlay.x1) overlay.x1 = x1;
-    if (y1 > overlay.y1) overlay.y1 = y1;
+    overlay.canvas = overlay.whole;
+    overlay.ox = overlay.oy = 0;
+    overlay.clip[0] = overlay.clip[1] = 0;
+    overlay.clip[2] = overlay.whole ? overlay.whole->width : 0;
+    overlay.clip[3] = overlay.whole ? overlay.whole->height : 0;
+}
+
+/* A call's box, x0, y0, x1, y1: (x, y, w, h) inside the mod's clip. */
+static void call_box(int box[4], int x, int y, int w, int h)
+{
+    box[0] = x > overlay.clip[0] ? x : overlay.clip[0];
+    box[1] = y > overlay.clip[1] ? y : overlay.clip[1];
+    box[2] = x + w < overlay.clip[2] ? x + w : overlay.clip[2];
+    box[3] = y + h < overlay.clip[3] ? y + h : overlay.clip[3];
+    if (box[0] >= box[2] || box[1] >= box[3]) box[0] = box[2] = box[1] = box[3] = 0;
+}
+
+/* What a call drew (its box), added to the overlay's bounds. */
+static void overlay_touch(const int box[4])
+{
+    if (box[0] >= box[2]) return;
+    if (overlay.x0 >= overlay.x1) {
+        overlay.x0 = box[0]; overlay.y0 = box[1]; overlay.x1 = box[2]; overlay.y1 = box[3];
+        return;
+    }
+    if (box[0] < overlay.x0) overlay.x0 = box[0];
+    if (box[1] < overlay.y0) overlay.y0 = box[1];
+    if (box[2] > overlay.x1) overlay.x1 = box[2];
+    if (box[3] > overlay.y1) overlay.y1 = box[3];
+}
+
+/* How many views a call is drawn through: one, the mod's clip, in a pass
+ * that draws everything; else one for each rectangle drawn again. */
+static int region_total(void)
+{
+    return overlay.raster ? (overlay.regions ? overlay.region_count : 1) : 0;
+}
+
+/* Region `r` as the view the drawing calls draw into, for a call that may
+ * touch `box`: 0 when they do not meet. */
+static int region_enter(int r, const int box[4])
+{
+    MenuCanvas *whole = overlay.whole;
+    int x0 = overlay.clip[0], y0 = overlay.clip[1], x1 = overlay.clip[2], y1 = overlay.clip[3];
+    if (overlay.regions) {
+        const int *at = overlay.regions + 4 * r;
+        if (at[0] > x0) x0 = at[0];
+        if (at[1] > y0) y0 = at[1];
+        if (at[0] + at[2] < x1) x1 = at[0] + at[2];
+        if (at[1] + at[3] < y1) y1 = at[1] + at[3];
+    }
+    if (x0 >= x1 || y0 >= y1 || box[0] >= box[2] || box[0] >= x1 || box[2] <= x0 || box[1] >= y1 || box[3] <= y0)
+        return 0;
+    overlay.view = *whole;
+    overlay.view.pixels = whole->pixels + (size_t)y0 * (size_t)whole->stride + (size_t)x0;
+    overlay.view.width = x1 - x0;
+    overlay.view.height = y1 - y0;
+    overlay.canvas = &overlay.view;
+    overlay.ox = x0;
+    overlay.oy = y0;
+    return 1;
+}
+
+/* A new call at the end of the list being made, or NULL (no list, or no
+ * memory: the list is then not whole, and is never compared). */
+static OverlayCall *list_call(int kind, const int box[4])
+{
+    OverlayList *list = overlay.list;
+    OverlayCall *call;
+    if (!list || !list->whole) return NULL;
+    if (list->count == list->room) {
+        int room = list->room ? list->room * 2 : 256;
+        OverlayCall *calls = room <= (1 << 20) ? realloc(list->calls, (size_t)room * sizeof(*calls)) : NULL;
+        if (!calls) {
+            list->whole = 0;
+            return NULL;
+        }
+        list->calls = calls;
+        list->room = room;
+    }
+    call = &list->calls[list->count++];
+    memset(call, 0, sizeof(*call));
+    call->kind = (unsigned char)kind;
+    memcpy(call->clip, overlay.clip, sizeof(call->clip));
+    memcpy(call->box, box, sizeof(call->box));
+    return call;
+}
+
+/* A text call's characters, kept in its list. */
+static void list_text(OverlayCall *call, const char *text)
+{
+    OverlayList *list = overlay.list;
+    size_t n = strlen(text) + 1;
+    uint32_t hash = 2166136261u;
+    if (list->used + n > list->chars_room) {
+        size_t room = list->chars_room ? list->chars_room * 2 : 4096;
+        char *chars;
+        while (room < list->used + n) room *= 2;
+        if (!(chars = realloc(list->chars, room))) {
+            list->whole = 0;
+            return;
+        }
+        list->chars = chars;
+        list->chars_room = room;
+    }
+    memcpy(list->chars + list->used, text, n);
+    call->text = list->used;
+    list->used += n;
+    for (const char *c = text; *c; c++) hash = (hash ^ (unsigned char)*c) * 16777619u;
+    call->hash = hash;
 }
 
 static void host_overlay_size(const MemoriesModHost *host, int *width, int *height, int *scale)
 {
-    int on = owner(host) && overlay.canvas;
-    if (width) *width = on ? overlay.canvas->width : 0;
-    if (height) *height = on ? overlay.canvas->height : 0;
+    int on = owner(host) && overlay.whole;
+    if (width) *width = on ? overlay.whole->width : 0;
+    if (height) *height = on ? overlay.whole->height : 0;
     if (scale) *scale = on ? overlay.scale : 1;
+}
+
+/* host->picture_only_frame (API 23): asked during the frame callbacks,
+ * read by the game's drawing until the next frame's (Mods_PictureOnlyFrame). */
+static int picture_only_asked;
+
+static void host_picture_only_frame(const MemoriesModHost *host)
+{
+    if (host_applied(host)) picture_only_asked = 1;
+}
+
+int Mods_PictureOnlyFrame(void) { return picture_only_asked; }
+
+/* host->clip (API 23): the overlay's drawing kept inside a rectangle of the
+ * canvas until the callback returns, or w or h of 0 or less for none. Each
+ * call then draws into a view of the canvas's own pixels (the same stride)
+ * no larger than it (region_enter), so it stops at its edges as at the
+ * canvas's own. */
+static void host_clip(const MemoriesModHost *host, int x, int y, int w, int h)
+{
+    MenuCanvas *whole = overlay.whole;
+    int x1 = x + w, y1 = y + h;
+    if (!owner(host) || !whole) return;
+    if (w <= 0 || h <= 0) {
+        overlay_unclip();
+        return;
+    }
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x1 > whole->width) x1 = whole->width;
+    if (y1 > whole->height) y1 = whole->height;
+    if (x1 < x) x1 = x;
+    if (y1 < y) y1 = y;
+    if (x > whole->width) x = x1 = whole->width;
+    if (y > whole->height) y = y1 = whole->height;
+    overlay.clip[0] = x;
+    overlay.clip[1] = y;
+    overlay.clip[2] = x1;
+    overlay.clip[3] = y1;
 }
 
 static int host_text_width(const MemoriesModHost *host, const char *text, int scale)
@@ -598,51 +852,538 @@ static int host_text_width(const MemoriesModHost *host, const char *text, int sc
     return owner(host) && overlay.width && text ? overlay.width(text, scale < 1 ? 1 : scale) : 0;
 }
 
+/* Text at `alpha` (255 as draw_text draws it) into the view: drawn as ever,
+ * then, below 255, mixed with what was under it, pixel by pixel, over the
+ * box it can take. x and middle are the view's. */
+static void raster_text(int x, int middle, const char *text, uint32_t rgb, int scale, unsigned alpha)
+{
+    MenuCanvas *canvas = overlay.canvas;
+    int top, w, h, x0, y0, x1, y1, row;
+    uint32_t *under;
+    if (alpha >= 255) {
+        overlay.text(canvas, x, middle, text, rgb & 0xFFFFFFu, scale);
+        return;
+    }
+    top = middle - 10 * scale;
+    w = overlay.width(text, scale) + 2 * scale;
+    h = 20 * scale;
+    x0 = x < 0 ? 0 : x;
+    y0 = top < 0 ? 0 : top;
+    x1 = x + w > canvas->width ? canvas->width : x + w;
+    y1 = top + h > canvas->height ? canvas->height : top + h;
+    if (x1 <= x0 || y1 <= y0 || !alpha) return;
+    if (!(under = malloc((size_t)(x1 - x0) * (size_t)(y1 - y0) * sizeof(*under)))) return;
+    for (row = y0; row < y1; row++)
+        memcpy(under + (size_t)(row - y0) * (size_t)(x1 - x0), canvas->pixels + (size_t)row * (size_t)canvas->stride + x0,
+               (size_t)(x1 - x0) * sizeof(*under));
+    overlay.text(canvas, x, middle, text, rgb & 0xFFFFFFu, scale);
+    for (row = y0; row < y1; row++) {
+        uint32_t *line = canvas->pixels + (size_t)row * (size_t)canvas->stride + x0;
+        const uint32_t *was = under + (size_t)(row - y0) * (size_t)(x1 - x0);
+        for (int column = 0; column < x1 - x0; column++) {
+            uint32_t now = line[column], old = was[column];
+            unsigned r, g, b;
+            if (now == old) continue;
+            r = ((now >> 16 & 255) * alpha + (old >> 16 & 255) * (255 - alpha)) / 255;
+            g = ((now >> 8 & 255) * alpha + (old >> 8 & 255) * (255 - alpha)) / 255;
+            b = ((now & 255) * alpha + (old & 255) * (255 - alpha)) / 255;
+            line[column] = (now & 0xFF000000u) | r << 16 | g << 8 | b;
+        }
+    }
+    free(under);
+}
+
+/* draw_text and draw_text_alpha: listed, then drawn through each view. Its
+ * box is the box the alpha path mixes and a margin round it, for a glyph
+ * that reaches past its advance or the line (a call's box must hold
+ * everything it can change). */
+static void overlay_text(int x, int middle, const char *text, uint32_t rgb, int scale, unsigned alpha)
+{
+    int box[4], width = overlay.width(text, scale);
+    OverlayCall *call;
+    call_box(box, x - 4 * scale, middle - 14 * scale, width + 12 * scale, 28 * scale);
+    if ((call = list_call(CALL_TEXT, box))) {
+        call->x = x;
+        call->y = middle;
+        call->w = scale;
+        call->rgb = rgb & 0xFFFFFFu;
+        call->alpha = alpha;
+        list_text(call, text);
+    }
+    for (int r = 0; r < region_total(); r++) {
+        if (region_enter(r, box)) raster_text(x - overlay.ox, middle - overlay.oy, text, rgb, scale, alpha);
+    }
+    if (alpha) {
+        int touched[4];
+        call_box(touched, x, middle - 10 * scale, width + (alpha < 255 ? 2 * scale : 0), 20 * scale);
+        overlay_touch(touched);
+    }
+}
+
 static void host_draw_text(const MemoriesModHost *host, int x, int middle, const char *text, uint32_t rgb, int scale)
 {
-    if (!owner(host) || !overlay.canvas || !text) return;
-    if (scale < 1) scale = 1;
-    overlay.text(overlay.canvas, x, middle, text, rgb & 0xFFFFFFu, scale);
-    overlay_touch(x, middle - 10 * scale, overlay.width(text, scale), 20 * scale);
+    if (!owner(host) || !overlay.whole || !text) return;
+    overlay_text(x, middle, text, rgb, scale < 1 ? 1 : scale, 255);
+}
+
+static void host_draw_text_alpha(const MemoriesModHost *host, int x, int middle, const char *text, uint32_t rgb,
+                                 int scale, unsigned alpha)
+{
+    if (!owner(host) || !overlay.whole || !text) return;
+    overlay_text(x, middle, text, rgb, scale < 1 ? 1 : scale, alpha > 255 ? 255 : alpha);
+}
+
+/* x / 255 for x up to 255 * 255, without the division: the overlay is
+ * blended pixel by pixel on the CPU at the window's size, so this is its
+ * inner loop. */
+static inline unsigned by_255(unsigned x) { return (x + 1 + (x >> 8)) >> 8; }
+
+/* n pixels of `line` under `from`'s (or `color` everywhere, when `from` is
+ * NULL), opaque colors, at `alpha`: each byte (src * alpha + under * (255 -
+ * alpha)) / 255, the alpha byte so alpha + under's * (255 - alpha) / 255.
+ * Four pixels at a time where there is SSE2, the same sums. */
+static void blend_span(uint32_t *line, int n, const uint32_t *from, uint32_t color, unsigned alpha)
+{
+    const unsigned inverse = 255 - alpha;
+    int i = 0;
+#ifdef __SSE2__
+    const __m128i zero = _mm_setzero_si128(), one = _mm_set1_epi16(1), constant = _mm_set1_epi32((int)color);
+    const __m128i times = _mm_set1_epi16((short)alpha), under_times = _mm_set1_epi16((short)inverse);
+    for (; i + 4 <= n; i += 4) {
+        __m128i src = from ? _mm_loadu_si128((const __m128i *)(from + i)) : constant;
+        __m128i under = _mm_loadu_si128((const __m128i *)(line + i));
+        __m128i low = _mm_add_epi16(_mm_mullo_epi16(_mm_unpacklo_epi8(src, zero), times),
+                                    _mm_mullo_epi16(_mm_unpacklo_epi8(under, zero), under_times));
+        __m128i high = _mm_add_epi16(_mm_mullo_epi16(_mm_unpackhi_epi8(src, zero), times),
+                                     _mm_mullo_epi16(_mm_unpackhi_epi8(under, zero), under_times));
+        low = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(low, one), _mm_srli_epi16(low, 8)), 8);
+        high = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(high, one), _mm_srli_epi16(high, 8)), 8);
+        _mm_storeu_si128((__m128i *)(line + i), _mm_packus_epi16(low, high));
+    }
+#endif
+    for (; i < n; i++) {
+        uint32_t src = from ? from[i] : color, under = line[i];
+        line[i] = (alpha + by_255((under >> 24) * inverse)) << 24 |
+                  by_255((src >> 16 & 255) * alpha + (under >> 16 & 255) * inverse) << 16 |
+                  by_255((src >> 8 & 255) * alpha + (under >> 8 & 255) * inverse) << 8 |
+                  by_255((src & 255) * alpha + (under & 255) * inverse);
+    }
+}
+
+/* A fill into the view, x and y the view's. */
+static void raster_fill(int x, int y, int w, int h, uint32_t rgb, unsigned alpha)
+{
+    MenuCanvas *canvas = overlay.canvas;
+    int row0, row1, col0, col1;
+    row0 = y < 0 ? 0 : y;
+    row1 = y + h > canvas->height ? canvas->height : y + h;
+    col0 = x < 0 ? 0 : x;
+    col1 = x + w > canvas->width ? canvas->width : x + w;
+    if (alpha == 255) { /* covered: the color, opaque */
+        const uint32_t pixel = 0xFF000000u | (rgb & 0xFFFFFFu);
+        for (int row = row0; row < row1; row++) {
+            uint32_t *line = canvas->pixels + (size_t)row * (size_t)canvas->stride;
+            for (int column = col0; column < col1; column++) line[column] = pixel;
+        }
+    } else if (alpha && col1 > col0) { /* none leaves every pixel as it was */
+        for (int row = row0; row < row1; row++)
+            blend_span(canvas->pixels + (size_t)row * (size_t)canvas->stride + col0, col1 - col0, NULL,
+                       0xFF000000u | (rgb & 0xFFFFFFu), alpha);
+    }
 }
 
 static void host_fill(const MemoriesModHost *host, int x, int y, int w, int h, uint32_t rgb, unsigned alpha)
 {
-    MenuCanvas *canvas = overlay.canvas;
-    unsigned inverse;
-    if (!owner(host) || !canvas || w <= 0 || h <= 0) return;
+    int box[4];
+    OverlayCall *call;
+    if (!owner(host) || !overlay.whole || w <= 0 || h <= 0) return;
     if (alpha > 255) alpha = 255;
-    inverse = 255 - alpha;
-    for (int row = y < 0 ? 0 : y; row < y + h && row < canvas->height; row++) {
-        for (int column = x < 0 ? 0 : x; column < x + w && column < canvas->width; column++) {
-            uint32_t *pixel = canvas->pixels + (size_t)row * (size_t)canvas->stride + (size_t)column, under = *pixel;
-            unsigned r = ((rgb >> 16 & 255) * alpha + (under >> 16 & 255) * inverse) / 255;
-            unsigned g = ((rgb >> 8 & 255) * alpha + (under >> 8 & 255) * inverse) / 255;
-            unsigned b = ((rgb & 255) * alpha + (under & 255) * inverse) / 255;
-            unsigned a = alpha + (under >> 24) * inverse / 255;
-            *pixel = a << 24 | r << 16 | g << 8 | b;
+    call_box(box, x, y, w, h);
+    if ((call = list_call(CALL_FILL, box))) {
+        call->x = x;
+        call->y = y;
+        call->w = w;
+        call->h = h;
+        call->rgb = rgb & 0xFFFFFFu;
+        call->alpha = alpha;
+    }
+    for (int r = 0; r < region_total(); r++) {
+        if (region_enter(r, box)) raster_fill(x - overlay.ox, y - overlay.oy, w, h, rgb, alpha);
+    }
+    overlay_touch(box);
+}
+
+/* MEMORIES_TRACE=frames: the time the mods' frame and overlay callbacks
+ * take, over 120 frames (untimed while the channel is off). */
+enum { CALLBACK_FRAME, CALLBACK_OVERLAY, CALLBACK_LISTED, CALLBACKS };
+static struct { uint64_t total[CALLBACKS]; unsigned max[CALLBACKS], count[CALLBACKS]; } callback_time;
+
+static uint64_t callback_start(void)
+{
+    struct timespec now;
+    if (!Log_Enabled(LOG_FRAMES)) return 0;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000000u + (uint64_t)now.tv_nsec / 1000u + 1u;
+}
+
+static void callback_end(int which, uint64_t started)
+{
+    static const char *const names[CALLBACKS] = {"frame", "overlay", "overlay (listed only)"};
+    struct timespec now;
+    unsigned us;
+    if (!started) return;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    us = (unsigned)((uint64_t)now.tv_sec * 1000000u + (uint64_t)now.tv_nsec / 1000u + 1u - started);
+    callback_time.total[which] += us;
+    if (us > callback_time.max[which]) callback_time.max[which] = us;
+    if (++callback_time.count[which] < 120) return;
+    LOG(LOG_FRAMES, "mods' %s callbacks: %u us per call (max %u)", names[which],
+        (unsigned)(callback_time.total[which] / callback_time.count[which]), callback_time.max[which]);
+    callback_time.total[which] = 0;
+    callback_time.max[which] = callback_time.count[which] = 0;
+}
+
+/* A pass over the canvas: every applied mod's overlay callback, in load
+ * order, drawing (raster) through the regions given (all of the canvas
+ * when NULL) or only listing its calls, into `list` when there is one. 0
+ * when there is nothing to draw on. */
+static int overlay_pass(MenuCanvas *canvas, int scale, void (*text)(MenuCanvas *, int, int, const char *, uint32_t, int),
+                        int (*width)(const char *, int), int raster, const int *regions, int count,
+                        OverlayList *list, const OverlayList *hashes)
+{
+    uint64_t started;
+    if (shut_down || !canvas || !canvas->pixels || !text || !width) return 0;
+    overlay.whole = canvas;
+    overlay.scale = scale < 1 ? 1 : scale;
+    overlay.text = text;
+    overlay.width = width;
+    overlay.x0 = overlay.y0 = overlay.x1 = overlay.y1 = 0;
+    overlay.raster = raster;
+    overlay.regions = regions;
+    overlay.region_count = count;
+    overlay.list = list;
+    overlay.hashes = hashes;
+    if (list) {
+        list->count = 0;
+        list->used = 0;
+        list->whole = 1;
+        list->width = canvas->width;
+        list->height = canvas->height;
+    }
+    /* Partial redraws also advance the cache generation. Otherwise all
+     * stretches used since the last whole pass remain pinned, eventually
+     * forcing a scrolling menu to resample every new size on every frame. */
+    if (raster) stretch_age();
+    started = callback_start();
+    for (int i = 0; i < mod_count; i++) {
+        if (mods[i].active && mods[i].initialized && mods[i].hooks.overlay) {
+            overlay_unclip(); /* a mod's clip is its own */
+            mods[i].hooks.overlay();
         }
     }
-    overlay_touch(x, y, w, h);
+    callback_end(raster ? CALLBACK_OVERLAY : CALLBACK_LISTED, started);
+    overlay.canvas = overlay.whole = NULL;
+    overlay.list = NULL;
+    overlay.hashes = NULL;
+    overlay.regions = NULL;
+    return 1;
+}
+
+static int listing_off; /* Mods_DrawPictureOverlay's canvas is not the window's */
+
+/* --- the overlay drawn elsewhere (Mods_SetOverlaySink) ------------------ */
+
+static const ModsOverlaySink *overlay_sink;
+
+void Mods_SetOverlaySink(const ModsOverlaySink *sink)
+{
+    overlay_sink = sink;
+    drawn_valid = 0;
+}
+
+/* Text is drawn once into pictures of its own, for a sink that takes only
+ * pictures: the menu's text is the CPU's, a whole string at a time. */
+#define STAMPS 512
+typedef struct {
+    char *text;
+    uint32_t rgb, hash, *pixels;
+    int scale, width, height;
+    unsigned used;
+} TextStamp;
+static TextStamp stamps[STAMPS];
+static unsigned stamp_pass;
+
+static void stamp_drop(TextStamp *stamp)
+{
+    if (overlay_sink && stamp->pixels) overlay_sink->forget(stamp->pixels);
+    free(stamp->text);
+    free(stamp->pixels);
+    memset(stamp, 0, sizeof(*stamp));
+}
+
+static const TextStamp *stamp_for(const char *text, uint32_t rgb, int scale,
+                                  void (*draw)(MenuCanvas *, int, int, const char *, uint32_t, int),
+                                  int (*width)(const char *, int))
+{
+    TextStamp *slot = NULL;
+    MenuCanvas canvas;
+    int i;
+    for (i = 0; i < STAMPS; i++) {
+        TextStamp *stamp = &stamps[i];
+        if (stamp->pixels && stamp->rgb == rgb && stamp->scale == scale && !strcmp(stamp->text, text)) {
+            stamp->used = stamp_pass;
+            return stamp;
+        }
+        if (!stamp->pixels) {
+            if (!slot || slot->pixels) slot = stamp;
+        } else if (!slot || (slot->pixels && stamp->used - slot->used > 0x80000000u)) {
+            slot = stamp;
+        }
+    }
+    if (slot->pixels) stamp_drop(slot);
+    /* the box overlay_text gives a call: all a glyph can reach */
+    slot->width = width(text, scale) + 12 * scale;
+    slot->height = 28 * scale;
+    slot->text = malloc(strlen(text) + 1);
+    slot->pixels = calloc((size_t)slot->width * (size_t)slot->height, sizeof(*slot->pixels));
+    if (!slot->text || !slot->pixels) {
+        free(slot->text);
+        free(slot->pixels);
+        memset(slot, 0, sizeof(*slot));
+        return NULL;
+    }
+    strcpy(slot->text, text);
+    slot->rgb = rgb;
+    slot->scale = scale;
+    slot->used = stamp_pass;
+    memset(&canvas, 0, sizeof(canvas));
+    canvas.pixels = slot->pixels;
+    canvas.stride = canvas.width = slot->width;
+    canvas.height = slot->height;
+    canvas.alpha = 1;
+    draw(&canvas, 4 * scale, 14 * scale, text, rgb, scale);
+    slot->hash = pixels_hash(slot->pixels, (size_t)slot->width * (size_t)slot->height);
+    return slot;
+}
+
+/* The pass just listed, to the sink. */
+static void overlay_to_sink(void (*draw)(MenuCanvas *, int, int, const char *, uint32_t, int),
+                            int (*width)(const char *, int))
+{
+    stamp_pass++;
+    overlay_sink->begin();
+    for (int i = 0; i < drawn.count; i++) {
+        const OverlayCall *call = &drawn.calls[i];
+        if (call->box[0] >= call->box[2]) continue;
+        if (call->kind == CALL_FILL) {
+            overlay_sink->fill(call->clip, call->x, call->y, call->w, call->h, call->rgb, call->alpha);
+        } else if (call->kind == CALL_IMAGE) {
+            overlay_sink->image(call->clip, call->pixels, call->pw, call->ph, call->hash, call->x, call->y, call->w,
+                                call->h, call->alpha);
+        } else if (call->alpha) {
+            const TextStamp *stamp = stamp_for(drawn.chars + call->text, call->rgb, call->w, draw, width);
+            if (stamp)
+                overlay_sink->image(call->clip, stamp->pixels, stamp->width, stamp->height, stamp->hash,
+                                    call->x - 4 * call->w, call->y - 14 * call->w, stamp->width, stamp->height,
+                                    call->alpha);
+        }
+    }
+    overlay_sink->end();
 }
 
 void Mods_DrawOverlay(MenuCanvas *canvas, int scale, void (*text)(MenuCanvas *, int, int, const char *, uint32_t, int),
                       int (*width)(const char *, int), int *x, int *y, int *w, int *h)
 {
     *x = *y = *w = *h = 0;
-    if (shut_down || !canvas || !canvas->pixels || !text || !width) return;
-    overlay.canvas = canvas;
-    overlay.scale = scale < 1 ? 1 : scale;
-    overlay.text = text;
-    overlay.width = width;
-    overlay.x0 = overlay.y0 = overlay.x1 = overlay.y1 = 0;
-    for (int i = 0; i < mod_count; i++) {
-        if (mods[i].active && mods[i].initialized && mods[i].hooks.overlay) mods[i].hooks.overlay();
+    if (!listing_off) drawn_valid = 0;
+    if (overlay_sink && !listing_off) {
+        if (overlay_pass(canvas, scale, text, width, 0, NULL, 0, &drawn, NULL) && drawn.whole)
+            overlay_to_sink(text, width);
+        return;
     }
-    overlay.canvas = NULL;
+    if (!overlay_pass(canvas, scale, text, width, 1, NULL, 0, listing_off ? NULL : &drawn, NULL)) return;
+    if (!listing_off) drawn_valid = drawn.whole;
     if (overlay.x0 < overlay.x1) {
         *x = overlay.x0; *y = overlay.y0; *w = overlay.x1 - overlay.x0; *h = overlay.y1 - overlay.y0;
     }
+}
+
+/* --- what differs between two passes ------------------------------------ */
+
+static int call_same(const OverlayList *la, const OverlayCall *a, const OverlayList *lb, const OverlayCall *b)
+{
+    if (a->kind != b->kind || a->x != b->x || a->y != b->y || a->w != b->w || a->h != b->h || a->rgb != b->rgb ||
+        a->alpha != b->alpha || a->pixels != b->pixels || a->pw != b->pw || a->ph != b->ph || a->hash != b->hash ||
+        memcmp(a->clip, b->clip, sizeof(a->clip)) != 0)
+        return 0;
+    return a->kind != CALL_TEXT || strcmp(la->chars + a->text, lb->chars + b->text) == 0;
+}
+
+static int lists_same(const OverlayList *a, const OverlayList *b)
+{
+    if (a->count != b->count) return 0;
+    for (int i = 0; i < a->count; i++)
+        if (!call_same(a, &a->calls[i], b, &b->calls[i])) return 0;
+    return 1;
+}
+
+/* The rectangles that differ, x0, y0, x1, y1: kept apart while they are
+ * further apart than DAMAGE_NEAR, else one, and never more than
+ * DAMAGE_MAX (the pair whose union grows least goes together). */
+#define DAMAGE_MAX 16
+#define DAMAGE_NEAR 24
+typedef struct { int count, rect[DAMAGE_MAX][4]; } Damage;
+
+static long long rect_area(const int r[4]) { return (long long)(r[2] - r[0]) * (r[3] - r[1]); }
+
+static void rect_union(int into[4], const int r[4])
+{
+    if (r[0] < into[0]) into[0] = r[0];
+    if (r[1] < into[1]) into[1] = r[1];
+    if (r[2] > into[2]) into[2] = r[2];
+    if (r[3] > into[3]) into[3] = r[3];
+}
+
+static void damage_add(Damage *damage, const int box[4])
+{
+    int add[4];
+    if (box[0] >= box[2] || box[1] >= box[3]) return;
+    memcpy(add, box, sizeof(add));
+    for (;;) {
+        int i, best = -1;
+        long long best_growth = 0;
+        for (i = 0; i < damage->count; i++) {
+            const int *r = damage->rect[i];
+            if (r[0] - DAMAGE_NEAR < add[2] && add[0] - DAMAGE_NEAR < r[2] && r[1] - DAMAGE_NEAR < add[3] &&
+                add[1] - DAMAGE_NEAR < r[3])
+                break;
+        }
+        if (i == damage->count && damage->count < DAMAGE_MAX) {
+            memcpy(damage->rect[damage->count++], add, sizeof(add));
+            return;
+        }
+        if (i == damage->count) {
+            /* full: into the one it grows least */
+            for (i = 0; i < damage->count; i++) {
+                int both[4];
+                long long growth;
+                memcpy(both, damage->rect[i], sizeof(both));
+                rect_union(both, add);
+                growth = rect_area(both) - rect_area(damage->rect[i]) - rect_area(add);
+                if (best < 0 || growth < best_growth) {
+                    best = i;
+                    best_growth = growth;
+                }
+            }
+            i = best;
+        }
+        /* taken out and added again with what it met, which may meet others */
+        rect_union(add, damage->rect[i]);
+        memcpy(damage->rect[i], damage->rect[--damage->count], sizeof(add));
+    }
+}
+
+/* The calls that differ between a (what drew the canvas) and b (a new
+ * pass), by the longest run of calls the two have in common, in order:
+ * every call not in it, the old where it was, the new where it is, is
+ * drawn again. Two calls in the same order cover a pixel the same way, so
+ * the canvas outside the boxes of the others is already b's. */
+#define DIFF_CELLS (1u << 20)
+static void overlay_diff(const OverlayList *a, const OverlayList *b, Damage *damage)
+{
+    int start = 0, end_a = a->count, end_b = b->count, na, nb, i, j;
+    uint16_t *lengths = NULL;
+    damage->count = 0;
+    while (start < end_a && start < end_b && call_same(a, &a->calls[start], b, &b->calls[start])) start++;
+    while (end_a > start && end_b > start && call_same(a, &a->calls[end_a - 1], b, &b->calls[end_b - 1])) {
+        end_a--;
+        end_b--;
+    }
+    na = end_a - start;
+    nb = end_b - start;
+    if (!na && !nb) return;
+    if ((unsigned long long)(na + 1) * (unsigned long long)(nb + 1) <= DIFF_CELLS) /* in 64 bits: 32 overflow */
+        lengths = malloc((size_t)(na + 1) * (size_t)(nb + 1) * sizeof(*lengths));
+    if (!lengths) {
+        /* too long to compare call by call: all between is drawn again */
+        for (i = start; i < end_a; i++) damage_add(damage, a->calls[i].box);
+        for (j = start; j < end_b; j++) damage_add(damage, b->calls[j].box);
+        return;
+    }
+#define L(i, j) lengths[(size_t)(i) * (size_t)(nb + 1) + (size_t)(j)]
+    for (i = na; i >= 0; i--) {
+        for (j = nb; j >= 0; j--) {
+            if (i == na || j == nb) L(i, j) = 0;
+            else if (call_same(a, &a->calls[start + i], b, &b->calls[start + j])) L(i, j) = (uint16_t)(L(i + 1, j + 1) + 1);
+            else L(i, j) = L(i + 1, j) > L(i, j + 1) ? L(i + 1, j) : L(i, j + 1);
+        }
+    }
+    i = j = 0;
+    while (i < na && j < nb) {
+        if (call_same(a, &a->calls[start + i], b, &b->calls[start + j])) {
+            i++;
+            j++;
+        } else if (L(i + 1, j) >= L(i, j + 1)) {
+            damage_add(damage, a->calls[start + i++].box);
+        } else {
+            damage_add(damage, b->calls[start + j++].box);
+        }
+    }
+#undef L
+    while (i < na) damage_add(damage, a->calls[start + i++].box);
+    while (j < nb) damage_add(damage, b->calls[start + j++].box);
+    free(lengths);
+}
+
+static int listed_valid; /* `listed` is the pass Mods_OverlayChanges compared */
+
+int Mods_OverlayChanges(MenuCanvas *canvas, int scale, void (*text)(MenuCanvas *, int, int, const char *, uint32_t, int),
+                        int (*width)(const char *, int), int *rects, int max)
+{
+    Damage damage;
+    int i;
+    listed_valid = 0;
+    if (!drawn_valid || !canvas || canvas->width != drawn.width || canvas->height != drawn.height || max < 1)
+        return -1;
+    /* The extra calls are API 23's (modapi.h): a mod built for an older one
+     * may move on in its overlay, so it is drawn once a frame, all of it. */
+    for (i = 0; i < mod_count; i++) {
+        if (mods[i].active && mods[i].initialized && mods[i].hooks.overlay && mods[i].hooks.api < 23) return -1;
+    }
+    if (!overlay_pass(canvas, scale, text, width, 0, NULL, 0, &listed, NULL) || !listed.whole) return -1;
+    overlay_diff(&drawn, &listed, &damage);
+    while (damage.count > max) { /* the last two together, which may meet others */
+        int last[4];
+        memcpy(last, damage.rect[--damage.count], sizeof(last));
+        rect_union(last, damage.rect[--damage.count]);
+        damage_add(&damage, last);
+    }
+    for (i = 0; i < damage.count; i++) {
+        rects[4 * i] = damage.rect[i][0];
+        rects[4 * i + 1] = damage.rect[i][1];
+        rects[4 * i + 2] = damage.rect[i][2] - damage.rect[i][0];
+        rects[4 * i + 3] = damage.rect[i][3] - damage.rect[i][1];
+    }
+    listed_valid = 1;
+    return damage.count;
+}
+
+int Mods_RedrawOverlayIn(MenuCanvas *canvas, int scale, void (*text)(MenuCanvas *, int, int, const char *, uint32_t, int),
+                         int (*width)(const char *, int), const int *rects, int count)
+{
+    OverlayList kept;
+    if (!listed_valid || !drawn_valid || !canvas || canvas->width != listed.width || canvas->height != listed.height)
+        return 0;
+    listed_valid = 0;
+    drawn_valid = 0; /* until the pass is known to be the one listed */
+    if (!overlay_pass(canvas, scale, text, width, 1, rects, count, &check, &listed)) return 0;
+    if (!check.whole || !lists_same(&check, &listed)) return 0;
+    /* the canvas is now what `check` draws: it is the list to compare with */
+    kept = drawn;
+    drawn = check;
+    check = kept;
+    drawn_valid = 1;
+    return 1;
 }
 
 unsigned Mods_OverlaySignature(unsigned frame)
@@ -656,6 +1397,843 @@ unsigned Mods_OverlaySignature(unsigned frame)
         signature = signature * 2654435761u + (hooks->overlay_signature ? hooks->overlay_signature() : frame);
     }
     return signature;
+}
+
+/* Where the window shows the game's picture (Mods_SetPicture). */
+static struct { int x, y, w, h, game_width; } picture = {0, 0, 0, 0, 320};
+
+void Mods_SetPicture(int x, int y, int w, int h, int game_width)
+{
+    picture.x = x;
+    picture.y = y;
+    picture.w = w;
+    picture.h = h;
+    picture.game_width = game_width > 0 ? game_width : 320;
+}
+
+/* The applied mods' overlays straight over `pixels` (0xFFRRGGBB, w x h), as
+ * a window showing the picture at that size would have them: the frame
+ * dumps' MEMORIES_DUMP_OVERLAY, for looking at a mod's screens headless. */
+void Mods_DrawPictureOverlay(uint32_t *pixels, int w, int h, int game_width,
+                             void (*text)(MenuCanvas *, int, int, const char *, uint32_t, int),
+                             int (*width)(const char *, int))
+{
+    MenuCanvas canvas;
+    int x, y, cw, ch;
+    int kept_x = picture.x, kept_y = picture.y, kept_w = picture.w, kept_h = picture.h, kept_game = picture.game_width;
+    canvas.pixels = pixels;
+    canvas.stride = w;
+    canvas.width = w;
+    canvas.height = h;
+    canvas.alpha = 0; /* the picture is there already: drawn straight over it */
+    Mods_SetPicture(0, 0, w, h, game_width);
+    listing_off = 1; /* the window's canvas keeps its list */
+    Mods_DrawOverlay(&canvas, h / 480 < 1 ? 1 : h / 480, text, width, &x, &y, &cw, &ch);
+    listing_off = 0;
+    Mods_SetPicture(kept_x, kept_y, kept_w, kept_h, kept_game);
+}
+
+static void host_overlay_picture(const MemoriesModHost *host, int *x, int *y, int *w, int *h, int *game_width)
+{
+    int px = picture.x, py = picture.y, pw = picture.w, ph = picture.h;
+    (void)host;
+    if ((pw <= 0 || ph <= 0) && overlay.whole) {
+        px = py = 0;
+        pw = overlay.whole->width;
+        ph = overlay.whole->height;
+    }
+    if (x) *x = px;
+    if (y) *y = py;
+    if (w) *w = pw;
+    if (h) *h = ph;
+    if (game_width) *game_width = picture.game_width;
+}
+
+/* The pictures the host made (load_image, alloc_image): their hash is
+ * taken once, at the first draw, and again after image_changed. Anything
+ * else draw_image is given may have been rewritten or freed and made again
+ * at the same address, so its pixels are hashed each time they are drawn:
+ * a menu's dozens of pictures, every pass, is a good part of a frame. */
+#define KEPT_BUCKETS 1024u
+typedef struct KeptImage {
+    struct KeptImage *next;
+    const uint32_t *pixels;
+    uint32_t hash;
+    int w, h; /* the size hashed; 0 for not yet */
+} KeptImage;
+static KeptImage *kept_images[KEPT_BUCKETS];
+
+static KeptImage **kept_bucket(const uint32_t *pixels)
+{
+    return &kept_images[((uint32_t)((uintptr_t)pixels >> 4) * 2654435761u) >> 22];
+}
+
+static KeptImage **kept_slot(const uint32_t *pixels)
+{
+    KeptImage **at = kept_bucket(pixels);
+    while (*at && (*at)->pixels != pixels) at = &(*at)->next;
+    return at;
+}
+
+static uint32_t *kept_add(uint32_t *pixels)
+{
+    KeptImage *kept = pixels ? calloc(1, sizeof(*kept)) : NULL;
+    if (kept) {
+        KeptImage **at = kept_bucket(pixels);
+        kept->pixels = pixels;
+        kept->next = *at;
+        *at = kept;
+    }
+    return pixels; /* without its entry, hashed as a mod's own */
+}
+
+/* A PNG as 0xAARRGGBB pixels, or NULL; the file closed. */
+static uint32_t *read_image(FILE *file, int *width, int *height)
+{
+    png_image image;
+    uint32_t *pixels = NULL;
+    memset(&image, 0, sizeof(image));
+    image.version = PNG_IMAGE_VERSION;
+    if (png_image_begin_read_from_stdio(&image, file)) {
+        image.format = PNG_FORMAT_BGRA; /* little-endian 0xAARRGGBB words */
+        pixels = malloc(PNG_IMAGE_SIZE(image));
+        if (pixels && png_image_finish_read(&image, NULL, pixels, 0, NULL)) {
+            *width = (int)image.width;
+            *height = (int)image.height;
+        } else {
+            free(pixels);
+            pixels = NULL;
+        }
+    }
+    png_image_free(&image);
+    fclose(file);
+    return pixels;
+}
+
+/* Pictures read ahead (prefetch_image), on a thread of their own: a large
+ * PNG takes milliseconds, which a frame of a menu moving from one to the
+ * next has not got. load_image takes the finished ones; only it hands them
+ * over, so the game runs the same whether a read is done yet or not. The
+ * finished ones no one took yet are kept up to AHEAD_BYTES, the oldest let
+ * go first (load_image reads such a one itself); a mod turned off loses its
+ * own (Mods_DropPrefetched). */
+enum { AHEAD_FREE, AHEAD_WAITING, AHEAD_READING, AHEAD_DONE };
+#define AHEAD_JOBS 160 /* a screen's whole list of small pictures, and more */
+/* Beside the texture packs' own read-ahead (48 MB in a 32-bit game). */
+#ifdef MEMORIES_TEST_OVERLAY_CACHE
+#define AHEAD_BYTES ((size_t)64 << 10) /* mods_overlay_test.c: four 64 x 64 */
+#else
+#define AHEAD_BYTES (sizeof(void *) > 4 ? (size_t)192 << 20 : (size_t)32 << 20)
+#endif
+typedef struct {
+    int state;
+    int dropped; /* READING for a mod turned off: the thread lets it go */
+    const Mod *mod;
+    char relative[128];
+    FILE *file;
+    uint32_t *pixels;
+    int w, h;
+    unsigned age;
+} AheadJob;
+static AheadJob ahead[AHEAD_JOBS];
+static pthread_mutex_t ahead_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t ahead_work = PTHREAD_COND_INITIALIZER, ahead_read = PTHREAD_COND_INITIALIZER;
+static int ahead_started;
+static unsigned ahead_age;
+static size_t ahead_bytes; /* the DONE jobs' pixels */
+
+/* Under ahead_lock: a job's pixels let go and the job freed. */
+static void ahead_clear(AheadJob *job)
+{
+    if (job->state == AHEAD_WAITING) fclose(job->file);
+    if (job->state == AHEAD_DONE) {
+        ahead_bytes -= (size_t)job->w * (size_t)job->h * 4u;
+        free(job->pixels);
+    }
+    memset(job, 0, sizeof(*job));
+}
+
+/* Under ahead_lock: the oldest finished pictures but `keep` let go until
+ * those kept fit AHEAD_BYTES. */
+static void ahead_trim(const AheadJob *keep)
+{
+    while (ahead_bytes > AHEAD_BYTES) {
+        AheadJob *oldest = NULL;
+        for (int i = 0; i < AHEAD_JOBS; i++) {
+            AheadJob *at = &ahead[i];
+            if (at->state == AHEAD_DONE && at != keep && (!oldest || at->age - oldest->age > 0x80000000u))
+                oldest = at;
+        }
+        if (!oldest) return; /* `keep` alone: load_image is about to want it */
+        ahead_clear(oldest);
+    }
+}
+
+static void *ahead_thread(void *unused)
+{
+    (void)unused;
+#ifndef _WIN32
+    { /* the game's clock is not for this thread */
+        sigset_t all;
+        sigfillset(&all);
+        pthread_sigmask(SIG_BLOCK, &all, NULL);
+    }
+#endif
+    pthread_mutex_lock(&ahead_lock);
+    for (;;) {
+        AheadJob *job = NULL;
+        for (int i = 0; i < AHEAD_JOBS; i++) {
+            if (ahead[i].state == AHEAD_WAITING && (!job || ahead[i].age - job->age < 0x80000000u)) job = &ahead[i];
+        }
+        if (!job) {
+            pthread_cond_wait(&ahead_work, &ahead_lock);
+            continue;
+        }
+        { /* the latest asked first: where the cursor is now */
+            FILE *file = job->file;
+            uint32_t *pixels;
+            int w = 0, h = 0;
+            job->state = AHEAD_READING;
+            pthread_mutex_unlock(&ahead_lock);
+            pixels = read_image(file, &w, &h);
+            pthread_mutex_lock(&ahead_lock);
+            if (job->dropped) { /* its mod was turned off while it was read */
+                free(pixels);
+                memset(job, 0, sizeof(*job));
+            } else {
+                job->pixels = pixels;
+                job->w = pixels ? w : 0;
+                job->h = pixels ? h : 0;
+                job->state = AHEAD_DONE;
+                ahead_bytes += (size_t)job->w * (size_t)job->h * 4u;
+                ahead_trim(job);
+            }
+            pthread_cond_broadcast(&ahead_read);
+        }
+    }
+    return NULL;
+}
+
+static AheadJob *ahead_find(const Mod *mod, const char *relative)
+{
+    for (int i = 0; i < AHEAD_JOBS; i++) {
+        if (ahead[i].state != AHEAD_FREE && !ahead[i].dropped && ahead[i].mod == mod &&
+            !strcmp(ahead[i].relative, relative))
+            return &ahead[i];
+    }
+    return NULL;
+}
+
+static void host_prefetch_image(const MemoriesModHost *host, const char *relative)
+{
+    const Mod *mod = owner(host);
+    AheadJob *job = NULL;
+    FILE *file;
+    if (!mod || !relative || strlen(relative) >= sizeof(job->relative)) return;
+    pthread_mutex_lock(&ahead_lock);
+    if ((job = ahead_find(mod, relative))) {
+        job->age = ++ahead_age;
+        pthread_mutex_unlock(&ahead_lock);
+        return;
+    }
+    /* a free job, or the oldest of those no one took or began on */
+    for (int i = 0; i < AHEAD_JOBS; i++) {
+        AheadJob *at = &ahead[i];
+        if (at->state == AHEAD_FREE) {
+            job = at;
+            break;
+        }
+        if (at->state != AHEAD_READING && (!job || at->age - job->age > 0x80000000u)) job = at;
+    }
+    if (job) ahead_clear(job);
+    pthread_mutex_unlock(&ahead_lock);
+    if (!job || !(file = host_open_asset(host, relative))) return;
+    pthread_mutex_lock(&ahead_lock);
+    job->mod = mod;
+    snprintf(job->relative, sizeof(job->relative), "%s", relative);
+    job->file = file;
+    job->age = ++ahead_age;
+    job->state = AHEAD_WAITING;
+    if (!ahead_started) {
+        pthread_t thread;
+#ifndef _WIN32
+        /* Blocked from its first instruction: the game's clock signal may
+         * come to the whole process (platform_common.c's setitimer). */
+        sigset_t all, previous;
+        sigfillset(&all);
+        pthread_sigmask(SIG_BLOCK, &all, &previous);
+#endif
+        ahead_started = pthread_create(&thread, NULL, ahead_thread, NULL) == 0;
+#ifndef _WIN32
+        pthread_sigmask(SIG_SETMASK, &previous, NULL);
+#endif
+        if (ahead_started) pthread_detach(thread);
+        else ahead_started = -1;
+    }
+    if (ahead_started < 0) { /* read when asked for: load_image does */
+        job->state = AHEAD_FREE;
+        fclose(file);
+    }
+    pthread_cond_signal(&ahead_work);
+    pthread_mutex_unlock(&ahead_lock);
+}
+
+/* A picture read ahead, or waited for if it is being read: 1 when there
+ * was one, its pixels (NULL if it could not be read) in *pixels. */
+static int ahead_take(const Mod *mod, const char *relative, uint32_t **pixels, int *width, int *height)
+{
+    AheadJob *job;
+    int found = 0;
+    pthread_mutex_lock(&ahead_lock);
+    if ((job = ahead_find(mod, relative))) {
+        if (job->state == AHEAD_WAITING) { /* not begun: read as if never asked */
+            fclose(job->file);
+        } else {
+            while (job->state == AHEAD_READING) pthread_cond_wait(&ahead_read, &ahead_lock);
+            if (job->state == AHEAD_DONE) { /* not let go to the budget meanwhile */
+                *pixels = job->pixels;
+                *width = job->w;
+                *height = job->h;
+                found = 1;
+                ahead_bytes -= (size_t)job->w * (size_t)job->h * 4u;
+                job->state = AHEAD_FREE;
+            }
+        }
+        if (job->state != AHEAD_FREE || found) memset(job, 0, sizeof(*job));
+    }
+    pthread_mutex_unlock(&ahead_lock);
+    return found;
+}
+
+/* A mod turned off: the pictures read ahead for it let go, its files not
+ * yet read closed, and one being read let go when done. */
+static void ahead_drop(const Mod *mod)
+{
+    pthread_mutex_lock(&ahead_lock);
+    for (int i = 0; i < AHEAD_JOBS; i++) {
+        AheadJob *at = &ahead[i];
+        if (at->state == AHEAD_FREE || at->mod != mod) continue;
+        if (at->state == AHEAD_READING) at->dropped = 1;
+        else ahead_clear(at);
+    }
+    pthread_mutex_unlock(&ahead_lock);
+}
+
+size_t Mods_Prefetched(int *jobs, int *unread)
+{
+    size_t bytes;
+    int count = 0, waiting = 0;
+    pthread_mutex_lock(&ahead_lock);
+    for (int i = 0; i < AHEAD_JOBS; i++) {
+        count += ahead[i].state != AHEAD_FREE;
+        waiting += ahead[i].state == AHEAD_WAITING || ahead[i].state == AHEAD_READING;
+    }
+    bytes = ahead_bytes;
+    pthread_mutex_unlock(&ahead_lock);
+    if (jobs) *jobs = count;
+    if (unread) *unread = waiting;
+    return bytes;
+}
+
+/* A picture of the mod's own (a PNG under its directory) as 0xAARRGGBB
+ * pixels, for draw_image; NULL when it cannot be read. */
+static uint32_t *host_load_image(const MemoriesModHost *host, const char *relative, int *width, int *height)
+{
+    uint32_t *pixels = NULL;
+    int w = 0, h = 0;
+    if (!relative) return NULL;
+    if (!ahead_take(owner(host), relative, &pixels, &w, &h)) {
+        FILE *file = host_open_asset(host, relative);
+        if (file) pixels = read_image(file, &w, &h);
+    }
+    if (width) *width = pixels ? w : 0;
+    if (height) *height = pixels ? h : 0;
+    return kept_add(pixels);
+}
+
+/* --- pictures stretched once, drawn from then on ------------------------ */
+
+/* draw_image's bilinear stretch, at the window's size, is the overlay's
+ * dearest work, and a mod draws the same pictures at the same size frame
+ * after frame (its overlay is drawn again whenever its signature moves): so
+ * each stretch is kept, the color and coverage of every pixel as the
+ * stretch makes them, and blended from there. A picture is known by its
+ * pixels' address, size and a hash of its pixels (a mod may draw new
+ * pixels into the same buffer); free_image lets its stretches go. */
+typedef struct {
+    const uint32_t *pixels;
+    int w, h, dw, dh;
+    uint32_t hash;
+    unsigned used;          /* the overlay pass it was last drawn in */
+    uint32_t *color;        /* dw x dh: 0xFFRRGGBB, or 0 where nothing covers */
+    float *coverage;        /* dw x dh, NULL when every pixel is covered whole */
+    /* With coverage: each row's runs of pixels covered whole, which blend
+     * as a picture covered whole does, four at a time; row r's are the
+     * pairs (start, end) from runs[2 * row_runs[r]] to before
+     * runs[2 * row_runs[r + 1]]. */
+    int *row_runs, *runs;
+    size_t bytes;
+} Stretch;
+#define STRETCHES 128
+#define STRETCH_BYTES ((size_t)96 << 20)
+static Stretch stretches[STRETCHES];
+static size_t stretch_bytes;
+static unsigned stretch_pass;
+#ifdef MEMORIES_TEST_OVERLAY_CACHE
+static unsigned overlay_test_fallbacks;
+unsigned Mods_TestOverlayFallbacks(void) { return overlay_test_fallbacks; }
+#endif
+
+static void stretch_drop(Stretch *stretch)
+{
+    free(stretch->color);
+    free(stretch->coverage);
+    free(stretch->row_runs);
+    free(stretch->runs);
+    stretch_bytes -= stretch->bytes;
+    memset(stretch, 0, sizeof(*stretch));
+}
+
+static uint32_t pixels_hash(const uint32_t *pixels, size_t count)
+{
+    uint32_t a = 2166136261u, b = 0x9E3779B9u, c = 0x85EBCA6Bu, d = 0xC2B2AE35u;
+    size_t i = 0;
+    for (; i + 4 <= count; i += 4) {
+        a = (a ^ pixels[i]) * 16777619u;
+        b = (b ^ pixels[i + 1]) * 16777619u;
+        c = (c ^ pixels[i + 2]) * 16777619u;
+        d = (d ^ pixels[i + 3]) * 16777619u;
+    }
+    for (; i < count; i++) a = (a ^ pixels[i]) * 16777619u;
+    return a ^ (b * 3u) ^ (c * 5u) ^ (d * 7u);
+}
+
+/* Covered whole: blended by draw_image's alpha alone (a * alpha / 255
+ * rounds to alpha for every alpha). */
+static int covered_whole(float a) { return a >= 254.9f && a <= 255.1f; }
+
+/* The runs of pixels covered whole in each row of a stretch with coverage
+ * (Stretch.runs), at least RUN_SHORTEST long; 0 when there is no memory,
+ * and then every pixel is blended on its own. */
+#define RUN_SHORTEST 8
+static size_t stretch_runs(Stretch *stretch)
+{
+    int dw = stretch->dw, dh = stretch->dh, total = 0, room = 0, *runs = NULL;
+    int *row_runs = malloc((size_t)(dh + 1) * sizeof(int));
+    if (!row_runs) return 0;
+    for (int row = 0; row < dh; row++) {
+        const float *cover = stretch->coverage + (size_t)row * dw;
+        row_runs[row] = total;
+        for (int column = 0; column < dw;) {
+            int end = column;
+            while (end < dw && covered_whole(cover[end])) end++;
+            if (end - column >= RUN_SHORTEST) {
+                if (total == room) {
+                    int *more;
+                    room = room ? room * 2 : 64;
+                    if (!(more = realloc(runs, (size_t)room * 2 * sizeof(int)))) {
+                        free(runs);
+                        free(row_runs);
+                        return 0;
+                    }
+                    runs = more;
+                }
+                runs[2 * total] = column;
+                runs[2 * total + 1] = end;
+                total++;
+            }
+            column = end > column ? end : column + 1;
+        }
+    }
+    row_runs[dh] = total;
+    stretch->row_runs = row_runs;
+    stretch->runs = runs;
+    return (size_t)(dh + 1) * sizeof(int) + (size_t)room * 2 * sizeof(int);
+}
+
+/* `pixels` stretched over dw x dh, sampled between texels: each pixel's
+ * color, the texels' alpha-weighted average, and how much they cover. */
+static Stretch *stretch_make(const uint32_t *pixels, int w, int h, int dw, int dh, uint32_t hash)
+{
+    size_t count = (size_t)dw * (size_t)dh, bytes = count * sizeof(uint32_t);
+    Stretch *slot = NULL, made;
+    uint32_t *color;
+    float *coverage;
+    int *x0s, *x1s, whole = 1;
+    float *txs;
+    if (count > STRETCH_BYTES / (sizeof(uint32_t) + sizeof(float))) return NULL;
+    color = malloc(bytes);
+    coverage = malloc(count * sizeof(float));
+    x0s = malloc((size_t)dw * sizeof(int));
+    x1s = malloc((size_t)dw * sizeof(int));
+    txs = malloc((size_t)dw * sizeof(float));
+    if (!color || !coverage || !x0s || !x1s || !txs) {
+        free(color); free(coverage); free(x0s); free(x1s); free(txs);
+        return NULL;
+    }
+    for (int column = 0; column < dw; column++) {
+        float fx = (column + 0.5f) * w / dw - 0.5f;
+        x0s[column] = fx < 0 ? 0 : (int)fx;
+        x1s[column] = x0s[column] + 1 < w ? x0s[column] + 1 : w - 1;
+        txs[column] = fx < 0 ? 0 : fx - x0s[column];
+    }
+    for (int row = 0; row < dh; row++) {
+        float fy = (row + 0.5f) * h / dh - 0.5f;
+        int y0 = fy < 0 ? 0 : (int)fy, y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+        float ty = fy < 0 ? 0 : fy - y0;
+        const uint32_t *top = pixels + (size_t)y0 * w, *bottom = pixels + (size_t)y1 * w;
+        uint32_t *out = color + (size_t)row * dw;
+        float *cover = coverage + (size_t)row * dw;
+        for (int column = 0; column < dw; column++) {
+            float tx = txs[column];
+            const uint32_t q[4] = {top[x0s[column]], top[x1s[column]], bottom[x0s[column]], bottom[x1s[column]]};
+            const float k[4] = {(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty};
+            float a = 0;
+#ifdef __SSE2__
+            __m128 channels = _mm_setzero_ps();
+#else
+            float c[3] = {0, 0, 0};
+#endif
+            for (int i = 0; i < 4; i++) {
+                float qa = (q[i] >> 24) * k[i];
+                a += qa;
+#ifdef __SSE2__
+                /* The same sums for B, G, R together, in the same order. */
+                __m128i bytes = _mm_cvtsi32_si128((int)q[i]), zero = _mm_setzero_si128();
+                __m128 values = _mm_cvtepi32_ps(_mm_unpacklo_epi16(_mm_unpacklo_epi8(bytes, zero), zero));
+                channels = _mm_add_ps(channels, _mm_mul_ps(values, _mm_set1_ps(qa)));
+#else
+                c[0] += (q[i] >> 16 & 255) * qa;
+                c[1] += (q[i] >> 8 & 255) * qa;
+                c[2] += (q[i] & 255) * qa;
+#endif
+            }
+            cover[column] = a;
+            if (a < 0.5f) {
+                out[column] = 0;
+                whole = 0;
+                continue;
+            }
+#ifdef __SSE2__
+            __m128i rgb = _mm_cvttps_epi32(_mm_div_ps(channels, _mm_set1_ps(a)));
+            out[column] = 0xFF000000u | (unsigned)_mm_cvtsi128_si32(rgb) |
+                          (unsigned)_mm_cvtsi128_si32(_mm_srli_si128(rgb, 4)) << 8 |
+                          (unsigned)_mm_cvtsi128_si32(_mm_srli_si128(rgb, 8)) << 16;
+#else
+            out[column] = 0xFF000000u | (unsigned)(c[0] / a) << 16 | (unsigned)(c[1] / a) << 8 | (unsigned)(c[2] / a);
+#endif
+            if (!covered_whole(a)) whole = 0;
+        }
+    }
+    free(x0s); free(x1s); free(txs);
+    memset(&made, 0, sizeof(made));
+    if (whole) {
+        free(coverage);
+        coverage = NULL;
+    } else {
+        bytes += count * sizeof(float);
+        made.coverage = coverage;
+        made.dw = dw;
+        made.dh = dh;
+        bytes += stretch_runs(&made);
+    }
+    /* room: the least lately drawn go, but never one of this pass's */
+    while (1) {
+        Stretch *oldest = NULL;
+        int i;
+        for (i = 0; i < STRETCHES; i++) {
+            if (!stretches[i].color) {
+                if (!slot) slot = &stretches[i];
+            } else if (stretches[i].used != stretch_pass && (!oldest || stretches[i].used - oldest->used > 0x80000000u)) {
+                oldest = &stretches[i];
+            }
+        }
+        if (slot && stretch_bytes + bytes <= STRETCH_BYTES) break;
+        if (!oldest) {
+            free(color); free(coverage); free(made.row_runs); free(made.runs);
+            return NULL;
+        }
+        stretch_drop(oldest);
+        slot = NULL;
+    }
+    slot->pixels = pixels;
+    slot->w = w; slot->h = h; slot->dw = dw; slot->dh = dh;
+    slot->hash = hash;
+    slot->color = color;
+    slot->coverage = coverage;
+    slot->row_runs = made.row_runs;
+    slot->runs = made.runs;
+    slot->bytes = bytes;
+    stretch_bytes += bytes;
+    return slot;
+}
+
+/* The kept stretch of `pixels` (their hash `hash`) over dw x dh, made now
+ * when there is none: NULL when it cannot be kept. */
+static Stretch *stretch_find(const uint32_t *pixels, int w, int h, int dw, int dh, uint32_t hash)
+{
+    Stretch *found;
+    for (int i = 0; i < STRETCHES; i++) {
+        Stretch *stretch = &stretches[i];
+        if (stretch->color && stretch->pixels == pixels && stretch->w == w && stretch->h == h && stretch->dw == dw &&
+            stretch->dh == dh) {
+            if (stretch->hash == hash) {
+                stretch->used = stretch_pass;
+                return stretch;
+            }
+            stretch_drop(stretch); /* new pixels in the same buffer */
+        }
+    }
+    found = stretch_make(pixels, w, h, dw, dh, hash);
+    if (found) found->used = stretch_pass;
+    return found;
+}
+
+/* A new overlay pass: stretches not drawn in the last 300 go. */
+static void stretch_age(void)
+{
+    stretch_pass++;
+    for (int i = 0; i < STRETCHES; i++) {
+        if (stretches[i].color && stretch_pass - stretches[i].used > 300) stretch_drop(&stretches[i]);
+    }
+}
+
+static uint32_t image_hash(const uint32_t *pixels, int w, int h)
+{
+    KeptImage *kept = *kept_slot(pixels);
+    if (!kept) return pixels_hash(pixels, (size_t)w * (size_t)h);
+    if (kept->w != w || kept->h != h) {
+        kept->hash = pixels_hash(pixels, (size_t)w * (size_t)h);
+        kept->w = w;
+        kept->h = h;
+    }
+    return kept->hash;
+}
+
+static uint32_t *host_alloc_image(const MemoriesModHost *host, int w, int h)
+{
+    if (!owner(host) || w <= 0 || h <= 0 || (size_t)w > ((size_t)-1 / sizeof(uint32_t)) / (size_t)h) return NULL;
+    return kept_add(calloc((size_t)w * (size_t)h, sizeof(uint32_t)));
+}
+
+static void host_image_changed(const MemoriesModHost *host, const uint32_t *pixels)
+{
+    KeptImage *kept = pixels ? *kept_slot(pixels) : NULL;
+    (void)host;
+    if (kept) kept->w = kept->h = 0;
+}
+
+static void host_free_image(const MemoriesModHost *host, uint32_t *pixels)
+{
+    (void)host;
+    for (int i = 0; pixels && i < STRETCHES; i++) {
+        if (stretches[i].pixels == pixels) stretch_drop(&stretches[i]);
+    }
+    if (pixels) {
+        KeptImage **at = kept_slot(pixels), *kept = *at;
+        if (kept) {
+            *at = kept->next;
+            free(kept);
+        }
+        if (overlay_sink) overlay_sink->forget(pixels);
+    }
+    free(pixels);
+}
+
+/* Pixels covered whole, blended by `alpha` alone: copied at 255. */
+static void whole_span(uint32_t *line, const uint32_t *from, int n, unsigned alpha)
+{
+    if (alpha == 255) memcpy(line, from, (size_t)n * sizeof(*line));
+    else blend_span(line, n, from, 0, alpha);
+}
+
+/* Pixels of a stretch with coverage, one at a time, each blended by its
+ * coverage times `alpha`. */
+static void cover_span(uint32_t *line, const uint32_t *from, const float *cover, int n, unsigned alpha)
+{
+    for (int column = 0; column < n; column++) {
+        float a = cover[column];
+        unsigned blend, inverse, under, color = from[column], out;
+        if (a < 0.5f) continue;
+        blend = (unsigned)(a * alpha / 255 + 0.5f);
+        inverse = 255 - blend;
+        under = line[column];
+        out = blend + (under >> 24) * inverse / 255;
+        line[column] = (out > 255 ? 255 : out) << 24 |
+                       ((color >> 16 & 255) * blend + (under >> 16 & 255) * inverse) / 255 << 16 |
+                       ((color >> 8 & 255) * blend + (under >> 8 & 255) * inverse) / 255 << 8 |
+                       ((color & 255) * blend + (under & 255) * inverse) / 255;
+    }
+}
+
+/* The stretch (draw_image's arguments, done when not kept) at (x, y), blended
+ * by its coverage times `alpha`: a row's runs covered whole as a picture
+ * covered whole blends (whole_span gives the same pixels cover_span would),
+ * the rest pixel by pixel. */
+static void draw_stretch(MenuCanvas *canvas, const Stretch *stretch, int x, int y, unsigned alpha)
+{
+    int dw = stretch->dw, dh = stretch->dh;
+    int row0 = y < 0 ? 0 : y, row1 = y + dh > canvas->height ? canvas->height : y + dh;
+    int col0 = x < 0 ? 0 : x, col1 = x + dw > canvas->width ? canvas->width : x + dw;
+    if (col1 <= col0) return;
+    for (int row = row0; row < row1; row++) {
+        uint32_t *line = canvas->pixels + (size_t)row * (size_t)canvas->stride + x;
+        const uint32_t *from = stretch->color + (size_t)(row - y) * dw;
+        const float *cover = stretch->coverage ? stretch->coverage + (size_t)(row - y) * dw : NULL;
+        int at = col0 - x, stop = col1 - x;
+        const int *run, *end;
+        if (!cover) { /* covered whole: blended by alpha alone */
+            whole_span(line + at, from + at, stop - at, alpha);
+            continue;
+        }
+        if (!stretch->runs) {
+            cover_span(line + at, from + at, cover + at, stop - at, alpha);
+            continue;
+        }
+        run = stretch->runs + 2 * stretch->row_runs[row - y];
+        end = stretch->runs + 2 * stretch->row_runs[row - y + 1];
+        while (at < stop) {
+            int next;
+            while (run < end && run[1] <= at) run += 2;
+            next = run < end && run[0] < stop ? run[0] : stop;
+            if (at < next) { /* up to the next run */
+                cover_span(line + at, from + at, cover + at, next - at, alpha);
+                at = next;
+            } else { /* inside a run */
+                next = run[1] < stop ? run[1] : stop;
+                whole_span(line + at, from + at, next - at, alpha);
+                at = next;
+            }
+        }
+    }
+}
+
+/* `pixels` (w x h, 0xAARRGGBB) stretched over dw x dh at (x, y) of the view,
+ * sampled between texels, blended by its own alpha times `alpha`, where no
+ * stretch of it can be kept. */
+static void raster_image(const uint32_t *pixels, int w, int h, int x, int y, int dw, int dh, unsigned alpha)
+{
+    MenuCanvas *canvas = overlay.canvas;
+    int row0 = y < 0 ? 0 : y, row1 = y + dh > canvas->height ? canvas->height : y + dh;
+    int col0 = x < 0 ? 0 : x, col1 = x + dw > canvas->width ? canvas->width : x + dw;
+    for (int row = row0; row < row1; row++) {
+        float fy = ((row - y) + 0.5f) * h / dh - 0.5f;
+        int y0 = fy < 0 ? 0 : (int)fy, y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+        float ty = fy < 0 ? 0 : fy - y0;
+        uint32_t *line = canvas->pixels + (size_t)row * (size_t)canvas->stride;
+        for (int column = col0; column < col1; column++) {
+            float fx = ((column - x) + 0.5f) * w / dw - 0.5f;
+            int x0 = fx < 0 ? 0 : (int)fx, x1 = x0 + 1 < w ? x0 + 1 : w - 1;
+            float tx = fx < 0 ? 0 : fx - x0;
+            const uint32_t q[4] = {pixels[(size_t)y0 * w + x0], pixels[(size_t)y0 * w + x1],
+                                   pixels[(size_t)y1 * w + x0], pixels[(size_t)y1 * w + x1]};
+            const float k[4] = {(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty};
+            float a = 0, c[3] = {0, 0, 0};
+            for (int i = 0; i < 4; i++) {
+                float qa = (q[i] >> 24) * k[i];
+                a += qa;
+                c[0] += (q[i] >> 16 & 255) * qa;
+                c[1] += (q[i] >> 8 & 255) * qa;
+                c[2] += (q[i] & 255) * qa;
+            }
+            if (a < 0.5f) continue;
+            {
+                unsigned blend = (unsigned)(a * alpha / 255 + 0.5f), inverse = 255 - blend, under = line[column];
+                unsigned r = ((unsigned)(c[0] / a) * blend + (under >> 16 & 255) * inverse) / 255;
+                unsigned g = ((unsigned)(c[1] / a) * blend + (under >> 8 & 255) * inverse) / 255;
+                unsigned b = ((unsigned)(c[2] / a) * blend + (under & 255) * inverse) / 255;
+                unsigned out = blend + (under >> 24) * inverse / 255;
+                line[column] = (out > 255 ? 255 : out) << 24 | r << 16 | g << 8 | b;
+            }
+        }
+    }
+}
+
+/* Already at the requested size: no resampling or duplicate scaled buffer.
+ * Pixel-art tablets and text commonly take this path at whole UI scales. */
+static void draw_unscaled(MenuCanvas *canvas, const uint32_t *pixels, int w, int h, int x, int y, unsigned alpha)
+{
+    int row0 = y < 0 ? 0 : y, row1 = y + h > canvas->height ? canvas->height : y + h;
+    int col0 = x < 0 ? 0 : x, col1 = x + w > canvas->width ? canvas->width : x + w;
+    for (int row = row0; row < row1; row++) {
+        uint32_t *line = canvas->pixels + (size_t)row * canvas->stride;
+        const uint32_t *from = pixels + (size_t)(row - y) * w;
+        int column = col0;
+        while (column < col1) {
+            unsigned a = from[column - x] >> 24;
+            if (a == 255) {
+                int start = column++;
+                while (column < col1 && from[column - x] >> 24 == 255) column++;
+                whole_span(line + start, from + start - x, column - start, alpha);
+            } else {
+                if (a) {
+                    uint32_t color = from[column - x], under = line[column];
+                    unsigned blend = (a * alpha + 127) / 255, inverse = 255 - blend;
+                    line[column] = (blend + by_255((under >> 24) * inverse)) << 24 |
+                        by_255((color >> 16 & 255) * blend + (under >> 16 & 255) * inverse) << 16 |
+                        by_255((color >> 8 & 255) * blend + (under >> 8 & 255) * inverse) << 8 |
+                        by_255((color & 255) * blend + (under & 255) * inverse);
+                }
+                column++;
+            }
+        }
+    }
+}
+
+/* `pixels` (w x h, 0xAARRGGBB) stretched over dw x dh at (x, y), sampled
+ * between texels, blended by its own alpha times `alpha`: listed, with the
+ * hash of its pixels, then drawn through each view. */
+static void host_draw_image(const MemoriesModHost *host, const uint32_t *pixels, int w, int h, int x, int y, int dw,
+                            int dh, unsigned alpha)
+{
+    const Stretch *stretch = NULL;
+    OverlayCall *call;
+    uint32_t hash = 0;
+    int box[4], hashed = 0, prepared = 0;
+    if (!owner(host) || !overlay.whole || !pixels || w <= 0 || h <= 0 || dw <= 0 || dh <= 0 || !alpha) return;
+    if (alpha > 255) alpha = 255;
+    call_box(box, x, y, dw, dh);
+    if (box[0] >= box[2]) return;
+    if (overlay.hashes && overlay.list && overlay.list->count < overlay.hashes->count) {
+        /* the pass this one makes again had this picture here: its hash */
+        const OverlayCall *was = &overlay.hashes->calls[overlay.list->count];
+        if (was->kind == CALL_IMAGE && was->pixels == pixels && was->pw == w && was->ph == h) {
+            hash = was->hash;
+            hashed = 1;
+        }
+    }
+    if (!hashed) hash = image_hash(pixels, w, h);
+    if ((call = list_call(CALL_IMAGE, box))) {
+        call->x = x;
+        call->y = y;
+        call->w = dw;
+        call->h = dh;
+        call->alpha = alpha;
+        call->pixels = pixels;
+        call->pw = w;
+        call->ph = h;
+        call->hash = hash;
+    }
+    overlay_touch(box);
+    if (!region_total()) return;
+    /* A cached stretch is needed only if a damaged rectangle meets it.
+     * Unchanged off-region pictures must not consume or churn the cache. */
+    for (int r = 0; r < region_total(); r++) {
+        if (!region_enter(r, box)) continue;
+        if (w == dw && h == dh) {
+            draw_unscaled(overlay.canvas, pixels, w, h, x - overlay.ox, y - overlay.oy, alpha);
+            continue;
+        }
+        if (!prepared) {
+            stretch = stretch_find(pixels, w, h, dw, dh, hash);
+#ifdef MEMORIES_TEST_OVERLAY_CACHE
+            if (!stretch) overlay_test_fallbacks++;
+#endif
+            prepared = 1;
+        }
+        if (stretch) draw_stretch(overlay.canvas, stretch, x - overlay.ox, y - overlay.oy, alpha);
+        else raster_image(pixels, w, h, x - overlay.ox, y - overlay.oy, dw, dh, alpha);
+    }
 }
 
 static void fill_host(Mod *mod)
@@ -682,6 +2260,19 @@ static void fill_host(Mod *mod)
     mod->host.sound_play = host_sound_play;
     mod->host.sound_free = host_sound_free;
     mod->host.packet_area = host_packet_area;
+    mod->host.mouse = host_mouse;
+    mod->host.capture_mouse = host_capture_mouse;
+    mod->host.overlay_picture = host_overlay_picture;
+    mod->host.draw_text_alpha = host_draw_text_alpha;
+    mod->host.hide_hud = host_hide_hud;
+    mod->host.load_image = host_load_image;
+    mod->host.free_image = host_free_image;
+    mod->host.draw_image = host_draw_image;
+    mod->host.alloc_image = host_alloc_image;
+    mod->host.image_changed = host_image_changed;
+    mod->host.prefetch_image = host_prefetch_image;
+    mod->host.clip = host_clip;
+    mod->host.picture_only_frame = host_picture_only_frame;
     mod->host.api = MEMORIES_MOD_API;
     mod->host.id = mod->id;
     mod->host.directory = mod->directory;
@@ -2681,6 +4272,9 @@ static void activate_once(int index, int on)
             load_texture_packs(-1, index, NULL, 0);
         }
         mod->active = 0;
+        mod->hud_hidden = 0;
+        release_mouse(index);
+        ahead_drop(mod);
         if (mod->hooks.applied) mod->hooks.applied(0);
     }
 }
@@ -3012,10 +4606,14 @@ void Mods_Note(const char *id, const char *format, ...)
 void Mods_DrawFrame(void)
 {
     int i;
+    uint64_t started;
+    picture_only_asked = 0;
     if (shut_down) return;
+    started = callback_start();
     for (i = 0; i < mod_count; i++) {
         if (mods[i].active && mods[i].initialized && mods[i].hooks.frame) mods[i].hooks.frame();
     }
+    callback_end(CALLBACK_FRAME, started);
 }
 
 void Mods_Reset(void)

@@ -1119,6 +1119,43 @@ static int panel_piece(int u0, int v0, int w, int h);
 static void name_over_panel(int x, int y, int width, int height, int u0, int v0, int w, int h, const Vertex *color,
                             int flags);
 
+/* SoftGpu_PictureOnlyClut */
+enum { PICTURE_ONLY_CLUTS = 8 };
+static struct { int x, y; } picture_only[PICTURE_ONLY_CLUTS];
+static int picture_only_count;
+
+void SoftGpu_PictureOnlyClut(int clut_x, int clut_y)
+{
+    int i;
+    for (i = 0; i < picture_only_count; i++) {
+        if (picture_only[i].x == clut_x && picture_only[i].y == clut_y) return;
+    }
+    if (i == PICTURE_ONLY_CLUTS) return;
+    picture_only[i].x = clut_x;
+    picture_only[i].y = clut_y;
+    picture_only_count++;
+}
+
+static int picture_only_clut(int clut_x, int clut_y)
+{
+    if (!recorder || scale <= 1) return 0;
+    for (int i = 0; i < picture_only_count; i++) {
+        if (picture_only[i].x == clut_x && picture_only[i].y == clut_y) return 1;
+    }
+    return 0;
+}
+
+/* SoftGpu_PictureOnlyFrame */
+static int picture_only_frame;
+
+void SoftGpu_PictureOnlyFrame(int on) { picture_only_frame = on; }
+
+static int picture_only_screen(void)
+{
+    return picture_only_frame && recorder && scale > 1 && gpu.clip_x2 - gpu.clip_x1 + 1 >= 256 &&
+           gpu.clip_y2 - gpu.clip_y1 + 1 >= 192;
+}
+
 static size_t polygon(const uint32_t *words, size_t count)
 {
     uint32_t command = words[0] >> 24;
@@ -1178,6 +1215,10 @@ static size_t polygon(const uint32_t *words, size_t count)
     if (wide_picture || (target == vram && picture)) {
         picture_triangle(v[0], v[1], v[2], flags);
         if (quad) picture_triangle(v[1], v[2], v[3], flags);
+    }
+    if ((textured && picture_only_clut(gpu.clut_x, gpu.clut_y)) || picture_only_screen()) {
+        fade = 0;
+        return need;
     }
     triangle(v[0], v[1], v[2], flags);
     if (quad) {
@@ -1293,7 +1334,7 @@ static size_t rectangle(const uint32_t *words, size_t count)
         }
     }
     const Plotter p = plotter();
-    switch (flags) {
+    switch (picture_only_screen() ? -1 : flags) {
 #define CASE(n) case n: \
         for (j = 0; j < h; j++) { \
             for (i = 0; i < w; i++) { \
@@ -1382,9 +1423,12 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
                  * keep the 4:3 clip: they are the 2D screens, and those park
                  * what they do not show just past the edge (the deck
                  * builder's column of card numbers), where the console's clip
-                 * hides it. The primitive's state words are idempotent. */
+                 * hides it. Full-width flat fills (fades and wipe bands)
+                 * extend over the sides. State words are idempotent. */
                 int clip_x1 = gpu.clip_x1, clip_x2 = gpu.clip_x2, offset_x = gpu.offset_x;
-                if (command < 0x60) {
+                uint32_t fill[3];
+                int full_width = SoftGpu_WidenFill(words + at, count - at, clip_x1, clip_x2, offset_x, wt->margin, fill);
+                if (command < 0x60 || full_width) {
                     gpu.clip_x2 += 2 * wt->margin;
                 } else {
                     gpu.clip_x1 += wt->margin;
@@ -1394,7 +1438,7 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
                 target = wt->pixels;
                 wide_picture = wt->picture;
                 dither_shift = wt->margin;
-                draw(words + at, count - at);
+                draw(full_width ? fill : words + at, full_width ? 3 : count - at);
                 wide_picture = NULL;
                 target = vram;
                 dither_shift = 0;

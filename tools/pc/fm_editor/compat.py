@@ -19,7 +19,7 @@ from pathlib import Path
 from .gamedata import FRAME_COLOR_NAMES, TYPE_MAGIC
 from .model import type_named
 
-HOST_API = 22
+HOST_API = 23
 
 # The release each mod API first shipped in, for the hints. An API past the
 # last listed is newer than every release.
@@ -244,6 +244,10 @@ def features(manifest: dict, project=None) -> list:
     # --- API 21 -------------------------------------------------------------
     if manifest.get("models"):
         add(21, "battle models the mod adds (\"models\")")
+    # --- API 23 (also the code mods' mouse, overlay pictures and clip) -----
+    menu = manifest.get("menu")
+    if isinstance(menu, dict) and "slide" in menu:
+        add(23, "the menu's slide (\"slide\")")
     return out
 
 

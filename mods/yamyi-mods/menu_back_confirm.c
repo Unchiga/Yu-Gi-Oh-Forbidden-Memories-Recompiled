@@ -253,6 +253,16 @@ enum { SEL_YES = 0, SEL_NO = 1 };
 
 static const MemoriesModHost *host;
 static void *orig_update;
+static void *orig_pads;
+/* While the prompt is up, the new presses (and repeats) of the frame are the
+ * prompt's alone: Input_UpdatePads' are taken here, before anything reads
+ * them. Masking them only round the wheel's update was not enough: with a
+ * mod's "menu" the port's title menu (src/pc/platform/title_menu.c) reads
+ * the pad before that update, so the Cross that answered NO also chose the
+ * highlighted entry. The held word stays: the next frame's presses come from
+ * the game's own record of what was held (gInput_dwPreviousHeld). */
+static u16 s_pad_pressed, s_pad_repeat;
+static int s_pad_taken;
 static void *orig_transition;
 
 static int s_open;
@@ -661,11 +671,24 @@ static void transition(s32 mode)
  * the screen underneath is handed a frame with no buttons in it. The words go
  * back immediately after: they are the repeat engine's outputs and other
  * readers run later in the frame. */
+static void update_pads(void)
+{
+    ((void (*)(void))orig_pads)();
+    s_pad_taken = s_open;
+    if (s_pad_taken) {
+        s_pad_pressed = gInput_wPad1Pressed;
+        s_pad_repeat = gInput_wPad1Repeat;
+        gInput_wPad1Pressed = 0;
+        gInput_wPad1Repeat = 0;
+    }
+}
+
 static s32 update_frontend(void)
 {
-    const u16 pressed = gInput_wPad1Pressed;
+    /* the words as the rest of the frame sees them, put back after */
+    const u16 seen_pressed = gInput_wPad1Pressed, seen_repeat = gInput_wPad1Repeat;
+    const u16 pressed = s_pad_taken ? s_pad_pressed : seen_pressed;
     const u16 held = gInput_wPad1Held;
-    const u16 repeat = gInput_wPad1Repeat;
     int leave = 0;
     s32 result;
 
@@ -728,9 +751,10 @@ static s32 update_frontend(void)
 
     result = ((s32 (*)(void))orig_update)();
 
-    gInput_wPad1Pressed = pressed;
+    gInput_wPad1Pressed = seen_pressed;
     gInput_wPad1Held = held;
-    gInput_wPad1Repeat = repeat;
+    gInput_wPad1Repeat = seen_repeat;
+    s_pad_taken = 0;
 
     /* Queued here, inside the frame the screen just built, rather than from
      * the frame callback -- by then the ordering table has been handed off. */
@@ -786,6 +810,9 @@ int YamyiConfirm_Init(const MemoriesModHost *from, MemoriesMod *mod)
     }
     if (host->hook(host, (void *)MainMenu_UpdateFrontendMenu,
                    (void *)update_frontend, &orig_update) == 0) {
+        return 0;
+    }
+    if (host->hook(host, (void *)Input_UpdatePads, (void *)update_pads, &orig_pads) == 0) {
         return 0;
     }
     return 1;
