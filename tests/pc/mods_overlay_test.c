@@ -14,6 +14,8 @@
 #include "pc/mods/events.h"
 #include "pc/platform/menu.h"
 #include "mod_fixtures/overlay_scene.h"
+#include <png.h>
+#include <time.h>
 
 #define W 220
 #define H 150
@@ -190,6 +192,60 @@ static void compare(const uint32_t *a, const uint32_t *b, int step)
             exit(1);
         }
     }
+}
+
+/* Until the reader thread has read every picture asked for. */
+static size_t settled(int *jobs)
+{
+    int unread = 1;
+    size_t bytes = 0;
+    for (int tries = 0; unread && tries < 2000; tries++) {
+        struct timespec pause = {0, 5000000};
+        bytes = Mods_Prefetched(jobs, &unread);
+        if (unread) nanosleep(&pause, NULL);
+    }
+    assert(!unread);
+    return bytes;
+}
+
+/* Pictures read ahead (host->prefetch_image) are kept to a budget, 64 KB
+ * in this test (four 64 x 64), the oldest let go first, load_image reading
+ * those itself; a mod turned off loses the ones read for it. */
+static void prefetched(OverlayScene *scene)
+{
+    char name[32], path[1024];
+    uint32_t pixels[64 * 64], *loaded;
+    int i, jobs, w, h;
+    for (i = 0; i < 64 * 64; i++) pixels[i] = 0xFF000000u | (uint32_t)i;
+    for (i = 0; i < 6; i++) {
+        png_image image;
+        memset(&image, 0, sizeof(image));
+        image.version = PNG_IMAGE_VERSION;
+        image.width = image.height = 64;
+        image.format = PNG_FORMAT_BGRA;
+        snprintf(path, sizeof(path), "%s/mods/overlay/p%d.png", root, i);
+        pixels[0] = 0xFF000000u | (uint32_t)i;
+        assert(png_image_write_to_file(&image, path, 0, pixels, 0, NULL));
+    }
+    for (i = 0; i < 6; i++) {
+        snprintf(name, sizeof(name), "p%d.png", i);
+        scene->prefetch(name);
+        settled(&jobs); /* one at a time: the oldest are the first asked */
+    }
+    assert(settled(&jobs) == (size_t)4 * 64 * 64 * 4);
+    assert(jobs == 4);
+    /* Taken (p5) or read again (p0, let go): the same pixels either way. */
+    for (i = 5; i >= 0; i -= 5) {
+        snprintf(name, sizeof(name), "p%d.png", i);
+        loaded = scene->load(name, &w, &h);
+        assert(loaded && w == 64 && h == 64 && loaded[0] == (0xFF000000u | (uint32_t)i) && loaded[1] == 0xFF000001u);
+        scene->free(loaded);
+    }
+    assert(settled(&jobs) == (size_t)3 * 64 * 64 * 4 && jobs == 3);
+    scene->prefetch("p0.png");
+    Mods_SetEnabled(0, 0);
+    assert(settled(&jobs) == 0 && jobs == 0);
+    puts("mods overlay: pictures read ahead kept to their budget and let go with their mod");
 }
 
 int main(int argc, char **argv)
@@ -389,6 +445,7 @@ int main(int argc, char **argv)
     /* Nor is a canvas of another size compared with this one's calls. */
     whole.width = W - 10;
     assert(Mods_OverlayChanges(&whole, 1, text, width, rects, MOST) == -1);
+    prefetched(scene);
     Mods_Shutdown();
     return 0;
 }

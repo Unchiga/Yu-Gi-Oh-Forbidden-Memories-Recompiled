@@ -156,6 +156,10 @@ typedef struct ModsOverlaySink {
     void (*forget)(const uint32_t *pixels);
 } ModsOverlaySink;
 void Mods_SetOverlaySink(const ModsOverlaySink *sink);
+/* The pictures read ahead for the mods (host->prefetch_image): the bytes of
+ * those read and not yet taken, how many jobs there are in all, and how
+ * many of them are still to read or being read. */
+size_t Mods_Prefetched(int *jobs, int *unread);
 /* The overlays once more, only listed, the canvas untouched, and compared
  * with the calls that last drew it (Mods_DrawOverlay, or a
  * Mods_RedrawOverlayIn after this): the rectangles of the canvas that

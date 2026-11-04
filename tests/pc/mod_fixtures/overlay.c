@@ -35,6 +35,10 @@ static void overlay(void)
     if (scene.kept) host->draw_image(host, scene.kept, 4, 4, 0, 0, 4, 4, 255);
 }
 
+static void prefetch(const char *relative) { host->prefetch_image(host, relative); }
+static uint32_t *load(const char *relative, int *w, int *h) { return host->load_image(host, relative, w, h); }
+static void release(uint32_t *pixels) { host->free_image(host, pixels); }
+
 int MemoriesModInit(const MemoriesModHost *from, MemoriesMod *mod)
 {
     host = from;
@@ -43,6 +47,9 @@ int MemoriesModInit(const MemoriesModHost *from, MemoriesMod *mod)
     mod->overlay = overlay;
     scene.kept = host->alloc_image(host, 4, 4);
     if (!scene.kept) return 0;
+    scene.prefetch = prefetch;
+    scene.load = load;
+    scene.free = release;
     host->provide(host, "scene", &scene);
     return 1;
 }

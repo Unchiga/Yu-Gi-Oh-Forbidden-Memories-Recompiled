@@ -20,6 +20,10 @@ typedef struct {
     uint32_t pictures[SCENE_PICTURES][SCENE_PICTURE_SIZE * SCENE_PICTURE_SIZE];
     uint32_t *kept;     /* a picture from alloc_image, drawn last; */
     int kept_changed;   /* set: image_changed first */
+    /* host->prefetch_image, load_image and free_image, for the test */
+    void (*prefetch)(const char *relative);
+    uint32_t *(*load)(const char *relative, int *w, int *h);
+    void (*free)(uint32_t *pixels);
 } OverlayScene;
 
 #endif

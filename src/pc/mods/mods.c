@@ -1513,11 +1513,21 @@ static uint32_t *read_image(FILE *file, int *width, int *height)
 /* Pictures read ahead (prefetch_image), on a thread of their own: a large
  * PNG takes milliseconds, which a frame of a menu moving from one to the
  * next has not got. load_image takes the finished ones; only it hands them
- * over, so the game runs the same whether a read is done yet or not. */
+ * over, so the game runs the same whether a read is done yet or not. The
+ * finished ones no one took yet are kept up to AHEAD_BYTES, the oldest let
+ * go first (load_image reads such a one itself); a mod turned off loses its
+ * own (Mods_DropPrefetched). */
 enum { AHEAD_FREE, AHEAD_WAITING, AHEAD_READING, AHEAD_DONE };
 #define AHEAD_JOBS 160 /* a screen's whole list of small pictures, and more */
+/* Beside the texture packs' own read-ahead (48 MB in a 32-bit game). */
+#ifdef MEMORIES_TEST_OVERLAY_CACHE
+#define AHEAD_BYTES ((size_t)64 << 10) /* mods_overlay_test.c: four 64 x 64 */
+#else
+#define AHEAD_BYTES (sizeof(void *) > 4 ? (size_t)192 << 20 : (size_t)32 << 20)
+#endif
 typedef struct {
     int state;
+    int dropped; /* READING for a mod turned off: the thread lets it go */
     const Mod *mod;
     char relative[128];
     FILE *file;
@@ -1530,6 +1540,34 @@ static pthread_mutex_t ahead_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ahead_work = PTHREAD_COND_INITIALIZER, ahead_read = PTHREAD_COND_INITIALIZER;
 static int ahead_started;
 static unsigned ahead_age;
+static size_t ahead_bytes; /* the DONE jobs' pixels */
+
+/* Under ahead_lock: a job's pixels let go and the job freed. */
+static void ahead_clear(AheadJob *job)
+{
+    if (job->state == AHEAD_WAITING) fclose(job->file);
+    if (job->state == AHEAD_DONE) {
+        ahead_bytes -= (size_t)job->w * (size_t)job->h * 4u;
+        free(job->pixels);
+    }
+    memset(job, 0, sizeof(*job));
+}
+
+/* Under ahead_lock: the oldest finished pictures but `keep` let go until
+ * those kept fit AHEAD_BYTES. */
+static void ahead_trim(const AheadJob *keep)
+{
+    while (ahead_bytes > AHEAD_BYTES) {
+        AheadJob *oldest = NULL;
+        for (int i = 0; i < AHEAD_JOBS; i++) {
+            AheadJob *at = &ahead[i];
+            if (at->state == AHEAD_DONE && at != keep && (!oldest || at->age - oldest->age > 0x80000000u))
+                oldest = at;
+        }
+        if (!oldest) return; /* `keep` alone: load_image is about to want it */
+        ahead_clear(oldest);
+    }
+}
 
 static void *ahead_thread(void *unused)
 {
@@ -1559,10 +1597,17 @@ static void *ahead_thread(void *unused)
             pthread_mutex_unlock(&ahead_lock);
             pixels = read_image(file, &w, &h);
             pthread_mutex_lock(&ahead_lock);
-            job->pixels = pixels;
-            job->w = w;
-            job->h = h;
-            job->state = AHEAD_DONE;
+            if (job->dropped) { /* its mod was turned off while it was read */
+                free(pixels);
+                memset(job, 0, sizeof(*job));
+            } else {
+                job->pixels = pixels;
+                job->w = pixels ? w : 0;
+                job->h = pixels ? h : 0;
+                job->state = AHEAD_DONE;
+                ahead_bytes += (size_t)job->w * (size_t)job->h * 4u;
+                ahead_trim(job);
+            }
             pthread_cond_broadcast(&ahead_read);
         }
     }
@@ -1572,7 +1617,9 @@ static void *ahead_thread(void *unused)
 static AheadJob *ahead_find(const Mod *mod, const char *relative)
 {
     for (int i = 0; i < AHEAD_JOBS; i++) {
-        if (ahead[i].state != AHEAD_FREE && ahead[i].mod == mod && !strcmp(ahead[i].relative, relative)) return &ahead[i];
+        if (ahead[i].state != AHEAD_FREE && !ahead[i].dropped && ahead[i].mod == mod &&
+            !strcmp(ahead[i].relative, relative))
+            return &ahead[i];
     }
     return NULL;
 }
@@ -1598,9 +1645,7 @@ static void host_prefetch_image(const MemoriesModHost *host, const char *relativ
         }
         if (at->state != AHEAD_READING && (!job || at->age - job->age > 0x80000000u)) job = at;
     }
-    if (job && job->state == AHEAD_WAITING) fclose(job->file);
-    if (job && job->state == AHEAD_DONE) free(job->pixels);
-    if (job) memset(job, 0, sizeof(*job));
+    if (job) ahead_clear(job);
     pthread_mutex_unlock(&ahead_lock);
     if (!job || !(file = host_open_asset(host, relative))) return;
     pthread_mutex_lock(&ahead_lock);
@@ -1645,15 +1690,49 @@ static int ahead_take(const Mod *mod, const char *relative, uint32_t **pixels, i
             fclose(job->file);
         } else {
             while (job->state == AHEAD_READING) pthread_cond_wait(&ahead_read, &ahead_lock);
-            *pixels = job->pixels;
-            *width = job->w;
-            *height = job->h;
-            found = 1;
+            if (job->state == AHEAD_DONE) { /* not let go to the budget meanwhile */
+                *pixels = job->pixels;
+                *width = job->w;
+                *height = job->h;
+                found = 1;
+                ahead_bytes -= (size_t)job->w * (size_t)job->h * 4u;
+                job->state = AHEAD_FREE;
+            }
         }
-        memset(job, 0, sizeof(*job));
+        if (job->state != AHEAD_FREE || found) memset(job, 0, sizeof(*job));
     }
     pthread_mutex_unlock(&ahead_lock);
     return found;
+}
+
+/* A mod turned off: the pictures read ahead for it let go, its files not
+ * yet read closed, and one being read let go when done. */
+static void ahead_drop(const Mod *mod)
+{
+    pthread_mutex_lock(&ahead_lock);
+    for (int i = 0; i < AHEAD_JOBS; i++) {
+        AheadJob *at = &ahead[i];
+        if (at->state == AHEAD_FREE || at->mod != mod) continue;
+        if (at->state == AHEAD_READING) at->dropped = 1;
+        else ahead_clear(at);
+    }
+    pthread_mutex_unlock(&ahead_lock);
+}
+
+size_t Mods_Prefetched(int *jobs, int *unread)
+{
+    size_t bytes;
+    int count = 0, waiting = 0;
+    pthread_mutex_lock(&ahead_lock);
+    for (int i = 0; i < AHEAD_JOBS; i++) {
+        count += ahead[i].state != AHEAD_FREE;
+        waiting += ahead[i].state == AHEAD_WAITING || ahead[i].state == AHEAD_READING;
+    }
+    bytes = ahead_bytes;
+    pthread_mutex_unlock(&ahead_lock);
+    if (jobs) *jobs = count;
+    if (unread) *unread = waiting;
+    return bytes;
 }
 
 /* A picture of the mod's own (a PNG under its directory) as 0xAARRGGBB
@@ -4195,6 +4274,7 @@ static void activate_once(int index, int on)
         mod->active = 0;
         mod->hud_hidden = 0;
         release_mouse(index);
+        ahead_drop(mod);
         if (mod->hooks.applied) mod->hooks.applied(0);
     }
 }
