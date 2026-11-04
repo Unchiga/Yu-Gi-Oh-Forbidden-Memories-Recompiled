@@ -8,6 +8,7 @@
  * size, clears the stack, and the read gives 0. Where 0x9FF00000 cannot be
  * mapped (Windows i686 without large-address awareness) the interpreter runs
  * on host memory instead, and so does this test. */
+#define _POSIX_C_SOURCE 200809L /* scratch.h: kill, lstat, mkdtemp */
 #include "scratch.h"
 #include "pc/guest/image.h"
 #include "pc/guest/mips.h"
