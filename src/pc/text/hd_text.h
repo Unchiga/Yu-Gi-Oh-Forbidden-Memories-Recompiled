@@ -24,8 +24,11 @@ int HdText_Enabled(void);
  * and again when the cell's pixels change. Returns 0 when there is none. */
 int HdText_Cell(int bank, int page_x, int page_y, int large, int u, int v, int factor, int *atlas_u, int *atlas_v);
 
-/* A read-only glyph picture for CPU overlays. Does not consume the atlas's
- * dirty rows; valid until the next atlas operation. `stride` is bytes/row. */
+/* A glyph's picture in the atlas, for a code mod drawing on the CPU (FPS
+ * Duels' ui.c): HdText_Cell's for bank 0, page (640, 0), so it may place
+ * the glyph in the atlas first, as that does, but does not take the atlas's
+ * dirty rows. Valid until the next atlas operation; `stride` is bytes/row.
+ * NULL when the glyph has no cell. */
 const uint8_t *HdText_CellPixels(int large, int u, int v, int factor, int *stride);
 
 /* Card titles: the game's plate for a card (96 x 14 texels, 4-bit) set

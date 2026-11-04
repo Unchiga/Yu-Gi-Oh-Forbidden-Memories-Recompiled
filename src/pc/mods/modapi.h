@@ -307,7 +307,9 @@ struct MemoriesModHost {
      * windows has the mouse, do not count. capture_mouse(1) hides the
      * pointer and keeps it in the window, so the motion never stops at an
      * edge, until capture_mouse(0), the mod being turned off, or the player
-     * opening the menu (which lets it go; ask again once it is closed).
+     * opening the menu (which lets it go; it comes back by itself once the
+     * menu, a notice or a panel of the port's is closed, with the focus, and
+     * when the game is no longer paused).
      * While captured, the mouse's buttons do nothing in the game itself.
      * capture_mouse(1) and capture_mouse(2) also take Escape (the Exit game
      * control's keys and buttons) from the port: pressed in the game's
