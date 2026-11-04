@@ -12,12 +12,13 @@ jobs:
           python-version: '3.x'
       # The controls window test draws the pad picture through libpng; the
       # object loader test builds 32-bit (gcc -m32) and its mods with clang
-      # and lld, as a player's build_mod.py does. The editor's GUI tests run
+      # and lld, as a player's build_mod.py does. The mods lifecycle test is
+      # 32-bit too and reads mod pictures, so it needs the i386 libpng. The editor's GUI tests run
       # in Xvfb at 96 dpi with DejaVu Sans as Tk's sans-serif, so the widths
       # they hold the tabs to do not move with the runner image's fonts.
       - run: >-
-          sudo apt-get update && sudo apt-get install --yes --no-install-recommends
-          libpng-dev gcc-multilib lld xvfb xauth python3-tk fonts-dejavu-core fontconfig
+          sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install --yes --no-install-recommends
+          libpng-dev libpng-dev:i386 gcc-multilib lld xvfb xauth python3-tk fonts-dejavu-core fontconfig
       - name: LIBGS packet priority regression
         run: python tools/pc/test_libgs_priority.py
       - run: cmake -S . -B tmp/pc -DBUILD_TESTING=ON
@@ -131,7 +132,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libpng-dev gcc-multilib lld
+      - run: >-
+          sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install --yes --no-install-recommends
+          libpng-dev libpng-dev:i386 gcc-multilib lld
       - run: cmake -S . -B tmp/pc -DMEMORIES_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
       - run: cmake --build tmp/pc
       - run: python tools/pc/test_path_layout.py --build tmp/pc
