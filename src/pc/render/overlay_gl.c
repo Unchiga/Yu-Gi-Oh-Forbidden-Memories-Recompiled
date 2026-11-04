@@ -81,13 +81,14 @@ static void texture_drop(Texture **at)
     free(texture);
 }
 
-/* The pixels, premultiplied, into the bound texture. */
-static void texture_fill(const uint32_t *pixels, int w, int h, int fresh)
+/* The pixels, premultiplied, into the bound texture: 0 when they could not
+ * go (no room to premultiply them, or none in the GL for a new texture). */
+static int texture_fill(const uint32_t *pixels, int w, int h, int fresh)
 {
     size_t count = (size_t)w * (size_t)h;
     if (count > upload_room) {
         uint32_t *more = realloc(upload, count * sizeof(*more));
-        if (!more) return;
+        if (!more) return 0;
         upload = more;
         upload_room = count;
     }
@@ -105,8 +106,25 @@ static void texture_fill(const uint32_t *pixels, int w, int h, int fresh)
         }
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    if (fresh) glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, upload);
-    else glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, upload);
+    if (!fresh) {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, upload);
+        return 1;
+    }
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, upload);
+    return glGetError() == GL_NO_ERROR;
+}
+
+/* The largest side a texture may have here (GL_MAX_TEXTURE_SIZE). */
+static int texture_most(void)
+{
+    static GLint most;
+    if (!most) {
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &most);
+        if (most <= 0) most = 2048; /* what every GL has */
+    }
+    return most;
 }
 
 static GLuint texture_for(const uint32_t *pixels, int w, int h, uint32_t hash)
@@ -116,11 +134,22 @@ static GLuint texture_for(const uint32_t *pixels, int w, int h, uint32_t hash)
         if (texture->pixels != pixels || texture->w != w || texture->h != h) continue;
         if (texture->hash != hash) { /* new pixels in the same buffer */
             glBindTexture(GL_TEXTURE_2D, texture->name);
-            texture_fill(pixels, w, h, 0);
+            if (!texture_fill(pixels, w, h, 0)) { /* not the old picture: none */
+                texture_drop(at);
+                return 0;
+            }
             texture->hash = hash;
         }
         texture->used = pass;
         return texture->name;
+    }
+    /* A picture the GL cannot hold, or no room for it: not drawn (an
+     * empty texture would draw as a solid block). */
+    if (w <= 0 || h <= 0 || w > texture_most() || h > texture_most()) {
+        static int told;
+        if (!told++) fprintf(stderr, "memories-pc: overlay: a mod's %dx%d picture is past the GL's %d; not drawn\n",
+                             w, h, texture_most());
+        return 0;
     }
     if (!(texture = calloc(1, sizeof(*texture)))) return 0;
     texture->pixels = pixels;
@@ -134,7 +163,11 @@ static GLuint texture_for(const uint32_t *pixels, int w, int h, uint32_t hash)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    texture_fill(pixels, w, h, 1);
+    if (!texture_fill(pixels, w, h, 1)) {
+        glDeleteTextures(1, &texture->name);
+        free(texture);
+        return 0;
+    }
     texture_bytes += (size_t)w * (size_t)h * 4;
     texture->next = *bucket_of(pixels);
     *bucket_of(pixels) = texture;
