@@ -183,11 +183,18 @@ static void begin_slide(int menu)
             run.from[item] = D_80184596 ? place : side;
             run.to[item] = D_80184596 ? side : place;
             if (!object) continue;
+            /* The game slides its entries to and from the middle: an entry
+             * a mod moves (its "x") to and from its own place instead. */
             if (D_80184596) {
                 object->field_38.h.field_38 = (s16)side;
+                if ((s16)object->field_34.h.field_36 == MIDDLE) {
+                    object->field_34.h.field_36 = (s16)place;
+                    object->field_30.h.field_30 = (s16)place;
+                }
             } else {
                 object->field_34.h.field_36 = (s16)side;
                 object->field_30.h.field_30 = (s16)side;
+                if ((s16)object->field_38.h.field_38 == MIDDLE) object->field_38.h.field_38 = (s16)place;
             }
         }
         return;
