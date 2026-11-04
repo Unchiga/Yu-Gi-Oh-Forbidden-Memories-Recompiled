@@ -463,7 +463,9 @@ void TitleImages_Prepare(const TitleConfig *config)
         pictures[which].y = fixed[which].y;
         pictures[which].clut_x = CLUT_X;
         pictures[which].clut_y = fixed[which].clut_y;
-        if (TitleImages_IsBackground(which)) SoftGpu_PictureOnlyClut(pictures[which].clut_x, pictures[which].clut_y);
+        /* Only a background of a mod's own draws through its palette. */
+        if (TitleImages_IsBackground(which) && pictures[which].ready)
+            SoftGpu_PictureOnlyClut(pictures[which].clut_x, pictures[which].clut_y);
     }
     /* A 4:3 background with a picture but no frames of its own, the
      * widescreen one animated: the middle of those frames. */
