@@ -136,6 +136,8 @@ int main(void)
     GuestRuntime_strcpy(G(0x5f8), "cdefg");
     assert(GuestRuntime_strncat(G(0x5e8), G(0x5f8), 3) == G(0x5e8));
     assert(!strcmp((char *)memory->ram + 0x5e8, "qcde"));
+    assert(GuestRuntime_strlen(G(0x5f8)) == 5 && GuestRuntime_strnlen(G(0x5f8), 3) == 3);
+    assert(GuestRuntime_strnlen(G(0x5f8), 0) == 0 && GuestRuntime_strlen(slice) == sizeof(slice) - 1);
     char native_text[8] = "ab";
     assert(GuestRuntime_strncat(native_text, "cdefg", 2) == native_text && !strcmp(native_text, "abcd"));
     assert(GuestRuntime_isdigit('0') && GuestRuntime_isdigit('9') && !GuestRuntime_isdigit('A') && !GuestRuntime_isdigit(EOF));

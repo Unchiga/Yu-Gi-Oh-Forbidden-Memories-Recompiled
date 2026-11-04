@@ -500,6 +500,7 @@ char *GuestRuntime_strrchr(const char *string, int value)
 size_t GuestRuntime_strnlen(const char *string, size_t limit)
 {
     size_t i = 0;
+    if (!limit) return 0; /* reads nothing, so resolves nothing */
     if (native_pointer(string)) return strnlen(string, limit);
     while (i < limit && byte(string, i)) i++;
     return i;
