@@ -98,6 +98,8 @@ build with the old combination; the eight smoke cases unchanged.
 | `peek ADDR LEN` / `poke ADDR HEX` | guest memory; ADDR may be `@NAME[+OFF]`, a game variable by name (see below) |
 | `save PATH` / `load PATH` | a save state |
 | `info` | frame, VBlank, mode, build id |
+| `wheel N` | turn the mouse wheel N notches (decimal, signed, positive away from the player), once, for `host->wheel` |
+| `pointer X Y [BTN]` / `pointer off` | put the mouse at picture coordinates (decimal, 320x240; widescreen x -53 to 372) holding BTN (hex: 1 left, 2 right, 4 middle) for `host->pointer`, until `pointer off` or the client leaves; the real mouse is ignored meanwhile. It makes no pad bits, so a mod that reads it drives itself |
 | `quit` | exit |
 | `jump TARGET [OPPONENT [DECK]]` | another screen, as Debug > Jump to goes there (step 6; added with it) |
 

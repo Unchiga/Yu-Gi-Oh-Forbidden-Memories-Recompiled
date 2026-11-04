@@ -22,6 +22,14 @@ void Control_Point(void);
 uint16_t Control_Pad(int port);
 /* Pad 2 counts as connected once the client has set it. */
 int Control_PadConnected(int port);
+/* The pointer the client holds (`pointer`), in picture coordinates, which
+ * host->pointer gives a mod in place of the real mouse: 1 with its place
+ * and buttons (bit 0 left, 1 right, 2 middle), 0 while the client has none.
+ * Signal-safe. */
+int Control_Pointer(int *x, int *y, unsigned *buttons);
+/* The notches the client turned (`wheel`) since the last call, which
+ * host->wheel adds to the real wheel's. Signal-safe. */
+int Control_PointerWheel(void);
 /* A `poke` or `jump` line a recording kept (recorder.h, C lines), done
  * again as the channel did it: 0 done, -1 not (a line of another kind, or
  * one the game refuses now). The line is modified in place. */

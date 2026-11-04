@@ -37,6 +37,18 @@ static void commands(void)
     CHECK(parse("pad 2 0xffff", &c) == 0 && c.pad == 1 && c.bits == 0xffff);
     CHECK(parse("pad 3 0", &c) == -1 && parse("pad 0 0", &c) == -1);
     CHECK(parse("pad 1 10000", &c) == -1 && parse("pad 1 xyz", &c) == -1 && parse("pad 1", &c) == -1);
+    CHECK(parse("pointer 160 120", &c) == 0 && c.kind == CONTROL_POINTER && !c.pointer_off &&
+          c.pointer_x == 160 && c.pointer_y == 120 && c.pointer_buttons == 0);
+    CHECK(parse("pointer -53 239 5", &c) == 0 && c.pointer_x == -53 && c.pointer_y == 239 && c.pointer_buttons == 5);
+    CHECK(parse("pointer 0 0 0x1\r", &c) == 0 && c.pointer_buttons == 1);
+    CHECK(parse("pointer off", &c) == 0 && c.kind == CONTROL_POINTER && c.pointer_off);
+    CHECK(parse("pointer off now", &c) == -1 && parse("pointer", &c) == -1 && parse("pointer 1", &c) == -1);
+    CHECK(parse("pointer 1 x", &c) == -1 && parse("pointer 1.5 2", &c) == -1 && parse("pointer - 2", &c) == -1);
+    CHECK(parse("pointer 1 2 8", &c) == -1 && parse("pointer 1 2 zz", &c) == -1 && parse("pointer 1 2 1 1", &c) == -1);
+    CHECK(parse("pointer 100001 0", &c) == -1);
+    CHECK(parse("wheel 3", &c) == 0 && c.kind == CONTROL_WHEEL && c.pointer_x == 3);
+    CHECK(parse("wheel -2", &c) == 0 && c.pointer_x == -2);
+    CHECK(parse("wheel", &c) == -1 && parse("wheel x", &c) == -1 && parse("wheel 1 2", &c) == -1);
     CHECK(parse("shot D:/some dir/a b.png ", &c) == 0 && c.kind == CONTROL_SHOT && !strcmp(c.path, "D:/some dir/a b.png"));
     CHECK(parse("save /tmp/x.state", &c) == 0 && c.kind == CONTROL_SAVE && !strcmp(c.path, "/tmp/x.state"));
     CHECK(parse("load x.state\r", &c) == 0 && c.kind == CONTROL_LOAD && !strcmp(c.path, "x.state"));

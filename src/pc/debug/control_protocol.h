@@ -22,6 +22,14 @@
  *                       title, debug, duel, free_duel, build_deck, library,
  *                       password, map, credits, options; a duel against
  *                       OPPONENT (decimal) with DECK ("723-762", "1,2,3")
+ *     pointer X Y [BTN] put the mouse at picture coordinates X, Y (decimal,
+ *                       may be negative; the game's 320x240, widescreen
+ *                       reaches x -53 to 372) holding BTN (hex: 1 left,
+ *                       2 right, 4 middle) from now on, for host->pointer
+ *     pointer off       the real mouse again
+ *     wheel N           turn the mouse wheel N notches (decimal, signed:
+ *                       positive away from the player), once, for
+ *                       host->wheel
  *     quit              end the game
  *
  * Numbers that are hex may carry a 0x; decimal ones may be given as 0x...
@@ -43,7 +51,9 @@ typedef enum {
     CONTROL_LOAD,
     CONTROL_INFO,
     CONTROL_JUMP,
-    CONTROL_QUIT
+    CONTROL_QUIT,
+    CONTROL_POINTER,
+    CONTROL_WHEEL
 } ControlKind;
 
 typedef struct {
@@ -59,6 +69,9 @@ typedef struct {
     /* After v0.3.0's fields (tools/pc/mod_compat.txt): */
     const char *symbol; /* peek, poke: the variable's name when ADDR was @NAME (inside the line); else NULL */
     uint32_t offset;  /* peek, poke: the +OFF after @NAME */
+    int pointer_x, pointer_y;     /* pointer */
+    unsigned pointer_buttons;     /* pointer: 1 left, 2 right, 4 middle */
+    int pointer_off;              /* pointer: `pointer off` */
 } ControlCommand;
 
 /* Parse one line (without its newline; a trailing '\r' is ignored). `data`
