@@ -362,6 +362,9 @@ static void test_first_second_third_attacked_sequence(void)
     ex_copy.battle_reset = MONSTER_RESET_COPY;
 
     /* Battle 1: MonsterEffects_Battle() increments attacked_summon, attacked_turn, attacked_duel */
+    /* Only a card with a duel-long shield is counted in the duel table. */
+    s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_duel;
     gDuel_wSceneStateFlags = PHASE_BATTLE;
     MonsterEffects_Battle();
     assert(gMonsterEffects.attacked_summon[5] == 1);
@@ -381,6 +384,8 @@ static void test_first_second_third_attacked_sequence(void)
     assert(gMonsterEffects.attacked_duel[5] == 1);
 
     /* Battle 2 on the same monster: counts become 2, so first_attacked immunity is exhausted */
+    s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_duel;
     gDuel_wSceneStateFlags = PHASE_BATTLE;
     MonsterEffects_Battle();
     assert(gMonsterEffects.attacked_summon[5] == 2);
@@ -401,6 +406,8 @@ static void test_first_second_third_attacked_sequence(void)
     assert(gMonsterEffects.attacked_duel[5] == 0);
 
     /* First attack against the new monster in zone 5: immune again under both "copy" and "duel"! */
+    s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_duel;
     gDuel_wSceneStateFlags = PHASE_BATTLE;
     MonsterEffects_Battle();
     assert(gMonsterEffects.attacked_summon[5] == 1);
@@ -430,6 +437,8 @@ static void test_first_second_third_attacked_sequence(void)
     /* When attacked, MonsterEffects_Battle() increments the hit counts:
      * attacked_summon[5] becomes 1 (immune under copy reset);
      * attacked_duel[5] becomes 2 (exceeds target_count 1, NOT immune under duel reset)! */
+    s_test_effects[0] = eff_first;
+    s_test_effects_ex[0] = ex_duel;
     gDuel_wSceneStateFlags = PHASE_BATTLE;
     MonsterEffects_Battle();
     assert(gMonsterEffects.attacked_summon[5] == 1);

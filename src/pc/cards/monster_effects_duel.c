@@ -96,10 +96,30 @@ int MonsterEffects_DuelCardAttacks(int side, int card_id)
     }
     return 0;
 }
+/* Whether the card has a battle_immunity whose count lasts the duel: only
+ * those cards take a slot in the table, so 64 slots never run out. */
+static int duel_counted(int card_id)
+{
+    const MonsterEffect *effects;
+    const MonsterEffectEx *effects_ex = NULL;
+    int n, e;
+    n = Cards_MonsterEffects(card_id, &effects);
+    Cards_MonsterEffectsEx(card_id, &effects_ex);
+    if (!effects_ex) return 0;
+    for (e = 0; e < n; e++) {
+        if (effects[e].when == MONSTER_WHEN_FACE_UP &&
+            effects[e].action == MONSTER_DO_BATTLE_IMMUNITY &&
+            effects_ex[e].battle_modifier >= MONSTER_BATTLE_MOD_FIRST_ATTACKED &&
+            effects_ex[e].battle_modifier <= MONSTER_BATTLE_MOD_AFTER_3_ATTACKS &&
+            effects_ex[e].battle_reset == MONSTER_RESET_DUEL)
+            return 1;
+    }
+    return 0;
+}
 static void add_duel_card_attack(int side, int card_id)
 {
     int i;
-    if (side < 0 || card_id <= 0) return;
+    if (side < 0 || card_id <= 0 || !duel_counted(card_id)) return;
     for (i = 0; i < S.duel_attack_total; i++) {
         if (S.duel_attack_side[i] == (unsigned char)side && S.duel_attack_card[i] == (short)card_id) {
             if (S.duel_attack_count[i] < 255) S.duel_attack_count[i]++;
