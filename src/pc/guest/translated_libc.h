@@ -4,9 +4,14 @@
 #include <stdarg.h>
 #include <stdio.h>
 long GuestRuntime_strtol(const char *, char **, int);
+unsigned long GuestRuntime_strtoul(const char *, char **, int);
+double GuestRuntime_strtod(const char *, char **);
+int GuestRuntime_atoi(const char *);
 char *GuestRuntime_fgets(char *, int, FILE *);
+size_t GuestRuntime_fread(void *, size_t, size_t, FILE *);
 size_t GuestRuntime_fwrite(const void *, size_t, size_t, FILE *);
 int GuestRuntime_fseek(FILE *, long, int);
+long GuestRuntime_ftell(FILE *);
 int GuestRuntime_fclose(FILE *);
 int GuestRuntime_isalnum(int);
 int GuestRuntime_isdigit(int);
@@ -23,7 +28,9 @@ int GuestRuntime_strncmp(const char *, const char *, size_t);
 char *GuestRuntime_strcpy(char *, const char *);
 char *GuestRuntime_strncpy(char *, const char *, size_t);
 char *GuestRuntime_strcat(char *, const char *);
+char *GuestRuntime_strncat(char *, const char *, size_t);
 void GuestRuntime_qsort(void *, size_t, size_t, int (*)(const void *, const void *));
+void *GuestRuntime_bsearch(const void *, const void *, size_t, size_t, int (*)(const void *, const void *));
 int GuestRuntime_printf(const char *, ...);
 int GuestRuntime_sprintf(char *, const char *, ...);
 void *GuestRuntime___memcpy_chk(void *, const void *, size_t, size_t);

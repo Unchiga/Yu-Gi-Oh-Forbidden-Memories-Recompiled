@@ -1105,6 +1105,11 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME pc_build_mod_toolchain
             COMMAND "${Python3_EXECUTABLE}" tools/pc/test_build_mod_toolchain.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # Every function the SDK's C library declares is lent to a mod of the
+        # translated game (Android, macOS), not only to the Windows ones.
+        add_test(NAME pc_mod_libc_lent
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/test_mod_libc_lent.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         # The SDK's one-click build (tools/pc/sdk): the pins the launchers carry,
         # the embeddable Python's sys.path, and both launchers run on a fake SDK with
         # archives made in the test (nothing downloaded, no compiler started).
