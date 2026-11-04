@@ -11,6 +11,7 @@
 #include "pc/mods/events.h"
 #include "image.h"
 #include "retail_image.h"
+#include "mips.h"
 #include "pc/audio/spu.h"
 #include "pc/audio/replace.h"
 #include "pc/compat/gte.h"
@@ -261,6 +262,11 @@ void Memories_StateSubsystems(MemoriesState *state)
     Memories_StateJumps(state);
 #endif
     RetailImage_State(state);
+#ifndef MEMORIES_TRANSLATED
+    /* The interpreted modules' stack (mips.c), RAM on the console: retail
+     * module code reads locals it never wrote. */
+    Memories_MipsStackState(state);
+#endif
     Spu_State(state);
     LibSpu_State(state);
     LibDs_State(state);

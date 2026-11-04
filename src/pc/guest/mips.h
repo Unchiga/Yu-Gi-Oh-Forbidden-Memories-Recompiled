@@ -1,5 +1,6 @@
 #ifndef MEMORIES_PC_GUEST_MIPS_H
 #define MEMORIES_PC_GUEST_MIPS_H
+#include <stddef.h>
 #include <stdint.h>
 
 /* Run a routine of a loaded overlay (see mips.c). `args` are the MIPS
@@ -14,6 +15,14 @@ void Memories_MipsAttribute(uint32_t identifier);
 void Memories_MipsFrame(unsigned frames);
 /* As above with four arguments; a failure ends the process. */
 uint32_t Memories_MipsCall(uint32_t address, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3);
+/* The interpreted code's stack (mapped on the first call), which save
+ * states carry: its bytes and *size, or NULL and 0 where guest words
+ * cannot address it (host memory above 4 GiB). */
+void *Memories_MipsStack(size_t *size);
+/* Save or load it as the state chunk "mips-stack" (fixed-address builds;
+ * the translated game keeps it with its mappings). */
+struct MemoriesState;
+void Memories_MipsStackState(struct MemoriesState *state);
 /* Whether an address lies in a slot whose code is interpreted. */
 int Memories_MipsInOverlay(uint32_t address);
 /* The guest-call fault handler's way into the interpreter: it stores the

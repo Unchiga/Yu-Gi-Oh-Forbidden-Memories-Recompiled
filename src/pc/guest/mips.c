@@ -50,10 +50,12 @@ extern void Model_QueueTintRequestForPartList(int32_t slot, int32_t part, uint32
                                               int32_t duration, const int32_t *parts);
 
 static uint32_t stack_top;   /* 0 until the stack is mapped */
+static uint8_t *stack_memory; /* its lowest byte, as the host reaches it */
 static uint32_t current_sp;  /* the innermost interpreted frame, or 0 */
 uint32_t Memories_MipsThunkTarget;
-#ifdef MEMORIES_TRANSLATED
 #include "state.h"
+#include "state_io.h"
+#ifdef MEMORIES_TRANSLATED
 void Memories_MipsState(MemoriesState *state)
 {
     MemoriesStateField fields[] = {{&stack_top, sizeof(stack_top)}, {&current_sp, sizeof(current_sp)},
@@ -113,12 +115,57 @@ static int ensure_stack(void)
                           -1, 0) != wanted) {
         static uint32_t fallback[STACK_SIZE / 4] __attribute__((aligned(16)));
         fprintf(stderr, "memories-pc: cannot map the overlay stack at 0x%08x; using host memory\n", STACK_BASE);
+        stack_memory = (uint8_t *)fallback;
         stack_top = (uint32_t)(uintptr_t)(fallback + STACK_SIZE / 4) - 16;
         return 0;
     }
+    stack_memory = wanted;
     stack_top = STACK_BASE + STACK_SIZE - 16;
     return 0;
 }
+
+/* The interpreted code's stack, for save states (state_subsystems.c). Retail
+ * module code reads locals it never wrote (variant module 128: the fourth
+ * byte of the two colours it hands Model_QueueTintRequestForParts, the start
+ * one becoming the tint pass's draw mode, and the corners of a POLY_FT4 that
+ * only SetPolyFT4 touched): on the console those read what earlier code left
+ * on the stack, which a state holds as part of RAM. So does this one, or a
+ * battle started from a state would look different after other battles. */
+void *Memories_MipsStack(size_t *size)
+{
+    ensure_stack();
+    *size = 0;
+    /* Host memory above 4 GiB (the fallback on a 64-bit host): guest words
+     * cannot address it, so interpreted code could not run on it either. */
+    if (!stack_memory || (uint64_t)(uintptr_t)stack_memory + STACK_SIZE > (uint64_t)UINT32_MAX + 1) return NULL;
+    *size = STACK_SIZE;
+    return stack_memory;
+}
+
+#ifndef MEMORIES_TRANSLATED
+/* Its state chunk, "mips-stack" (the translated game keeps the stack with
+ * its other mappings). A state without it, or with one of another size,
+ * clears the stack, as at boot, so that loading such a state twice gives
+ * the same game too; without a stack to carry the chunk is left out. */
+void Memories_MipsStackState(MemoriesState *state)
+{
+    static const char tag[] = "mips-stack";
+    size_t size, saved = 0;
+    const uint8_t *found = NULL;
+    MemoriesStateField field;
+    field.data = Memories_MipsStack(&size);
+    field.size = size;
+    if (!field.data) return;
+    if (Memories_StateLoading(state) && (!(found = Memories_StateFindChunk(state, tag, &saved)) || saved != size)) {
+        fprintf(stderr, "memories-pc: state: %s '%s' (%lu bytes in the state, %lu in this build); the interpreter's "
+                        "stack is cleared\n", found ? "layout changed for" : "no chunk", tag, (unsigned long)saved,
+                (unsigned long)size);
+        memset(field.data, 0, size);
+        return;
+    }
+    Memories_StateChunk(state, tag, &field, 1);
+}
+#endif
 
 /* The last run's instructions, for the trace (Memories_MipsTry), failed runs too. */
 static unsigned try_steps;

@@ -618,6 +618,32 @@ of MODEL, WA and SU found no other variadic callee: `printf` is handled in
 `Model_SetSlotProperties` are never called from them.
 `tests/pc/mips_varargs_test.c` runs such a call through the interpreter.
 
+Retail module code reads stack words it never wrote, as on the console,
+where they hold what earlier code left at that depth. Variant module 128
+(record 330, slot A; 258 in slot B) sets only the colour bytes of the two
+`CVECTOR`s it hands `Model_QueueTintRequestForParts` (`0x8013B474`-`0x8013B4D4`:
+`lbu` of `sp+0x3BB` and `sp+0x3C3`), and the start colour's fourth byte is the
+tint pass's draw mode (`func_800528AC`, `Model_HasInsufficientBufferSpace`);
+it also reads the corners of a `POLY_FT4` that only `SetPolyFT4` touched
+(`sp+0x80`/`0x82`, `0x8013C0AC`) for a `ratan2`. Those are the only reads
+whose values differed between the two histories below (an instrumented
+interpreter, 2026-11-02). The bridge forwards eight stack words to every
+native call, written or not; every callee that got an unwritten one in those
+battles takes fewer parameters than that word's place, so it is not among
+them. On the console the words are game RAM and a
+save state holds them; the port's interpreted code runs on its own stack, and
+since "Port: save states carry the interpreter's stack" a state holds it too
+(chunk `mips-stack`, all 256 KiB; the translated build already kept it with
+its mappings). Before, a battle started from a state looked different after
+other battles in the same game: record 330's second-star battle drew other
+sparks from 679 frames in after record 320's (the model oracle;
+`tests/pc/replays/state-load-mips-stack`). A state from before the chunk
+clears the stack. Within one game the words still hold what earlier
+interpreted modules left (the console's would hold what its native code
+left, which the port's native frames on the host stack cannot give).
+`tests/pc/mips_stack_test.c` checks the stack the states carry is the one
+the interpreter runs on.
+
 Checked from `slot1.state`: the AI's attack (card clash, damage lettering,
 burn destruction: ids 2 and 3), the player's attack committed with Square
 (the 3D battle: arena, both monsters, the variant module's setup command and
