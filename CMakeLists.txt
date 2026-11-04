@@ -1127,6 +1127,11 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME pc_replay_check
             COMMAND "${Python3_EXECUTABLE}" tests/pc/replay_check_test.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # model_oracle.py's comparison and coverage on made-up games
+        # (notes/pc-build.md, "MIPS-only effects").
+        add_test(NAME pc_model_oracle_check
+            COMMAND "${Python3_EXECUTABLE}" tests/pc/model_oracle_test.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         # Native units that name files reach compat/fs.h (notes/pc-build.md).
         add_test(NAME pc_utf8_paths
             COMMAND "${Python3_EXECUTABLE}" tools/pc/check_utf8_paths.py

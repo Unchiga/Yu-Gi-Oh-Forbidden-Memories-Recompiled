@@ -655,11 +655,84 @@ is retail (the reference for comparisons); `MEMORIES_DUEL_EFFECTS=skip`
 (called `native` before the bank ran as native C; `native` now means the
 default) restores the bring-up behaviour
 (ids 1-3 interpreted, others complete at once); `MEMORIES_FRAME_HASHES=<file>`
-writes a hash of VRAM per presented frame for comparing two runs; `MEMORIES_MODEL_MODULES=native`
-uses the resident spark burst instead of the monster's module; an effect or
-module the interpreter cannot run is reported once on stderr and falls back
-the same way. `MEMORIES_TRACE_MIPS_PRINTF=1` prints the modules' own
-`printf` format strings.
+writes a hash of VRAM per presented frame for comparing two runs;
+`MEMORIES_MODEL_MODULES=interpreter` interprets every battle model module
+even one native C stands in for (the reference, as the duel effects'
+switch; with no native C linked in for the models yet it is the default);
+`MEMORIES_MODEL_MODULES=spark` puts the resident spark burst in place of
+every monster's module (it was called `native`; `native` now means the
+default, as for the duel effects, so that it names the native C once there
+is some; any other value is the default too, and says so once on stderr);
+an effect or module the interpreter cannot run is reported once on stderr
+and falls back the same way. `MEMORIES_TRACE=model` logs every call
+of a model module with the module's identifier, its slot and what ran it
+(`variant slot=0 command=1 module 418 in A: interpreter`; `slot=` is the
+active model, `D_8009AFA0`). `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
+modules' own `printf` format strings.
+
+**The model modules' oracle** (`tools/pc/model_oracle.py`): before native C
+replaces any variant module, every MODEL.MRG record's 3D battle run two
+ways, frame for frame. A record holds four variant images: one per guardian
+star of the card (the "alternative": `D_800EF658`'s last byte, set by the
+duel from the card's `DUEL_CARD_FLAG_USE_GUARDIAN_STAR_2`) in each slot
+(stages 7-10 of the load, `func_80056D7C`: alternative 0 slot A, 0 B, 1 A,
+1 B; ten sectors each from sector 180 of the record). On the disc that is
+1,181 distinct images per slot (595 and 602 per alternative in slot A, 595
+and 600 in slot B). The script drives one battle per alternative with the
+record's monster on both sides, no duel needed: from a state saved at the
+debug menu (`goto("debug")`) it pokes the two model records into
+`D_800EF658`, the mode to come back to into `D_8009B269` and the animated
+battle (1) into `D_8009B26C`, as the duel's phase 5 does
+(`duel_scene_battle.c`), and steps until the mode byte leaves 1. Each battle
+starts from that state, so none depends on what ran before it. Which slot
+runs: the attacker's (A) always; the defender's (B) only when the attacker
+does not win (`field_02`: 1 is the side that wins), so the default outcome
+is a tie (both modules run; `--outcomes attacker,defender` adds the other
+paths). Every battle runs twice, by default the build's default against
+`MEMORIES_MODEL_MODULES=interpreter`, in games of their own (`--jobs`), and
+the two must agree on every frame hash and every module call the trace logs
+(setup commands by frame, updates by count). A battle where either run did
+not call the variant module of a slot its outcome runs (A always, B unless
+the attacker wins) is an error, not a match: two battles that never started
+would agree on everything. Slot B's images are asked for only from battles
+that run it. The report gives per record
+identical or the first differing frame counted from the battle's start, the
+modules that ran (identifier and slot) and those that cannot run. Coverage:
+the script steps a VBlank at a time while the two models load and peeks
+each slot's 0x5000 bytes once its transfer has landed (the slot's load step,
+`field_E14`, past 0) and before step 9, the first that can call the module;
+it hashes them against the disc's image for that record, alternative and
+slot. An image counts when its slot held the disc's bytes, hashed before its
+module's first call, and its module was called there on both sides, and
+every distinct image of the records asked for must count. Hashing after the
+battle is not enough: record 40's second-star modules (762 in slot A, 859
+in B) write six bytes at +0x1FFC inside their own image. The primary
+modules are reported too: 10 of the 605 distinct ones in slot A (604 in B)
+are called in these battles. The VRAM hash covers the frame being drawn, so
+it differs a frame before the screen does: `--shots N` pictures the first
+differing frame, the one before and the one after.
+
+Checked on Windows (i7-8700K, 6 cores): all 621 records, both
+alternatives, tie, the default against `interpreter` (on master the same
+code, so this is the determinism check at scale): 1,242 of 1,242 battles
+identical, 1,181 of 1,181 distinct images covered in each slot, in 40 min
+with `--jobs 11` (a battle is 1,053 to 2,544 frames, 1,559 on average,
+about 7 s alone; 1.2 s a battle and side with eleven games at once). It catches a difference where
+it is: a build whose default skipped the 200th update of module 418 in slot
+A (that call at frame +836 of record 34's battle) was reported "first
+differing frame +838" for that battle only, and its pictures differ from
++839 on (the stand-in: +639, its first update at +637). The 418 experiment
+(that shape linked as native C, gated by hash) against the interpreter: the
+13 records with it in slot A identical. **Battles are only comparable with
+the same history:** the interpreter's stack (`0x9FF00000`, mips.c) is not in
+save states, and a module that reads a stack word it never wrote sees what
+the battle before left there. With `--reverse-reference` (the reference
+runs the battles in the opposite order) record 330's second-star battle
+differed at +679 (a few sparks) whenever record 320's second-star battle
+came just before it, and was identical with the interpreter's stack zeroed
+before each outermost call (a diagnostic build). The sweep's two sides run
+the same battles in the same order, so they compare alike; native C for such
+a module would read the host's stack instead, and differ.
 
 ### Credits
 
