@@ -138,7 +138,10 @@ static int pointer_x, pointer_y, pointer_inside, cursor_hidden;
  * picture only; and the capture it asked for, which is SDL's relative mode
  * while the game has the window to itself -- a menu, a notice, a panel or
  * another window having it lets the pointer go until it is done. */
-static int mouse_dx, mouse_dy, mouse_wanted, mouse_relative;
+/* The mouse's motion gathered for host->mouse: SDL's fractions of a pixel
+ * kept, the whole pixels handed over. */
+static float mouse_dx, mouse_dy;
+static int mouse_wanted, mouse_relative;
 static unsigned mouse_held;
 /* Escape claimed by that mod (capture_mouse 1 or 2): an Exit game press in
  * the game's window, no menu, notice or panel up, is its, kept here until
@@ -2223,8 +2226,8 @@ static void pump(void)
             continue;
         if (mouse_relative && SDL_GetWindowFromEvent(&event) == window) {
             if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.which != SDL_TOUCH_MOUSEID) {
-                mouse_dx += (int)event.motion.xrel;
-                mouse_dy += (int)event.motion.yrel;
+                mouse_dx += event.motion.xrel;
+                mouse_dy += event.motion.yrel;
                 continue;
             }
             if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
@@ -2277,8 +2280,8 @@ static void pump(void)
         } else if (event.type == SDL_EVENT_MOUSE_MOTION) {
             static unsigned logged_frame = ~0u;
             if (event.motion.y >= Menu_Height() && !Menu_IsOpen()) {
-                mouse_dx += (int)event.motion.xrel;
-                mouse_dy += (int)event.motion.yrel;
+                mouse_dx += event.motion.xrel;
+                mouse_dy += event.motion.yrel;
             }
             pointer_is_mouse = 1;
             pointer_x = menu_event.x;
@@ -2812,9 +2815,10 @@ void HERE(Platform_ShowError)(const char *title, const char *message)
 
 static void mouse_motion(int *dx, int *dy, unsigned *buttons, int escape)
 {
-    *dx = mouse_dx;
-    *dy = mouse_dy;
-    mouse_dx = mouse_dy = 0;
+    *dx = (int)mouse_dx; /* toward 0: the rest waits for the next call */
+    *dy = (int)mouse_dy;
+    mouse_dx -= (float)*dx;
+    mouse_dy -= (float)*dy;
     *buttons = Menu_IsOpen() || Panel_Shown() ? 0 : mouse_held;
     if (escape && escape_pressed) {
         *buttons |= MEMORIES_MOUSE_ESCAPE;
