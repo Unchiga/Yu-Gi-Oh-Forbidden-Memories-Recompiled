@@ -1,8 +1,11 @@
 """Shared PC target metadata, game inventory, and native source selection."""
 
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_gate  # noqa: E402
 
 # Declared deployment baseline; runtime compatibility is validated separately.
 MACOS_MINIMUM = "11.0"
@@ -108,8 +111,20 @@ MODULES = [
     ("duel_effects", "src/overlays/duel_effects/*.c", 0x18, 0x80146000),
     ("credits", "src/overlays/credits/*.c", 0x10, 0x80180000),
 ]
+# MODEL.MRG's variant control modules: one module per slot for each shape the
+# table (config/pc/model_gate.csv) says is native, linked at the slot base.
+# Their addresses come from the C (tools/pc/model_gate.py), not from a retail
+# ELF, and they are gated like the effect bank: src/pc/overlays/model_modules.c
+# runs the C for the retail code and interprets any other.
+MODEL_MODULES = [
+    (row.module(slot), model_gate.source_patterns(row, slot), row.identifier(slot), model_gate.BASE[slot])
+    for row in model_gate.native_rows() for slot in "AB"
+]
+MODULES += MODEL_MODULES
 MODULE_CONFIG = {"overworld": "overworld_before_coup"}
-GATED_MODULES = {"duel_effects", "credits"}
+GATED_MODULES = {"duel_effects", "credits"} | {name for name, _, _, _ in MODEL_MODULES}
+# The modules that have no retail ELF or function list in config/slus_01411.
+SOURCE_ADDRESSED_MODULES = {name for name, _, _, _ in MODEL_MODULES}
 
 COMMON_FILES = [
     "rng.c",
@@ -141,7 +156,14 @@ def game_sources():
         )
     }
     groups.update(
-        (name, sorted(path.relative_to(ROOT).as_posix() for path in ROOT.glob(pattern)))
+        (
+            name,
+            sorted(
+                path.relative_to(ROOT).as_posix()
+                for one in ((pattern,) if isinstance(pattern, str) else pattern)
+                for path in ROOT.glob(one)
+            ),
+        )
         for name, pattern, _, _ in MODULES
     )
     return groups

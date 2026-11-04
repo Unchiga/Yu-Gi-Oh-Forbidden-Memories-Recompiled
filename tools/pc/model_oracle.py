@@ -19,7 +19,12 @@ MEMORIES_MODEL_MODULES unset) and the reference (MEMORIES_MODEL_MODULES=
 interpreter). For each battle they must agree on every frame hash
 (MEMORIES_FRAME_HASHES) and every module call the model trace logs (a
 setup command, its slot, module and frame; the updates by count). The
-report gives, per record: identical, or the first differing frame counted
+trace also says what ran each module call: "native" (the decomp's C, for
+the code shapes config/pc/model_gate.csv ports), "interpreter" or "stand-in".
+A default-mode side must have run native C in exactly the slots whose disc
+image is a native row's code (the first `span` bytes by SHA-256), and the
+interpreter in the rest; a reference in interpreter mode must never run
+native: anything else is an error, not a difference. The report gives, per record: identical, or the first differing frame counted
 from the battle's start; the modules that ran (identifier and slot); and any
 the interpreter could not run. The coverage check hashes the variant image
 each slot holds once its load has landed and before its module can run
@@ -29,6 +34,7 @@ have been in its slot and called there, on both sides.
 
     python tools/pc/model_oracle.py --disc game/disc.bin                # all 621 records
     python tools/pc/model_oracle.py --records 34,100-119 --jobs 8
+    python tools/pc/model_oracle.py --records gated                      # the records that have a native-C image
     python tools/pc/model_oracle.py --reference-mode "" --reverse-reference   # the default against itself
     python tools/pc/model_oracle.py --mode spark --records 34 --shots 1   # a difference, with pictures
 
@@ -54,6 +60,7 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from yfm_control import Game, GameHung, OUTPUT  # noqa: E402
+import model_gate  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_HEADER = ROOT / "src/game/model.h"
@@ -127,6 +134,26 @@ def parse_records(text: str | None) -> list[int]:
             if record not in records:
                 records.append(record)
     return records
+
+
+def parse_record_selection(text: str | None, disc: "Disc", alternatives: list[int]) -> list[int]:
+    """parse_records, plus "gated": the records with a variant image, in the
+    alternatives asked for, that config/pc/model_gate.csv runs as native C."""
+    if text != "gated":
+        return parse_records(text)
+    return [record for record in range(RECORDS)
+            if any(native_row(disc, record, alternative, slot) for alternative in alternatives for slot in "AB")]
+
+
+def native_row(disc: "Disc", record: int, alternative: int, slot: str) -> "model_gate.Row | None":
+    """The native row whose code (the first `span` bytes of the image,
+    SHA-256) the record's image in a slot has, None when the interpreter
+    is to run it."""
+    image = disc.variant(record, alternative, slot)
+    for row in model_gate.native_rows():
+        if hashlib.sha256(image[:row.span]).hexdigest() == row.sha256(slot):
+            return row
+    return None
 
 
 class Battle(NamedTuple):
@@ -365,8 +392,45 @@ def first_difference(mine: array, theirs: array) -> int | None:
     return None
 
 
-def compare(subject: dict, reference: dict) -> dict:
-    """What one battle's two runs say: its verdict and why."""
+def backends(side: dict) -> dict[str, set[str]]:
+    """{slot: what ran its variant module calls} from a side's paths."""
+    found: dict[str, set[str]] = {}
+    for module, ways in side["paths"].items():
+        kind, _, slot = module.rpartition(" in ")
+        if kind.startswith("variant "):
+            found.setdefault(slot, set()).update(ways)
+    return found
+
+
+def backend_errors(side: dict, expected: dict[str, bool], native_allowed: bool) -> list[str]:
+    """Where a side ran something other than what the table says: native C
+    in the slots whose image is a native row's code, if it is a default-mode
+    side, and the interpreter in the others; never native for a side that
+    asked for the interpreter or the stand-in."""
+    errors = []
+    ran = backends(side)
+    # A slot that holds a native row's code and made no variant call at all
+    # is an error too (compare() has already said so for the slots a battle's
+    # outcome runs; expected holds only those).
+    for slot in sorted(expected):
+        if native_allowed and expected[slot] and slot not in ran:
+            errors.append(f"{side['side']}: slot {slot} holds a module the table runs as native C and made no call")
+    for slot, ways in sorted(ran.items()):
+        want_native = native_allowed and expected.get(slot, False)
+        if want_native and ways != {"native"}:
+            errors.append(f"{side['side']}: slot {slot} holds a module the table runs as native C and ran "
+                          f"{', '.join(sorted(ways))}")
+        elif not want_native and "native" in ways:
+            errors.append(f"{side['side']}: slot {slot} ran native C where the table says "
+                          f"{'interpreter' if native_allowed else 'the mode asks for no native C'}")
+    return errors
+
+
+def compare(subject: dict, reference: dict, holds_native: dict[str, bool] | None = None,
+            native_allowed: tuple[bool, bool] = (False, False)) -> dict:
+    """What one battle's two runs say: its verdict and why. `holds_native` says
+    which slots hold a native row's code; `native_allowed` whether each side
+    (subject, reference) is in the mode that runs native C."""
     verdict = {"battle": subject["battle"], "frames": [len(subject.get("hashes", ())), len(reference.get("hashes", ()))]}
     errors = [f"{side['side']}: {side['error']}" for side in (subject, reference) if side.get("error")]
     errors += [f"{side['side']}: no frame hash for {side['hashes'].count(0)} of its {len(side['hashes'])} frames"
@@ -380,9 +444,14 @@ def compare(subject: dict, reference: dict) -> dict:
             called = {where for _, kind, where, _, _ in side["calls"] if kind == "variant"}
             errors += [f"{side['side']}: no variant module called in slot {slot}"
                        for slot in expected if slot not in called]
+    if not errors and holds_native is not None:
+        for side, allowed in zip((subject, reference), native_allowed):
+            errors += backend_errors(side, holds_native, allowed)
     if errors:
         verdict.update(status="error", why="; ".join(errors))
         return verdict
+    verdict["backends"] = {name: {slot: sorted(ways) for slot, ways in backends(side).items()}
+                           for name, side in (("subject", subject), ("reference", reference))}
     differing = first_difference(subject["hashes"], reference["hashes"])
     calls_same = subject["calls"] == reference["calls"] and subject["updates"] == reference["updates"]
     verdict["modules"] = sorted({f"{kind} {module} in {slot}" for _, kind, slot, module, _ in subject["calls"]})
@@ -493,7 +562,8 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--disc", type=Path, default=os.environ.get("MEMORIES_DISC"),
                         help="the disc image (default: MEMORIES_DISC)")
-    parser.add_argument("--records", help="records of MODEL.MRG, 0-620 (\"34,100-119\"; default all)")
+    parser.add_argument("--records", help="records of MODEL.MRG, 0-620 (\"34,100-119\"; default all; \"gated\": "
+                                          "the records that have an image config/pc/model_gate.csv runs as native C)")
     parser.add_argument("--alternatives", default="0,1", help="guardian-star alternatives (default 0,1)")
     parser.add_argument("--outcomes", default="tie",
                         help="tie (both modules run), attacker (only slot A's), defender; comma-separated")
@@ -520,8 +590,8 @@ def main() -> int:
     if not arguments.disc or not Path(arguments.disc).is_file():
         parser.error("no disc image: --disc or MEMORIES_DISC")
     disc = Disc(Path(arguments.disc).resolve())
-    records = parse_records(arguments.records)
     alternatives = [int(a) for a in arguments.alternatives.split(",")]
+    records = parse_record_selection(arguments.records, disc, alternatives)
     outcomes = [o.strip() for o in arguments.outcomes.split(",")]
     for outcome in outcomes:
         if outcome not in OUTCOMES:
@@ -569,7 +639,13 @@ def main() -> int:
         for future in [pool.submit(work, task) for task in tasks]:
             future.result()
     elapsed = time.monotonic() - began
-    verdicts = [compare(results["subject"][b.key], results["reference"][b.key]) for b in battles]
+    # The slots whose disc image is a native row's code: where a default-mode
+    # side must have run the decomp's C (compare).
+    expected = {b.key: {slot: native_row(disc, b.record, b.alternative, slot) is not None
+                        for slot in running_slots(b.outcome)} for b in battles}
+    allowed = tuple(mode not in ("interpreter", "spark") for mode in (arguments.mode, arguments.reference_mode))
+    verdicts = [compare(results["subject"][b.key], results["reference"][b.key], expected[b.key], allowed)
+                for b in battles]
     cover = coverage(battles, results["subject"], results["reference"], disc)
     bases = sorted({r["base_hash"] for side in results.values() for r in side.values() if "base_hash" in r})
 
@@ -599,6 +675,16 @@ def main() -> int:
     if cover["mismatched"]:
         summary.append(f"  {len(cover['mismatched'])} slots did not hold the disc's image: "
                        + "; ".join(cover["mismatched"][:6]))
+    ran = {"subject": {}, "reference": {}}
+    for verdict in verdicts:
+        for name, slots in verdict.get("backends", {}).items():
+            for ways in slots.values():
+                for way in ways:
+                    ran[name][way] = ran[name].get(way, 0) + 1
+    summary.append("  backends (battle slots; what ran the variant module): " + "; ".join(
+        f"{name} " + (", ".join(f"{way} {count}" for way, count in sorted(counts.items())) or "none")
+        for name, counts in ran.items()) +
+        f"; {sum(held for slots in expected.values() for held in slots.values())} of them hold a native row's code")
     stand_in = sorted({f"{v['battle']}: {module}" for v in verdicts for side in ("subject", "reference")
                        if (side == "subject" and arguments.mode != "spark") or
                        (side == "reference" and arguments.reference_mode != "spark")

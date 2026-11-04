@@ -688,17 +688,113 @@ default) restores the bring-up behaviour
 writes a hash of VRAM per presented frame for comparing two runs;
 `MEMORIES_MODEL_MODULES=interpreter` interprets every battle model module
 even one native C stands in for (the reference, as the duel effects'
-switch; with no native C linked in for the models yet it is the default);
+switch);
 `MEMORIES_MODEL_MODULES=spark` puts the resident spark burst in place of
 every monster's module (it was called `native`; `native` now means the
-default, as for the duel effects, so that it names the native C once there
-is some; any other value is the default too, and says so once on stderr);
+default, as for the duel effects: the decomp's C for the shapes the gate
+table ports, the interpreter for the rest; any other value is the default
+too, and says so once on stderr);
 an effect or module the interpreter cannot run is reported once on stderr
 and falls back the same way. `MEMORIES_TRACE=model` logs every call
 of a model module with the module's identifier, its slot and what ran it
-(`variant slot=0 command=1 module 418 in A: interpreter`; `slot=` is the
-active model, `D_8009AFA0`). `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
+(`variant slot=0 command=1 module 418 in A: native`, or `interpreter` or
+`stand-in`; `slot=` is the active model, `D_8009AFA0`); with
+`MEMORIES_TRACE=mods` each slot logs once, when its module's code changes,
+whether it is the retail code of a native shape (`model variant module 418
+in slot A: retail code, native C`) or not. `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
 modules' own `printf` format strings.
+
+**The model modules in native C** (the gate, `src/pc/overlays/model_modules.c`).
+Upstream matched every variant module (2,362 distinct images, #8531); the
+port links the decomp's C for the shapes `config/pc/model_gate.csv` lists
+as `native` and interprets the rest. A **shape** is a code layout: the
+first word of the slot A image names one (418 is one; slot B's image of the
+same code is linked at `0x8017B000` and its first word is 568), and the disc
+has 324 of them, 183 on more than one image. A row has the shape, its
+`backend` (`native`; `interpret`, the default of a shape not ported yet;
+`keep`, a shape that must stay interpreted, with the reason in its note:
+shape 128 reads stack bytes it never wrote, which native C would take from
+the host's stack), its `span`, the SHA-256 of the first `span` bytes of each
+slot's image, and the images and identifiers it was written from, the
+decomp's `data_start` and, for a module made of the C of two headers, the
+`sources` (header numbers separated by `;`; empty: the shape's own).
+`span` is where the hash stops. **By default it is the data start** (where the
+decomp's layout starts the module's data): the hash then covers code and
+constants only, so a mod that changes a model's tables or textures
+(`MODEL.MRG` data, #398/#399) still runs the C, and one that changes the
+code is interpreted. **A batch widens it** to cover any word of the slot's
+data that the C divides by, takes a remainder by, or indexes with: the
+interpreter survives a zero divisor (`divu` leaves lo = `0xFFFFFFFF`,
+`break 7` is a no-op) where native C faults on x86 (and gives 0 on arm64),
+so a mod that zeroed such a word must get the interpreter. The batch's
+reviewer greps the shape's C for `/`, `%` and `[` on values derived from the
+slot, and the row's note says which words the widening covers. `check --disc`
+fails when the images of a row differ anywhere inside its span, and
+`problems` when a span is wider than the data start with no note. The rows
+are written from the disc by `tools/pc/model_gate.py update --disc` (never by
+hand; only `backend`, `note`, `data_start`, `sources`, `command_table` and a
+native or kept row's `span` are kept from the row), which also writes the
+table the game is built with, `src/pc/overlays/model_gate_table.inc`;
+`check` verifies the table, that file and the address sections against each other, and
+against the disc with `--disc` (the images of a shape must agree over its
+span; the report says how far beyond it they agree). Shape 418 is the
+example of a widened span: its data start is `0x396C`, but
+`variant418_bands.c`, `variant418_sheet.c` and `variant418_quad.c` divide by
+the timing words of the attack's config entry (`+0x28..+0x3C` of the entry at
+`D_8013E96C + 0xFC + cmd * 0x44`), so its span is `0x3F60`, the common prefix
+of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
+those 1,524 bytes runs the interpreter, and one that changes anything after
+them (the model's tables and textures) still runs the C.
+
+**The command is an index too, and the caller chooses it.** The setup of a
+variant module is called with a word of the record `% 1000`
+(`model_control.c`, `model_load_step.c`), which a MODEL.MRG mod controls, and
+418's setup takes `D_8013E96C + 0xFC + command * 0x44` as its config entry
+without a bound. The retail table has 18 entries (commands 0 to 17, ending
+at `0x3F30`, inside the span). A native row therefore has a `command_table`
+(`table:stride:count:field`, or `none` when its C takes no command index; for
+418 `0x3A68:0x44:18:0x1B74`): `problems` fails when the entries are not
+inside the span, and `model_modules.c` sends to the interpreter a setup whose
+command is `>= count` and any update whose entry pointer (the work area's word
+at `field`, where the setup stored its choice) is not one of the `count`
+entries. That makes the decision stateless: an attack the interpreter set up
+stays with it, so does one a saved state resumes, and an update with no setup
+before it. When such a setup falls to the stand-in (the interpreter could not
+run it), the stand-in does not write the entry word, so `model_modules.c`
+clears it: one left by an earlier attack would send the updates to the C.
+The first such call of a slot's code is logged under
+`MEMORIES_TRACE=mods`; the model trace shows `interpreter` for each. The
+batch reviewer therefore greps the shape's C for an index taken from the
+command or the work area, as well as from slot data, and sets `command_table`
+by hand from the C (`count` is where the retail table ends; the gated oracle
+fails a retail record whose command or entry pointer a wrong `count` or
+`field` would send to the interpreter). The gate only
+matches the US disc's modules: the other regions' 418 images differ and are
+interpreted. To port a shape:
+copy the decomp's `variant<shape>_*.c` into `src/native_overlays/model_variant` (not
+`src/overlays`: every C file there must be a subsegment of a split, which
+these modules do not have here; the headers' relative includes are the
+same depth) and
+the slot B wrappers (the same C under `#define`s of the `0x8017Bxxx`
+names) into `src/native_overlays/model_variant_slot1`, set the row to `native` with
+the decomp's data start as its span, run `update --disc` and a build.
+`build_config.py` makes two gated modules of it (`model_variant_<shape>` and
+`_slot1`, banks `0x8013B000` and `0x8017B000`, every name prefixed as for the
+effect bank), and their entry is the function at the slot base + 4. These
+modules have no retail ELF, so `config/pc/guest_addresses.txt` gets their
+sections from the C's own names (`func_8013B004`, `D_8013E96C`: the decomp
+names things by address), which `build_game32.py` writes after the ELF-derived
+ones whenever it runs; the committed file has them, and
+`tools/pc/test_model_gate.py` fails when it does not. At run time a slot's
+verdict (native entry or none) is kept with a copy of the words it was taken
+from and stands while the slot holds them: the gate costs one pass over the
+span a call (about 4,060 words for 418's `0x3F60` bytes), and sees every way a
+module arrives. Shape 418 was
+ported first: 13 records have it (Dark Magician, Cocoon of Evolution, Faith
+Bird, Ancient Jar, Lucky Trinket, Ray & Temperature, Protector of the
+Throne, Millennium Shield, Magical Ghost, Hoshiningen, Takuhee, Morphing Jar
+and Invader of the Throne), on the first guardian star's image for nine of
+them and the second's for four (records 166, 275, 419 and 540).
 
 **The model modules' oracle** (`tools/pc/model_oracle.py`): before native C
 replaces any variant module, every MODEL.MRG record's 3D battle run two
@@ -727,7 +823,17 @@ the attacker wins) is an error, not a match: two battles that never started
 would agree on everything. Slot B's images are asked for only from battles
 that run it. The report gives per record
 identical or the first differing frame counted from the battle's start, the
-modules that ran (identifier and slot) and those that cannot run. Coverage:
+modules that ran (identifier and slot) and those that cannot run. **What ran
+each module is checked, not assumed:** the trace names the backend of every
+call (`native`, `interpreter`, `stand-in`), and a default-mode side must have
+run native C in exactly the slots whose disc image is a native row's code of
+`config/pc/model_gate.csv` (its first `span` bytes by SHA-256), and the
+interpreter in the others; a reference in `interpreter` mode that ran native C
+is as much an error as a gated shape that ran interpreted, so a gate that
+silently stopped matching cannot pass as "identical". The summary counts the
+battle slots by backend (`backends ...: subject interpreter 65, native 65`),
+and `--records gated` selects the records that have a native image
+(`tools/pc/test_model_gate.py` holds the check's cases). Coverage:
 the script steps a VBlank at a time while the two models load and peeks
 each slot's 0x5000 bytes once its transfer has landed (the slot's load step,
 `field_E14`, past 0) and before step 9, the first that can call the module;
@@ -751,9 +857,13 @@ about 7 s alone; 1.2 s a battle and side with eleven games at once). It catches 
 it is: a build whose default skipped the 200th update of module 418 in slot
 A (that call at frame +836 of record 34's battle) was reported "first
 differing frame +838" for that battle only, and its pictures differ from
-+839 on (the stand-in: +639, its first update at +637). The 418 experiment
-(that shape linked as native C, gated by hash) against the interpreter: the
-13 records with it in slot A identical. **Battles are only comparable with
++839 on (the stand-in: +639, its first update at +637). With shape 418
+linked as native C (the gate above): all 621 records, both alternatives, tie,
+the default against `interpreter`: 1,242 of 1,242 identical in 41 min with
+`--jobs 11`, 1,181 of 1,181 images covered in each slot, native C in the 26
+battle slots that hold shape 418's code and the interpreter in the other
+2,458 (the 13 records, all three outcomes, 78 battles: 78 identical, native in
+65 slots, on the 32-bit and the 64-bit Windows game). **Battles are only comparable with
 the same history:** the interpreter's stack (`0x9FF00000`, mips.c) is not in
 save states, and a module that reads a stack word it never wrote sees what
 the battle before left there. With `--reverse-reference` (the reference

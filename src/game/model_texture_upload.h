@@ -10,6 +10,9 @@
  * biasing both by the side. */
 u32 ModelTexture_PackPageClut(int side, int mode, GsIMAGE *params);
 
+/* The same through a copy of the image header (func_80059A50.c). */
+u32 func_80059A50(s32 a0, s32 a1, GsIMAGE *src);
+
 /* Reads a TIM into the caller's GsIMAGE, uploads its pixels and CLUT, and
  * returns the packed texture-page word. */
 s32 ModelTexture_LoadTim(GsIMAGE *data, char *path, s32 mode, s32 arg3, s32 x,
