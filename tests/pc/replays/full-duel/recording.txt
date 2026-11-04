@@ -1,9 +1,9 @@
 yfm-recording 1
-build 1e157761
+build 81b78a7b
 start boot
-F build: 1e157761 (commit v0.2.0-68-g3dcaa9a45e-dirty)
+F build: 81b78a7b (commit v0.3.1-preview.1-171-g1ae1780e83)
 F os: Windows 10.0 build 26300, 64-bit
-F settings: master_volume=100 music_volume=100 sfx_volume=100 stream_volume=100 scale=4 fullscreen=0 borderless=0 scaling=0 aspect=0 filter=0 vsync=0 speed=100 fps=0 show_menu_fullscreen=0 pause_on_focus_loss=0 mute_on_focus_loss=0 hide_cursor=1 show_hud=0 menu_scale=0 window_x=-1 window_y=-1 audio_interpolation=0 internal_scale=1 deck_slots=1 brightness=100 contrast=100 saturation=100 gamma=100 crt=0 reduce_flashes=0 xbr=0 hd_text=0 fusion_helper=0 msaa=0 opponent_name=0 pgxp=0 card_drops=1 free_duel_progress=0 check_for_updates=1 update_prereleases=0 rank_meter=0 library_all_cards=0 cheat_life_points=8000 cheat_show_hand=0 cheat_free_spending=0 card_passwords=0 jp_buttons=0 card_browse=0 language=0 confirm_quit=1
+F settings: master_volume=100 music_volume=100 sfx_volume=100 stream_volume=100 scale=4 fullscreen=0 borderless=0 scaling=0 aspect=0 filter=0 vsync=0 speed=100 fps=0 show_menu_fullscreen=0 pause_on_focus_loss=0 mute_on_focus_loss=0 hide_cursor=1 show_hud=0 menu_scale=0 window_x=-1 window_y=-1 audio_interpolation=0 internal_scale=1 deck_slots=1 brightness=100 contrast=100 saturation=100 gamma=100 crt=0 reduce_flashes=0 xbr=0 hd_text=0 fusion_helper=0 msaa=0 opponent_name=0 pgxp=0 card_drops=1 free_duel_progress=0 check_for_updates=1 update_prereleases=0 rank_meter=0 library_all_cards=0 cheat_life_points=8000 cheat_show_hand=0 cheat_free_spending=0 card_passwords=0 jp_buttons=0 card_browse=0 language=0 confirm_quit=1 touch_controls=0 offer_crash_reports=1 screen_rotation=0 hd_fast=2 touch_opacity=0 touch_style=0
 F mods: none
 F clock: virtual
 I 1 0000 0000 0000 0000 0
@@ -372,17 +372,17 @@ H 1349 1349 00ee887cab75ebc7
 H 1353 1353 ce71c6a2092c8a96
 H 1357 1357 761e5359bb65b6c8
 H 1361 1361 1af9705e83488765
-H 1365 1365 0aa8ec5659e98287
-H 1369 1369 a7a5389d9abf7da6
-H 1373 1373 2a2b32fe3926bb64
-H 1377 1377 95f4596f65249364
+H 1365 1365 9110f5b65f2fcad3
+H 1369 1369 41e43ad07986456a
+H 1373 1373 55caeecbba63eaa4
+H 1377 1377 1c0e22ae0e7242a4
 I 1381 4000 4000 0000 0000 0
-H 1381 1381 f1e63d5da8e1a764
-H 1385 1385 f1e63d5da8e1a764
+H 1381 1381 a32421e58e959ea4
+H 1385 1385 a32421e58e959ea4
 I 1387 0000 0000 0000 0000 0
-H 1389 1389 f1e63d5da8e1a764
-H 1393 1393 f1e63d5da8e1a764
-H 1397 1397 f1e63d5da8e1a764
+H 1389 1389 a32421e58e959ea4
+H 1393 1393 a32421e58e959ea4
+H 1397 1397 a32421e58e959ea4
 H 1401 1401 96bf57eeafba49ea
 H 1405 1405 4ca03ee6f424d471
 H 1409 1409 247e58ae58e5d9a3
