@@ -1611,7 +1611,17 @@ static void host_prefetch_image(const MemoriesModHost *host, const char *relativ
     job->state = AHEAD_WAITING;
     if (!ahead_started) {
         pthread_t thread;
+#ifndef _WIN32
+        /* Blocked from its first instruction: the game's clock signal may
+         * come to the whole process (platform_common.c's setitimer). */
+        sigset_t all, previous;
+        sigfillset(&all);
+        pthread_sigmask(SIG_BLOCK, &all, &previous);
+#endif
         ahead_started = pthread_create(&thread, NULL, ahead_thread, NULL) == 0;
+#ifndef _WIN32
+        pthread_sigmask(SIG_SETMASK, &previous, NULL);
+#endif
         if (ahead_started) pthread_detach(thread);
         else ahead_started = -1;
     }
