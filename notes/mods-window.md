@@ -285,6 +285,8 @@ file that is no mod gets the usual refusal ("That file is not a .zip.",
   stops: Windows and the 32-bit builds; Android's arm64 game takes 4 GB),
   a file that is not a `.zip`, or more mods than the game takes (256, in
   one `.zip` or with those installed). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
+  The `id`, the name and whether it carries code come from its `mod.json`
+  whatever its size (a card mod's is tens of MB), as the loader reads them.
   Unpacking goes into a hidden `mods/.import-XXXXXX` folder (the scan skips
   names starting with a dot), checking each file's size and CRC; only then
   is each mod renamed into place, and any failure puts back what was moved

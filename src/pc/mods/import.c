@@ -25,7 +25,6 @@
 
 #define ZIP_MAX MODS_IMPORT_ZIP_BYTES
 #define DIRECTORY_MAX (32u << 20)       /* its central directory */
-#define MANIFEST_MAX (4u << 20)         /* a mod.json read to name the mod */
 #define NAME_MAX_ 512
 #define CHUNK 65536
 #define PARTS_MAX 32                    /* folders deep, in a name */
@@ -337,14 +336,20 @@ static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifes
     const char *id = NULL, *name, *slash;
     char folder[NAME_MAX_], error[128];
     size_t plen = strlen(mod->prefix);
-    if (manifest->size <= MANIFEST_MAX && (text = malloc(manifest->size + 1))) {
-        if (!unpack(import, manifest, NULL, text, why, why_size)) {
-            free(text);
-            return 0;
-        }
-        document = Json_Parse((const char *)text, error, sizeof(error));
-        root = Json_Root(document);
+    /* Whatever its size, as the loader reads it (Json_ParseFile has no limit
+     * either): a card mod's mod.json is tens of MB, and one left unread
+     * names its mod from the folder, not as the loader will. One that cannot
+     * be held in memory is one the loader could not read: refused. */
+    if (!(text = malloc((size_t)manifest->size + 1))) {
+        snprintf(why, why_size, "Out of memory (the mod.json in the .zip is %lu bytes).", (unsigned long)manifest->size);
+        return 0;
     }
+    if (!unpack(import, manifest, NULL, text, why, why_size)) {
+        free(text);
+        return 0;
+    }
+    document = Json_Parse((const char *)text, error, sizeof(error));
+    root = Json_Root(document);
     free(text);
     /* The folder it is in, from the .zip ("" for a mod at its root). */
     folder[0] = 0;
