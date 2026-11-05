@@ -25,6 +25,7 @@
 
 #define ZIP_MAX MODS_IMPORT_ZIP_BYTES
 #define DIRECTORY_MAX (32u << 20)       /* its central directory */
+#define MANIFEST_MAX (128u << 20)       /* a mod.json read to name the mod */
 #define NAME_MAX_ 512
 #define CHUNK 65536
 #define PARTS_MAX 32                    /* folders deep, in a name */
@@ -330,18 +331,21 @@ static int folder_valid(const char *s)
  * or not the .zip has an object for this game. */
 static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifest, char *why, size_t why_size)
 {
-    unsigned char *text = NULL;
-    JsonDocument *document = NULL;
-    const JsonValue *root = NULL;
-    const char *id = NULL, *name, *slash;
+    unsigned char *text;
+    JsonDocument *document;
+    const JsonValue *root;
+    const char *id, *name, *slash;
     char folder[NAME_MAX_], error[128];
     size_t plen = strlen(mod->prefix);
-    /* Whatever its size, as the loader reads it (Json_ParseFile has no limit
-     * either): a card mod's mod.json is tens of MB, and one left unread
-     * names its mod from the folder, not as the loader will. One that cannot
-     * be held in memory is one the loader could not read: refused. */
+    /* The loader reads the whole file, so a mod.json this game would not
+     * read is refused here, not named from its folder. */
+    if (manifest->size > MANIFEST_MAX) {
+        snprintf(why, why_size, "The mod.json in the .zip is too large (more than %u MB). Nothing was imported.",
+                 MANIFEST_MAX >> 20);
+        return 0;
+    }
     if (!(text = malloc((size_t)manifest->size + 1))) {
-        snprintf(why, why_size, "Out of memory (the mod.json in the .zip is %lu bytes).", (unsigned long)manifest->size);
+        snprintf(why, why_size, "The mod.json in the .zip is too large to read. Nothing was imported.");
         return 0;
     }
     if (!unpack(import, manifest, NULL, text, why, why_size)) {
@@ -349,8 +353,12 @@ static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifes
         return 0;
     }
     document = Json_Parse((const char *)text, error, sizeof(error));
-    root = Json_Root(document);
     free(text);
+    if (!document && !error[0]) { /* no reason given: its copy or its nodes did not fit */
+        snprintf(why, why_size, "The mod.json in the .zip is too large to read. Nothing was imported.");
+        return 0;
+    }
+    root = Json_Root(document);
     /* The folder it is in, from the .zip ("" for a mod at its root). */
     folder[0] = 0;
     if (plen) {
@@ -528,6 +536,10 @@ ModsImport *Mods_ImportOpen(const char *zip, char *why, size_t why_size)
         }
         if (e->offset >= start) {
             snprintf(why, why_size, "The .zip is damaged.");
+            goto fail;
+        }
+        if (e->method == 8 && e->size > (unsigned long long)e->packed * 1032u + 64) { /* deflate's best ratio */
+            snprintf(why, why_size, "The .zip is damaged (%s).", e->name);
             goto fail;
         }
         import->total += e->size;

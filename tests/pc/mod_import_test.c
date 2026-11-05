@@ -311,6 +311,27 @@ int main(void)
         free(big);
         free(code);
     }
+    /* A mod.json that says it unpacks to more than the importer reads (128 MB)
+     * is refused, before a byte of it is allocated: the loader would read the
+     * whole file at every launch. A deflated one that says more than deflate
+     * can make of its packed bytes is a damaged .zip. */
+    reset();
+    {
+        ZipItem stored[] = {{"mod.json", "{\"id\": \"huge\"}", 0, 0, 0, 0, 0, 200L << 20}};
+        ZipItem packed[] = {{"mod.json", "{\"id\": \"huge\"}", 1, 0, 0, 0, 0, 200L << 20}};
+        ModsImport *imp;
+        write_zip(zip, stored, 1);
+        imp = Mods_ImportOpen(zip, why, sizeof(why));
+        CHECK(!imp && strstr(why, "mod.json in the .zip is too large (more than 128 MB)") && strstr(why, "Nothing was imported"));
+        if (imp)
+            Mods_ImportClose(imp);
+        write_zip(zip, packed, 1);
+        imp = Mods_ImportOpen(zip, why, sizeof(why));
+        CHECK(!imp && strstr(why, "damaged"));
+        if (imp)
+            Mods_ImportClose(imp);
+        CHECK(!listing("mods")[0]);
+    }
     /* Two names that differ only beyond ASCII: one file where the storage
      * folds them (NTFS, APFS, Android's shared storage; probed here), so the
      * import is refused there with nothing written; two files elsewhere. */
