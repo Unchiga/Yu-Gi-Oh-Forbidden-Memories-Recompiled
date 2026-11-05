@@ -398,7 +398,8 @@ struct MemoriesModHost {
      * take_wheel(1) makes the wheel the mod's: notches are kept for it and
      * no longer press anything, until take_wheel(0), the mod being turned
      * off, or another mod taking it. Notches turned while a menu, a notice or a
-     * port window has the mouse do not count. */
+     * port window has the mouse do not count; under capture_mouse(1) the
+     * wheel the mod has taken still counts. */
     int (*wheel)(const MemoriesModHost *);
     void (*take_wheel)(const MemoriesModHost *, int on);
 };

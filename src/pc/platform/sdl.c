@@ -2269,7 +2269,10 @@ static void pump(void)
                 mouse_held = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? mouse_held | bit : mouse_held & ~bit;
                 continue;
             }
-            if (event.type == SDL_EVENT_MOUSE_WHEEL) continue;
+            if (event.type == SDL_EVENT_MOUSE_WHEEL) {
+                if (wheel_taken) wheel_notches += event.wheel.integer_y; /* a captor may hold the wheel too */
+                continue;
+            }
         }
         if (Panel_Shown() && dispatch_panel(&event, &menu_event)) continue;
         /* A tap at the top of the screen shows the hidden bar under it, so
@@ -2406,8 +2409,11 @@ static void pump(void)
             }
             break;
         case SDL_EVENT_MOUSE_WHEEL:
-            if (menu_event.wheel && wheel_taken) {
-                wheel_notches += menu_event.wheel > 0 ? 1 : -1; /* the mod's, not the D-pad's */
+            if (wheel_taken) {
+                /* The mod's, not the D-pad's: whole notches, as SDL adds up a
+                 * high-resolution wheel's or a touchpad's fractions (one
+                 * event per fraction would each be a notch). */
+                wheel_notches += event.wheel.integer_y;
             } else if (menu_event.wheel) {
                 wheel_bits = menu_event.wheel > 0 ? 0x0010 : 0x0040; /* one notch: a short tap */
                 wheel_frames = 3;
@@ -2912,8 +2918,10 @@ static int wheel_read(void)
 
 static void wheel_take(int on)
 {
+    if (on == wheel_taken) return; /* a take_wheel(1) every frame keeps its notches */
     wheel_taken = on;
-    if (!on) wheel_notches = 0;
+    wheel_notches = 0;
+    Control_PointerWheel(); /* and the control channel's from before */
 }
 
 /* 0 nothing, 1 the pointer and Escape, 2 Escape only (host->capture_mouse). */
