@@ -54,6 +54,13 @@ void Mods_SetAudioClips(int (*add)(int mod, const char *id, const int16_t *sampl
  * Escape only. Without these the host answers no motion and captures
  * nothing. */
 void Mods_SetMouse(void (*motion)(int *dx, int *dy, unsigned *buttons, int escape), void (*capture)(int mode));
+/* The pointer and the wheel for host->pointer, host->wheel and
+ * host->take_wheel (API 24): the pointer's place in the game's picture and
+ * the buttons held, 1 when it is a mouse's over the picture and nothing of
+ * the port's has it; the wheel's notches since the last call; and whether a
+ * notch is also a D-pad press (0 when a mod has taken the wheel). Without
+ * these the host answers no pointer and no notches. */
+void Mods_SetPointer(int (*pointer)(int *x, int *y, unsigned *buttons), int (*wheel)(void), void (*take)(int on));
 /* The MEMORIES_HUD_* parts the applied mods hide (host->hide_hud), or 0. */
 unsigned Mods_HiddenHud(void);
 /* Where the window shows the game's picture, for host->overlay_picture:

@@ -69,6 +69,25 @@ static int number(const char *text, int hex, uint32_t *out)
     return 0;
 }
 
+/* A signed decimal within +-100000 (a picture coordinate). */
+static int signed_number(const char *text, int *out)
+{
+    int negative = 0, value = 0;
+    if (!text) return -1;
+    if (*text == '-') {
+        negative = 1;
+        text++;
+    }
+    if (!*text) return -1;
+    for (; *text; text++) {
+        if (*text < '0' || *text > '9') return -1;
+        value = value * 10 + (*text - '0');
+        if (value > 100000) return -1;
+    }
+    *out = negative ? -value : value;
+    return 0;
+}
+
 /* peek's and poke's address: hex, or @NAME[+OFF], a game variable by its name
  * (OFF hex); the game finds where NAME is in this build. */
 static int address_argument(char *text, ControlCommand *command)
@@ -110,6 +129,25 @@ int ControlProtocol_Parse(char *line, ControlCommand *command, uint8_t *data, ch
         if (number(word(&cursor), 1, &value) || value > 0xFFFFu || !at_end(&cursor))
             return fail(error, error_size, "usage: pad P BITS (BITS is hex, up to ffff)");
         command->bits = (uint16_t)value;
+    } else if (!strcmp(name, "pointer")) {
+        const char *x = word(&cursor);
+        command->kind = CONTROL_POINTER;
+        if (x && !strcmp(x, "off")) {
+            command->pointer_off = 1;
+            if (!at_end(&cursor)) return fail(error, error_size, "usage: pointer off");
+            return 0;
+        }
+        if (signed_number(x, &command->pointer_x) || signed_number(word(&cursor), &command->pointer_y))
+            return fail(error, error_size, "usage: pointer X Y [BTN] | pointer off (X and Y are decimal)");
+        argument = word(&cursor);
+        if (argument && (number(argument, 1, &value) || value > 7u))
+            return fail(error, error_size, "usage: pointer X Y [BTN] (BTN is hex, up to 7)");
+        command->pointer_buttons = argument ? value : 0;
+        if (!at_end(&cursor)) return fail(error, error_size, "usage: pointer X Y [BTN]");
+    } else if (!strcmp(name, "wheel")) {
+        command->kind = CONTROL_WHEEL;
+        if (signed_number(word(&cursor), &command->pointer_x) || !at_end(&cursor))
+            return fail(error, error_size, "usage: wheel N (decimal, may be negative)");
     } else if (!strcmp(name, "shot") || !strcmp(name, "save") || !strcmp(name, "load")) {
         command->kind = name[0] == 's' ? (name[1] == 'h' ? CONTROL_SHOT : CONTROL_SAVE) : CONTROL_LOAD;
         command->path = rest(&cursor);

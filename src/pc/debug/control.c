@@ -31,6 +31,8 @@ static int owed;          /* the "ok" of a `step` or a `load`, sent at the next 
 static int send_failed;
 static volatile uint16_t pads[2];
 static volatile int pad2_set;
+static volatile int pointer_set, pointer_x, pointer_y;   /* `pointer`: picture coordinates */
+static volatile unsigned pointer_buttons;
 static ControlLines lines;
 static char line[CONTROL_LINE_MAX + 1];
 static uint8_t data[CONTROL_DATA_MAX];
@@ -45,6 +47,21 @@ static int send_idle(void)
 
 uint16_t Control_Pad(int port) { return pads[port & 1]; }
 int Control_PadConnected(int port) { return port == 1 && pad2_set; }
+static volatile int wheel_pending;
+int Control_PointerWheel(void)
+{
+    int notches = wheel_pending;
+    wheel_pending = 0;
+    return notches;
+}
+int Control_Pointer(int *x, int *y, unsigned *buttons)
+{
+    if (!pointer_set) return 0;
+    *x = pointer_x;
+    *y = pointer_y;
+    *buttons = pointer_buttons;
+    return 1;
+}
 
 /* One reply line, in one piece (`text` is `reply` or a short literal). */
 static void send_line(const char *text)
@@ -86,6 +103,7 @@ static void detach(const char *why)
     send_failed = pad2_set = 0;
     lines.used = lines.dropping = 0;
     pads[0] = pads[1] = 0; /* nothing held by a client that has gone */
+    pointer_set = 0;       /* nor a pointer: the real mouse is the mouse again */
     Platform_ControlAttach(0);
     fprintf(stderr, "memories-pc: control: %s at frame %u\n", why, Memories_PresentedFrames());
 }
@@ -330,6 +348,17 @@ static int handle(char *text)
     case CONTROL_PAD:
         pads[command.pad] = command.bits;
         if (command.pad == 1) pad2_set = 1;
+        send_line("ok");
+        return 0;
+    case CONTROL_POINTER:
+        pointer_x = command.pointer_x;
+        pointer_y = command.pointer_y;
+        pointer_buttons = command.pointer_buttons;
+        pointer_set = !command.pointer_off;
+        send_line("ok");
+        return 0;
+    case CONTROL_WHEEL:
+        wheel_pending += command.pointer_x;
         send_line("ok");
         return 0;
     case CONTROL_SHOT:

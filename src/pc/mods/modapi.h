@@ -74,6 +74,8 @@
  *      the overlay;
  *      clip: the overlay's drawing kept inside a rectangle;
  *      picture_only_frame: a frame the CPU does not raster as well
+ *  24  pointer, wheel, take_wheel: where the mouse is over the game's
+ *      picture and the wheel, for a mod that points with it
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 
@@ -378,6 +380,28 @@ struct MemoriesModHost {
      * or in a later frame. Called from the frame callback, every frame it is
      * for; it lapses when the frame is shown. */
     void (*picture_only_frame)(const MemoriesModHost *);
+
+    /* --- API 24 ---
+     * The mouse as a pointer, for a mod that points with it instead of
+     * steering (mouse's motion is for that): returns 1 with where it is in the
+     * game's picture coordinates (320x240; a widened picture reaches x -53 to
+     * 372) and the buttons it holds, bit 0 the left, 1 the right, 2 the middle,
+     * whatever else they do in the game; either pointer may be NULL. Returns
+     * 0 when the pointer is not a mouse's (a touch), is outside the picture
+     * or on the menu bar, the window has no input focus, a menu, a notice or
+     * one of the port's windows has the pointer, or the mod has capture_mouse(1).
+     * Only while the mod is applied. */
+    int (*pointer)(const MemoriesModHost *, int *x, int *y, unsigned *buttons);
+    /* The mouse wheel: the notches turned since the last call, positive away
+     * from the player and negative toward, cleared by the call. By default
+     * a notch is a D-pad Up or Down press in the game and none is kept here;
+     * take_wheel(1) makes the wheel the mod's: notches are kept for it and
+     * no longer press anything, until take_wheel(0), the mod being turned
+     * off, or another mod taking it. Notches turned while a menu, a notice or a
+     * port window has the mouse do not count; under capture_mouse(1) the
+     * wheel the mod has taken still counts. */
+    int (*wheel)(const MemoriesModHost *);
+    void (*take_wheel)(const MemoriesModHost *, int on);
 };
 
 /* The symbol a mod's object defines, and its type. */

@@ -33,6 +33,7 @@
 #include "pc/debug/log.h"
 #include "pc/debug/monitor.h"
 #include "pc/debug/crash_test.h"
+#include "pc/debug/control.h"
 #include "pc/debug/hud.h"
 #include "pc/guest/state.h"
 #include "save_icon.h"
@@ -152,6 +153,11 @@ static unsigned mouse_held;
  * the game's window, no menu, notice or panel up, is its, kept here until
  * its next host->mouse (claim_exit). */
 static int escape_claimed, escape_pressed;
+/* The wheel for a mod that points with the mouse (mod API 24, Mods_SetPointer):
+ * the notches since it was last read, kept while a mod has taken the wheel,
+ * which then makes no D-pad press. */
+static volatile int wheel_notches;
+static volatile int wheel_taken;
 /* The pointer's place is a mouse's (it hovers): the mouse events SDL makes
  * of a touch move it only while the finger is down, and leave it where the
  * finger lifted, so they never reveal the bar by hovering. */
@@ -452,6 +458,8 @@ static void close_controls(void)
     controls_renderer = NULL;
     controls_texture = NULL;
     mouse_bits = wheel_now = 0;
+    mouse_held = 0; /* a release inside the window is not seen */
+    wheel_notches = 0;
     wheel_frames = 0;
     ControlsRuntime_Block(0);
     restore_game_context();
@@ -576,6 +584,8 @@ static void open_panel(int kind)
         if (Platform_ClockRate()) Platform_SetClockRate(0);
     }
     mouse_bits = wheel_now = 0;
+    mouse_held = 0; /* a release inside the window is not seen */
+    wheel_notches = 0;
     wheel_frames = 0;
     menu_dirty = 1;
     LOG(LOG_WINDOW, "panel %s shown in the window, game paused (was %d%%)", kind == PANEL_MODS ? "Mods" : "Controls",
@@ -595,6 +605,8 @@ static void panel_after(int tapped)
         if (panel_clock_rate && Platform_ClockRate() == 0 && !background_paused) Platform_SetClockRate(panel_clock_rate);
     }
     mouse_bits = wheel_now = 0;
+    mouse_held = 0; /* a release inside the window is not seen */
+    wheel_notches = 0;
     wheel_frames = 0;
     ControlsRuntime_ResetKeys();
     menu_dirty = 1;
@@ -1368,15 +1380,21 @@ int HERE(Platform_StartAudio)(void (*mix)(int16_t *, size_t))
 
 /* --- window ----------------------------------------------------------- */
 
+/* The frame's width in game pixels (its height is logical_h): what the
+ * window is laid out for, and what host->pointer maps back from. Widescreen
+ * pictures arrive 4/3 as wide as the 4:3 ones (libgpu.c), so both keep the
+ * same pixel shape, whatever the internal resolution. */
+static int frame_width(void)
+{
+    const int aspect = Settings_Get(SET_ASPECT);
+    return aspect == 1 ? logical_w : aspect == 2 ? logical_h * 16 / 9 : logical_h * 4 / 3;
+}
+
 static void relayout(void)
 {
     static int logged_window_w, logged_window_h, logged_output_w, logged_output_h;
     int output_w, output_h, window_w, window_h, menu;
-    int aspect = Settings_Get(SET_ASPECT);
-    /* Widescreen pictures arrive 4/3 as wide as the 4:3 ones (libgpu.c), so
-     * both keep the same pixel shape; the frame's size in game pixels is
-     * what the window is laid out for, whatever the internal resolution. */
-    int pw = aspect == 1 ? logical_w : aspect == 2 ? logical_h * 16 / 9 : logical_h * 4 / 3;
+    int pw = frame_width();
     int ph = logical_h, area_h, mode = Settings_Get(SET_SCALING);
     float factor;
     if ((!renderer && !use_gl) || picture_w <= 0 || picture_h <= 0 ||
@@ -2251,7 +2269,10 @@ static void pump(void)
                 mouse_held = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? mouse_held | bit : mouse_held & ~bit;
                 continue;
             }
-            if (event.type == SDL_EVENT_MOUSE_WHEEL) continue;
+            if (event.type == SDL_EVENT_MOUSE_WHEEL) {
+                if (wheel_taken) wheel_notches += event.wheel.integer_y; /* a captor may hold the wheel too */
+                continue;
+            }
         }
         if (Panel_Shown() && dispatch_panel(&event, &menu_event)) continue;
         /* A tap at the top of the screen shows the hidden bar under it, so
@@ -2388,7 +2409,12 @@ static void pump(void)
             }
             break;
         case SDL_EVENT_MOUSE_WHEEL:
-            if (menu_event.wheel) {
+            if (wheel_taken) {
+                /* The mod's, not the D-pad's: whole notches, as SDL adds up a
+                 * high-resolution wheel's or a touchpad's fractions (one
+                 * event per fraction would each be a notch). */
+                wheel_notches += event.wheel.integer_y;
+            } else if (menu_event.wheel) {
                 wheel_bits = menu_event.wheel > 0 ? 0x0010 : 0x0040; /* one notch: a short tap */
                 wheel_frames = 3;
             }
@@ -2844,6 +2870,60 @@ static void mouse_motion(int *dx, int *dy, unsigned *buttons, int escape)
     }
 }
 
+/* host->pointer (API 24): the mouse's place in the game's picture
+ * coordinates, 0..319 across and 0..239 down for the 4:3 picture, with the
+ * wider frame's extra width on both sides in widescreen (x from -53 to 372),
+ * the way the port's own overlays map them (rank_art.c); and the buttons it
+ * holds. The control channel's `pointer` stands in for the mouse in tests. */
+static int pointer_read(int *x, int *y, unsigned *buttons)
+{
+    int gx, gy, pw, ph;
+    unsigned held;
+    float u, v;
+
+    if (Control_Pointer(&gx, &gy, &held)) {
+        *x = gx;
+        *y = gy;
+        *buttons = held;
+        return 1;
+    }
+    if (!window || !(SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) || !pointer_inside || !pointer_is_mouse)
+        return 0;
+    if (Menu_IsOpen() || Menu_NoticeShown() || Panel_Shown() || pointer_y < Menu_Height()) return 0;
+    if (pointer_x < layout.dst.x || pointer_x >= layout.dst.x + layout.dst.w || pointer_y < layout.dst.y ||
+        pointer_y >= layout.dst.y + layout.dst.h)
+        return 0;
+    pw = frame_width();
+    ph = logical_h;
+    if (pw <= 0 || ph <= 0 || layout.dst.w <= 0 || layout.dst.h <= 0) return 0;
+    u = ((float)pointer_x - layout.dst.x) / layout.dst.w * (float)pw;
+    v = ((float)pointer_y - layout.dst.y) / layout.dst.h * (float)ph;
+    /* To 240 rows, and the 320 columns of the 4:3 picture centred in the frame. */
+    gx = (int)SDL_floorf((u - ((float)pw - 320.0f * (float)ph / 240.0f) * 0.5f) * 240.0f / (float)ph);
+    gy = (int)SDL_floorf(v * 240.0f / (float)ph);
+    *x = gx;
+    *y = gy;
+    *buttons = mouse_held;
+    return 1;
+}
+
+/* host->wheel and host->take_wheel: the notches (and the control channel's
+ * `wheel`) since the last read. */
+static int wheel_read(void)
+{
+    int notches = Control_PointerWheel() + wheel_notches;
+    wheel_notches = 0;
+    return notches;
+}
+
+static void wheel_take(int on)
+{
+    if (on == wheel_taken) return; /* a take_wheel(1) every frame keeps its notches */
+    wheel_taken = on;
+    wheel_notches = 0;
+    Control_PointerWheel(); /* and the control channel's from before */
+}
+
 /* 0 nothing, 1 the pointer and Escape, 2 Escape only (host->capture_mouse). */
 static void mouse_capture(int mode)
 {
@@ -2879,6 +2959,8 @@ int Platform_Open(const char *title)
     ModsWindow_SetFolderAccess(Platform_ModsFolderAccess, Platform_AskModsFolderAccess, Platform_AskedModsFolderAccess,
                                Platform_ModsFolderCanAsk, Platform_ModsFolderRight);
 #endif
+    /* Before the headless return: the control channel's pointer and wheel (tests) reach a mod without a window. */
+    Mods_SetPointer(pointer_read, wheel_read, wheel_take);
     if (getenv("MEMORIES_HEADLESS")) {
         return 0;
     }

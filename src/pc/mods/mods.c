@@ -577,6 +577,55 @@ void Mods_SetMouse(void (*motion)(int *dx, int *dy, unsigned *buttons, int escap
     mouse_motion = motion;
     mouse_capture = capture;
 }
+/* The pointer and the wheel (API 24): the window's own (Mods_SetPointer), and
+ * the mod that took the wheel, which is given back when it is turned off. */
+static int (*pointer_read)(int *, int *, unsigned *);
+static int (*wheel_read)(void);
+static void (*wheel_take)(int);
+static int wheel_owner = -1;
+static int host_pointer(const MemoriesModHost *host, int *x, int *y, unsigned *buttons)
+{
+    Mod *mod = owner(host);
+    int px = 0, py = 0;
+    unsigned held = 0;
+    int inside = mod && mod->active && (int)(mod - mods) != mouse_captor && pointer_read && pointer_read(&px, &py, &held);
+    if (x) *x = inside ? px : 0;
+    if (y) *y = inside ? py : 0;
+    if (buttons) *buttons = inside ? held : 0;
+    return inside;
+}
+static int host_wheel(const MemoriesModHost *host)
+{
+    Mod *mod = owner(host);
+    return mod && mod->active && (int)(mod - mods) == wheel_owner && wheel_read ? wheel_read() : 0;
+}
+static void host_take_wheel(const MemoriesModHost *host, int on)
+{
+    Mod *mod = owner(host);
+    int index = mod ? (int)(mod - mods) : -1;
+    if (!mod || (on && !mod->active)) return;
+    if (on) {
+        wheel_owner = index;
+    } else if (wheel_owner == index) {
+        wheel_owner = -1;
+    } else {
+        return; /* another mod has it */
+    }
+    if (wheel_take) wheel_take(on != 0);
+}
+static void release_wheel(int index)
+{
+    if (wheel_owner == index) {
+        wheel_owner = -1;
+        if (wheel_take) wheel_take(0);
+    }
+}
+void Mods_SetPointer(int (*pointer)(int *x, int *y, unsigned *buttons), int (*wheel)(void), void (*take)(int on))
+{
+    pointer_read = pointer;
+    wheel_read = wheel;
+    wheel_take = take;
+}
 /* The parts of the port's HUD the applied mods hide (host->hide_hud). */
 static void host_hide_hud(const MemoriesModHost *host, unsigned mask)
 {
@@ -2273,6 +2322,9 @@ static void fill_host(Mod *mod)
     mod->host.prefetch_image = host_prefetch_image;
     mod->host.clip = host_clip;
     mod->host.picture_only_frame = host_picture_only_frame;
+    mod->host.pointer = host_pointer;
+    mod->host.wheel = host_wheel;
+    mod->host.take_wheel = host_take_wheel;
     mod->host.api = MEMORIES_MOD_API;
     mod->host.id = mod->id;
     mod->host.directory = mod->directory;
@@ -4274,6 +4326,7 @@ static void activate_once(int index, int on)
         mod->active = 0;
         mod->hud_hidden = 0;
         release_mouse(index);
+        release_wheel(index);
         ahead_drop(mod);
         if (mod->hooks.applied) mod->hooks.applied(0);
     }
