@@ -8,6 +8,7 @@
 #ifdef MEMORIES_PC
 #include "ai_opponent_data.h"   /* gDuel_bOpponentID */
 #include "pc/free_duel/duelists.h"
+#include "pc/cards/monster_effects.h"
 #endif
 #include "ai_script_read_byte.h"
 void AiScript_FindBestAttack(void) {
@@ -52,6 +53,30 @@ void AiScript_FindBestAttack(void) {
             if ((f & DUEL_CARD_FLAG_USED_THIS_TURN) != 0) {
                 continue;
             }
+#ifdef MEMORIES_PC
+            {
+                unsigned attacker_effects = MonsterEffects_CombatFlags(r->card_id);
+                unsigned defender_effects = MonsterEffects_CombatFlags(e->card_id);
+                unsigned combined = attacker_effects | defender_effects;
+                int forced_kill = (combined & MONSTER_COMBAT_DESTROY_BOTH) ||
+                    ((combined & MONSTER_COMBAT_DESTROY_NON_IMMUNE) &&
+                     !(defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE));
+                /* Piercing and either combatant's forced-destruction rule
+                 * both make a defender a meaningful attack target. */
+                if ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) != 0 &&
+                    !(attacker_effects & MONSTER_COMBAT_PIERCING) && !forced_kill)
+                    continue;
+                if (want != 0 && (f & DUEL_CARD_FLAG_FACE_DOWN) != 0) continue;
+                v = r->attack - ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) ? e->defense : e->attack);
+                v += Duel_CalcGuardianStarMatchup(r->guardian_star, e->guardian_star);
+                /* Immunity prevents removal, not LP damage from winning an
+                 * attack-position battle.  destroy_both overrides it. */
+                if ((defender_effects & MONSTER_COMBAT_BATTLE_IMMUNE) &&
+                    !(combined & MONSTER_COMBAT_DESTROY_BOTH) && v <= 0)
+                    continue;
+                if (forced_kill && v <= 0) v = 1;
+            }
+#else
             if ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) != 0) {
                 continue;
             }
@@ -60,8 +85,9 @@ void AiScript_FindBestAttack(void) {
                     continue;
                 }
             }
-            v = r->attack - e->attack;
+            v = r->attack - ((f & DUEL_CARD_FLAG_DEFENSE_POSITION) ? e->defense : e->attack);
             v += Duel_CalcGuardianStarMatchup(r->guardian_star, e->guardian_star);
+#endif
             if (gAiScript_State.attack_best_stat < v) {
                 gAiScript_State.attack_best_stat = v;
                 gAiScript_State.attack_best_slot = i;
