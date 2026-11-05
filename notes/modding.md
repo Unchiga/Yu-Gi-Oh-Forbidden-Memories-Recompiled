@@ -47,9 +47,10 @@ the game never writes to it. Importing a mod or the HD pack, `mod-data/<id>/`,
 the settings and profiles all stay in the user directory, and **Remove** does
 not delete a mod that lives in the chosen folder (delete it there). A mod in
 the chosen folder shows as `folder` where the Mods window shows where a mod
-came from. On Android its code is not run (other apps can write to shared
-storage): the mod's data is used, `Mods_CodeSkipped` is true and the status says
-so; Import mod... puts it where its code runs (`Mods_SetFolderCode`).
+came from. Its code runs, on Android too: every mod in the folder works, code
+mods included, with no import and no prompt. (Shared storage is writable by any
+other app that holds All files access: the same trust the game places in the
+mods folder on a PC.)
 
 A folder that is gone, is a file or cannot be read is left out, with no
 notice at start-up: the reason is in the log (`mods folder: ...`) and
