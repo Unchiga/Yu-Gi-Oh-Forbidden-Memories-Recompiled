@@ -354,7 +354,8 @@ static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifes
     }
     document = Json_Parse((const char *)text, error, sizeof(error));
     free(text);
-    if (!document && !error[0]) { /* no reason given: its copy or its nodes did not fit */
+    /* Its copy did not fit (no reason given) or its nodes did not. */
+    if (!document && (!error[0] || !strcmp(error, "out of memory"))) {
         snprintf(why, why_size, "The mod.json in the .zip is too large to read. Nothing was imported.");
         return 0;
     }
