@@ -1,6 +1,7 @@
 #include "pc/guest/translated_runtime.h"
 #include "pc/guest/translated_libc.h"
 #include <assert.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +24,10 @@ static void expect_abort(int which)
         if (which == 7) GuestRuntime_fwrite(G(0x100), SIZE_MAX, 2, stdout);
         if (which == 8) GuestRuntime_fgets(G(MEMORIES_RAM_SIZE - 1), 8, stdin);
         if (which == 9) GuestRuntime_fclose(G(0x100));
+        if (which == 10) GuestRuntime_fread(G(0x100), SIZE_MAX, 2, stdin);
+        if (which == 11) GuestRuntime_fread(G(MEMORIES_RAM_SIZE - 1), 1, 8, stdin);
+        if (which == 12) GuestRuntime_ftell(G(0x100));
+        if (which == 13) GuestRuntime_bsearch(G(0x5a0), G(0x300), SIZE_MAX, 4, compare);
         if (which == 0) GuestRuntime_strlen((char *)(uintptr_t)0xd0000000u);
         if (which == 1) GuestRuntime_memcpy(G(MEMORIES_RAM_SIZE - 1), "xx", 2);
         if (which == 2) GuestRuntime_sprintf(G(0x200), "%ls", G(0x100));
@@ -75,6 +80,13 @@ int main(void)
     GuestRuntime_qsort(G(0x300), 4, sizeof(int), (int (*)(const void *, const void *))(uintptr_t)0x80010000u);
     int *sorted = (int *)(memory->ram + 0x300);
     assert(sorted[0] == -2 && sorted[1] == 0 && sorted[2] == 4 && sorted[3] == 7);
+    int key = 4, absent = 5;
+    memcpy(memory->ram + 0x5a0, &key, sizeof(key));
+    memcpy(memory->ram + 0x5b0, &absent, sizeof(absent));
+    typedef int (*Compare)(const void *, const void *);
+    assert(GuestRuntime_bsearch(G(0x5a0), G(0x300), 4, sizeof(int), (Compare)(uintptr_t)0x80010000u) == G(0x308));
+    assert(GuestRuntime_bsearch(G(0x5b0), G(0x300), 4, sizeof(int), (Compare)(uintptr_t)0x80010000u) == NULL);
+    assert(GuestRuntime_bsearch(G(0x5a0), G(0x300), 0, sizeof(int), (Compare)(uintptr_t)0x80010000u) == NULL);
     assert(GuestRuntime___memcpy_chk(G(0x400), "fortify", 8, 8) == G(0x400));
     assert(GuestRuntime___strcat_chk(G(0x400), " works", 32) == G(0x400));
     assert(GuestRuntime_snprintf(G(0x450), 5, "%s", G(0x400)) == 13);
@@ -89,7 +101,45 @@ int main(void)
     memcpy(&end, memory->ram + 0x520, sizeof(end));
     assert(end == G(0x505));
     assert(GuestRuntime_strtol("42", NULL, 10) == 42);
+    assert(GuestRuntime_atoi(G(0x500)) == -123 && GuestRuntime_atoi("77x") == 77);
+    GuestRuntime_strcpy(G(0x5c0), "ff zz");
+    assert(GuestRuntime_strtoul(G(0x5c0), &end, 16) == 255 && end == G(0x5c2));
+    assert(GuestRuntime_strtoul(G(0x5c0), G(0x520), 16) == 255);
+    memcpy(&end, memory->ram + 0x520, sizeof(end));
+    assert(end == G(0x5c2));
+    GuestRuntime_strcpy(G(0x5d0), "2.5e1rest");
+    assert(GuestRuntime_strtod(G(0x5d0), &end) == 25.0 && end == G(0x5d5));
+    assert(GuestRuntime_strtod("1.5", NULL) == 1.5);
+    GuestRuntime_strcpy(G(0x5e0), "ab");
+    assert(GuestRuntime_strncat(G(0x5e0), "cdefg", 3) == G(0x5e0));
+    assert(!strcmp((char *)memory->ram + 0x5e0, "abcde"));
+    assert(GuestRuntime_strncat(G(0x5e0), "!", 9) == G(0x5e0));
+    assert(!strcmp((char *)memory->ram + 0x5e0, "abcde!"));
+    assert(GuestRuntime_strncat(G(0x5e0), "x", 0) == G(0x5e0) && !strcmp((char *)memory->ram + 0x5e0, "abcde!"));
     assert(GuestRuntime_strtol("invalid", &end, 10) == 0 && !strcmp(end, "invalid"));
+    GuestRuntime_strcpy(G(0x5f0), "zz");
+    assert(GuestRuntime_strtoul(G(0x5f0), &end, 10) == 0 && end == G(0x5f0));
+    assert(GuestRuntime_strtod(G(0x5f0), &end) == 0.0 && end == G(0x5f0));
+    /* A native string is parsed where it is, whatever follows it (a language
+     * file's lines are slices of one buffer with no NUL between them), and the
+     * end it leaves is native too, in a native or a guest pointer. */
+    static const char slice[] = "[a1] x [b2] y";
+    assert(GuestRuntime_strtoul(slice + 1, &end, 16) == 0xa1 && end == slice + 3);
+    assert(GuestRuntime_strtoul(slice + 8, G(0x520), 16) == 0xb2);
+    memcpy(&end, memory->ram + 0x520, sizeof(end));
+    assert(end == slice + 10);
+    assert(GuestRuntime_strtod(slice + 1, &end) == 0.0 && end == slice + 1);
+    assert(GuestRuntime_strtol("12 34", &end, 10) == 12 && !strcmp(end, " 34"));
+    assert(GuestRuntime_atoi("99999999999") == INT_MAX && GuestRuntime_atoi("-99999999999") == INT_MIN);
+    assert(GuestRuntime_atoi(G(0x5f0)) == 0);
+    GuestRuntime_strcpy(G(0x5e8), "q");
+    GuestRuntime_strcpy(G(0x5f8), "cdefg");
+    assert(GuestRuntime_strncat(G(0x5e8), G(0x5f8), 3) == G(0x5e8));
+    assert(!strcmp((char *)memory->ram + 0x5e8, "qcde"));
+    assert(GuestRuntime_strlen(G(0x5f8)) == 5 && GuestRuntime_strnlen(G(0x5f8), 3) == 3);
+    assert(GuestRuntime_strnlen(G(0x5f8), 0) == 0 && GuestRuntime_strlen(slice) == sizeof(slice) - 1);
+    char native_text[8] = "ab";
+    assert(GuestRuntime_strncat(native_text, "cdefg", 2) == native_text && !strcmp(native_text, "abcd"));
     assert(GuestRuntime_isdigit('0') && GuestRuntime_isdigit('9') && !GuestRuntime_isdigit('A') && !GuestRuntime_isdigit(EOF));
     assert(GuestRuntime_isalnum('A') && !GuestRuntime_isalnum('!'));
     assert(GuestRuntime_isspace(' ') && GuestRuntime_tolower('A') == 'a');
@@ -104,8 +154,19 @@ int main(void)
     char native_line[16];
     assert(GuestRuntime_fgets(native_line, sizeof(native_line), file) == native_line);
     assert(!strcmp(native_line, "123\n"));
+    assert(GuestRuntime_ftell(file) == 4);
+    assert(GuestRuntime_fseek(file, 1, SEEK_SET) == 0 && GuestRuntime_ftell(file) == 1);
+    memset(memory->ram + 0x580, 0, 8);
+    assert(GuestRuntime_fread(G(0x580), 1, 8, file) == 3);   /* "23\n" is all that is left */
+    assert(!memcmp(memory->ram + 0x580, "23\n", 4));
+    assert(GuestRuntime_fseek(file, 0, SEEK_SET) == 0);
+    assert(GuestRuntime_fread(G(0x590), 2, 2, file) == 2 && !memcmp(memory->ram + 0x590, "123\n", 4));
+    assert(GuestRuntime_fread(G(0x590), 0, 5, file) == 0 && GuestRuntime_fread(G(0x590), 5, 0, file) == 0);
+    assert(GuestRuntime_fseek(file, 0, SEEK_SET) == 0);
+    char native_bytes[4];
+    assert(GuestRuntime_fread(native_bytes, 1, 4, file) == 4 && !memcmp(native_bytes, "123\n", 4));
     assert(GuestRuntime_fclose(file) == 0);
-    for (int i = 0; i < 10; i++) expect_abort(i);
+    for (int i = 0; i < 14; i++) expect_abort(i);
     GuestRuntime_Reset(); free(memory);
-    puts("Translated libc: guest strings, bounded reads, memory, formatting, callbacks and invalid spans passed");
+    puts("Translated libc: guest strings, bounded reads, files, memory, formatting, callbacks and invalid spans passed");
 }

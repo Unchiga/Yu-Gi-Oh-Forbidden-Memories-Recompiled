@@ -2,6 +2,7 @@
  * compiled normally: its real libc calls must never be remapped to itself. */
 #include "translated_runtime.h"
 #include "translated_libc.h"
+#include <limits.h>
 #include <stdint.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -18,27 +19,70 @@ static unsigned char byte(const void *address, size_t offset)
 {
     return *(const unsigned char *)GuestRuntime_ResolveData(at(address, offset), 1);
 }
+/* A pointer into native storage (the game's own host code, a buffer on the
+ * host heap) needs no span check and no copy: the C library works on it where
+ * it is. Only a guest pointer, which never resolves to itself, is resolved. */
+static int native_pointer(const void *address)
+{
+    return GuestRuntime_ResolveData((void *)address, 1) == address;
+}
 size_t GuestRuntime_strlen(const char *string)
 {
     size_t length = 0;
+    if (native_pointer(string)) return strlen(string);
     while (byte(string, length)) {
         if (length == SIZE_MAX) abort();
         length++;
     }
     return length;
 }
+/* The string the strto* functions parse: itself when native, else a checked
+ * span of its guest storage. The parse end goes back as the same kind of
+ * pointer, so a guest string is never scanned beyond its own NUL and a native
+ * one (a whole language file cut into lines, parsed one number at a time) is
+ * never scanned at all. */
+static const char *parse_string(const char *string)
+{
+    size_t length;
+    if (native_pointer(string)) return string;
+    length = GuestRuntime_strlen(string);
+    if (length == SIZE_MAX) abort();
+    return GuestRuntime_ResolveData((void *)string, length + 1);
+}
+static void parse_end(const char *string, const char *native, char **end, char *parsed)
+{
+    char *value = native == string ? parsed : at(string, (size_t)(parsed - native));
+    if (end) memcpy(GuestRuntime_ResolveData(end, sizeof(value)), &value, sizeof(value));
+}
 long GuestRuntime_strtol(const char *string, char **end, int base)
 {
-    size_t length = GuestRuntime_strlen(string);
-    if (length == SIZE_MAX) abort();
-    const char *native = GuestRuntime_ResolveData((void *)string, length + 1);
-    char *parsed_end;
-    long value = strtol(native, &parsed_end, base);
-    if (end) {
-        char *guest_end = at(string, (size_t)(parsed_end - native));
-        memcpy(GuestRuntime_ResolveData(end, sizeof(guest_end)), &guest_end, sizeof(guest_end));
-    }
+    const char *native = parse_string(string);
+    char *parsed;
+    long value = strtol(native, &parsed, base);
+    parse_end(string, native, end, parsed);
     return value;
+}
+unsigned long GuestRuntime_strtoul(const char *string, char **end, int base)
+{
+    const char *native = parse_string(string);
+    char *parsed;
+    unsigned long value = strtoul(native, &parsed, base);
+    parse_end(string, native, end, parsed);
+    return value;
+}
+double GuestRuntime_strtod(const char *string, char **end)
+{
+    const char *native = parse_string(string);
+    char *parsed;
+    double value = strtod(native, &parsed);
+    parse_end(string, native, end, parsed);
+    return value;
+}
+/* Saturated, as the 32-bit games' atoi is: a long is 64 bits here. */
+int GuestRuntime_atoi(const char *string)
+{
+    long value = GuestRuntime_strtol(string, NULL, 10);
+    return value > INT_MAX ? INT_MAX : value < INT_MIN ? INT_MIN : (int)value;
 }
 /* FILE handles come from the native mod host's open_asset/open_data callbacks.
  * They are opaque host objects, never guest-addressed storage. */
@@ -59,10 +103,18 @@ size_t GuestRuntime_fwrite(const void *buffer, size_t size, size_t count, FILE *
     const void *native = bytes ? GuestRuntime_ResolveData((void *)buffer, bytes) : buffer;
     return fwrite(native, size, count, native_file(file));
 }
+size_t GuestRuntime_fread(void *buffer, size_t size, size_t count, FILE *file)
+{
+    if (size && count > SIZE_MAX / size) abort();
+    size_t bytes = size * count;
+    void *native = bytes ? GuestRuntime_ResolveData(buffer, bytes) : buffer;
+    return fread(native, size, count, native_file(file));
+}
 int GuestRuntime_fseek(FILE *file, long offset, int origin)
 {
     return fseek(native_file(file), offset, origin);
 }
+long GuestRuntime_ftell(FILE *file) { return ftell(native_file(file)); }
 int GuestRuntime_fclose(FILE *file) { return fclose(native_file(file)); }
 int GuestRuntime_isalnum(int value) { return isalnum(value); }
 int GuestRuntime_isdigit(int value) { return isdigit(value); }
@@ -132,6 +184,15 @@ char *GuestRuntime_strcat(char *destination, const char *source)
     GuestRuntime_memcpy(at(destination, prefix), source, suffix + 1);
     return destination;
 }
+char *GuestRuntime_strncat(char *destination, const char *source, size_t length)
+{
+    size_t prefix = GuestRuntime_strlen(destination), suffix = GuestRuntime_strnlen(source, length);
+    if (suffix == SIZE_MAX || prefix > SIZE_MAX - suffix - 1) abort();
+    GuestRuntime_ResolveData(destination, prefix + suffix + 1);
+    GuestRuntime_memcpy(at(destination, prefix), source, suffix);
+    *(char *)GuestRuntime_ResolveData(at(destination, prefix + suffix), 1) = 0;
+    return destination;
+}
 struct SortContext {
     uintptr_t guest_base, host_base;
     size_t length, width;
@@ -179,6 +240,28 @@ void GuestRuntime_qsort(void *base, size_t count, size_t width, int (*compare)(c
         free(sort_context.temporary[i]);
     }
     sort_context = previous;
+}
+/* The elements stay where they are, so the comparator gets the guest pointers
+ * the caller gave (the key) and made from its base (the element); nothing is
+ * copied, unlike qsort's temporaries. */
+void *GuestRuntime_bsearch(const void *key, const void *base, size_t count, size_t width,
+                           int (*compare)(const void *, const void *))
+{
+    size_t low = 0, high = count;
+    int (*native)(const void *, const void *);
+    if (!count) return NULL;
+    if (!width || count > SIZE_MAX / width) abort();
+    GuestRuntime_ResolveData((void *)base, count * width);
+    native = (int (*)(const void *, const void *))GuestRuntime_ResolveFunction((void *)compare);
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        void *element = at(base, middle * width);
+        int order = native(key, element);
+        if (!order) return element;
+        if (order < 0) high = middle;
+        else low = middle + 1;
+    }
+    return NULL;
 }
 
 /* Format one conversion at a time so %s and %n also cross the guest boundary.
@@ -417,6 +500,8 @@ char *GuestRuntime_strrchr(const char *string, int value)
 size_t GuestRuntime_strnlen(const char *string, size_t limit)
 {
     size_t i = 0;
+    if (!limit) return 0; /* reads nothing, so resolves nothing */
+    if (native_pointer(string)) return strnlen(string, limit);
     while (i < limit && byte(string, i)) i++;
     return i;
 }

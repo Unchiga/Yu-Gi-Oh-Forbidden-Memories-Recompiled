@@ -2770,7 +2770,20 @@ mod's globals. The units are compiled at `-O2 -fPIC` and merged with
 `MemoriesModRegisterGlobals` and `MemoriesModUnregisterGlobals`, which the
 loader calls before `MemoriesModInit` and when it frees the mod. The C
 library lends the pointer-free math directly; everything else comes from
-the game's export table.
+the game's export table. That is every function the SDK's headers declare
+(`tools/pc/test_mod_libc_lent.py` fails when one is not lent): the string,
+number-parsing, `snprintf`, `qsort`/`bsearch` and `fread`/`fwrite`/`fseek`/
+`ftell`/`fgets`/`fclose` calls go to the runtime's guest-pointer wrappers
+(`src/pc/guest/translated_libc.c`, `HOST_LIBC` in `tools/pc/guest_build.py`),
+which check every span a mod hands them, and `malloc` and friends to its
+allocator. The same list serves the macOS ARM64 mods. The game's own
+units are renamed to the same wrappers (`HOST_LIBC`), so a pointer into
+native storage is used where it is (a string is not scanned, a file or an
+array is not copied) and only a guest pointer is checked and resolved. On
+Android and macOS (LP64) `strtol` and `strtoul` return 64-bit values and
+`atoi` saturates at `INT_MIN`/`INT_MAX`; a `long` is 32 bits on Windows, so
+a mod must not depend on a value past 2^31 from them. A function added to
+the SDK needs its wrapper there in the same change.
 
 What it needs, besides `ld.lld` and `llvm-objcopy`:
 
