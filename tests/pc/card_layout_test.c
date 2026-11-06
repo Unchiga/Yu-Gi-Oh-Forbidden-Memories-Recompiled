@@ -48,8 +48,13 @@ static char fake_frame_style[FAKE_CARD_COUNT][32];
 static int fake_card_type[FAKE_CARD_COUNT];
 static int fake_effects[FAKE_CARD_COUNT];
 static char fake_tag[FAKE_CARD_COUNT][16];
+static char fake_identity[FAKE_CARD_COUNT][64];   /* "mod:key:1" of a card a mod added, "" for a retail card */
 int Cards_FrameOverride(int id) { return (unsigned)id < FAKE_CARD_COUNT ? fake_frame_color[id] : -1; }
 const char *Cards_FrameStyle(int id) { return (unsigned)id < FAKE_CARD_COUNT ? fake_frame_style[id] : ""; }
+const char *Cards_Identity(int id)
+{
+    return (unsigned)id < FAKE_CARD_COUNT && fake_identity[id][0] ? fake_identity[id] : NULL;
+}
 int Cards_Type(int id) { return (unsigned)id < FAKE_CARD_COUNT ? fake_card_type[id] : CARD_TYPE_DRAGON; }
 int Cards_TypeNamed(const char *text)
 {
@@ -123,6 +128,7 @@ static void reset(void)
         fake_card_type[i] = CARD_TYPE_DRAGON;
         fake_effects[i] = 0;
         fake_tag[i][0] = 0;
+        fake_identity[i][0] = 0;
     }
     CardLayout_SetCard(0);   /* back to the monster bucket between tests */
 }
@@ -1011,6 +1017,136 @@ static void type_label_replaces_and_hides(void)
     CHECK(!visible);
 }
 
+/* Frame styles from several layouts. "hd" is a whole layout (a released
+ * pack's: rules, a default and its own parts); "foil" only adds styles, as a
+ * cards mod's own frames do, and its "gold" is named as hd's is. */
+static const char *const HD_MANIFEST =
+    "{\"id\": \"hd\", \"card_layout\": {\"frame_styles\": {"
+        "\"gold\": {\"image\": \"g.png\", \"hand_color\": \"gold\"},"
+        "\"orange\": {\"image\": \"orange.png\", \"hand_color\": \"orange\"}},"
+    "\"frame_for\": [{\"class\": \"effect_monster\", \"style\": \"orange\"}],"
+    "\"default_style\": \"gold\", \"atk\": {\"x\": 38, \"y\": 178}}}";
+static const char *const FOIL_MANIFEST =
+    "{\"id\": \"foil\", \"card_layout\": {\"frame_styles\": {"
+        "\"rainbow\": {\"image\": \"rainbow.png\", \"hand_color\": \"purple\", \"atk\": {\"x\": 11, \"y\": 22}},"
+        "\"gold\": {\"image\": \"foilgold.png\", \"hand_color\": \"orange\"}}}}";
+
+static void add_hd_and_foil(int hd_on, int foil_on)
+{
+    reset();
+    add_mod("hd", "/mods/hd", HD_MANIFEST, 1, "full_bleed", hd_on);
+    add_mod("foil", "/mods/foil", FOIL_MANIFEST, 1, "full_bleed", foil_on);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+}
+
+static const char *path_of(int id)
+{
+    CardLayout_SetCard(id);
+    return CardLayout_FramePath();
+}
+
+/* A layout of frame styles alone does not take the shared layout over: the
+ * other mod's rules, default and parts stay what every plain card uses, and a
+ * card naming a style of the styles-only mod is drawn by that mod's own. */
+static void styles_only_does_not_shadow(void)
+{
+    CardLayoutFrameStyle style;
+    reset();
+    CHECK(!styles_only(NULL));
+    add_hd_and_foil(1, 1);
+    CHECK(find_source().mod == 0);                      /* hd, though foil comes later */
+    CHECK(!strcmp(path_of(1), "/mods/hd/g.png"));       /* a plain card: hd's default */
+    CHECK(CardLayout_FullBleed());
+    CHECK(CardLayout_Part(CARD_LAYOUT_ATK).x == 38);    /* hd's shared part */
+    CHECK(CardLayout_FrameStyleOf(1, &style) && style.mod == 0);
+    CHECK(!strcmp(path_of(2), "/mods/foil/rainbow.png"));   /* a card of foil's: its style */
+    CHECK(CardLayout_FullBleed());
+    CHECK(CardLayout_Part(CARD_LAYOUT_ATK).x == 11);    /* foil's own part */
+    CHECK(CardLayout_FrameStyleOf(2, &style) && style.mod == 1 && style.color == CARD_FRAME_PURPLE);
+    CHECK(!strcmp(path_of(1), "/mods/hd/g.png"));       /* and back: nothing carried over */
+    CHECK(CardLayout_Part(CARD_LAYOUT_ATK).x == 38);
+    CHECK(notes == 0);
+    /* A layout with anything besides "frame_styles" is a whole layout. */
+    CHECK(!styles_only(Mods_Manifest(0) ? Json_Member(Mods_Manifest(0), "card_layout") : NULL));
+    CHECK(styles_only(Json_Member(Mods_Manifest(1), "card_layout")));
+}
+
+/* Each layout's styles are on while that mod's own "full_bleed" is. */
+static void style_owner_gate(void)
+{
+    CardLayoutFrameStyle style;
+    /* foil off: its card is drawn as every other of hd's. */
+    add_hd_and_foil(1, 0);
+    CHECK(!strcmp(path_of(2), "/mods/hd/g.png"));
+    CHECK(CardLayout_FrameStyleOf(2, &style) && style.mod == 0);
+    CHECK(!strcmp(path_of(1), "/mods/hd/g.png"));
+    /* hd off, foil on (the player's own case: retail frames, and a few cards
+     * in a frame of their own): plain cards stay retail, with retail's parts. */
+    add_hd_and_foil(0, 1);
+    CHECK(!CardLayout_FrameStyleOf(1, &style));
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_FullBleed() && CardLayout_Part(CARD_LAYOUT_ATK).x == 0x61);
+    CHECK(!strcmp(path_of(2), "/mods/foil/rainbow.png"));
+    CHECK(CardLayout_FullBleed() && CardLayout_Part(CARD_LAYOUT_ATK).x == 11);
+    CHECK(CardLayout_Active());
+    /* foil alone, on or off. */
+    reset();
+    add_mod("foil", "/mods/foil", FOIL_MANIFEST, 1, "full_bleed", 1);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+    CHECK(!CardLayout_FrameStyleOf(1, &style));
+    CHECK(!strcmp(path_of(2), "/mods/foil/rainbow.png"));
+    reset();
+    add_mod("foil", "/mods/foil", FOIL_MANIFEST, 1, "full_bleed", 0);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+    CHECK(!CardLayout_FrameStyleOf(2, &style) && !CardLayout_Active());
+    CHECK(notes == 0);                                  /* off is not a missing style */
+}
+
+/* A style two layouts declare: the shared layout's rules find theirs first, a
+ * card of a mod finds its own mod's, and any other card the newest, noted. */
+static void style_name_collision(void)
+{
+    add_hd_and_foil(1, 1);
+    snprintf(fake_frame_style[3], sizeof(fake_frame_style[3]), "%s", "gold");
+    snprintf(fake_frame_style[4], sizeof(fake_frame_style[4]), "%s", "gold");
+    snprintf(fake_identity[4], sizeof(fake_identity[4]), "%s", "hd:thing:1");
+    CHECK(!strcmp(path_of(1), "/mods/hd/g.png"));              /* the default, by the shared layout */
+    CHECK(notes == 0);
+    CHECK(!strcmp(path_of(4), "/mods/hd/g.png"));              /* a card of hd's, naming it */
+    CHECK(notes == 0);
+    CHECK(!strcmp(path_of(3), "/mods/foil/foilgold.png"));     /* a retail card: the newest */
+    CHECK(notes == 1 && strstr(note, "also declared"));
+    CHECK(!strcmp(path_of(3), "/mods/foil/foilgold.png"));
+    CHECK(notes == 1);                                          /* said once */
+    /* A card of foil's naming it finds foil's whichever mod came last. */
+    snprintf(fake_identity[3], sizeof(fake_identity[3]), "%s", "foil:other:1");
+    CHECK(!strcmp(path_of(3), "/mods/foil/foilgold.png"));
+    /* A name no layout has is noted, and the card is retail. */
+    snprintf(fake_frame_style[5], sizeof(fake_frame_style[5]), "%s", "nothing");
+    {
+        CardLayoutFrameStyle style;
+        int before = notes;
+        CHECK(!CardLayout_FrameStyleOf(5, &style) && notes == before + 1);
+    }
+}
+
+/* The pictures every layout in use may draw, once each. */
+static void frame_paths_cover_every_layout(void)
+{
+    static char paths[8][1024];
+    add_hd_and_foil(1, 1);
+    CHECK(CardLayout_FramePaths(paths, 8) == 4);
+    CHECK(!strcmp(paths[0], "/mods/hd/g.png") && !strcmp(paths[1], "/mods/hd/orange.png"));
+    CHECK(!strcmp(paths[2], "/mods/foil/rainbow.png") && !strcmp(paths[3], "/mods/foil/foilgold.png"));
+    CHECK(CardLayout_FramePaths(paths, 3) == 3);
+    add_hd_and_foil(1, 0);
+    CHECK(CardLayout_FramePaths(paths, 8) == 2);
+    add_hd_and_foil(0, 1);
+    CHECK(CardLayout_FramePaths(paths, 8) == 2 && !strcmp(paths[0], "/mods/foil/rainbow.png"));
+    add_hd_and_foil(0, 0);
+    CHECK(CardLayout_FramePaths(paths, 8) == 0 && !CardLayout_Active());
+}
+
 int main(void)
 {
     retail_defaults();
@@ -1047,6 +1183,10 @@ int main(void)
     frame_box_is_bounded();
     movable_parts_can_hide();
     type_label_replaces_and_hides();
+    styles_only_does_not_shadow();
+    style_owner_gate();
+    style_name_collision();
+    frame_paths_cover_every_layout();
     reset();
     printf("card layout: ok\n");
     return 0;

@@ -1317,7 +1317,8 @@ disagree. Three keys say it:
   kind, a style named for the card's six-color `"frame"`, the first
   `frame_for` rule that applies, `default_style`, then retail. This lets a
   cards mod opt into a new frame without using a tag as an implementation
-  detail. `null` clears an inherited named style.
+  detail. `null` clears an inherited named style. The style may be one of
+  another mod's layout ([Layouts of several mods](#layouts-of-several-mods)).
 - `frame_for`: a list of rules, the first that applies to a card wins. A rule
   says `"style"` and, to limit it, any of `"class"` (what the card is, below),
   `"tag"` (one of the card's [`tags`](more-cards.md#tags)) and `"setting"` (a
@@ -1400,9 +1401,11 @@ there (a card-kind badge, say) has nowhere resident to read one from yet;
 a Build Deck badge sheet and a duel-resident word texture were both tried
 and backed out (wrong VRAM residency and wrong shape, respectively).
 
-Only one mod's `card_layout` is read at a time -- the last applied one that
-declares it, the same "a later mod wins" rule other singular keys follow --
-so two layout mods together is the last one's layout, not a merge of both.
+The shared keys of a `card_layout` are read from one mod at a time -- the last
+applied one that declares more than `frame_styles`, the same "a later mod
+wins" rule other singular keys follow -- so two whole layouts together are the
+last one's, not a merge of both. Frame styles do combine
+([Layouts of several mods](#layouts-of-several-mods)).
 Forbidden Memories HD carries this as its own `full_bleed` setting, no code
 of its own needed: `tools/pc/hd_assets_pack.py`'s `--anime-frame-<kind>`
 flags default to `tools/pc/hd_recipes/anime_frame_<kind>.png` if present,
@@ -1411,6 +1414,39 @@ none` gives a kind no picture even where `hd_recipes` has one (effect monsters
 then wear the monster frame). A model for writing another: a pure data mod, no
 `library`, with one `full_bleed` setting, frame styles and rules, and the
 positions above.
+
+### Layouts of several mods
+
+Every applied mod's `frame_styles` is read, and a style is drawn by the mod
+that declared it: its pictures are in that mod's folder, its own parts
+(`art`, `atk`, `stars`, ...) place the card's elements, and it is on while
+**that mod's** `full_bleed` setting is. The shared keys (`frame_for`,
+`default_style`, `default_styles`, the layout's own `art`, `atk`, `def`,
+`stars`, `attribute`, `spell`, `digits` and `type_label`, and the older
+per-kind `frame`) come from one layout, as above.
+
+A `card_layout` with **nothing but `frame_styles`** adds styles and takes none
+of that away from the layout before it. A cards mod that brings its own
+frames is written that way: its cards name its styles with `frame_style`, and
+everything else keeps the frames and positions of the player's other layout
+(Forbidden Memories HD's anime frames, or retail's). Put every part a style
+needs inside the style (`art`, `atk`, `def`, `stars`, `attribute`, `title`):
+with no shared layout of its own, what it leaves out is retail's place.
+
+How a card finds its style:
+
+- A card's own `frame_style` is looked up in the mod that declared the card
+  (the one its identity names), then in the newest mod that has it. The style
+  is used while its owner's `full_bleed` is on; off, the card is drawn as any
+  other card of the player's frames (so a variant wears what its base card
+  does). A name no layout has is noted in the Mods window and the card keeps
+  retail's frame.
+- Every other card is picked by the shared layout's rules, as before. The rules
+  look a name up in the shared layout's own styles first, then the others'. A
+  style named for the card's `frame` color may be any layout's.
+- A name two mods declare is taken from the newer one, with a note, unless the
+  shared layout's own rules or the declaring mod named it: prefix the styles
+  of a cards mod (`foil-rainbow`) so they cannot meet another mod's `gold`.
 
 **Known limitation**: the frame image itself does not render in the duel's
 own card viewer (opened from the hand) -- `CardLayout_DrawFrame` submits
