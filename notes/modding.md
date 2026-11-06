@@ -1420,7 +1420,9 @@ positions above.
 Every applied mod's `frame_styles` is read, and a style is drawn by the mod
 that declared it: its pictures are in that mod's folder, its own parts
 (`art`, `atk`, `stars`, ...) place the card's elements, and it is on while
-**that mod's** `full_bleed` setting is. The shared keys (`frame_for`,
+**that mod's** `full_bleed` setting is: off until the player turns it on, or
+on from the start when the mod's `settings` entry for `full_bleed` has
+`"default": 1`. The shared keys (`frame_for`,
 `default_style`, `default_styles`, the layout's own `art`, `atk`, `def`,
 `stars`, `attribute`, `spell`, `digits` and `type_label`, and the older
 per-kind `frame`) come from one layout, as above.

@@ -136,12 +136,31 @@ static LayoutSource find_source(void)
     return source;
 }
 
+/* A mod's setting `key`: what the player set, else the "default" of the
+ * mod's "settings" entry that names it (what the Mods window shows), else 0.
+ * Reading the default here keeps the window and the game of one mind: a
+ * mod whose frames are on by default is not drawn without them until the
+ * player has touched the switch. */
+static int mod_setting(int mod, const char *key)
+{
+    const JsonValue *spec;
+    int fallback = 0;
+
+    for (spec = Json_At(Json_Member(Mods_Manifest(mod), "settings"), 0); spec; spec = Json_Next(spec)) {
+        const char *name = Json_String(Json_Member(spec, "key"), NULL);
+        if (name && !strcmp(name, key)) {
+            fallback = (int)Json_Number(Json_Member(spec, "default"), 0);
+            break;
+        }
+    }
+    return Mods_Setting(Mods_Id(mod), key, fallback);
+}
+
 static int full_bleed_of(const LayoutSource *source)
 {
-    /* Off until the player turns it on. A mod's own "settings" entry's
-     * "default" is the Mods window's display only -- this fallback is the
-     * one that actually answers; keep both in sync if either changes. */
-    return source->mod >= 0 && Mods_Setting(Mods_Id(source->mod), "full_bleed", 0) != 0;
+    /* Off until the player turns it on, or the mod's own "full_bleed"
+     * setting says it is on by default. */
+    return source->mod >= 0 && mod_setting(source->mod, "full_bleed") != 0;
 }
 
 /* A mod's own "card_layout" object, NULL for none (or for no mod). */
@@ -154,7 +173,7 @@ static const JsonValue *layout_of(int mod)
  * layout mod having one of its own. */
 static int mod_full_bleed(int mod)
 {
-    return mod >= 0 && Mods_Setting(Mods_Id(mod), "full_bleed", 0) != 0;
+    return mod >= 0 && mod_setting(mod, "full_bleed") != 0;
 }
 
 /* Whether any applied layout mod has its frames on. */
@@ -378,7 +397,7 @@ static int rule_applies(const LayoutSource *source, const JsonValue *rule, int c
 {
     const char *key = Json_String(Json_Member(rule, "setting"), NULL);
     const char *text;
-    if (key && !Mods_Setting(Mods_Id(source->mod), key, 0)) return 0;
+    if (key && !mod_setting(source->mod, key)) return 0;
     text = Json_String(Json_Member(rule, "class"), NULL);
     if (text && strcmp(text, Cards_ClassName(cls))) return 0;
     text = Json_String(Json_Member(rule, "tag"), NULL);

@@ -1147,6 +1147,37 @@ static void frame_paths_cover_every_layout(void)
     CHECK(CardLayout_FramePaths(paths, 8) == 0 && !CardLayout_Active());
 }
 
+/* A mod's "full_bleed" is its own setting: off until the player turns it on, or on when the
+ * settings entry that declares it says so, which is what the Mods window shows. */
+static void declared_default_is_the_switch(void)
+{
+    CardLayoutFrameStyle style;
+    static const char *const with_default =
+        "{\"id\": \"foil\", \"settings\": [{\"key\": \"full_bleed\", \"type\": \"bool\", \"default\": 1}],"
+        " \"card_layout\": {\"frame_styles\": {\"rainbow\": {\"image\": \"rainbow.png\", \"hand_color\": \"purple\"}}}}";
+    static const char *const without_default =
+        "{\"id\": \"foil\", \"settings\": [{\"key\": \"full_bleed\", \"type\": \"bool\", \"default\": 0}],"
+        " \"card_layout\": {\"frame_styles\": {\"rainbow\": {\"image\": \"rainbow.png\", \"hand_color\": \"purple\"}}}}";
+    reset();
+    add_mod("foil", "/mods/foil", with_default, 1, NULL, 0);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+    CHECK(CardLayout_FrameStyleOf(2, &style) && CardLayout_Active());          /* on by its own default */
+    reset();
+    add_mod("foil", "/mods/foil", with_default, 1, "full_bleed", 0);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+    CHECK(!CardLayout_FrameStyleOf(2, &style) && !CardLayout_Active());        /* the player's choice wins */
+    reset();
+    add_mod("foil", "/mods/foil", without_default, 1, NULL, 0);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+    CHECK(!CardLayout_FrameStyleOf(2, &style));                                /* off by default, as HD's is */
+    reset();
+    add_mod("foil", "/mods/foil", "{\"id\": \"foil\", \"card_layout\": {\"frame_styles\": {\"rainbow\": "
+            "{\"image\": \"rainbow.png\", \"hand_color\": \"purple\"}}}}", 1, NULL, 0);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+    CHECK(!CardLayout_FrameStyleOf(2, &style));                                /* no entry: off */
+    CHECK(notes == 0);
+}
+
 int main(void)
 {
     retail_defaults();
@@ -1187,6 +1218,7 @@ int main(void)
     style_owner_gate();
     style_name_collision();
     frame_paths_cover_every_layout();
+    declared_default_is_the_switch();
     reset();
     printf("card layout: ok\n");
     return 0;
