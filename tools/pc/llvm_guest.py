@@ -305,6 +305,11 @@ def process(operation, text, **options):
                 mode="w", dir=cache, delete=False
             ) as staging:
                 staging.write(result)
+                # A rename can reach the disk before the data does: without
+                # this a power cut leaves a good name on bad contents, which
+                # every later build trusts and links with functions missing.
+                staging.flush()
+                os.fsync(staging.fileno())
                 staged = Path(staging.name)
             staged.replace(cached)
     return json.loads(result) if operation == "inspect" else result
