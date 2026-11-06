@@ -194,37 +194,56 @@ int GuestRuntime_RegisterFunction(u32 guest, void (*host)(void))
     functions[function_count++] = (struct Function){guest, (uintptr_t)host};
     return 0;
 }
+/* The first entry of region_order that ends past `address`. Regions do not
+ * overlap, so their ends are in the same order as their bases. */
+static unsigned first_region_past(u32 address)
+{
+    unsigned low = 0, high = region_count;
+    while (low < high) {
+        unsigned middle = low + (high - low) / 2;
+        const GuestRuntimeRegion *r = &regions[region_order[middle]];
+        if ((size_t)r->guest + r->length <= address) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+}
 void GuestRuntime_RegisterAutomatic(void *host, size_t length)
 {
     u32 candidate = automatic_cursor;
-    unsigned i;
-    int moved;
+    unsigned i, position;
     if (!host || !length) return;
     for (i = 0; i < region_count; ++i)
         if (regions[i].host == (uintptr_t)host && regions[i].length == length) return;
     /* Try the cursor first, then the complete arena. A larger temporary
      * allocation may skip a small free span and leave the cursor above it.
-     * Failing at the upper end must not hide that reusable lower span. */
+     * Failing at the upper end must not hide that reusable lower span.
+     * The walk goes up the regions in address order, each looked at once: a
+     * big allocation may have to step over all of them. */
     int wrapped = 0;
-    do {
-        moved = 0;
+    position = first_region_past(candidate);
+    for (;;) {
+        const GuestRuntimeRegion *r;
+        size_t next;
         if (length > AUTOMATIC_END - candidate) {
             if (wrapped) invalid("guest token arena exhausted", (uintptr_t)host, length);
             candidate = AUTOMATIC_BASE;
             wrapped = 1;
-            moved = 1;
+            position = first_region_past(candidate);
             continue;
         }
-        for (i = 0; i < region_count; ++i) {
-            const GuestRuntimeRegion *r = &regions[i];
-            if (candidate < r->guest + r->length && r->guest < candidate + length) {
-                size_t next = ((size_t)r->guest + r->length + 15u) & ~(size_t)15u;
-                candidate = next >= AUTOMATIC_END ? AUTOMATIC_END : (u32)next;
-                moved = 1;
-                break;
-            }
+        /* Rounding up to 16 can pass a short region whole. */
+        while (position < region_count) {
+            r = &regions[region_order[position]];
+            if ((size_t)r->guest + r->length > candidate) break;
+            ++position;
         }
-    } while (moved);
+        if (position == region_count) break;
+        r = &regions[region_order[position]];
+        if (r->guest >= (size_t)candidate + length) break;
+        next = ((size_t)r->guest + r->length + 15u) & ~(size_t)15u;
+        candidate = next >= AUTOMATIC_END ? AUTOMATIC_END : (u32)next;
+        ++position;
+    }
     if (GuestRuntime_RegisterData(host, length, candidate)) invalid("cannot register native allocation", (uintptr_t)host, length);
     automatic_cursor = (u32)(((size_t)candidate + length + 15u) & ~(size_t)15u);
 }

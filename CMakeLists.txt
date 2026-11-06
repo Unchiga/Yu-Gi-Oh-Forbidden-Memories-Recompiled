@@ -933,6 +933,21 @@ if(BUILD_TESTING)
         target_compile_options(memories_mod_import_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mod_import COMMAND memories_mod_import_test)
+    # Where the translated game's token arena puts an allocation
+    # (src/pc/guest/translated_runtime.c), which needs 64-bit host pointers.
+    # A search that looks at every region again after each step does not
+    # finish in the time limit.
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_executable(memories_translated_arena_test tests/pc/translated_arena_test.c
+            src/pc/guest/translated_runtime.c src/pc/memory.c)
+        target_include_directories(memories_translated_arena_test PRIVATE src)
+        target_compile_definitions(memories_translated_arena_test PRIVATE _DEFAULT_SOURCE)
+        if(NOT MSVC)
+            target_compile_options(memories_translated_arena_test PRIVATE -O2 -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME pc_translated_arena COMMAND memories_translated_arena_test)
+        set_tests_properties(pc_translated_arena PROPERTIES TIMEOUT 60)
+    endif()
     # Card title plates (src/pc/cards/art.c), set from a name in the serif
     # face as a translated card's is: where FreeType is at hand (beside
     # libpng, as in the Windows dependencies), and skipped (77) on a system
