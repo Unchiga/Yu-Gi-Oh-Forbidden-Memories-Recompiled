@@ -94,8 +94,8 @@ static int utf8(const unsigned char *s, size_t n)
 
 /* Windows' tools write a name in the system's OEM code page and leave out the
  * .zip's UTF-8 flag. The format says code page 437; code page 850, Western
- * Windows', has the same accented letters in the same places and the ones 437
- * lacks (ã, õ, Á) where 437 has line art no file name uses. */
+ * Windows', keeps 437's accented letters where they are and adds the ones 437
+ * lacks (ã, õ, Á) in place of its line art and Greek letters. */
 static const unsigned short CP850[128] = {
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7,
     0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC, 0x00C4, 0x00C5,

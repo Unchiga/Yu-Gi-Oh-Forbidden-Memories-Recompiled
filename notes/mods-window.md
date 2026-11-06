@@ -274,7 +274,7 @@ file that is no mod gets the usual refusal ("That file is not a .zip.",
   the storage itself takes for one, such as `É.png` and `é.png` on
   Android's shared storage, are found as the second is written: "Two files
   in the .zip are one file on this storage..."), two mods with
-  one folder or one `id`, names that are not UTF-8, ZIP64 or split
+  one folder or one `id`, names marked UTF-8 that are not, ZIP64 or split
   archives (the plain form holds 65,534 entries and 4 GB, which is what
   the importer takes), more than 4 GB unpacked or more than the free space
   holds, a `.zip` over 4 GB (2 GB where a `long` has 32 bits, where `ftell`
@@ -285,8 +285,10 @@ file that is no mod gets the usual refusal ("That file is not a .zip.",
   the loader reads them; one over 128 MB (a card mod's is tens of MB) is
   refused, as the game would read the whole file at every launch.
   A file's name with no UTF-8 flag that is not UTF-8 either is read as code
-  page 850, which Windows' tools write (the format says 437; 850 has the same
-  accented letters and the ones 437 lacks, like `ã`).
+  page 850, which Windows' tools write (the format says 437; 850 keeps 437's
+  accented letters and adds the ones it lacks, like `ã`). A name from another
+  system's code page (Cyrillic, Shift-JIS) comes out odd rather than refused,
+  and still has to pass the same checks.
   Unpacking goes into a hidden `mods/.import-XXXXXX` folder (the scan skips
   names starting with a dot), checking each file's size and CRC; only then
   is each mod renamed into place, and any failure puts back what was moved
