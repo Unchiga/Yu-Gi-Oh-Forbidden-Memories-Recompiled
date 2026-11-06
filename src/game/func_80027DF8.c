@@ -7,6 +7,9 @@
 #include "duel_card_display_state.h"
 #include "duel_deck_card.h"
 #include "func_80027DF8.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/monster_effects_duel.h"
+#endif
 
 void func_80027DF8(AiActiveCard *out, s32 who) {
     DuelCardRecord *base;
@@ -29,6 +32,11 @@ void func_80027DF8(AiActiveCard *out, s32 who) {
 
                 out->card_id = rec->card_id;
                 r = Duel_CalcCardStats(rec);
+#ifdef MEMORIES_PC
+                /* Its own "combat" boosts, which any battle of its gives it
+                   (monster_effects_duel.h). */
+                r = MonsterEffects_AiStats(rec, r);
+#endif
                 out->attack = r;
                 out->defense = r >> 16;
                 out->flags = rec->flags;
@@ -64,6 +72,11 @@ void func_80027DF8(AiActiveCard *out, s32 who) {
 
                 out->card_id = rec->card_id;
                 r = Duel_CalcCardStats(rec);
+#ifdef MEMORIES_PC
+                /* Its own "combat" boosts, which any battle of its gives it
+                   (monster_effects_duel.h). */
+                r = MonsterEffects_AiStats(rec, r);
+#endif
                 out->attack = r;
                 out->defense = r >> 16;
                 out->flags = rec->flags;

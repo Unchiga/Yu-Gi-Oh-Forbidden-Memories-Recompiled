@@ -428,6 +428,16 @@ destroys a monster whose `destroyed` effect fires next), and the CPU's
 monsters' effects fire as the player's do. Apart from putting such
 monsters down face up, the CPU plays as it always has: it sees the boosts
 in its view of the board, but it does not plan around a card's effects.
+A `combat` boost is in that view too, though it exists only in its battle:
+a monster's own (`self`) are in the ATK and DEF the CPU sees for it on the
+field, and those on the monster it battles (`battle`) in its weighing of
+each attack (counted as the battle counts them, both monsters face up), so
+it does not attack into a monster that would win once its boost comes, and
+does attack with one of its own that would. AI Hard Mode weighs them the
+same way, in its attacks and in the threats it keeps its monsters safe
+from. What it cannot foresee: a code mod that takes the battle's occasion,
+a `combat` heal or damage, and what a `destroyed` or `destroy_opponent`
+effect does after the battle.
 
 The [FM Editor](../tools/pc/fm_editor/README.md#monster-effects) edits
 them in the Cards tab. A [code mod](modding.md#code-mods) hears every one of
@@ -453,6 +463,13 @@ with the monsters chosen in place of its ATK test. A `magic` effect runs through
 card-effect dispatch (`DuelEffect_StartCardEffect`), first handler then
 second, as playing the card does. On the other side's turn, the turn is
 lent to the owner (`D_8009B1D5`, `D_8009B1C8`, `D_8009B22C`) while it runs.
+The CPU chooses its attacks before a battle begins, so it foresees the
+battle's `combat` boosts as `MonsterEffects_Battle` will make them, and
+makes none: `MonsterEffects_AiStats` adds a monster's own to the AI
+snapshot (`func_80027DF8`), and `MonsterEffects_AiBattleEdge` those on the
+monster it battles to `AiScript_FindKiller`'s difference and AI Hard
+Mode's board (its `edge` and `hit`). Both add nothing when no monster
+declares one, so the disc's duels play as ever.
 The state is a game variable (`src/pc/game/trigger_state.c`), so save states
 carry it.
 
