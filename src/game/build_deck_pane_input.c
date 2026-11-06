@@ -127,8 +127,9 @@ void BuildDeck_UpdateChestPaneInput(BuildDeckTransitionState *state)
         if (state->deck_total < DECK_SIZE &&
             state->chest_card_quantities[r] != 0 &&
 #ifdef MEMORIES_PC
-            /* Three, or a mod's "deck_copies" (tables.h). */
-            state->deck_card_quantities[r] <
+            /* Three, or a mod's "deck_copies" (tables.h), of a card and its
+               variants together (cards.h). */
+            Cards_FamilyCopies(state->deck_card_quantities, r) <
                 Tables_Value(TABLES_VALUE_DECK_COPIES, DECK_CARD_COPY_LIMIT)) {
 #else
             state->deck_card_quantities[r] < DECK_CARD_COPY_LIMIT) {

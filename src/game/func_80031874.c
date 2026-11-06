@@ -9,6 +9,7 @@
 #include "build_deck_transition_state.h"
 #include "color_constants.h"
 #ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
 #include "pc/cards/tables.h"
 #endif
 #include "duel_card_stat_display.h"
@@ -159,8 +160,10 @@ void func_80031874(DisplayObject *obj, GsOT *ot)
                 /* Red once the deck holds the limit: three copies, or one of
                    ids 0x11-0x15. */
 #ifdef MEMORIES_PC
-                /* At a mod's "deck_copies" (tables.h), else the three. */
-                if (n >= Tables_Value(TABLES_VALUE_DECK_COPIES, 3) ||
+                /* At a mod's "deck_copies" (tables.h), else the three; a
+                   variant counts with its card (cards.h). */
+                if (Cards_FamilyCopies(gBuildDeck_pState->deck_card_quantities, id) >=
+                        Tables_Value(TABLES_VALUE_DECK_COPIES, 3) ||
                     ((u32)(id - 0x11) < 5 && n != 0)) {
 #else
                 if (n >= 3 || ((u32)(id - 0x11) < 5 && n != 0)) {

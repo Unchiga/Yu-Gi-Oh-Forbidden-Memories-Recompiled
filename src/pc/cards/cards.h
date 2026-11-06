@@ -274,13 +274,32 @@ const unsigned char *Cards_FieldArtRecord(int id);
 const unsigned char *Cards_Text(int id, const unsigned char *text);
 
 /* A card the game rolled from a disc table of retail cards (a duel reward,
- * an opponent's deck): `id` or one of the copies of it that asked to take
- * its place there. `use` is CARDS_USE_DROP or CARDS_USE_OPPONENT. Draws
- * from the game's own random numbers only when there is a choice, so
- * without such copies the game's sequence is untouched. */
+ * an opponent's deck): `id`, one of its variants by that variant's chance, or
+ * one of the copies of it that asked to take its place there. `use` is
+ * CARDS_USE_DROP or CARDS_USE_OPPONENT. Draws from the game's own random
+ * numbers only when there is a choice, so without such copies the game's
+ * sequence is untouched. */
 #define CARDS_USE_DROP 0
 #define CARDS_USE_OPPONENT 1
 int Cards_PickVariant(int id, int use);
+
+/* Variants of a retail card: copies a mod gives "variant_permille" (the
+ * chance, in thousandths, that a roll of the base card is this card instead;
+ * notes/more-cards.md). A variant plays as its base does; the family of a
+ * retail card is the card and its variants, which a deck holds the limit of
+ * together. Cards_VariantOf is the retail card `id` is a variant of, 0 for any
+ * other card; Cards_VariantCount and Cards_VariantMember list a retail card's
+ * variants in card order (0 past the last); Cards_VariantPermille is a
+ * variant's chance (0 for any other card) and Cards_VariantLabel its
+ * "variant_label" (NULL for none). Cards_FamilyCopies is how many cards of
+ * `id`'s family `quantities` (a per-card-id count: a deck's or a chest's)
+ * holds: `quantities[id]` for a card with no variants. */
+int Cards_VariantOf(int id);
+int Cards_VariantCount(int base);
+int Cards_VariantMember(int base, int index);
+int Cards_VariantPermille(int id);
+const char *Cards_VariantLabel(int id);
+int Cards_FamilyCopies(const unsigned char *quantities, int id);
 
 /* The running save was just loaded (`state` is its SaveDataState), or was
  * just written with this sequence number: read or write what it holds of the

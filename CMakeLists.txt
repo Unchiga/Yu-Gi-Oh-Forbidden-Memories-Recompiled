@@ -608,6 +608,17 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_cards_order_found COMMAND memories_cards_order_test found)
     add_test(NAME pc_cards_order_moved COMMAND memories_cards_order_test b-first)
+    # A card's variants (cards.c, notes/more-cards.md): the family index, the
+    # roll by each variant's own chance, and the deck limit's family count.
+    add_executable(memories_card_variants_test tests/pc/card_variants_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+                   src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
+    target_include_directories(memories_card_variants_test PRIVATE src)
+    target_compile_definitions(memories_card_variants_test PRIVATE MEMORIES_PC)
+    target_link_libraries(memories_card_variants_test PRIVATE m Threads::Threads PNG::PNG)
+    if(NOT MSVC)
+        target_compile_options(memories_card_variants_test PRIVATE -Wall -Wextra)
+    endif()
+    add_test(NAME pc_card_variants COMMAND memories_card_variants_test)
     # Custom monster types (API 15, cards.c's "card_types"):
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods
