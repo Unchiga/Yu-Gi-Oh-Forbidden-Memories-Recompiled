@@ -290,6 +290,38 @@ int main(void)
     quantities[8] = 1;
     assert(Cards_FamilyCopies(quantities, 8) == 1);
 
+    /* The Library's cells (SET_LIBRARY_FOLD_VARIANTS is on unless the player turns it off): every card but the
+     * variants, in card order, so 4 of the 731 cards share a cell. */
+    Cards_LibraryBegin();
+    assert(Cards_LibraryFolded());
+    assert(Cards_LibraryEntryCount() == gCard_nCount - 4);
+    assert(Cards_LibraryEntry(0) == 0 && Cards_LibraryEntry(1) == 1 && Cards_LibraryEntry(722) == 722);
+    assert(Cards_LibraryEntry(723) == 725 && Cards_LibraryEntry(724) == 726);   /* 723 and 724 share card 1's cell */
+    assert(Cards_LibraryEntry(727) == 730 && Cards_LibraryEntry(728) == 0);     /* 729 and 731 share 5's and 7's */
+    assert(Cards_LibraryEntry(-1) == 0 && Cards_LibraryEntry(9999) == 0);
+    /* The entry is seen once any of its cards is; its cards shown are the card, then each variant seen. */
+    assert(!Cards_LibraryFamilySeen(1) && Cards_LibraryFamilySize(1) == 1);
+    assert(Cards_LibraryFamilyMember(1, 0) == 1 && Cards_LibraryFamilyMember(1, 1) == 0);
+    Cards_MarkSeen(724);
+    assert(Cards_LibraryFamilySeen(1) && Cards_LibraryFamilySeen(5) == 0);
+    assert(Cards_LibraryFamilySize(1) == 2 && Cards_LibraryFamilyMember(1, 1) == 724);
+    Cards_MarkSeen(723);
+    assert(Cards_LibraryFamilySize(1) == 3 && Cards_LibraryFamilyMember(1, 1) == 723 &&
+           Cards_LibraryFamilyMember(1, 2) == 724 && Cards_LibraryFamilyMember(1, 3) == 0);
+    assert(Cards_LibraryFamilySize(2) == 1);   /* a card with no variants is its own entry */
+    /* The line about the variants: made for the card on show, as the text of its own string. */
+    Cards_LibraryVariantNote(724, 1);
+    assert(Cards_Text(LIBRARY_VARIANT_TEXT_ID, NULL));   /* (the glyphs of the line are the game's: not checked here) */
+    assert(!Cards_Text(0x10, NULL));
+    /* Turned off: every card has a cell of its own, as before there were variants. */
+    Settings_Set(SET_LIBRARY_FOLD_VARIANTS, 0);
+    Cards_LibraryBegin();
+    assert(!Cards_LibraryFolded() && Cards_LibraryEntryCount() == gCard_nCount);
+    assert(Cards_LibraryEntry(731) == 731 && Cards_LibraryEntry(732) == 0 && Cards_LibraryFamilySize(1) == 1);
+    Settings_Set(SET_LIBRARY_FOLD_VARIANTS, 1);
+    Cards_LibraryBegin();
+    assert(Cards_LibraryEntryCount() == gCard_nCount - 4);
+
     printf("card variants: ok\n");
     return 0;
 }

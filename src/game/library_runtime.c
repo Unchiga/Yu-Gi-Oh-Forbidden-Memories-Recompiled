@@ -102,6 +102,80 @@
 #define LIBRARY_MOTION_STATE_VIEW(state) ((LibraryMotionState *)(state))
 #define DISPLAY_OBJECT_VIEW(object) ((DisplayObject *)(object))
 
+#ifdef MEMORIES_PC
+/* The card view of a card that has variants (cards.h, Cards_LibraryBegin):
+ * H(state, 6) stays the entry's own card (its cell, its record), and
+ * gLibrary_shownCard is the card of the entry on show. L1 and R1 step through
+ * the entry; a line under the card says which and the variant's label. */
+static s32 gLibrary_shownCard;
+static s32 gLibrary_noteUp;
+#define LIBRARY_NOTE_CHANNEL 2
+
+/* The line about the variants, made again for the card on show. */
+static void Library_VariantNote(u8 *state)
+{
+    s32 head = H(state, 6);
+    u8 *box;
+
+    if (gLibrary_noteUp) {
+        TextBox_Destroy(&D_800EB0F8[LIBRARY_NOTE_CHANNEL]);
+        gLibrary_noteUp = 0;
+    }
+    if (Cards_LibraryFamilySize(head) < 2) return;
+    Cards_LibraryVariantNote(gLibrary_shownCard, head);
+    /* In the strip between the card and the footer, clear of the footer's cell number. */
+    box = TextBox_Create(LIBRARY_NOTE_CHANNEL, LIBRARY_VARIANT_TEXT_ID, 0x32, 0xC9, 0x108, 0x10);
+    B(box, 0x54) = 0;
+    B(box, 0x53) = 1;
+    B(box, 0x59) = 4;
+    gLibrary_noteUp = 1;
+}
+
+/* The next card of the entry (`step` 1 for R1, -1 for L1). Its picture, frame
+ * and text are made again as the card view makes them, where the card rests,
+ * and the view's own fade (state 3) shows it. 1 when the card changed. */
+static s32 Library_ShowVariant(u8 *state, s32 step)
+{
+    DuelEffectResourceRecord *rec = D_800EA0E8;
+    s32 head = H(state, 6), size = Cards_LibraryFamilySize(head), at, card, layout;
+    u8 *o;
+    u8 *box;
+
+    if (size < 2) return 0;
+    for (at = 0; at < size && Cards_LibraryFamilyMember(head, at) != gLibrary_shownCard; at++) {
+    }
+    if (at == size) at = 0;
+    card = Cards_LibraryFamilyMember(head, (at + step + size) % size);
+    if (!card) return 0;
+    gLibrary_shownCard = card;
+    SD_SEPlayFull(6);
+    func_80029528(0);
+    TextBox_Destroy(&D_800EB0F8[0]);
+    func_80029164(0, card);
+    o = func_800291E0(0, -1, -1);
+    H(o, 8) |= 4;
+    /* The card where the opening's slide leaves it (state 1's end). */
+    W(o, 0x20) = 0x8000;
+    W(o, 0x30) = 0x40002;
+    W(o, 0x44) = 0x10001000;
+    W(o, 4) |= 0x08000000;
+    W(rec->object_04, 4) &= 0x7FFFFFFF;
+    DisplayObject_SavePosition((void *)o);
+    H(o, 0x60) = 0;
+    gDuel_wSelectedCardID = card;
+    layout = 3;
+    if (((gDuel_adwCardStats[card - 1] >> 0x1A) & 0x1F) >= 0x14 || Stars_NoStarCard(card)) {
+        layout = 4;
+    }
+    box = TextBox_Create(0, layout, 0x94, 0xE, 0xA8, 0xC0);
+    B(box, 0x54) = 0;
+    B(box, 0x53) = 1;
+    B(box, 0x59) = 4;
+    Library_VariantNote(state);
+    state[1] = 3;
+    return 1;
+}
+#endif
 void func_8002ACA4(u8 *state)
 {
     DuelEffectResourceRecord *rec;
@@ -268,6 +342,11 @@ void func_8002ACA4(u8 *state)
         B(box, 0x54) = 0;
         B(box, 0x53) = 1;
         B(box, 0x59) = 4;
+#ifdef MEMORIES_PC
+        gLibrary_shownCard = H(state, 6);
+        gLibrary_noteUp = 0;
+        Library_VariantNote(state);
+#endif
         state[1] = 1;
         return;
     case 1:
@@ -439,6 +518,12 @@ void func_8002ACA4(u8 *state)
         }
         break;
     case 5:
+#ifdef MEMORIES_PC
+        if ((gInput_wPad1Pressed & PAD_BUTTON_L1_R1_MASK) && state[3] == 0 && state[4] == 0 &&
+            Library_ShowVariant(state, (gInput_wPad1Pressed & PAD_BUTTON_R1) ? 1 : -1)) {
+            return;
+        }
+#endif
         if (gInput_wPad1Pressed & 0x20) {
             H(rec->object_00, 8) |= 4;
             state[1] = 6;
@@ -497,6 +582,13 @@ void func_8002ACA4(u8 *state)
             DisplayObject_ReleaseIfPresent((void *G32)W(state, 0x4C));
             W(state, 0x4C) = 0;
             TextBox_Destroy(&D_800EB0F8[0]);
+#ifdef MEMORIES_PC
+            if (gLibrary_noteUp) {
+                TextBox_Destroy(&D_800EB0F8[LIBRARY_NOTE_CHANNEL]);
+                gLibrary_noteUp = 0;
+            }
+            gDuel_wSelectedCardID = H(state, 6);
+#endif
             state[1] = 8;
             return;
         }
@@ -746,6 +838,10 @@ void func_8002BFCC(void) {
     gGraphics_sViewportX = 0;
     func_80035668(0);
     DuelEffect_ClearResourceObjectPointers(0);
+#ifdef MEMORIES_PC
+    /* A card's variants share its cell (cards.h). */
+    Cards_LibraryBegin();
+#endif
     n = CARD_COUNT - 1;
     q = (s16 *)0x801805A2;
     b = &D_800EA0E8[0];
@@ -851,6 +947,29 @@ void func_8002BFCC(void) {
 #endif
         n++;
     } while (n < CARD_ID_END_LIVE);
+#ifdef MEMORIES_PC
+    /* An entry of a card and its variants (cards.h): seen once any of them
+       has been, owned once any is, and counted once. */
+    if (Cards_LibraryFolded()) {
+        s32 head, i, seen = 0;
+
+        for (head = CARD_ID_FIRST; head <= CARD_COUNT; head++) {
+            for (i = 0; i < Cards_VariantCount(head); i++) {
+                s32 variant = Cards_VariantMember(head, i);
+                u8 member = *(u8 *)(r + variant * 4 + 0x56);
+                u8 *entry = (u8 *)(r + head * 4 + 0x56);
+
+                if (!Cards_Seen(variant) || !(member & 0x80)) continue;
+                if (!(*entry & 0x80)) *entry = 0x81;
+                if (!(member & 1)) *entry &= 0xFE;
+            }
+        }
+        for (i = 1; (head = Cards_LibraryEntry(i)) != 0; i++) {
+            if (Cards_LibraryFamilySeen(head)) seen++;
+        }
+        D_801D5608[0].library_count = seen;
+    }
+#endif
     func_8003B6AC(3, 1);
 #ifdef MEMORIES_PC
     /* "<seen/total>" in 16-pixel letters: nine of them fill the console's
@@ -860,7 +979,7 @@ void func_8002BFCC(void) {
         s32 digits = 3;
         s32 width;
 
-        for (n = CARD_COUNT_LIVE; n >= 1000; n /= 10) {
+        for (n = Cards_LibraryEntryCount(); n >= 1000; n /= 10) {
             digits++;
         }
         width = (3 + 2 * digits) * 0x10;

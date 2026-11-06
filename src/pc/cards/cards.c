@@ -573,17 +573,18 @@ static unsigned char *encode_type_name(const char *mod, const char *text, const 
 #define LIBRARY_HEADING_ID 0xF8
 static unsigned char library_heading[64];
 static const unsigned char *library_source;
+static int library_heading_total;   /* the count the cached heading says */
 
 static const unsigned char *heading(const unsigned char *text)
 {
     const unsigned char *at;
     char digits[16];
     int width, i, n = 0;
-    if (text == library_source) return library_heading;
+    if (text == library_source && library_heading_total == Cards_LibraryEntryCount()) return library_heading;
     for (at = text; *at != 0xFF; at++) {
         if (*at >= 0xF9 && *at <= 0xFD) return text;
     }
-    width = snprintf(digits, sizeof(digits), "%d", gCard_nCount);
+    width = snprintf(digits, sizeof(digits), "%d", Cards_LibraryEntryCount());
     at = text;
     while (*at != 0xFF) {
         if ((size_t)n + 16 >= sizeof(library_heading)) return text;
@@ -605,11 +606,16 @@ static const unsigned char *heading(const unsigned char *text)
     }
     library_heading[n] = 0xFF;
     library_source = text;
+    library_heading_total = Cards_LibraryEntryCount();
     return library_heading;
 }
 
+/* The Library card view's line about the variants (Cards_LibraryVariantNote). */
+static unsigned char variant_text[96];
+
 const unsigned char *Cards_Text(int id, const unsigned char *text)
 {
+    if (id == LIBRARY_VARIANT_TEXT_ID) return variant_text;
     if (id == LIBRARY_HEADING_ID && gCard_nCount > CARD_COUNT && text) return heading(text);
     return text;
 }
@@ -2156,6 +2162,108 @@ int Cards_Seen(int id)
 int Cards_LibraryPlaceholder(int id)
 {
     return Settings_Get(SET_LIBRARY_ALL_CARDS) && Cards_Valid(id) && !Cards_Seen(id);
+}
+
+/* --- the Library's entries (cards.h) ----------------------------------- */
+
+static unsigned short library_entries[CARD_TABLE_ID_END];   /* [1..count]: the card of each cell */
+static int library_entry_count;
+static int library_folded;
+static int library_built;   /* the entries are worked out for this setting: the Library opening does it, and a
+                             * state loaded inside the Library (a new process) finds them wanted */
+
+static void library_build(void)
+{
+    int id, n = 0;
+    library_built = 1;
+    library_folded = 0;
+    library_entry_count = 0;
+    if (!family_members || !Settings_Get(SET_LIBRARY_FOLD_VARIANTS)) return;
+    for (id = CARD_ID_FIRST; id <= gCard_nCount; id++) {
+        if (variant_base[id]) continue;
+        library_entries[++n] = (unsigned short)id;
+    }
+    library_entry_count = n;
+    library_folded = 1;
+}
+
+void Cards_LibraryBegin(void)
+{
+    library_build();
+}
+
+int Cards_LibraryFolded(void)
+{
+    if (!library_built) library_build();
+    return library_folded;
+}
+
+int Cards_LibraryEntryCount(void)
+{
+    if (!library_built) library_build();
+    return library_folded ? library_entry_count : gCard_nCount;
+}
+
+int Cards_LibraryEntry(int cell)
+{
+    if (!library_built) library_build();
+    if (cell < 1) return 0;
+    if (!library_folded) return cell <= gCard_nCount ? cell : 0;
+    return cell <= library_entry_count ? library_entries[cell] : 0;
+}
+
+int Cards_LibraryFamilySeen(int id)
+{
+    int i, count = Cards_VariantCount(id);
+    if (Cards_Seen(id)) return 1;
+    for (i = 0; i < count; i++) {
+        if (Cards_Seen(Cards_VariantMember(id, i))) return 1;
+    }
+    return 0;
+}
+
+/* The variants of `head` the Library shows: those seen, or all of them while it shows every card. */
+static int library_shows(int variant)
+{
+    return Cards_Seen(variant) || Settings_Get(SET_LIBRARY_ALL_CARDS);
+}
+
+int Cards_LibraryFamilySize(int head)
+{
+    int i, count = Cards_VariantCount(head), size = 1;
+    if (!Cards_LibraryFolded()) return 1;
+    for (i = 0; i < count; i++) {
+        if (library_shows(Cards_VariantMember(head, i))) size++;
+    }
+    return size;
+}
+
+int Cards_LibraryFamilyMember(int head, int index)
+{
+    int i, count = Cards_VariantCount(head);
+    if (index == 0) return head;
+    if (!Cards_LibraryFolded() || index < 0) return 0;
+    for (i = 0; i < count; i++) {
+        int variant = Cards_VariantMember(head, i);
+        if (library_shows(variant) && --index == 0) return variant;
+    }
+    return 0;
+}
+
+void Cards_LibraryVariantNote(int shown, int head)
+{
+    char line[80];
+    const char *label = shown == head ? "Original" : Cards_VariantLabel(shown);
+    int size = Cards_LibraryFamilySize(head), at, n = 0;
+    const char *p;
+    for (at = 0; at < size && Cards_LibraryFamilyMember(head, at) != shown; at++) {}
+    if (at == size) at = 0;   /* not one of them (a state loaded in the viewer): the card itself */
+    snprintf(line, sizeof(line), "L1 < %d/%d %.24s > R1", at + 1, size, label && *label ? label : "Variant");
+    /* The game's font has the ASCII letters, digits and punctuation: a label's other letters are left out. */
+    for (p = line; *p && n + 1 < (int)sizeof(variant_text); p++) {
+        if ((unsigned char)*p < 0x80) variant_text[n++] = (unsigned char)glyph_of((unsigned char)*p);
+    }
+    variant_text[n] = 0xFF;
 }
 
 void Cards_MarkSeen(int id)

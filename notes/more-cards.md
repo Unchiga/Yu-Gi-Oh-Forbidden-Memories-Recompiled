@@ -531,6 +531,11 @@ own.
   of added cards cannot). A chance outside 1 to 1000, a `variant_label` with no
   `variant_permille`, and the keys on a `replace` entry are noted in the Mods
   window and the card is an ordinary copy.
+* **The Library** shows a card and its variants as one entry (View > Library:
+  variants in one entry, on unless the player turns it off, [pc-build.md](pc-build.md#library-variants-in-one-entry)).
+  The card's view steps through the entry with L1 and R1: the card itself,
+  then each variant seen. The entry counts once in the heading, is seen once
+  any of its cards is and owned once any is. What a save keeps is by card.
 * A copy with the older `drops: true` (no `variant_permille`) still takes its
   base's place in an even share, and is its own card for the deck limit.
 

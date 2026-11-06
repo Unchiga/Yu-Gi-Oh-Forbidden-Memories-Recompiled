@@ -2975,6 +2975,37 @@ loaded menu on SAVE, and the game is saved to slot 1.
 
 The option is read when the Library opens: switching it while the Library
 is open takes effect the next time it opens.
+### Library: variants in one entry
+
+View > Library: variants in one entry (`library_fold_variants`,
+`MEMORIES_LIBRARY_FOLD_VARIANTS=0`, on by default) gives a retail card and its
+[variants](more-cards.md#variants-alternate-versions-of-a-card) one cell of the
+Library's grid. Without a mod that has variants nothing differs: the setting
+is read, no cell is folded, and every number the Library uses is the one it
+had.
+
+`Cards_LibraryBegin` (`src/pc/cards/cards.c`) works out the cells as the
+Library opens: every card but the variants, in card order. A cell is then a
+card by `Cards_LibraryEntry(cell)`, and the grid's rows follow
+`Cards_LibraryEntryCount()` in place of the card count
+(`src/game/card_grid.h`). The grid's cursor (`Library_GetGridCursorCardId`),
+its drawing (`Library_DrawCardGrid`), the panels past the disc's and the
+heading's total ask the same two functions, each in a `MEMORIES_PC` block; the
+retail branches are as they were. With the variants folded and no other card
+added, the grid is the retail one.
+
+What a save keeps stays by card (owned, seen); the entry is a view of it. In
+`func_8002BFCC` an entry is seen once its card or any variant is, owned once
+any is, and counted once in the heading's "seen". In its card view
+(`func_8002ACA4`), L1 and R1 step through the entry: the card, then each
+variant seen (every one while View > Library: show every card is on). The new
+card's picture, frame, stars and text are made again as the view makes them
+and set where the opening's slide leaves a card (state 1's end), and the
+view's own fade (state 3) shows them; a small line under the card says which
+(`Cards_LibraryVariantNote`, "L1 < 2/3 Rainbow foil > R1", a string of its own,
+`LIBRARY_VARIANT_TEXT_ID`). The entry's own card stays the one the cell, the
+record and the closing slide use. The 3D model view is not stepped.
+
 ### Card passwords (View)
 
 View > Card passwords (`card_passwords`, `MEMORIES_CARD_PASSWORDS=1`, off by

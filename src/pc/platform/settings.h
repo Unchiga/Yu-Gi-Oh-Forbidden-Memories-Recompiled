@@ -72,6 +72,7 @@ typedef enum {
     SET_HD_FAST,
     SET_TOUCH_OPACITY,
     SET_TOUCH_STYLE,
+    SET_LIBRARY_FOLD_VARIANTS,  /* the Library shows a card and its variants as one entry */
     SET_COUNT
 } SettingId;
 

@@ -301,6 +301,31 @@ int Cards_VariantPermille(int id);
 const char *Cards_VariantLabel(int id);
 int Cards_FamilyCopies(const unsigned char *quantities, int id);
 
+/* The Library with its variants folded (SET_LIBRARY_FOLD_VARIANTS): a retail
+ * card's variants are not cells of the grid; the card is one cell, and its
+ * card view steps through the family with L1 and R1. Cards_LibraryBegin, as
+ * the Library opens, works out which cards have a cell: every card but the
+ * variants, in card order (while the setting is off, or no mod has variants,
+ * every card, so a cell is its card's number). Cards_LibraryEntryCount is how
+ * many cells the grid has and Cards_LibraryEntry the card of cell `cell`
+ * (1 on), 0 past the last. Cards_LibraryFamilySeen is whether the card or any
+ * variant of it has been seen (the entry is then); Cards_LibraryFamilySize and
+ * Cards_LibraryFamilyMember are the entry's cards the Library may show, the
+ * card first, then each variant seen (every one while View > Library: show
+ * every card is on). Cards_LibraryVariantNote makes the line "L1 < 2/3 Rainbow
+ * foil > R1" for card `shown` of `head`'s entry, the text of string
+ * LIBRARY_VARIANT_TEXT_ID. Only the grid and the card view change: what a
+ * save keeps of a card (owned, seen) stays by card. */
+#define LIBRARY_VARIANT_TEXT_ID 0xFFFE
+void Cards_LibraryBegin(void);
+int Cards_LibraryFolded(void);
+int Cards_LibraryEntryCount(void);
+int Cards_LibraryEntry(int cell);
+int Cards_LibraryFamilySeen(int id);
+int Cards_LibraryFamilySize(int head);
+int Cards_LibraryFamilyMember(int head, int index);
+void Cards_LibraryVariantNote(int shown, int head);
+
 /* The running save was just loaded (`state` is its SaveDataState), or was
  * just written with this sequence number: read or write what it holds of the
  * new cards, under the token Cards_SetSlotTokens gave last. */
