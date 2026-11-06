@@ -284,6 +284,9 @@ file that is no mod gets the usual refusal ("That file is not a .zip.",
   The `id`, the name and whether it carries code come from its `mod.json`, as
   the loader reads them; one over 128 MB (a card mod's is tens of MB) is
   refused, as the game would read the whole file at every launch.
+  A file's name with no UTF-8 flag that is not UTF-8 either is read as code
+  page 850, which Windows' tools write (the format says 437; 850 has the same
+  accented letters and the ones 437 lacks, like `ã`).
   Unpacking goes into a hidden `mods/.import-XXXXXX` folder (the scan skips
   names starting with a dot), checking each file's size and CRC; only then
   is each mod renamed into place, and any failure puts back what was moved
