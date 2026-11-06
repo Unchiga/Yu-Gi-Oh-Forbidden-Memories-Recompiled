@@ -148,6 +148,33 @@ static void a_span_after_the_wrap(void)
         if (i != 3) assert(GuestRuntime_UnregisterData(slots[i]) == 0);
 }
 
+/* An exact fit reaches the arena's end; a region across the end, and one
+ * across its base, leave the top and the bottom to the search. */
+static void the_ends_of_the_arena(void)
+{
+    void *slots[16], *back, *across, *before;
+    for (int i = 0; i < 16; ++i) slots[i] = place(16u * MB);
+    assert(token(slots[15]) == END - 16u * MB);
+    assert(GuestRuntime_UnregisterData(slots[15]) == 0);
+    assert(GuestRuntime_UnregisterData(slots[3]) == 0);
+    across = new_host(0x20000);
+    assert(GuestRuntime_RegisterData(across, 0x20000, END - 0x10000u) == 0);
+    /* The top is 64 KiB short now: it comes back to slot 3's span. */
+    back = place(16u * MB);
+    assert(token(back) == BASE + 3u * 16u * MB);
+    assert(GuestRuntime_UnregisterData(back) == 0);
+    assert(GuestRuntime_UnregisterData(across) == 0);
+    assert(GuestRuntime_UnregisterData(slots[0]) == 0);
+    before = new_host(0x20000);
+    assert(GuestRuntime_RegisterData(before, 0x20000, BASE - 0x10000u) == 0);
+    back = place(1u * MB);
+    assert(token(back) >= BASE + 0x10000u);
+    assert(GuestRuntime_UnregisterData(back) == 0);
+    assert(GuestRuntime_UnregisterData(before) == 0);
+    for (int i = 1; i < 15; ++i)
+        if (i != 3) assert(GuestRuntime_UnregisterData(slots[i]) == 0);
+}
+
 #ifndef _WIN32
 /* Nothing fits, above the cursor or below it: the arena says so. */
 static void exhausted(void)
@@ -165,12 +192,13 @@ static void exhausted(void)
         close(output[1]);
         for (int i = 0; i < 15; ++i) place(16u * MB);
         place(8u * MB);
-        place(8u * MB);
+        if (token(place(8u * MB)) != END - 8u * MB) _exit(1);
         place(16u);
         _exit(0);
     }
     close(output[1]);
     assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status));
     length = read(output[0], text, sizeof(text) - 1);
     close(output[0]);
     assert(length > 0);
@@ -207,6 +235,8 @@ int main(void)
     MemoriesMemory *memory = calloc(1, sizeof(*memory));
     assert(memory && GuestRuntime_Bind(memory) == 0);
     a_span_after_the_wrap();
+    assert(GuestRuntime_Bind(memory) == 0);
+    the_ends_of_the_arena();
     assert(GuestRuntime_Bind(memory) == 0);
 #ifndef _WIN32
     exhausted();
