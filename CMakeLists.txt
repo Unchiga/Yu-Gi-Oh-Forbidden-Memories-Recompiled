@@ -199,7 +199,7 @@ if(BUILD_TESTING)
         target_link_options(memories_fusion_rules_test PRIVATE -fsanitize=address,undefined)
     endif()
     add_test(NAME pc_fusion_rules COMMAND memories_fusion_rules_test)
-    add_executable(memories_duelists_test tests/pc/duelists_test.c src/pc/free_duel/duelists.c src/pc/mods/json.c)
+    add_executable(memories_duelists_test tests/pc/duelists_test.c src/pc/platform/loading.c src/pc/free_duel/duelists.c src/pc/mods/json.c)
     target_include_directories(memories_duelists_test PRIVATE src)
     target_compile_definitions(memories_duelists_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -365,6 +365,12 @@ if(BUILD_TESTING)
         target_compile_options(memories_quit_prompt_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_quit_prompt COMMAND memories_quit_prompt_test)
+    add_executable(memories_loading_test tests/pc/loading_test.c src/pc/platform/loading.c)
+    target_include_directories(memories_loading_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_loading_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_loading COMMAND memories_loading_test)
     add_executable(memories_host_actions_test tests/pc/host_actions_test.c src/pc/platform/host_actions.c
         src/pc/platform/controls.c src/pc/platform/quit_prompt.c)
     target_include_directories(memories_host_actions_test PRIVATE src)
@@ -549,7 +555,7 @@ if(BUILD_TESTING)
     target_include_directories(memories_password_data_test PRIVATE src)
     target_compile_definitions(memories_password_data_test PRIVATE MEMORIES_PC)
     add_test(NAME pc_password_data COMMAND memories_password_data_test)
-    add_executable(memories_tables_test tests/pc/tables_test.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_tables_test tests/pc/tables_test.c src/pc/platform/loading.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_tables_test PRIVATE src)
     target_compile_definitions(memories_tables_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -584,7 +590,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_attributes COMMAND memories_attributes_test)
     # A card's "stars" through cards.c's own add_entry, on a stand-in for the
     # disc's tables (notes/modding.md, "No star").
-    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
+    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/platform/loading.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
                    src/pc/mods/json.c src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_stars_test PRIVATE src)
     target_compile_definitions(memories_cards_stars_test PRIVATE MEMORIES_PC)
@@ -598,7 +604,7 @@ if(BUILD_TESTING)
     # Two mods' "cards" in the load order the settings give, through the real
     # mod loader and cards.c's Cards_Build: once as the folders sort, once
     # with the second moved first (notes/more-cards.md).
-    add_executable(memories_cards_order_test tests/pc/cards_order_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_cards_order_test tests/pc/cards_order_test.c src/pc/platform/loading.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_order_test PRIVATE src)
     target_compile_definitions(memories_cards_order_test PRIVATE MEMORIES_PC)
@@ -612,7 +618,7 @@ if(BUILD_TESTING)
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods
     # redefining one id, and a name the game has no letters for.
-    add_executable(memories_card_types_test tests/pc/card_types_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_card_types_test tests/pc/card_types_test.c src/pc/platform/loading.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_card_types_test PRIVATE src)
     target_compile_definitions(memories_card_types_test PRIVATE MEMORIES_PC)
@@ -638,7 +644,7 @@ if(BUILD_TESTING)
         target_compile_options(memories_type_icons_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_type_icons COMMAND memories_type_icons_test)
-    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c src/pc/platform/loading.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_free_duel_progress_test PRIVATE src)
     target_compile_definitions(memories_free_duel_progress_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -655,7 +661,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_font_art COMMAND memories_font_art_test)
     set_tests_properties(pc_font_art PROPERTIES SKIP_RETURN_CODE 77)
-    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/cards/tables.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/platform/loading.c src/pc/cards/tables.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_card_drops_test PRIVATE src)
     target_compile_definitions(memories_card_drops_test PRIVATE MEMORIES_PC)
     # The game's headers (drops.c's save and reward layouts) are 32-bit.
@@ -700,7 +706,7 @@ if(BUILD_TESTING)
     # A duelist's bust (src/pc/free_duel/busts.c): "bust" as read, and the
     # records it is made into read back as the game reads a character's
     # parts bank, on the test's own pictures.
-    add_executable(memories_busts_test tests/pc/busts_test.c src/pc/mods/json.c)
+    add_executable(memories_busts_test tests/pc/busts_test.c src/pc/platform/loading.c src/pc/mods/json.c)
     target_include_directories(memories_busts_test PRIVATE src)
     target_compile_definitions(memories_busts_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -973,7 +979,7 @@ if(BUILD_TESTING)
         add_test(NAME pc_card_art COMMAND memories_card_art_test "${CMAKE_CURRENT_BINARY_DIR}/card-art-test")
         # What a duelist's bust costs the start (busts.c Busts_Make with the
         # real art.c): the biggest bust and a typical one, drawn at runtime.
-        add_executable(memories_busts_make_test tests/pc/busts_make_test.c src/pc/cards/art.c src/pc/mods/json.c)
+        add_executable(memories_busts_make_test tests/pc/busts_make_test.c src/pc/platform/loading.c src/pc/cards/art.c src/pc/mods/json.c)
         target_include_directories(memories_busts_make_test PRIVATE src ${MEMORIES_FREETYPE_INCLUDE})
         target_compile_definitions(memories_busts_make_test PRIVATE MEMORIES_PC)
         target_link_libraries(memories_busts_make_test PRIVATE ${MEMORIES_FREETYPE_LIBRARY} ${memories_plate_fonts}

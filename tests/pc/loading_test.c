@@ -1,0 +1,122 @@
+/* The loading screen's pacing (src/pc/platform/loading.c): nothing shown for
+ * a start that takes under half a second, a new stage drawn at once after
+ * it and the same one at most ten times a second, no calls outside
+ * Begin/Finish, and a platform with nothing to show on asked no more. */
+#include "pc/platform/loading.h"
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+static uint64_t clock_now;
+static int shown, ended, quits, answer;
+static char last_line[160];
+static unsigned last_done, last_total;
+
+static uint64_t fake_now(void) { return clock_now; }
+static int fake_show(const char *line, unsigned done, unsigned total)
+{
+    shown++;
+    snprintf(last_line, sizeof(last_line), "%s", line);
+    last_done = done;
+    last_total = total;
+    return answer;
+}
+static void fake_end(void) { ended++; }
+static void fake_quit(void) { quits++; }
+static const LoadingSink sink = {fake_show, fake_end, fake_now, fake_quit};
+
+static void reset(void)
+{
+    clock_now = 1000000;
+    shown = ended = quits = answer = 0;
+    last_line[0] = '\0';
+}
+
+static void pace_alone(void)
+{
+    LoadingPace pace;
+    LoadingPace_Begin(&pace, 5000000);
+    assert(!LoadingPace_Due(&pace, 5000000, "Cards"));
+    assert(!LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US - 1, "Cards"));
+    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US, "Cards"));
+    /* The same stage waits for its interval; another goes at once. */
+    assert(!LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US - 1, "Cards"));
+    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US, "Cards"));
+    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US, "Tables"));
+    assert(!LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US + 1, "Tables"));
+    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US, "Cards")); /* back to a label not drawn last */
+}
+
+static void fast_start(void)
+{
+    unsigned i;
+    reset();
+    Loading_Step("Cards", 1, 2); /* before Begin: nothing */
+    assert(!shown);
+    Loading_Begin(&sink);
+    for (i = 0; i < 1000; i++) { /* a start of 0.499 s, a step every half millisecond */
+        clock_now += 499;
+        Loading_Step("Cards", i, 1000);
+    }
+    assert(!shown && "a quick start shows nothing");
+    Loading_Step("Starting the game", 0, 0);
+    Loading_Finish();
+    assert(!shown && ended == 1);
+    Loading_Step("Cards", 1, 2); /* after Finish: nothing */
+    assert(!shown);
+}
+
+static void slow_start(void)
+{
+    unsigned i;
+    reset();
+    Loading_Begin(&sink);
+    for (i = 0; i < 3000; i++) { /* 3 s, a step a millisecond */
+        clock_now += 1000;
+        Loading_Step("Cards", i, 3000);
+    }
+    /* From 0.5 s to 3 s at ten a second: 25, give or take the edges. */
+    assert(shown >= 24 && shown <= 26);
+    assert(!strncmp(last_line, "Cards ", 6) && last_total == 3000 && last_done > 2800);
+    assert(strstr(last_line, "of 3000"));
+    Loading_Step("Tables", 0, 0);
+    assert(!strcmp(last_line, "Tables") && last_total == 0 && "a new stage at once, without a count");
+    Loading_Finish();
+    assert(ended == 1 && !quits);
+    Loading_Finish();
+    assert(ended == 1);
+}
+
+static void without_a_window(void)
+{
+    reset();
+    answer = -1;
+    Loading_Begin(&sink);
+    clock_now += 2000000;
+    Loading_Step("Cards", 1, 2);
+    assert(shown == 1 && ended == 1);
+    clock_now += 2000000;
+    Loading_Step("Tables", 0, 0);
+    assert(shown == 1 && "not asked again");
+}
+
+static void closed_while_loading(void)
+{
+    reset();
+    answer = 1;
+    Loading_Begin(&sink);
+    clock_now += 2000000;
+    Loading_Step("Cards", 1, 2);
+    assert(shown == 1 && quits == 1 && ended == 1);
+}
+
+int main(void)
+{
+    pace_alone();
+    fast_start();
+    slow_start();
+    without_a_window();
+    closed_while_loading();
+    puts("loading screen: nothing before half a second, ten a second at most, a stage at once, none outside Begin/Finish passed");
+    return 0;
+}

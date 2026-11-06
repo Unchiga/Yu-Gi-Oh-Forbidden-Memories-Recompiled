@@ -2,6 +2,7 @@
 #include "image.h"
 #include "state.h"
 #include "pc/platform/platform.h"
+#include "pc/platform/loading.h"
 #include "pc/debug/log.h"
 #include "pc/debug/symbols.h"
 #include "pc/debug/crash.h"
@@ -188,6 +189,8 @@ static void user_dir_fact(int writable, const char *why)
     else Monitor_Fact("user dir", "%s; writable: no: %s", Paths_UserDir(), why);
 }
 
+static const LoadingSink loading_sink = {Platform_ShowLoading, Platform_EndLoading, NULL, NULL};
+
 int main(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -239,12 +242,17 @@ int main(int argc, char **argv)
     if (Platform_Open("Yu-Gi-Oh! Forbidden Memories") != 0) {
         return 1;
     }
+    Loading_Begin(&loading_sink);   /* a start that drags shows what it is doing (loading.h) */
     Update_Start(); /* in the background; a newer release shows a notice */
     /* The mods are applied by now (Platform_Open reads the settings), and
      * the executable is in place: the cards they add come after its own. */
+    Loading_Step("Text and fonts", 0, 0);
     Text_Build();   /* the mods' translations and fonts, which the cards' names may use */
     Cards_Build();
+    Loading_Step("Sorting cards", 0, 0);
     Text_SortCards();
+    Loading_Step("Starting the game", 0, 0);
+    Loading_Finish();   /* the picture the game draws next replaces it */
     note_settings(SET_COUNT, 0);
     Settings_Observe(note_settings);
 #ifndef _WIN32 /* the Windows runtime has no line buffering, and takes no size 0 */

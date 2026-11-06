@@ -2948,6 +2948,158 @@ static int claim_exit(void)
     return 1;
 }
 
+/* The loading screen (loading.h): drawn straight to the window with a
+ * texture of its own, apart from the picture, the overlay and the layout,
+ * none of which exist before the first frame; a start that never shows it
+ * creates nothing of this. The window's events are pumped and left in the
+ * queue for the game's own pump, except a quit, which is the player's
+ * answer to a wait with nothing to lose, and the mouse's motion, which
+ * would pile up for minutes. */
+static uint32_t *loading_pixels;
+static SDL_Texture *loading_texture;
+static GLuint gl_loading;
+static int loading_w, loading_h;
+
+static int loading_quit_asked(void)
+{
+    SDL_Event keys[16];
+    int count, i;
+    if (SDL_HasEvent(SDL_EVENT_QUIT) || SDL_HasEvent(SDL_EVENT_WINDOW_CLOSE_REQUESTED)) return 1;
+    count = SDL_PeepEvents(keys, 16, SDL_PEEKEVENT, SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_DOWN);
+    for (i = 0; i < count; i++) if (keys[i].key.key == SDLK_AC_BACK) return 1; /* a phone's Back */
+    return 0;
+}
+
+static void loading_fill(int x, int y, int w, int h, uint32_t color)
+{
+    int row, column;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > loading_w) w = loading_w - x;
+    if (y + h > loading_h) h = loading_h - y;
+    for (row = y; row < y + h; row++)
+        for (column = x; column < x + w; column++) loading_pixels[(size_t)row * (size_t)loading_w + (size_t)column] = color;
+}
+
+/* The Mods window's colors (mods_window.c) and its font. */
+static void loading_paint(const char *line, unsigned done, unsigned total)
+{
+    static const uint32_t BACKGROUND = 0xFF181b20u, EDGE = 0xFF363d49u, TEXT = 0xFFe9edf3u, ACCENT = 0xFF356dd1u;
+    MenuCanvas c = {loading_pixels, loading_w, loading_w, loading_h, 0};
+    char cut[160];
+    int unit = (loading_h + 240) / 360, middle = loading_h * 2 / 5, room = loading_w - 32, width;
+    if (unit < 1) unit = 1;
+    if (unit > 4) unit = 4;
+    loading_fill(0, 0, loading_w, loading_h, BACKGROUND);
+    while (unit > 1 && Menu_TextWidthScaled(line, unit) > room) unit--;
+    snprintf(cut, sizeof(cut), "%s", line);
+    if (Menu_TextWidthScaled(cut, unit) > room) { /* a name too long even at 1x: cut, with dots */
+        char base[sizeof(cut)];
+        size_t length;
+        snprintf(base, sizeof(base), "%s", line);
+        for (length = strlen(base); length;) {
+            length = Menu_TextBack(base, length);
+            base[length] = ' ';
+            snprintf(cut, sizeof(cut), "%s...", base);
+            if (Menu_TextWidthScaled(cut, unit) <= room) break;
+        }
+    }
+    width = Menu_TextWidthScaled(cut, unit);
+    Menu_DrawTextScaled(&c, (loading_w - width) / 2, middle, cut, TEXT, unit);
+    if (total) {
+        int bar_w = loading_w * 6 / 10, bar_h = 6 * unit, x = (loading_w - bar_w) / 2, y = middle + 18 * unit;
+        long long filled = (long long)bar_w * (done > total ? total : done) / total;
+        loading_fill(x - 1, y - 1, bar_w + 2, bar_h + 2, EDGE);
+        loading_fill(x, y, bar_w, bar_h, BACKGROUND);
+        loading_fill(x, y, (int)filled, bar_h, ACCENT);
+    }
+}
+
+int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
+{
+    int w, h, output_w = 0, output_h = 0;
+    if (!window || (!renderer && !use_gl)) return -1;
+    SDL_PumpEvents(); /* the window answers the system, and Android its input */
+    SDL_FlushEvent(SDL_EVENT_MOUSE_MOTION);
+    if (loading_quit_asked()) return 1;
+    /* Away (Android): the surface and its context may be gone; the game's
+     * own pump makes them again, and nothing is drawn until then. */
+    if (background_paused || SDL_HasEvent(SDL_EVENT_RENDER_DEVICE_RESET)) return 0;
+    if (!SDL_GetWindowSize(window, &w, &h) || w <= 0 || h <= 0) return 0;
+    if (use_gl && !SDL_GetWindowSizeInPixels(window, &output_w, &output_h)) return 0;
+    if (w != loading_w || h != loading_h) {
+        if (gl_loading) glDeleteTextures(1, &gl_loading);
+        gl_loading = 0;
+        if (loading_texture) SDL_DestroyTexture(loading_texture);
+        loading_texture = NULL;
+        free(loading_pixels);
+        loading_pixels = malloc((size_t)w * (size_t)h * 4);
+        if (!loading_pixels) { loading_w = loading_h = 0; return 0; }
+        loading_w = w;
+        loading_h = h;
+    }
+    loading_paint(line, done, total);
+    if (use_gl) {
+        const int win_w = layout.win_w, win_h = layout.win_h;
+        if (!gl_loading) {
+            glGenTextures(1, &gl_loading);
+            glBindTexture(GL_TEXTURE_2D, gl_loading);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+        }
+        glBindTexture(GL_TEXTURE_2D, gl_loading);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, loading_pixels);
+        layout.win_w = w; /* gl_quad's, on macOS */
+        layout.win_h = h;
+        glViewport(0, 0, output_w, output_h);
+#ifndef __APPLE__
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0, w, h, 0, -1, 1);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+#endif
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+#ifndef __APPLE__
+        glEnable(GL_TEXTURE_2D);
+        glColor4f(1, 1, 1, 1);
+#endif
+        glDisable(GL_BLEND);
+        gl_quad(gl_loading, 0, 0, (float)w, (float)h);
+        SDL_GL_SwapWindow(window);
+        layout.win_w = win_w;
+        layout.win_h = win_h;
+    } else {
+        if (!loading_texture) {
+            loading_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+            if (!loading_texture) return 0;
+            SDL_SetTextureScaleMode(loading_texture, SDL_SCALEMODE_LINEAR);
+        }
+        SDL_UpdateTexture(loading_texture, NULL, loading_pixels, w * 4);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        SDL_RenderTexture(renderer, loading_texture, NULL, NULL);
+        SDL_RenderPresent(renderer);
+    }
+    return 0;
+}
+
+void Platform_EndLoading(void)
+{
+    if (gl_loading) glDeleteTextures(1, &gl_loading);
+    gl_loading = 0;
+    if (loading_texture) SDL_DestroyTexture(loading_texture);
+    loading_texture = NULL;
+    free(loading_pixels);
+    loading_pixels = NULL;
+    loading_w = loading_h = 0;
+}
+
 int Platform_Open(const char *title)
 {
     sigset_t previous;

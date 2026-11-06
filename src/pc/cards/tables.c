@@ -23,6 +23,7 @@
 #include "pc/mods/json.h"
 #include "pc/debug/log.h"
 #include "pc/platform/paths.h"
+#include "pc/platform/loading.h"
 #include "pc/compat/fs.h"
 #include "game/card_constants.h"
 #include "game/duel_rank.h"
@@ -346,15 +347,18 @@ static void read_fusions(const char *mod, const JsonValue *list)
     int i;
     const JsonValue *rule;
     char where[64];
+    int total;
     if (list && Json_TypeOf(list) != JSON_ARRAY) {
         Mods_Note(mod, "\"fusions\" is not an array");
         return;
     }
+    total = Json_Count(list);   /* one walk, for the loading screen's bar */
     /* One pass down the list: Json_Count and Json_At each walk it from the
      * start, which made a mod of every pair (261,003 rules, the editor's
      * bulk fusions) take minutes to read. */
     for (i = 0, rule = Json_At(list, 0); rule; i++, rule = Json_Next(rule)) {
         const JsonValue *with = Json_Member(rule, "with");
+        Loading_Step("Fusions", (unsigned)i, (unsigned)total);
         const JsonValue *result = Json_Member(rule, "result");
         const JsonValue *removed = Json_Member(rule, "remove");
         int a, b, made = 0;
@@ -567,16 +571,18 @@ static void read_equip_default(const char *mod, const JsonValue *value)
 
 static void read_equips(const char *mod, const JsonValue *list)
 {
-    int i, j, pass;
+    int i, j, pass, total;
     char where[80];
     if (list && Json_TypeOf(list) != JSON_ARRAY) {
         Mods_Note(mod, "\"equips\" is not an array");
         return;
     }
-    for (i = 0; i < Json_Count(list); i++) {
+    total = Json_Count(list);
+    for (i = 0; i < total; i++) {
         const JsonValue *entry = Json_At(list, i);
         unsigned order = ++order_counter;
         int equip;
+        Loading_Step("Equips", (unsigned)i, (unsigned)total);
         snprintf(where, sizeof(where), "equips[%d]", i);
         if (!Mods_EntryUsed(mod, entry, where)) continue;
         equip = card(mod, where, Json_Member(entry, "card"));
@@ -1334,6 +1340,7 @@ static void read_pool_folder(const char *mod, const char *directory, int decks)
         const JsonValue *root;
         char identity[192];
         int duelist;
+        Loading_Step(decks ? "Duelist decks" : "Duelist drops", (unsigned)i, (unsigned)count);
         /* The file's name is the id the mod's own duelists/<id>.json gave it,
          * so the four folders are keyed alike; failing that, a name as any
          * other entry names an opponent, which is how a stock duelist or
@@ -2398,12 +2405,16 @@ void Tables_AddFrom(const char *mod, const char *directory, const JsonValue *man
     Fields_Build();
     forget_pools();
     pool_directory = directory;
+    Loading_Step("Fusions and equips", 0, 0);
     read_fusions(mod, Json_Member(manifest, "fusions"));
     read_equips(mod, Json_Member(manifest, "equips"));
     read_equip_default(mod, Json_Member(manifest, "equip_bonus_default"));
+    Loading_Step("Rituals", 0, 0);
     read_rituals(mod, Json_Member(manifest, "rituals"));
+    Loading_Step("Drops and decks", 0, 0);
     read_pools(mod, Json_Member(manifest, "drops"), 0);
     read_pools(mod, Json_Member(manifest, "decks"), 1);
+    Loading_Step("Limits and passwords", 0, 0);
     read_chest_overflow(mod, Json_Member(manifest, "chest_overflow"));
     read_terrain_bonus(mod, Json_Member(manifest, "terrain_bonus"));
     read_trap_thresholds(mod, Json_Member(manifest, "trap_thresholds"));
