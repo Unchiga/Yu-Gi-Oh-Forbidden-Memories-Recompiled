@@ -119,11 +119,12 @@ void MonsterEffects_Stats(const void *record, int *attack, int *defense);
  * only then). MonsterEffects_AiStats: `stats` (Duel_CalcCardStats's word
  * for the monster `record`) with the monster's own "combat" boosts, those
  * any battle of its gives it: the AI snapshot's (func_80027DF8.c).
- * MonsterEffects_AiBattleEdge: for the AI snapshot's slots, what the two
- * monsters' "combat" boosts of the monster it battles ("battle") add to
- * the attacker's ATK less the target's ATK, or its DEF when
- * `against_defense`: the attack searches add it to their difference. Both
- * are 0 when no monster declares one, as with the disc's cards. */
+ * MonsterEffects_AiBattleEdge: for the AI snapshot's slots, what that
+ * battle adds past the snapshot to the attacker's ATK less the target's
+ * ATK, or its DEF when `against_defense`: each one's "battle" boosts on the
+ * other, and a "for_each" counting the other face up: the attack searches
+ * add it to their difference. Both are 0 when no monster declares one, as
+ * with the disc's cards. */
 int MonsterEffects_AiStats(const void *record, int stats);
 int MonsterEffects_AiBattleEdge(int attacker_slot, int target_slot, int against_defense);
 

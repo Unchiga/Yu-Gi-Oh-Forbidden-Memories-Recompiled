@@ -436,8 +436,14 @@ it does not attack into a monster that would win once its boost comes, and
 does attack with one of its own that would. AI Hard Mode weighs them the
 same way, in its attacks and in the threats it keeps its monsters safe
 from. What it cannot foresee: a code mod that takes the battle's occasion,
-a `combat` heal or damage, and what a `destroyed` or `destroy_opponent`
-effect does after the battle.
+a `combat` heal or damage, what a `destroyed` or `destroy_opponent`
+effect does after the battle, and, in the retail AI, the field script's
+lethal check, which compares printed ATK (`CalcCardPower`), so at 500 LP
+its 1800 still attacks a 1200 with +1500 and loses. A boost is added to
+stats already held to 0 and the cap, so a monster past the cap reads low (a
+real 11000 with -2000 is 9000, the CPU sees 7999). What each CPU knows does
+not change: its own face-down monsters count, a player's face-down one only
+for a duelist that sees hidden stats already.
 
 The [FM Editor](../tools/pc/fm_editor/README.md#monster-effects) edits
 them in the Cards tab. A [code mod](modding.md#code-mods) hears every one of

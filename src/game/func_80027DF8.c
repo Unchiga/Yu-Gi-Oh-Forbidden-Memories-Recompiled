@@ -72,11 +72,6 @@ void func_80027DF8(AiActiveCard *out, s32 who) {
 
                 out->card_id = rec->card_id;
                 r = Duel_CalcCardStats(rec);
-#ifdef MEMORIES_PC
-                /* Its own "combat" boosts, which any battle of its gives it
-                   (monster_effects_duel.h). */
-                r = MonsterEffects_AiStats(rec, r);
-#endif
                 out->attack = r;
                 out->defense = r >> 16;
                 out->flags = rec->flags;

@@ -306,6 +306,18 @@ static void combat_cases(void)
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] != 56);
     b.edge[0][0][1] = 400;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 56);
+    /* An equip on a field monster: the attack it would win counts its edge. */
+    {
+        HmDecision free_hit, cut_hit;
+        o.spells = 0;
+        b = empty(); b.own[0] = monster(2, 1500, 500); b.own[0].zone = 1;
+        b.enemy[0] = monster(20, 2000, 1000);
+        b.hand[0] = magic(657, 23); b.hand_count = 1;
+        free_hit = Hm_PlanHand(&b,&o,&rules);
+        b.edge[0][0][0] = -1000;
+        cut_hit = Hm_PlanHand(&b,&o,&rules);
+        assert(free_hit.result == 1 && cut_hit.result == 1 && cut_hit.score < free_hit.score);
+    }
 }
 
 int main(void)

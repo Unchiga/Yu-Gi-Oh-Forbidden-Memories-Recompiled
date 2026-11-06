@@ -233,15 +233,15 @@ static int reaches(const MonsterEffect *effect, int source, int target, int card
 
 /* How many times `effect` of the card at `source` is made: 1, or with a
  * "for_each" the face-up monsters it counts as the field was last looked
- * at (the battle's two as face up once it begins), the card too; `up` and
- * `also` (-1 none) are counted face up as well, as a battle's two are. */
-static int counted(const MonsterEffect *effect, int source, int up, int also)
+ * at (the battle's two as face up once it begins), the card too;
+ * `fighter` and `foe` (-1 none) count face up, as a battle's two will. */
+static int counted(const MonsterEffect *effect, int source, int fighter, int foe)
 {
     int record, n = 0;
     if (effect->each == MONSTER_EACH_NONE) return 1;
     for (record = 0; record < MONSTER_RECORDS; record++) {
         if (!monster_zone(record) || !S.card[record] ||
-            !(S.face_up[record] || record == up || record == also)) continue;
+            !(S.face_up[record] || record == fighter || record == foe)) continue;
         if (effect->each == MONSTER_EACH_OWN && owner(record) != owner(source)) continue;
         if (effect->each == MONSTER_EACH_OPPONENT && owner(record) == owner(source)) continue;
         if (effect->each_type != -1 && Cards_Type(S.card[record]) != (unsigned char)effect->each_type) continue;
@@ -788,6 +788,8 @@ static void foresee(int source, int target, int foe, int *attack, int *defense)
         if (effect->when != MONSTER_WHEN_COMBAT || effect->action != MONSTER_DO_BOOST ||
             (effect->target == MONSTER_TARGET_BATTLE) != (source != target))
             continue;
+        /* The type and attribute only, as the battle asks them: `target` is
+           settled, and reaches() takes MONSTER_TARGET_BATTLE for a flip's. */
         if (!reaches(&(MonsterEffect){.target = MONSTER_TARGET_ALL, .type = effect->type, .attribute = effect->attribute},
                      source, target, card))
             continue;
@@ -823,14 +825,27 @@ static int ai_record(int slot)
     return side < 2 && slot >= 0 && slot < DUEL_FIELD_ROW_SIZE ? side * 15 + 5 + slot : -1;
 }
 
+/* What the battle with `foe` gives the monster at `record` past what the AI
+ * snapshot has for it: the foe's boosts on it, and its own "for_each" with
+ * the foe counted face up too (the snapshot counts only the monster). */
+static void foresee_battle(int record, int foe, int *attack, int *defense)
+{
+    int own_attack = 0, own_defense = 0;
+    foresee(foe, record, foe, attack, defense);
+    foresee(record, record, foe, attack, defense);
+    foresee(record, record, -1, &own_attack, &own_defense);
+    *attack -= own_attack;
+    *defense -= own_defense;
+}
+
 int MonsterEffects_AiBattleEdge(int attacker_slot, int target_slot, int against_defense)
 {
     int attacker = ai_record(attacker_slot), target = ai_record(target_slot);
-    int attack = 0, unused = 0, cut = 0, cut_defense = 0;
+    int attack = 0, attacker_defense = 0, target_attack = 0, target_defense = 0;
     if (!S.ready || attacker < 0 || target < 0 || attacker == target) return 0;
-    foresee(target, attacker, target, &attack, &unused);
-    foresee(attacker, target, attacker, &cut, &cut_defense);
-    return attack - (against_defense ? cut_defense : cut);
+    foresee_battle(attacker, target, &attack, &attacker_defense);
+    foresee_battle(target, attacker, &target_attack, &target_defense);
+    return attack - (against_defense ? target_defense : target_attack);
 }
 
 void MonsterEffects_Stats(const void *pointer, int *attack, int *defense)

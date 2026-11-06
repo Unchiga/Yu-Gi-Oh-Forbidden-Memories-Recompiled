@@ -86,6 +86,8 @@ if(BUILD_TESTING)
         add_executable(memories_monster_effects_ai_test tests/pc/monster_effects_ai_test.c)
         target_include_directories(memories_monster_effects_ai_test PRIVATE src)
         target_compile_definitions(memories_monster_effects_ai_test PRIVATE MEMORIES_PC)
+        # func_80027DF8.c's deck view is an asm label, which -std=c11 has no word for.
+        set_target_properties(memories_monster_effects_ai_test PROPERTIES C_EXTENSIONS ON)
         target_compile_options(memories_monster_effects_ai_test PRIVATE -m32 -ffunction-sections -fdata-sections)
         target_link_options(memories_monster_effects_ai_test PRIVATE -m32 -Wl,--gc-sections)
         if(WIN32)

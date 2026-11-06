@@ -1,7 +1,8 @@
 /* The CPU's view of "combat" monster effects (monster_effects_duel.h:
- * MonsterEffects_AiStats, MonsterEffects_AiBattleEdge) and the attack search
- * that uses it (AiScript_FindKiller). Compile as 32-bit for the game's
- * display-object layout. */
+ * MonsterEffects_AiStats, MonsterEffects_AiBattleEdge), the AI snapshot and
+ * the attack search that use it (func_80027DF8, AiScript_FindKiller), and
+ * that view held against the battle itself. Compile as 32-bit for the
+ * game's display-object layout. */
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -10,8 +11,10 @@
 #include <string.h>
 #include "../../src/pc/cards/monster_effects_duel.c"
 #include "../../src/game/ai_script_find_killer.c"
+#include "../../src/game/duel_calc_card_stats.c"
+#include "../../src/game/func_80027DF8.c"
 
-/* The duel's state the effects read; nothing here runs a battle. */
+/* The duel's state the effects read. */
 MonsterEffectsState gMonsterEffects;
 DuelCardRecord D_801A7AD8[30];
 DuelSideState D_800E9FF0[2];
@@ -24,6 +27,9 @@ s16 D_8009B22A;
 DisplayObject *D_800E9EF0[2];
 u16 D_8009B178[2];
 AiActiveCard gDuel_aActiveCards[112];
+DuelDeckCardRecord gDuel_aDeckCardRecords[80];
+DuelCardStagingDeckView D_8015C424_cards;
+s32 gDuel_adwCardStats[1024];
 s32 gAiScript_aMemory[AI_SCRIPT_MEMORY_COUNT];
 const char *const MonsterEffect_WhenNames[MONSTER_WHEN_COUNT];
 const char *const MonsterEffect_DoNames[MONSTER_DO_COUNT];
@@ -44,12 +50,14 @@ int Tables_StatCap(int defense) { (void)defense; return 9999; }
 int Tables_StatCapEither(void) { return 9999; }
 s32 Duel_CalcGuardianStarMatchup(s32 attacker, s32 defender) { (void)attacker; (void)defender; return 0; }
 
+/* A battle tells the mods and plays a sound. */
+void Mods_Dispatch(MemoriesModEvent *event) { (void)event; }
+void SD_SEPlayFull(u32 sound) { (void)sound; }
+
 /* What runs only when an effect is made, never by the CPU's view. */
 int Log_Wanted(LogChannel channel) { (void)channel; return 0; }
 void Log_Printf(LogChannel channel, const char *format, ...) { (void)channel; (void)format; }
-void Mods_Dispatch(MemoriesModEvent *event) { (void)event; assert(0); }
 int Mods_DamageLife(int side, int life, int amount, int battle) { (void)side; (void)amount; (void)battle; assert(0); return life; }
-void SD_SEPlayFull(u32 sound) { (void)sound; assert(0); }
 void DuelEffect_StartRetailCardEffect(s32 card, s32 step) { (void)card; (void)step; assert(0); }
 DuelEffectRequest *DuelEffect_CreateRequest(s32 id) { (void)id; assert(0); return 0; }
 void DuelCard_RemoveFromField(DuelCardRecord *card) { (void)card; assert(0); }
@@ -66,9 +74,12 @@ enum { GIANT = 1, STEER = 2, DRAGON_FOE = 3, WARRIOR = 4, WINGED = 5, BABY = 6 }
 #define TYPE_DRAGON 0
 #define TYPE_WARRIOR 3
 
+static DuelCardDisplayObject card_objects[30];
+
 static void put(int side, int zone, int card, int face_up)
 {
     int record = side * 15 + 5 + zone;
+    D_801A7AD8[record].object = &card_objects[record];
     D_801A7AD8[record].card_id = (s16)card;
     D_801A7AD8[record].flags = DUEL_CARD_FLAG_OCCUPIED | (face_up ? 0 : DUEL_CARD_FLAG_FACE_DOWN);
     gMonsterEffects.card[record] = (short)card;
@@ -105,6 +116,8 @@ static void setup(void)
     gMonsterEffects.ready = 1;
     gDuel_wSceneStateFlags = PHASE_FIELD;
     D_8009B1D5 = CPU;
+    memset(D_800E9FF0, -1, sizeof(D_800E9FF0));     /* no hand */
+    D_800E9FF0[0].deck_draw_cursor = D_800E9FF0[1].deck_draw_cursor = DECK_SIZE;
     types[GIANT] = types[STEER] = types[WARRIOR] = TYPE_WARRIOR;
     types[DRAGON_FOE] = types[WINGED] = types[BABY] = TYPE_DRAGON;
 }
@@ -119,8 +132,81 @@ static int killer(int target, int mode)
     return gAiScript_aMemory[3];
 }
 
+/* The field of a run of preview_against_battle(): six cards with up to two
+ * "combat" boosts each, some monsters on each side, face up or down. */
+static unsigned seed = 12345;
+static int rnd(int n)
+{
+    seed = seed * 1103515245u + 12345u;
+    return (int)((seed >> 16) % (unsigned)n);
+}
+static void random_duel(void)
+{
+    static const int whose[] = {MONSTER_EACH_NONE, MONSTER_EACH_OWN, MONSTER_EACH_OPPONENT, MONSTER_EACH_ALL};
+    int side, zone, card, n;
+    setup();
+    for (card = 1; card <= 6; card++) {
+        for (n = rnd(3); n > 0; n--) {
+            int type = rnd(2) ? -1 : rnd(2) ? TYPE_DRAGON : TYPE_WARRIOR;
+            int counted_type = rnd(2) ? -1 : rnd(2) ? TYPE_DRAGON : TYPE_WARRIOR;
+            effect(card, each(combat(rnd(2) ? MONSTER_TARGET_BATTLE : MONSTER_TARGET_SELF, (rnd(5) - 2) * 50,
+                                     (rnd(5) - 2) * 50, type), whose[rnd(4)], counted_type));
+        }
+    }
+    for (side = 0; side < 2; side++) {
+        for (zone = 0; zone < DUEL_FIELD_ROW_SIZE; zone++) {
+            if (!rnd(2)) continue;
+            put(side, zone, 1 + rnd(6), rnd(2));
+            /* Well inside 0 and the cap: their clamps are the battle's alone. */
+            D_801A7AD8[side * 15 + 5 + zone].attack = (s16)(4000 + rnd(10) * 100);
+            D_801A7AD8[side * 15 + 5 + zone].defense = (s16)(4000 + rnd(10) * 100);
+        }
+    }
+}
+
+/* What the CPU works out from the snapshot (func_80027DF8) and the edge, as
+ * FindKiller does, against what MonsterEffects_Battle then gives the two. */
+static void preview_against_battle(void)
+{
+    static DisplayObject attacker_object, target_object;
+    int run, battles = 0, boosted = 0;
+    for (run = 0; run < 40000; run++) {
+        int a = rnd(DUEL_FIELD_ROW_SIZE), t = rnd(DUEL_FIELD_ROW_SIZE), against_defense = rnd(2);
+        int turn = rnd(2), attacker, target, foreseen, packed_a, packed_t, real;
+        random_duel();
+        D_8009B1D5 = (u8)turn;
+        attacker = turn * 15 + 5 + a;
+        target = (turn ^ 1) * 15 + 5 + t;
+        if (!D_801A7AD8[attacker].card_id || !D_801A7AD8[target].card_id) continue;
+        if (against_defense) D_801A7AD8[target].flags |= DUEL_CARD_FLAG_DEFENSE_POSITION;
+        func_80027DF8(&gDuel_aActiveCards[AI_SLOT_OWN_MONSTER_FIRST], turn);
+        func_80027DF8(&gDuel_aActiveCards[AI_SLOT_OPPONENT_MONSTER_FIRST], turn ^ 1);
+        foreseen = gDuel_aActiveCards[AI_SLOT_OWN_MONSTER_FIRST + a].attack -
+            (against_defense ? gDuel_aActiveCards[AI_SLOT_OPPONENT_MONSTER_FIRST + t].defense
+                             : gDuel_aActiveCards[AI_SLOT_OPPONENT_MONSTER_FIRST + t].attack) +
+            MonsterEffects_AiBattleEdge(AI_SLOT_OWN_MONSTER_FIRST + a, AI_SLOT_OPPONENT_MONSTER_FIRST + t,
+                                        against_defense);
+        attacker_object.field_6A = (s16)attacker;
+        target_object.field_6A = (s16)target;
+        D_800E9EF0[0] = &attacker_object;
+        D_800E9EF0[1] = &target_object;
+        D_8009B178[1] = D_801A7AD8[target].flags;
+        gDuel_wSceneStateFlags = PHASE_BATTLE;
+        MonsterEffects_Battle();
+        packed_a = Duel_CalcCardStats(&D_801A7AD8[attacker]);
+        packed_t = Duel_CalcCardStats(&D_801A7AD8[target]);
+        real = (packed_a & 0xFFFF) - (against_defense ? packed_t >> 16 : packed_t & 0xFFFF);
+        assert(foreseen == real);
+        battles++;
+        boosted += gMonsterEffects.battle_attack[attacker] || gMonsterEffects.battle_attack[target] ||
+            gMonsterEffects.battle_defense[target];
+    }
+    assert(battles > 5000 && boosted > battles / 2);
+}
+
 int main(void)
 {
+    preview_against_battle();
     setup();
     /* No monster declares an effect: the disc's stats, nothing added. */
     put(PLAYER, 0, GIANT, 1); put(CPU, 0, STEER, 1);
@@ -177,6 +263,16 @@ int main(void)
     /* The player's face-down Winged Dragon against Baby Dragon: both count,
      * the CPU's face-down Winged Dragon does not. */
     assert(MonsterEffects_AiBattleEdge(1, 56, 0) == -300);
+
+    /* A face-down attacker and target: the snapshot counts each one alone
+     * for its own "for_each", the edge adds the other, as the battle does. */
+    setup(); put(CPU, 0, BABY, 0); put(PLAYER, 0, WINGED, 0);
+    effect(BABY, each(combat(MONSTER_TARGET_SELF, 300, 0, -1), MONSTER_EACH_ALL, TYPE_DRAGON));
+    effect(WINGED, each(combat(MONSTER_TARGET_SELF, 0, 200, -1), MONSTER_EACH_ALL, TYPE_DRAGON));
+    assert(ai(CPU, 0, 1200, 700) == stats(1500, 700));
+    assert(ai(PLAYER, 0, 1400, 1200) == stats(1400, 1400));
+    assert(MonsterEffects_AiBattleEdge(1, 56, 0) == 300);
+    assert(MonsterEffects_AiBattleEdge(1, 56, 1) == 100);
 
     /* FindKiller: the CPU's Steer (1800) against the player's Giant (1200)
      * in attack, Giant +1500 ATK before combat, then a Winged Dragon
