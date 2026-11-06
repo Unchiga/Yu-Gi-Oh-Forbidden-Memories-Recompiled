@@ -4434,14 +4434,14 @@ anonymous memory), so on Android it needs a path and the right to read it:
   fresh folder from it before the mods are scanned
   (`Platform_TakePendingModsFolder`, as the disc setup takes its pick), and drops
   anything else. A path that does not fit the panel's buffer is no answer.
-- **Code mods** from the chosen folder are read for their data only on Android
-  (`Mods_SetFolderCode`, off by default there, `mods.c`): shared storage is
-  written to by every app that holds the same right, and the object loader
-  would run whatever is in the file. The mod is listed, its data is used, its
-  status says "Code not run: import it to run its code" and its details say that
-  only its data is used. Import mod... copies a mod into the game's own folder,
-  where its code runs. Desktop is unchanged: there the folder is the player's.
-  `pc_mods_folder_datacode` and `pc_mods_folder_allcode` check both.
+- **Code mods** in the chosen folder run their code on Android as on the desktop
+  and as imported mods do: a player puts every mod in one folder and they all
+  work, with no import step. The object loader reads the file with `fopen` into
+  memory and maps the code from anonymous memory (`mprotect`), so a noexec mount
+  of shared storage does not matter. The trade-off: shared storage is writable
+  by any other app that holds All files access, which is the same trust the
+  desktop game places in its mods folder. `pc_mods_folder_code` checks that the
+  loader is asked for the object.
 - **Google Play** restricts `MANAGE_EXTERNAL_STORAGE` to file managers and
   similar apps, so a store build has to drop the permission and the Mods
   folder... button; the sideloaded APK keeps both.

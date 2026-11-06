@@ -10,8 +10,8 @@
  *   env         MEMORIES_MODS_FOLDER over the file, and set to nothing
  *   owned       the game's own folders named another way, by hand: not read again
  *   exclusive   MEMORIES_MODS_DIR set: the only folder read
- *   datacode    a mod with code in the folder, where its code is not run (Android): its data is
- *   allcode     the same where it is allowed: the loader is asked for the object
+ *   code        a mod with code in the folder: its code is run as on every platform (Android too),
+ *               so the loader is asked for the object; nothing says "Code not run"
  */
 #define main original_mods_test
 #include "pc/compat/fs.h"
@@ -415,12 +415,13 @@ static void exclusive_case(void)
     assert(strstr(Mods_FolderProblem(), "MEMORIES_MODS_DIR is set"));
 }
 
-/* A mod with code in the chosen folder, where an Android game reads data only
- * (Mods_SetFolderCode, the default there): `allowed` is what the game says of
- * it. Its object is not there, so a game that tries to load it cannot: the mod
- * is up only where its code was set aside. The same mod in the user directory
- * is another matter, whatever is said of the folder. */
-static void code_case(int allowed)
+/* A mod with code in the chosen folder: its code is run wherever the folder is
+ * read, Android included (shared storage is the player's, as the PC's mods folder
+ * is). Its object is not there, so the loader is asked for it and cannot give
+ * it: the mod is not up, and nothing says its code was set aside. A manifest
+ * with "enabled" turns itself on, as on the PC, and the same mod in the user
+ * directory is treated alike. */
+static void code_case(void)
 {
     int chosen, own;
     mod_at("chosen/coded", "{\"id\":\"coded\",\"name\":\"Coded\",\"enabled\":true,\"library\":\"coded\"}");
@@ -428,21 +429,15 @@ static void code_case(int allowed)
     mod_at("user/mods/own", "{\"id\":\"own\",\"name\":\"Own\",\"enabled\":true,\"library\":\"own\"}");
     assert(!setenv("MEMORIES_MOD_CODED", "1", 1));   /* the player turned it on */
     choose("chosen");
-    Mods_SetFolderCode(allowed);
     load();
-    /* Where any app can write the folder, a manifest does not turn itself on. */
-    assert(Mods_Active(find("self-on")) == allowed);
+    assert(Mods_Active(find("self-on")));
     chosen = find("coded");
     own = find("own");
     assert(chosen >= 0 && own >= 0 && !strcmp(Mods_Origin(chosen), "folder") && Mods_HasCode(chosen));
-    assert(!Mods_Active(own) && !Mods_CodeSkipped(own) && !strstr(Mods_Status(own), "Code not run"));
-    if (allowed) {   /* the loader is asked for the object, which is not there */
-        assert(!Mods_Active(chosen) && !Mods_CodeSkipped(chosen) && !strstr(Mods_Status(chosen), "Code not run"));
-    } else {   /* its data is used, and the window is told why not its code */
-        assert(Mods_Active(chosen) && !Mods_Failed(chosen) && Mods_CodeSkipped(chosen));
-        assert(strstr(Mods_Status(chosen), "Code not run: import it to run its code"));
-        assert(!strcmp(Mods_Metadata(chosen, "name"), "Coded"));
-    }
+    /* the loader is asked for each object, which is not there: neither mod is up */
+    assert(!Mods_Active(own) && !strstr(Mods_Status(own), "Code not run"));
+    assert(!Mods_Active(chosen) && !strstr(Mods_Status(chosen), "Code not run"));
+    assert(!strcmp(Mods_Metadata(chosen, "name"), "Coded"));
 }
 
 int main(int argc, char **argv)
@@ -463,8 +458,7 @@ int main(int argc, char **argv)
     else if (!strcmp(what, "owned-user")) owned_case("user/downloads");
     else if (!strcmp(what, "env")) env_case(0);
     else if (!strcmp(what, "envempty")) env_case(1);
-    else if (!strcmp(what, "datacode")) code_case(0);
-    else if (!strcmp(what, "allcode")) code_case(1);
+    else if (!strcmp(what, "code")) code_case();
     else if (!strcmp(what, "exclusive")) exclusive_case();
     else {
         fprintf(stderr, "mods_folder_test: unknown case \"%s\"\n", what);

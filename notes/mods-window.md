@@ -94,14 +94,10 @@ the question has the footer's room (four lines on a phone) and Use no folder
 is in reach. Remove on a mod from that folder answers that it is in the
 player's own mods folder.
 
-On Android a mod from that folder starts off whatever its manifest says, as any
-app with the right can write there.
-On Android a mod from that folder is read for its data only: a mod with code
-is listed, its data applies, and its status says "Code not run: import it to
-run its code" (details: "Native code mod: only its data is used from your mods
-folder"), because other apps can write to shared storage. Import mod... puts
-the mod in the game's own folder, where its code runs. On the desktop nothing
-changes.
+A mod from that folder is treated as any other mod, on Android too: its manifest
+decides whether it starts on, and a mod with code runs its code (the object is
+read into memory and made executable there, as for an imported mod; nothing is
+mapped from the folder). Nothing has to be imported for it to work.
 
 The profile field accepts a name (letters, digits, spaces, `_`, `-`). Save writes
 the currently applied preferences to `mod-profiles/<name>.txt` in the user
