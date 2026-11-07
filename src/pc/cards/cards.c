@@ -2225,11 +2225,15 @@ void Cards_ArtAhead(const unsigned short *ids, int count)
     if (used) ArtCache_Prefer(handles, used);
 }
 
+static const unsigned char *translated_plate(int id);
+
 void Cards_PrepareArt(int id)
 {
     int from;
+    if (!Cards_Valid(id)) return;
     if ((from = art_of(id, ART_PICTURE)) != 0) own_art(from, ART_PICTURE);
     if ((from = art_of(id, ART_THUMBNAIL)) != 0) own_art(from, ART_THUMBNAIL);
+    if (!names[id]) translated_plate(Cards_BaseId(id)); /* which is set once, and allocates */
 }
 
 /* The plate of a retail card a translation renames (its name, string

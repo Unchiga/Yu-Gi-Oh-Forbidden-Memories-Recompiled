@@ -250,10 +250,10 @@ int Cards_OwnPassword(int id, unsigned *password);
  * func_80029164 read (the picture, the title plate, the thumbnail), and the
  * 0x580-byte thumbnail block the duel copies for the hand and field. */
 void Cards_PatchArtRecord(int id, unsigned char *record);
-/* Before a read of a card's art record is asked of the disc: the record's picture, made
- * or read here, where the game runs. A patch comes when the disc delivers, and that is
- * in an interrupt with MEMORIES_CLOCK=interrupt, where only what memory holds can be
- * used: without this the card would show its base's art once. */
+/* Before a read of a card's art record is asked of the disc: the record's picture and
+ * plate, made or read here, where the game runs. A patch comes when the disc delivers, and
+ * that is in an interrupt with MEMORIES_CLOCK=interrupt, where only what memory holds
+ * can be used: without this the card would show its base's art once. */
 void Cards_PrepareArt(int id);
 /* A duel's cards (its two decks, the moment they are known): their art is made next
  * (card_art_cache.h), so that the game has less to wait for when it copies the decks'
