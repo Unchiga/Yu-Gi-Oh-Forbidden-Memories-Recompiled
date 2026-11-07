@@ -47,7 +47,13 @@ SOFT_GPU = "src/pc/render/soft_gpu.c"
 # Renderer caches and decoded PNGs never enter 32-bit guest storage.
 # Keep their LP64 pointers and lifetimes on the host, outside the token arena.
 # State restoration may replace guest heaps, but must not free live GL buffers.
-HOST_HEAP_UNITS = {"src/pc/render/texture_pack.c", "src/pc/render/gl_picture.c"}
+# So does a parsed manifest: only src/pc reads it, it can be hundreds of megabytes
+# and a save state has no use for it.
+HOST_HEAP_UNITS = {
+    "src/pc/render/texture_pack.c",
+    "src/pc/render/gl_picture.c",
+    "src/pc/mods/json.c",
+}
 
 
 ROOT = Path(__file__).resolve().parents[2]
