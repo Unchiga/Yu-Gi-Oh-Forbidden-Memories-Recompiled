@@ -68,7 +68,10 @@ static int control_key(const char *name)
 static char *name_of(const JsonValue *entry)
 {
     const char *name = Json_String(Json_Member(entry, "name"), NULL);
-    return name ? strdup(name) : NULL;
+    size_t size = name ? strlen(name) + 1 : 0;
+    char *copy = size ? malloc(size) : NULL;
+    if (copy) memcpy(copy, name, size);
+    return copy;
 }
 
 /* One deck: { "name": ..., "weight": ..., card: copies, ... }, the copies
