@@ -23,28 +23,33 @@ static int fake_show(const char *line, unsigned done, unsigned total)
 }
 static void fake_end(void) { ended++; }
 static void fake_quit(void) { quits++; }
-static const LoadingSink sink = {fake_show, fake_end, fake_now, fake_quit};
+static const LoadingSink sink = {fake_show, fake_end, fake_now};
 
 static void reset(void)
 {
     clock_now = 1000000;
     shown = ended = quits = answer = 0;
     last_line[0] = '\0';
+    Loading_SetQuit(fake_quit);
 }
 
 static void pace_alone(void)
 {
     LoadingPace pace;
-    LoadingPace_Begin(&pace, 5000000);
-    assert(!LoadingPace_Due(&pace, 5000000, "Cards"));
-    assert(!LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US - 1, "Cards"));
-    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US, "Cards"));
-    /* The same stage waits for its interval; another goes at once. */
-    assert(!LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US - 1, "Cards"));
-    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US, "Cards"));
-    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US, "Tables"));
-    assert(!LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US + 1, "Tables"));
-    assert(LoadingPace_Due(&pace, 5000000 + LOADING_DELAY_US + LOADING_INTERVAL_US, "Cards")); /* back to a label not drawn last */
+    const uint64_t t0 = 5000000, shown_at = t0 + LOADING_DELAY_US;
+    LoadingPace_Begin(&pace, t0);
+    assert(!LoadingPace_Due(&pace, t0, "Cards"));
+    assert(!LoadingPace_Due(&pace, shown_at - 1, "Cards"));
+    assert(LoadingPace_Due(&pace, shown_at, "Cards"));
+    /* The same stage waits for its interval... */
+    assert(!LoadingPace_Due(&pace, shown_at + LOADING_INTERVAL_US - 1, "Cards"));
+    assert(LoadingPace_Due(&pace, shown_at + LOADING_INTERVAL_US, "Cards"));
+    /* ...another goes at once, but not within the floor of the last draw. */
+    assert(!LoadingPace_Due(&pace, shown_at + LOADING_INTERVAL_US + LOADING_FLOOR_US - 1, "Tables"));
+    assert(LoadingPace_Due(&pace, shown_at + LOADING_INTERVAL_US + LOADING_FLOOR_US, "Tables"));
+    assert(!LoadingPace_Due(&pace, shown_at + LOADING_INTERVAL_US + LOADING_FLOOR_US + 1, "Tables"));
+    /* Back to a label not drawn last: at once, past the floor. */
+    assert(LoadingPace_Due(&pace, shown_at + LOADING_INTERVAL_US + 2 * LOADING_FLOOR_US, "Cards"));
 }
 
 static void fast_start(void)
@@ -79,6 +84,9 @@ static void slow_start(void)
     assert(shown >= 24 && shown <= 26);
     assert(!strncmp(last_line, "Cards ", 6) && last_total == 3000 && last_done > 2800);
     assert(strstr(last_line, "of 3000"));
+    Loading_Step("Tables", 0, 0);
+    assert(!strncmp(last_line, "Cards ", 6) && "not within the floor of the last draw");
+    clock_now += LOADING_FLOOR_US;
     Loading_Step("Tables", 0, 0);
     assert(!strcmp(last_line, "Tables") && last_total == 0 && "a new stage at once, without a count");
     Loading_Finish();

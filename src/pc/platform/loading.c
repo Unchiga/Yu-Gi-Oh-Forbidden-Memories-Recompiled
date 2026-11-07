@@ -1,6 +1,7 @@
 /* The loading screen's pacing (loading.h). The drawing is the platform's
  * (sdl.c, Platform_ShowLoading); this file only decides when to ask for it,
  * so a start that takes a fraction of a second never does. */
+#include "pc/compat/fs.h"
 #include "pc/platform/loading.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,12 +16,14 @@ void LoadingPace_Begin(LoadingPace *pace, uint64_t now_us)
 {
     memset(pace, 0, sizeof(*pace));
     pace->started_us = now_us;
+    pace->delay_us = LOADING_DELAY_US;
     pace->started = 1;
 }
 
 int LoadingPace_Due(LoadingPace *pace, uint64_t now_us, const char *what)
 {
-    if (!pace->started || now_us - pace->started_us < LOADING_DELAY_US) return 0;
+    if (!pace->started || now_us - pace->started_us < pace->delay_us) return 0;
+    if (pace->drawn && now_us - pace->drawn_us < LOADING_FLOOR_US) return 0;
     if (pace->drawn && !strncmp(pace->what, what, sizeof(pace->what) - 1) &&
         now_us - pace->drawn_us < LOADING_INTERVAL_US)
         return 0;
@@ -32,14 +35,16 @@ int LoadingPace_Due(LoadingPace *pace, uint64_t now_us, const char *what)
 
 static LoadingSink sink;
 static LoadingPace pace;
+static void (*quit_hook)(void);
 static int active;
 
 static uint64_t clock_us(void)
 {
 #ifdef _WIN32
-    LARGE_INTEGER count, frequency;
+    static LARGE_INTEGER frequency; /* fixed at boot: asked once */
+    LARGE_INTEGER count;
+    if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&count);
-    QueryPerformanceFrequency(&frequency);
     return (uint64_t)count.QuadPart / (uint64_t)frequency.QuadPart * 1000000u +
            (uint64_t)count.QuadPart % (uint64_t)frequency.QuadPart * 1000000u / (uint64_t)frequency.QuadPart;
 #else
@@ -51,18 +56,21 @@ static uint64_t clock_us(void)
 
 static uint64_t now_us(void) { return sink.now ? sink.now() : clock_us(); }
 
+void Loading_SetQuit(void (*quit)(void)) { quit_hook = quit; }
+
 void Loading_Begin(const LoadingSink *to)
 {
+    const char *knob;
     if (active || !to || !to->show) return;
     sink = *to;
     LoadingPace_Begin(&pace, now_us());
+    if ((knob = getenv("MEMORIES_LOADING_DELAY_MS")) && *knob) pace.delay_us = (uint64_t)strtoul(knob, NULL, 10) * 1000u;
     active = 1;
 }
 
 void Loading_Step(const char *what, unsigned done, unsigned total)
 {
     char line[160];
-    void (*quit)(void) = sink.quit;
     int shown;
     if (!active || !LoadingPace_Due(&pace, now_us(), what)) return;
     if (total) snprintf(line, sizeof(line), "%s %u of %u", what, done, total);
@@ -73,7 +81,7 @@ void Loading_Step(const char *what, unsigned done, unsigned total)
     } else if (shown > 0) {
         /* Closed while it loaded: there is nothing to lose, so no question. */
         Loading_Finish();
-        if (quit) quit();
+        if (quit_hook) quit_hook();
         else exit(0);
     }
 }

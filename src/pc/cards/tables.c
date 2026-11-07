@@ -352,13 +352,14 @@ static void read_fusions(const char *mod, const JsonValue *list)
         Mods_Note(mod, "\"fusions\" is not an array");
         return;
     }
-    total = Json_Count(list);   /* one walk, for the loading screen's bar */
-    /* One pass down the list: Json_Count and Json_At each walk it from the
-     * start, which made a mod of every pair (261,003 rules, the editor's
-     * bulk fusions) take minutes to read. */
+    /* One pass down the list: Json_At in the loop walked it from the start
+     * for every rule, which made a mod of every pair (261,003 rules, the
+     * editor's bulk fusions) take minutes to read. One Json_Count is one
+     * walk, kept for the loading screen's bar. */
+    total = Json_Count(list);
     for (i = 0, rule = Json_At(list, 0); rule; i++, rule = Json_Next(rule)) {
-        const JsonValue *with = Json_Member(rule, "with");
         Loading_Step("Fusions", (unsigned)i, (unsigned)total);
+        const JsonValue *with = Json_Member(rule, "with");
         const JsonValue *result = Json_Member(rule, "result");
         const JsonValue *removed = Json_Member(rule, "remove");
         int a, b, made = 0;

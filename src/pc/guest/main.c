@@ -189,7 +189,15 @@ static void user_dir_fact(int writable, const char *why)
     else Monitor_Fact("user dir", "%s; writable: no: %s", Paths_UserDir(), why);
 }
 
-static const LoadingSink loading_sink = {Platform_ShowLoading, Platform_EndLoading, NULL, NULL};
+/* The loading screen's window was closed (or Back pressed): out the way the
+ * game's own exit goes (libetc.c, VSync), the clock first. */
+static void quit_while_loading(void)
+{
+    Monitor_Shared()->exiting = 1; /* a slow shutdown is not a freeze */
+    Platform_StopTimers();
+    Mods_Shutdown();
+    exit(0);
+}
 
 int main(int argc, char **argv)
 {
@@ -239,10 +247,12 @@ int main(int argc, char **argv)
     if (Memories_ModulesInit() != 0) {
         return 1;
     }
+    /* Platform_Open begins the loading screen once its window is open, before
+     * it reads the mods (loading.h). */
+    Loading_SetQuit(quit_while_loading);
     if (Platform_Open("Yu-Gi-Oh! Forbidden Memories") != 0) {
         return 1;
     }
-    Loading_Begin(&loading_sink);   /* a start that drags shows what it is doing (loading.h) */
     Update_Start(); /* in the background; a newer release shows a notice */
     /* The mods are applied by now (Platform_Open reads the settings), and
      * the executable is in place: the cards they add come after its own. */

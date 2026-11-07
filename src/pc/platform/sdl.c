@@ -22,6 +22,7 @@
 #include "panel.h"
 #include "quit_prompt.h"
 #include "host_actions.h"
+#include "loading.h"
 #include "settings.h"
 #include "pc/audio/spu.h"
 #include "pc/debug/cheats.h"
@@ -175,6 +176,9 @@ static int background_clock_rate, background_paused;
  * the app comes back (repaint_menu, below). */
 static uint64_t foreground_repaint_until;
 static float known_refresh; /* what the wayland driver reported before a fallback to x11 */
+
+/* The loading screen's (below): set by app_event while it is watching. */
+static int loading_watch, loading_quit, loading_reset;
 
 static void show(void);
 static void repaint_menu(void);
@@ -2143,6 +2147,13 @@ static int dispatch_panel(const SDL_Event *event, const MenuEvent *menu_event)
 static bool SDLCALL app_event(void *userdata, SDL_Event *event)
 {
     (void)userdata;
+    if (loading_watch) { /* the loading screen's: every event comes by here */
+        if (event->type == SDL_EVENT_QUIT || event->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED ||
+            (event->type == SDL_EVENT_KEY_DOWN && event->key.key == SDLK_AC_BACK))
+            loading_quit = 1;
+        else if (event->type == SDL_EVENT_RENDER_DEVICE_RESET)
+            loading_reset = 1;
+    }
     switch (event->type) {
     case SDL_EVENT_WILL_ENTER_BACKGROUND: case SDL_EVENT_DID_ENTER_BACKGROUND:
         if (!background_paused) {
@@ -2952,23 +2963,18 @@ static int claim_exit(void)
  * texture of its own, apart from the picture, the overlay and the layout,
  * none of which exist before the first frame; a start that never shows it
  * creates nothing of this. The window's events are pumped and left in the
- * queue for the game's own pump, except a quit, which is the player's
- * answer to a wait with nothing to lose, and the mouse's motion, which
- * would pile up for minutes. */
+ * queue for the game's own pump; app_event, which sees every one as it comes,
+ * notes a quit (the close button, SDL_EVENT_QUIT, a phone's Back) and a render
+ * device reset while it is watching (loading_watch), and the mouse's motion
+ * is dropped, as it would pile up for minutes. The picture is a fixed small
+ * one, LOADING_PIXELS in all whatever the window, stretched to it: a draw
+ * costs the same on a 4K window as on a phone. */
+enum { LOADING_PIXELS = 960 * 540 };
 static uint32_t *loading_pixels;
 static SDL_Texture *loading_texture;
 static GLuint gl_loading;
 static int loading_w, loading_h;
-
-static int loading_quit_asked(void)
-{
-    SDL_Event keys[16];
-    int count, i;
-    if (SDL_HasEvent(SDL_EVENT_QUIT) || SDL_HasEvent(SDL_EVENT_WINDOW_CLOSE_REQUESTED)) return 1;
-    count = SDL_PeepEvents(keys, 16, SDL_PEEKEVENT, SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_DOWN);
-    for (i = 0; i < count; i++) if (keys[i].key.key == SDLK_AC_BACK) return 1; /* a phone's Back */
-    return 0;
-}
+static int loading_shown; /* a draw happened: the events of the wait are the wait's */
 
 static void loading_fill(int x, int y, int w, int h, uint32_t color)
 {
@@ -2986,26 +2992,11 @@ static void loading_paint(const char *line, unsigned done, unsigned total)
 {
     static const uint32_t BACKGROUND = 0xFF181b20u, EDGE = 0xFF363d49u, TEXT = 0xFFe9edf3u, ACCENT = 0xFF356dd1u;
     MenuCanvas c = {loading_pixels, loading_w, loading_w, loading_h, 0};
-    char cut[160];
-    int unit = (loading_h + 240) / 360, middle = loading_h * 2 / 5, room = loading_w - 32, width;
-    if (unit < 1) unit = 1;
-    if (unit > 4) unit = 4;
+    int unit = loading_h >= 400 ? 2 : 1, middle = loading_h * 2 / 5, width;
     loading_fill(0, 0, loading_w, loading_h, BACKGROUND);
-    while (unit > 1 && Menu_TextWidthScaled(line, unit) > room) unit--;
-    snprintf(cut, sizeof(cut), "%s", line);
-    if (Menu_TextWidthScaled(cut, unit) > room) { /* a name too long even at 1x: cut, with dots */
-        char base[sizeof(cut)];
-        size_t length;
-        snprintf(base, sizeof(base), "%s", line);
-        for (length = strlen(base); length;) {
-            length = Menu_TextBack(base, length);
-            base[length] = ' ';
-            snprintf(cut, sizeof(cut), "%s...", base);
-            if (Menu_TextWidthScaled(cut, unit) <= room) break;
-        }
-    }
-    width = Menu_TextWidthScaled(cut, unit);
-    Menu_DrawTextScaled(&c, (loading_w - width) / 2, middle, cut, TEXT, unit);
+    while (unit > 1 && Menu_TextWidthScaled(line, unit) > loading_w - 32) unit--;
+    width = Menu_TextWidthScaled(line, unit);
+    Menu_DrawTextScaled(&c, (loading_w - width) / 2, middle, line, TEXT, unit);
     if (total) {
         int bar_w = loading_w * 6 / 10, bar_h = 6 * unit, x = (loading_w - bar_w) / 2, y = middle + 18 * unit;
         long long filled = (long long)bar_w * (done > total ? total : done) / total;
@@ -3017,28 +3008,41 @@ static void loading_paint(const char *line, unsigned done, unsigned total)
 
 int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
 {
-    int w, h, output_w = 0, output_h = 0;
+    int w, h, output_w = 0, output_h = 0, cw, ch;
     if (!window || (!renderer && !use_gl)) return -1;
     SDL_PumpEvents(); /* the window answers the system, and Android its input */
     SDL_FlushEvent(SDL_EVENT_MOUSE_MOTION);
-    if (loading_quit_asked()) return 1;
-    /* Away (Android): the surface and its context may be gone; the game's
-     * own pump makes them again, and nothing is drawn until then. */
-    if (background_paused || SDL_HasEvent(SDL_EVENT_RENDER_DEVICE_RESET)) return 0;
+    if (loading_quit) return 1;
+    /* The render device was reset (Android): what was made on the old one
+     * is gone with it, not to be destroyed; the game's own pump makes its
+     * renderer again (the event stays queued for it), this one draws on. */
+    if (loading_reset) {
+        loading_reset = 0;
+        loading_texture = NULL;
+        gl_loading = 0;
+    }
+    /* Away: the surface may be gone until the app is back. */
+    if (background_paused) return 0;
     if (!SDL_GetWindowSize(window, &w, &h) || w <= 0 || h <= 0) return 0;
     if (use_gl && !SDL_GetWindowSizeInPixels(window, &output_w, &output_h)) return 0;
-    if (w != loading_w || h != loading_h) {
+    /* The window's shape in LOADING_PIXELS: 960x540 for 16:9. */
+    cw = (int)SDL_sqrt((double)LOADING_PIXELS * (double)w / (double)h);
+    ch = (int)((long long)cw * h / w);
+    if (cw < 16) cw = 16;
+    if (ch < 16) ch = 16;
+    if (cw != loading_w || ch != loading_h) {
         if (gl_loading) glDeleteTextures(1, &gl_loading);
         gl_loading = 0;
         if (loading_texture) SDL_DestroyTexture(loading_texture);
         loading_texture = NULL;
         free(loading_pixels);
-        loading_pixels = malloc((size_t)w * (size_t)h * 4);
+        loading_pixels = malloc((size_t)cw * (size_t)ch * 4);
         if (!loading_pixels) { loading_w = loading_h = 0; return 0; }
-        loading_w = w;
-        loading_h = h;
+        loading_w = cw;
+        loading_h = ch;
     }
     loading_paint(line, done, total);
+    loading_shown = 1;
     if (use_gl) {
         const int win_w = layout.win_w, win_h = layout.win_h;
         if (!gl_loading) {
@@ -3048,11 +3052,11 @@ int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, loading_w, loading_h, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
         }
         glBindTexture(GL_TEXTURE_2D, gl_loading);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, loading_pixels);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, loading_w, loading_h, GL_BGRA, GL_UNSIGNED_BYTE, loading_pixels);
         layout.win_w = w; /* gl_quad's, on macOS */
         layout.win_h = h;
         glViewport(0, 0, output_w, output_h);
@@ -3076,11 +3080,12 @@ int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
         layout.win_h = win_h;
     } else {
         if (!loading_texture) {
-            loading_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+            loading_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                                loading_w, loading_h);
             if (!loading_texture) return 0;
             SDL_SetTextureScaleMode(loading_texture, SDL_SCALEMODE_LINEAR);
         }
-        SDL_UpdateTexture(loading_texture, NULL, loading_pixels, w * 4);
+        SDL_UpdateTexture(loading_texture, NULL, loading_pixels, loading_w * 4);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         SDL_RenderTexture(renderer, loading_texture, NULL, NULL);
@@ -3091,6 +3096,7 @@ int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
 
 void Platform_EndLoading(void)
 {
+    loading_watch = 0;
     if (gl_loading) glDeleteTextures(1, &gl_loading);
     gl_loading = 0;
     if (loading_texture) SDL_DestroyTexture(loading_texture);
@@ -3098,19 +3104,46 @@ void Platform_EndLoading(void)
     free(loading_pixels);
     loading_pixels = NULL;
     loading_w = loading_h = 0;
+    if (loading_shown) {
+        /* What the player did while the screen was up is not for the first
+         * frame (a tap, a stick's drift); the window's own events, a quit and
+         * the devices coming and going stay for the game's pump. */
+        SDL_FlushEvent(SDL_EVENT_KEY_DOWN);
+        SDL_FlushEvent(SDL_EVENT_KEY_UP);
+        SDL_FlushEvent(SDL_EVENT_TEXT_EDITING);
+        SDL_FlushEvent(SDL_EVENT_TEXT_INPUT);
+        SDL_FlushEvents(SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_WHEEL);
+        SDL_FlushEvents(SDL_EVENT_FINGER_DOWN, SDL_EVENT_FINGER_CANCELED);
+        SDL_FlushEvents(SDL_EVENT_JOYSTICK_AXIS_MOTION, SDL_EVENT_JOYSTICK_BUTTON_UP);
+        SDL_FlushEvents(SDL_EVENT_GAMEPAD_AXIS_MOTION, SDL_EVENT_GAMEPAD_BUTTON_UP);
+        SDL_FlushEvents(SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN, SDL_EVENT_GAMEPAD_SENSOR_UPDATE);
+        loading_shown = 0;
+    }
 }
 
-int Platform_Open(const char *title)
+/* The mods the settings say are applied (menu.h), and what the start has
+ * to know of them. Platform_Open reads them once the window is open. */
+static void open_mods(void)
 {
-    sigset_t previous;
-    ControlsRuntime_Init();
-    Menu_LoadSettings(); /* the volume and scale apply with or without a window */
+    Menu_LoadMods();
 #ifdef SDL_PLATFORM_ANDROID
     /* What the mods folder could be read with at this start, for the panel's
      * Apply & restart: noted now that the mods are scanned. */
     ModsWindow_SetFolderAccess(Platform_ModsFolderAccess, Platform_AskModsFolderAccess, Platform_AskedModsFolderAccess,
                                Platform_ModsFolderCanAsk, Platform_ModsFolderRight);
 #endif
+}
+
+static const LoadingSink loading_sink = {Platform_ShowLoading, Platform_EndLoading, NULL};
+
+int Platform_Open(const char *title)
+{
+    sigset_t previous;
+    ControlsRuntime_Init();
+    Menu_LoadSettingsWithoutMods(); /* the volume and scale apply with or without a window */
+    /* Without a window the mods are read at once, as ever. With one they wait
+     * for it, so that the loading screen shows what a big mod takes. */
+    if (getenv("MEMORIES_HEADLESS")) open_mods();
     /* Before the headless return: the control channel's pointer and wheel (tests) reach a mod without a window. */
     Mods_SetPointer(pointer_read, wheel_read, wheel_take);
     if (getenv("MEMORIES_HEADLESS")) {
@@ -3176,6 +3209,14 @@ int Platform_Open(const char *title)
         LOG(LOG_WINDOW, "SDL fallback renderer %s, video %s", SDL_GetRendererName(renderer), SDL_GetCurrentVideoDriver());
     }
     Menu_SetPresentPass(use_gl); /* present_pass.c: the desktop presenter's alone */
+    /* The mods, now there is a window to show them on: a big one takes
+     * minutes on a phone (loading.h). Nothing Menu_Init or the picture pass
+     * set up above reads them; the window's pointer, mouse and overlay hooks
+     * are in place, which a mod only calls once the game runs. */
+    Menu_PrepareFont();
+    loading_watch = 1;
+    Loading_Begin(&loading_sink);
+    open_mods();
     Menu_Init();
 #ifdef SDL_PLATFORM_ANDROID
     /* One window, always the whole screen, no update check (android.c):

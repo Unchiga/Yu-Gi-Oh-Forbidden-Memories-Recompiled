@@ -1951,9 +1951,8 @@ static unsigned entries_total, entries_done;
 
 static void count_mod(const char *mod, const char *directory, const struct JsonValue *cards, void *context)
 {
-    const struct JsonValue *entry;
     (void)mod, (void)directory, (void)context;
-    for (entry = Json_At(cards, 0); entry; entry = Json_Next(entry)) entries_total++;
+    entries_total += (unsigned)Json_Count(cards);
 }
 
 static void add_mod(const char *mod, const char *directory, const struct JsonValue *cards, void *context)

@@ -1121,43 +1121,68 @@ A big mod makes the start take long (More Cards 1.61: about 13 s on Windows,
 minutes on a phone), and until now the window stayed empty all that time.
 When the start-up has taken more than half a second (`LOADING_DELAY_US`) the
 window shows a dark screen with one line of what is happening ("Cards 432 of
-1588", "Fusions 2000 of 9000", "Duelists") and, when the total is known, a
-progress bar; a start under half a second shows nothing, not a frame, so it
-is as before. There is no setting.
+1588", "Fusions 2000 of 9000", "Reading mods 1 of 4") and, when the total is
+known, a progress bar; a start under half a second shows nothing, not a frame,
+so it is as before. There is no setting; `MEMORIES_LOADING_DELAY_MS=<ms>`
+(0: from the first step) replaces the half second to look at the screen on a
+quick start.
 
-- **Where it hooks in.** `main()` calls `Loading_Begin` once `Platform_Open`
-  has made the window and the renderer, and `Loading_Finish` after
-  `Text_SortCards`. Between them `Loading_Step(what, done, total)` is called
-  from the loops the start-up already runs on the main thread: `Cards_Build`
-  (per card entry, the stages after it: Duelists, Tables, Stars, Packs, Tower),
-  the duelist, drop and deck folders, the fusion and equip lists. With
-  nothing due it is one clock read. `loading.c` only decides when to draw
-  (`LoadingPace_Due`: nothing before the delay, a new `what` at once, the same
-  one at most every `LOADING_INTERVAL_US`, 100 ms); the drawing is the sink's,
-  so `tests/pc/loading_test.c` runs it with a fake clock.
-- **What is outside it.** The mods are scanned and applied (`Mods_Load`, from
-  `Menu_LoadSettings`) *before* the window exists, so that part, about 0.2 s
-  of More Cards on a PC, has no screen; the window opens right after it.
-  Moving the window earlier means splitting `Menu_LoadSettings` and applying
-  the mods after `open_renderer`; not done, since the mods' code and texture
-  packs are initialised there. A stage with no step inside (`Text_Build`, one
-  JSON file read) is shown as its label and does not pump events.
-- **Drawing.** `Platform_ShowLoading` draws into a texture of its own, the
-  Mods window's colors and the menu font (`Menu_DrawTextScaled`, the disc is
-  not read yet), straight to the window: desktop GL (the same quad as
-  `show`) or the SDL renderer (Android's OpenGL ES). It does not touch the
-  picture, the overlay or the layout, none of which exist before the first
-  frame; `Platform_EndLoading` frees it and the game's first frame replaces
-  it. Headless runs have no window, so `Platform_ShowLoading` answers -1 and
-  nothing asks again; the x11 backend answers the same.
+- **Two-phase load.** `Menu_LoadSettings` is two halves now,
+  `Menu_LoadSettingsWithoutMods` and `Menu_LoadMods` (`Mods_Load`: scan,
+  `Mods_CheckManifest`, `apply_overrides`, `activate`). `Platform_Open` (sdl.c)
+  does the first, opens the window and the renderer, then `Menu_PrepareFont`
+  (the font the screen needs, which `Menu_Init` then keeps), `Loading_Begin`,
+  `Menu_LoadMods` and `Menu_Init`. Without a window (headless) it reads the
+  mods at once, in the old order; the settings reload (`ACT_RELOAD_SETTINGS`)
+  and the x11 backend call `Menu_LoadSettings`, both halves. What reads mod
+  state was checked: `Menu_Init` (language items read language packs and the
+  disc, not mods), `Menu_SetHdPicture`, `GlPicture_Init` (the texture packs
+  are mapped by generation, as for a live change) and `create_window` do not.
+  `Mods_SetPointer`, `Mods_SetMouse` and `Mods_SetOverlaySink` are set before
+  the mods are read now instead of after; a mod reaches them only once the
+  game runs.
+- **Steps.** `Loading_Step(what, done, total)` is called from the loops the
+  start-up already runs on the main thread, before the game's own stack:
+  `scan` (per manifest, before and after the parse, since one huge `mod.json`
+  has no loop inside to step from: the label stays while it parses and the
+  events are pumped on both sides), the apply loops of `Mods_Load` ("Checking
+  mods", "Preparing mods", "Starting mods"), `Cards_Build` (per card entry,
+  with a total counted first, then Duelists, Tables, Stars, Packs, Tower), the
+  duelist, portrait, drop and deck folders, the fusion and equip lists. With
+  nothing due it is a clock read (the Windows one reads the counter's
+  frequency once). `loading.c` only decides when to draw (`LoadingPace_Due`:
+  nothing before the delay, never within 50 ms of the last draw, a new `what`
+  at once past that, the same one at most every 100 ms); the drawing is the
+  sink's, so `tests/pc/loading_test.c` runs it with a fake clock. A stage
+  label skipped for the 50 ms floor is not drawn later by itself, and a stage
+  with no step inside (`Text_Build`) shows only its label.
+- **Drawing.** `Platform_ShowLoading` draws into a picture of a fixed size
+  (960x540 pixels for a 16:9 window, the same area in the window's shape
+  otherwise), in the Mods window's colors and the menu font, stretched to the
+  window by a texture of its own: desktop GL (the same quad as `show`) or the
+  SDL renderer (Android's OpenGL ES). It does not touch the picture, the
+  overlay or the layout, none of which exist before the first frame;
+  `Platform_EndLoading` frees it and the game's first frame replaces it.
+  Headless runs never begin it; the x11 backend's `Platform_ShowLoading`
+  answers -1.
 - **Events.** Each draw calls `SDL_PumpEvents`, which keeps Windows from
   calling the window not responding and Android from waiting on input, and
-  leaves the events queued for the game's own pump (mouse motion is dropped,
-  it would pile up for minutes). The window's close button, `SDL_EVENT_QUIT`
-  or a phone's Back in the queue end the process (`exit(0)`) without the
-  quit question: nothing is lost yet. While the app is in the background, or
-  a render device reset waits to be handled (`reset_renderer`, in the game's
-  pump), nothing is drawn.
+  leaves the events queued for the game's own pump. `app_event` (the watcher
+  that sees every event) notes the close button, `SDL_EVENT_QUIT` and a
+  phone's Back, and a render device reset, while the screen is watching.
+  A quit leaves by the game's own exit (`quit_while_loading` in `main.c`:
+  the exiting flag, `Platform_StopTimers`, `Mods_Shutdown`, `exit`) without
+  the quit question, nothing being lost yet. After a reset the screen's
+  texture is dropped, not destroyed, and made again on the next draw; the
+  event stays queued for the game's pump (`reset_renderer`). While the app is
+  in the background nothing is drawn. `Platform_EndLoading`, when a draw
+  happened, drops the key, text, mouse (not the device events), finger,
+  joystick and gamepad input of the wait so a tap or a stick's drift is not
+  replayed into the first frame; window, quit, device and background events
+  stay.
+- **Names.** `Loading_Begin`, `Loading_Step`, `Loading_Finish`,
+  `Loading_SetQuit` and `Platform_ShowLoading` are port globals, so a code mod
+  can bind them like every other.
 
 ### Screenshots
 
