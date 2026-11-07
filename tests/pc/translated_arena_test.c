@@ -1,10 +1,12 @@
 /* Where the token arena puts a native allocation (translated_runtime.c): the
  * search walks the regions in address order, each once, and lands where
  * looking at every region again after each step would have. The hosts here
- * are numbers, never read: the arena is only an address map. */
+ * are numbers, never read, the arena being only an address map, but for what
+ * GuestRuntime_TryCalloc allocates itself. */
 #include "types.h"
 #include "pc/guest/translated_runtime.h"
 #include <assert.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,10 +16,17 @@
 #include <unistd.h>
 #endif
 
-#define BASE 0xd0000000u
+#define BASE 0xc0000000u  /* below AUTOMATIC_START: used once the top is full */
+#define START 0xd0000000u /* where a save state expects the globals */
 #define END 0xe0000000u
+#define STACK 0xe0000000u       /* the game's stacks: fixed tokens, registered late */
+#define STACK_TOO 0xe1000000u
+#define STACK_SIZE (8u * MB)
 #define MB (1024u * 1024u)
 #define MODEL_MAX 2048
+
+void *GuestRuntime_TryCalloc(size_t count, size_t length);
+void GuestRuntime_free(void *pointer);
 
 static uintptr_t next_host = (uintptr_t)1 << 44;
 
@@ -41,7 +50,7 @@ static void *place(size_t length)
  * from the start after each step. */
 static struct { u32 guest; size_t length; void *host; } model[MODEL_MAX];
 static unsigned model_count;
-static u32 model_cursor = BASE;
+static u32 model_cursor = START;
 
 static int model_search(size_t length, u32 *found)
 {
@@ -129,23 +138,68 @@ static void same_as_the_first_search(void)
     }
 }
 
-/* A span below the cursor is used once the top is too small. */
-static void a_span_after_the_wrap(void)
+static unsigned region_flags(void *host)
 {
-    void *slots[14], *high, *back;
-    for (int i = 0; i < 14; ++i) slots[i] = place(16u * MB);
-    assert(token(slots[0]) == BASE && token(slots[13]) == BASE + 13u * 16u * MB);
+    for (unsigned i = 0; i < GuestRuntime_RegionCount(); ++i) {
+        const GuestRuntimeRegion *region = GuestRuntime_Region(i);
+        if (region->host == (uintptr_t)host) return region->flags;
+    }
+    return 0;
+}
+
+/* From the start to the end, then from the base up, then a span left below
+ * the cursor. */
+static void the_order_of_the_arena(void)
+{
+    enum { SLOTS = 14, LOW = 16 };
+    void *slots[SLOTS], *low[LOW], *high, *back, *stack, *stack_too;
+    for (int i = 0; i < SLOTS; ++i) slots[i] = place(16u * MB);
+    assert(token(slots[0]) == START && token(slots[SLOTS - 1]) == START + (SLOTS - 1) * 16u * MB);
     assert(GuestRuntime_UnregisterData(slots[3]) == 0);
     /* Does not fit where slot 3 was: it goes on top, past that span. */
     high = place(17u * MB);
-    assert(token(high) == BASE + 14u * 16u * MB);
-    /* 15 MB are left on top: this one comes back down. */
+    assert(token(high) == START + SLOTS * 16u * MB);
+    /* 15 MB are left on top, so this one wraps to the base. */
+    low[0] = place(16u * MB);
+    assert(token(low[0]) == BASE);
+    for (int i = 1; i < LOW; ++i) {
+        low[i] = place(16u * MB);
+        assert(token(low[i]) == BASE + i * 16u * MB);
+    }
+    /* The base is full up to the start: slot 3's span is what is left. */
     back = place(16u * MB);
-    assert(token(back) == BASE + 3u * 16u * MB);
+    assert(token(back) == START + 3u * 16u * MB);
+    assert(GuestRuntime_AutomaticSpace() == 15u * MB);
+    /* The arena nearly full, as with a big mod: the game's stacks come later
+     * (Memories_NativeStateRunGame) and their tokens have to be free. */
+    stack = new_host(STACK_SIZE);
+    stack_too = new_host(STACK_SIZE);
+    assert(GuestRuntime_RegisterData(stack, STACK_SIZE, STACK) == 0);
+    assert(GuestRuntime_RegisterData(stack_too, STACK_SIZE, STACK_TOO) == 0);
+    /* Nothing fits now, and this caller can do without. */
+    {
+        unsigned regions = GuestRuntime_RegionCount();
+        void *refused = new_host(16u * MB);
+        assert(GuestRuntime_TryRegisterAllocation(refused, 16u * MB) == -1);
+        assert(GuestRuntime_RegionCount() == regions);
+        errno = 0;
+        assert(!GuestRuntime_TryCalloc(16, MB) && errno == ENOMEM);
+        assert(GuestRuntime_RegionCount() == regions);
+        /* What fits comes back as any allocation does, and is freed as one. */
+        void *fits = GuestRuntime_TryCalloc(1, 4096);
+        assert(fits && GuestRuntime_RegionCount() == regions + 1);
+        assert(token(fits) == START + SLOTS * 16u * MB + 17u * MB);
+        assert(region_flags(fits) & MEMORIES_REGION_HEAP);
+        GuestRuntime_free(fits);
+        assert(GuestRuntime_RegionCount() == regions);
+    }
+    assert(GuestRuntime_UnregisterData(stack) == 0);
+    assert(GuestRuntime_UnregisterData(stack_too) == 0);
     assert(GuestRuntime_UnregisterData(back) == 0);
     assert(GuestRuntime_UnregisterData(high) == 0);
-    for (int i = 0; i < 14; ++i)
+    for (int i = 0; i < SLOTS; ++i)
         if (i != 3) assert(GuestRuntime_UnregisterData(slots[i]) == 0);
+    for (int i = 0; i < LOW; ++i) assert(GuestRuntime_UnregisterData(low[i]) == 0);
 }
 
 #ifndef _WIN32
@@ -163,9 +217,7 @@ static void exhausted(void)
         close(output[0]);
         assert(dup2(output[1], 2) == 2);
         close(output[1]);
-        for (int i = 0; i < 15; ++i) place(16u * MB);
-        place(8u * MB);
-        place(8u * MB);
+        for (int i = 0; i < 32; ++i) place(16u * MB);
         place(16u);
         _exit(0);
     }
@@ -194,11 +246,11 @@ static void a_big_allocation_past_many_regions(void)
          * which then steps over nearly every region. */
         assert(GuestRuntime_UnregisterData(hosts[round]) == 0);
         big = place(4u * MB);
-        assert(token(big) == BASE + (u32)(MANY + round) * 912u);
+        assert(token(big) == START + (u32)(MANY + round) * 912u);
         assert(GuestRuntime_UnregisterData(big) == 0);
         /* The cursor is where it was, so this goes on top. */
         small = place(912);
-        assert(token(small) == BASE + (u32)(MANY + round) * 912u);
+        assert(token(small) == START + (u32)(MANY + round) * 912u);
     }
 }
 
@@ -206,7 +258,7 @@ int main(void)
 {
     MemoriesMemory *memory = calloc(1, sizeof(*memory));
     assert(memory && GuestRuntime_Bind(memory) == 0);
-    a_span_after_the_wrap();
+    the_order_of_the_arena();
     assert(GuestRuntime_Bind(memory) == 0);
 #ifndef _WIN32
     exhausted();

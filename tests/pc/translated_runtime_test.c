@@ -196,7 +196,7 @@ int main(void)
     }
     {
         /* A temporary decoded image skips a small hole. At the arena end,
-         * a later small allocation must still find that hole. */
+         * a later small allocation comes back to the arena's base. */
         u8 *pool = malloc(0x10000000u);
         assert(pool && !GuestRuntime_Bind(memory));
         GuestRuntime_RegisterAutomatic(pool, 16);
@@ -204,7 +204,7 @@ int main(void)
         assert(!GuestRuntime_UnregisterData(pool));
         GuestRuntime_RegisterAutomatic(pool + 0x10000000u - 32, 32);
         GuestRuntime_RegisterAutomatic(pool, 16);
-        assert(GuestRuntime_EncodePointer(pool) == 0xd0000000u);
+        assert(GuestRuntime_EncodePointer(pool) == 0xc0000000u);
         GuestRuntime_Reset();
         free(pool);
     }

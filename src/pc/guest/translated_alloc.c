@@ -1,5 +1,6 @@
 #include "../../types.h"
 #include "translated_runtime.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
@@ -18,6 +19,21 @@ void *GuestRuntime_calloc(size_t count, size_t length)
     size = count * length;
     p = calloc(1, size ? size : 1);
     if (p && GuestRuntime_IsBound()) GuestRuntime_RegisterAllocation(p, size ? size : 1);
+    return p;
+}
+void *GuestRuntime_TryCalloc(size_t count, size_t length)
+{
+    size_t size;
+    void *p;
+    if (count && length > SIZE_MAX / count) { errno = ENOMEM; return NULL; }
+    size = count * length;
+    p = calloc(1, size ? size : 1);
+    if (p && GuestRuntime_IsBound() && GuestRuntime_TryRegisterAllocation(p, size ? size : 1)) {
+        fprintf(stderr, "memories-pc: no room in the token arena for %zu bytes; the caller goes without\n", size);
+        free(p);
+        errno = ENOMEM;
+        return NULL;
+    }
     return p;
 }
 void GuestRuntime_free(void *pointer)

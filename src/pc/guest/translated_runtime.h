@@ -30,6 +30,9 @@ void GuestRuntime_RegisterGlobal(void *host, size_t length, uint64_t identity, u
  * past it, which aborts. Fragmentation may leave less in one piece. */
 size_t GuestRuntime_AutomaticSpace(void);
 void GuestRuntime_RegisterAllocation(void *host, size_t length);
+/* As GuestRuntime_RegisterAllocation, but -1 instead of the abort when the
+ * arena has no room. For GuestRuntime_TryCalloc (try_alloc.h). */
+int GuestRuntime_TryRegisterAllocation(void *host, size_t length);
 unsigned GuestRuntime_RegionCount(void);
 const GuestRuntimeRegion *GuestRuntime_Region(unsigned index);
 int GuestRuntime_RegisterAllocationAt(void *host, size_t length, uint32_t guest);
