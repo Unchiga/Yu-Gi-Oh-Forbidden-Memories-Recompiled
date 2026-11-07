@@ -958,7 +958,7 @@ CardLayoutPart CardLayout_Part(CardLayoutElement element)
          * viewer's own card-plate footprint. This is intentionally not a
          * movable manifest part: only full_bleed replaces the retail plate.
          * A style's optional back_image uses this same box. */
-        p.visible = !full_bleed;
+        p.visible = !full_bleed || Json_Bool(Json_Member(style_node, "game_frame"), 0);
         p.w = current.width;
         p.h = current.height;
         break;

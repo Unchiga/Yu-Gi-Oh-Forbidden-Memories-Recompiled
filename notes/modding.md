@@ -1287,6 +1287,12 @@ captions with it). A frame style with `"parts_over_art": true` draws the
 picture under them instead (and still over the frame), so a picture that runs
 past its window does not hide them.
 
+A full-bleed style with no `image` has no frame at all (the game's own is
+left out, the card is the picture and its parts). `"game_frame": true` keeps
+the game's own frame behind it: the card's colour (monster, magic, trap...),
+its name bar and stat boxes, under a picture and parts the style places where
+it likes (the FM Editor's Full art uses it).
+
 ### Frame styles and the rules that pick them
 
 A card is drawn in a frame **style**: a picture and the color its small card

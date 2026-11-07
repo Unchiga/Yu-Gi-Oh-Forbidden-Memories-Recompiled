@@ -841,6 +841,27 @@ static void star_picture(void)
     CHECK(!CardLayout_StarImage(path, sizeof(path), &w, &h, &step));
 }
 
+/* "game_frame": a full-bleed style keeps the game's own frame (the frame part stays visible) when it says so. */
+static void game_frame_kept(void)
+{
+    reset();
+    add_mod("x", "/mods/x",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {"
+            "\"bare\": {\"full_bleed\": true, \"hand_color\": \"gold\"},"
+            "\"kept\": {\"full_bleed\": true, \"game_frame\": true, \"hand_color\": \"gold\"},"
+            "\"framed\": {\"image\": \"f.png\", \"hand_color\": \"gold\"}}}}",
+            1, "full_bleed", 1);
+    snprintf(fake_frame_style[1], sizeof(fake_frame_style[1]), "%s", "bare");
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "kept");
+    snprintf(fake_frame_style[3], sizeof(fake_frame_style[3]), "%s", "framed");
+    CardLayout_SetCard(1);
+    CHECK(CardLayout_FullBleed() && !CardLayout_Part(CARD_LAYOUT_FRAME).visible);    /* no frame at all */
+    CardLayout_SetCard(2);
+    CHECK(CardLayout_FullBleed() && CardLayout_Part(CARD_LAYOUT_FRAME).visible);     /* the game's stays */
+    CardLayout_SetCard(3);
+    CHECK(CardLayout_FullBleed() && !CardLayout_Part(CARD_LAYOUT_FRAME).visible);    /* its own picture replaces it */
+}
+
 /* "parts_over_art": the picture goes under the card's other parts, for the style that says so. */
 static void parts_over_art(void)
 {
@@ -1293,6 +1314,7 @@ int main(void)
     color_tint();
     star_picture();
     parts_over_art();
+    game_frame_kept();
     per_style_layout();
     partial_art_rect_uses_retail_defaults();
     frame_box_is_bounded();
