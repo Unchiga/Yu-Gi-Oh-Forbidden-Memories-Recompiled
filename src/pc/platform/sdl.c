@@ -2975,6 +2975,35 @@ static SDL_Texture *loading_texture;
 static GLuint gl_loading;
 static int loading_w, loading_h;
 static int loading_shown; /* a draw happened: the events of the wait are the wait's */
+static int loading_first = 1; /* the next draw is the first */
+
+/* Android: the window's surface comes a moment after the window, and after the
+ * mode change before it (immersive fullscreen) it is made again; a frame
+ * presented before that never reaches the display, and a long parse follows
+ * the first draw at once. Events are pumped until the window is shown and its
+ * size has held for a few checks, at most half a second. */
+static void loading_wait_for_surface(void)
+{
+#ifdef SDL_PLATFORM_ANDROID
+    const uint64_t until = real_now_us() + 500000;
+    int w0 = 0, h0 = 0, stable = 0;
+    while (real_now_us() < until && !loading_quit) {
+        int w, h;
+        SDL_PumpEvents();
+        if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) && SDL_GetWindowSizeInPixels(window, &w, &h) &&
+            w > 0 && h > 0) {
+            if (w == w0 && h == h0) {
+                if (++stable >= 3) break;
+            } else {
+                w0 = w;
+                h0 = h;
+                stable = 0;
+            }
+        }
+        SDL_Delay(15);
+    }
+#endif
+}
 
 static void loading_fill(int x, int y, int w, int h, uint32_t color)
 {
@@ -3009,7 +3038,10 @@ static void loading_paint(const char *line, unsigned done, unsigned total)
 int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
 {
     int w, h, output_w = 0, output_h = 0, cw, ch;
+    int pass, passes;
     if (!window || (!renderer && !use_gl)) return -1;
+    if (loading_first) loading_wait_for_surface();
+    passes = loading_first ? 2 : 1; /* the first frame twice: one swap alone may not reach the screen */
     SDL_PumpEvents(); /* the window answers the system, and Android its input */
     SDL_FlushEvent(SDL_EVENT_MOUSE_MOTION);
     if (loading_quit) return 1;
@@ -3043,7 +3075,11 @@ int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
     }
     loading_paint(line, done, total);
     loading_shown = 1;
-    if (use_gl) {
+    if (loading_first) {
+        loading_first = 0;
+        fprintf(stderr, "memories-pc: loading screen: first draw, %dx%d (window %dx%d): \"%s\"\n", loading_w, loading_h, w, h, line);
+    }
+    for (pass = 0; pass < passes; pass++) if (use_gl) {
         const int win_w = layout.win_w, win_h = layout.win_h;
         if (!gl_loading) {
             glGenTextures(1, &gl_loading);
@@ -3104,6 +3140,7 @@ void Platform_EndLoading(void)
     free(loading_pixels);
     loading_pixels = NULL;
     loading_w = loading_h = 0;
+    loading_first = 1;
     if (loading_shown) {
         /* What the player did while the screen was up is not for the first
          * frame (a tap, a stick's drift); the window's own events, a quit and
