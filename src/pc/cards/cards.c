@@ -2268,45 +2268,101 @@ void Cards_LibraryVariantNote(int shown, int head)
 
 static int row_names;
 
-void Cards_RowNames(int on)
+void Cards_RowNames(int mode)
 {
-    row_names = on;
+    row_names = mode;
 }
 
+#define ROW_LETTERS 16        /* the letters a row's name shows (the row's text stops there) */
+#define ROW_FULL_SIZE 160
 #define ROW_NAME_BUFFERS 32   /* a page of rows is eight; each text box reads its name as it builds */
 #define ROW_NAME_SIZE 72
-#define ROW_LABEL_WITH_NAME 9
+#define ROW_PAUSE_START 45    /* frames the cursor row's name waits before it scrolls, and at its end */
+#define ROW_PAUSE_END 60
+#define ROW_STEP 7            /* frames to a letter */
+
+/* The row's whole name, the variant's label before it ("Manga: Dark Magician"), as game text, ended by 0xFF in
+   `out`; returns its letters (an added letter, F1-F5 and a low byte, is one), and sets `*labelled` to whether
+   it has a label. */
+static int row_full(int id, unsigned char *out, int *labelled)
+{
+    const char *label = Cards_VariantLabel(id);
+    const unsigned char *name, *p;
+    int n = 0, units = 0, colon = glyph_of(':');
+    *labelled = 0;
+    out[0] = 0xFF;
+    if (!(name = Cards_NameCodes(id))) return 0;
+    for (; label && *label && n < 24; label++) {
+        int code = (unsigned char)*label < 0x80 ? glyph_of((unsigned char)*label) : -1;
+        if (code >= 0 && code < GLYPHS_EXTENDED_FIRST) {
+            out[n++] = (unsigned char)code;
+            units++;
+        }
+    }
+    if (n) {
+        *labelled = 1;
+        if (colon >= 0 && colon < GLYPHS_EXTENDED_FIRST) {
+            out[n++] = (unsigned char)colon;
+            units++;
+        }
+        out[n++] = 0;   /* the space */
+        units++;
+    }
+    for (p = name; *p != 0xFF && n + 3 < ROW_FULL_SIZE; units++) {
+        out[n++] = *p;
+        if (*p >= 0xF1 && *p <= 0xF5 && p[1] != 0xFF) out[n++] = *++p;
+        p++;
+    }
+    out[n] = 0xFF;
+    return units;
+}
+
+static int row_scroll_id, row_scroll_offset, row_scroll_wait;
 
 const unsigned char *Cards_RowNameText(int id)
 {
     static unsigned char buffers[ROW_NAME_BUFFERS][ROW_NAME_SIZE];
     static int next;
-    const char *label = row_names ? Cards_VariantLabel(id) : NULL;
-    const unsigned char *name, *p;
-    unsigned char *out;
-    int n = 0, colon = glyph_of(':');
-    if (!label || !*label || !(name = Cards_NameCodes(id))) return NULL;
+    unsigned char full[ROW_FULL_SIZE], *out;
+    const unsigned char *p;
+    int labelled, units, skip, n = 0;
+    if (!row_names) return NULL;
+    units = row_full(id, full, &labelled);
+    /* A name no longer than the row is the game's own, unless a label goes with it; a longer name of the cursor
+       row is a window of it. */
+    if (!units || (!labelled && !(row_names == 2 && units > ROW_LETTERS))) return NULL;
+    skip = row_names == 2 && id == row_scroll_id && units > ROW_LETTERS ? row_scroll_offset : 0;
+    if (skip > units - ROW_LETTERS) skip = units - ROW_LETTERS;
     out = buffers[next++ % ROW_NAME_BUFFERS];
-    for (; *label && n < 24; label++) {
-        int code = (unsigned char)*label < 0x80 ? glyph_of((unsigned char)*label) : -1;
-        if (code >= 0 && code < GLYPHS_EXTENDED_FIRST) out[n++] = (unsigned char)code;
-    }
-    if (n == 0) return NULL;
-    /* A row shows about sixteen letters: a label that would leave the name fewer than five is shown alone. */
-    if (n > ROW_LABEL_WITH_NAME) {
-        out[n] = 0xFF;
-        return out;
-    }
-    if (colon >= 0 && colon < GLYPHS_EXTENDED_FIRST) out[n++] = (unsigned char)colon;
-    out[n++] = 0;   /* the space */
-    for (p = name; *p != 0xFF && n + 3 < ROW_NAME_SIZE; ) {
+    for (p = full; skip > 0 && *p != 0xFF; skip--) p += *p >= 0xF1 && *p <= 0xF5 ? 2 : 1;
+    while (*p != 0xFF && n + 3 < ROW_NAME_SIZE) {
         out[n++] = *p;
-        /* F1-F5 and a low byte are one added letter (glyphs.h) */
-        if (*p >= 0xF1 && *p <= 0xF5 && p[1] != 0xFF) out[n++] = *++p;
+        if (*p >= 0xF1 && *p <= 0xF5) out[n++] = *++p;
         p++;
     }
     out[n] = 0xFF;
     return out;
+}
+
+int Cards_RowScroll(int id)
+{
+    unsigned char full[ROW_FULL_SIZE];
+    int labelled, last, was = row_scroll_offset;
+    if (id != row_scroll_id) {
+        row_scroll_id = id;
+        row_scroll_offset = 0;
+        row_scroll_wait = 0;
+        return was != 0;   /* the row that scrolled is made plain again */
+    }
+    last = (id ? row_full(id, full, &labelled) : 0) - ROW_LETTERS;
+    if (last <= 0) return 0;
+    row_scroll_wait++;
+    if (row_scroll_wait < (row_scroll_offset == 0 ? ROW_PAUSE_START : row_scroll_offset >= last ? ROW_PAUSE_END : ROW_STEP)) {
+        return 0;
+    }
+    row_scroll_wait = 0;
+    row_scroll_offset = row_scroll_offset >= last ? 0 : row_scroll_offset + 1;
+    return 1;
 }
 
 void Cards_MarkSeen(int id)

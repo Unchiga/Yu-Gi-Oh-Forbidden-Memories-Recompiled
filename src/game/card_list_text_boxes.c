@@ -33,7 +33,12 @@ void CardList_CreateSlotTextBox(CardList *list, s32 slot)
         style = 6;
     }
 #ifdef MEMORIES_PC
-    Cards_RowNames(1);   /* a variant's row names it with its label */
+    /* A variant's row names it with its label, and the cursor row of the active pane scrolls a long name
+       (cards.h). */
+    Cards_RowNames(gBuildDeck_pState != 0 && list == &gBuildDeck_pState->lists[gBuildDeck_pState->pane_index] &&
+                           slot == list->cursor
+                       ? 2
+                       : 1);
 #endif
     box = TextBox_Create(list->kind + 1, style, 0x22, 0x2B, 0x120, 0xB0);
     box->field_3A = slot * 22;

@@ -304,14 +304,19 @@ int Cards_FamilyCopies(const unsigned char *quantities, int id);
 int Cards_HaveVariants(void);
 /* The Build Deck's and the trade's card rows name a variant with its label in
  * front ("Manga: Dark Magician"), so that the player can tell which card of an
- * entry a row shows: the row's name is clipped at the right, not the left.
- * Cards_RowNames(1) is set while a row's text box is made, and then
- * Cards_RowNameText is the name text of a variant with a label (letters the
- * game's font lacks are left out of the label; a long label stands alone,
- * the row being sixteen letters wide); NULL for any other card, and
- * whenever it is not set. */
-void Cards_RowNames(int on);
+ * entry a row shows. A row is sixteen letters wide, so a longer name is
+ * clipped; the row under the cursor scrolls instead, the way an electronic
+ * sign does: it waits, moves a letter at a time to the end of the name, waits
+ * and starts again. Cards_RowNames is set while a row's text box is made: 1
+ * for a row, 2 for the cursor row, 0 after. Then Cards_RowNameText is the
+ * name text of a variant with a label (letters the game's font lacks are
+ * left out of the label), or of a name too long for the cursor row, as it
+ * shows now; NULL for any other card, and whenever it is not set.
+ * Cards_RowScroll(id) is called every frame with the card under the cursor
+ * (0 for none) and says whether the cursor row's text has to be made again. */
+void Cards_RowNames(int mode);
 const unsigned char *Cards_RowNameText(int id);
+int Cards_RowScroll(int id);
 
 /* The Library with its variants folded (SET_LIBRARY_FOLD_VARIANTS): a retail
  * card's variants are not cells of the grid; the card is one cell, and its

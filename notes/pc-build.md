@@ -3032,11 +3032,16 @@ an entry the row shows (the card itself at first); everything else is in
   returned from the deck is the one the chest's row shows; they step the
   card viewer (Triangle) too (`card_browse.c`), keeping the row in step;
 - a row of a variant with a `variant_label` names it with the label in front,
-  "Manga: Dark Magician" (a long label stands alone, the row being sixteen
-  letters wide): `Cards_RowNames` is set while `CardList_CreateSlotTextBox`
-  makes the row's text box and the name command asks `Cards_RowNameText`, so
-  the card viewer and the rest of the game keep the plain name. The deck's
-  and the trade's rows do the same;
+  "Manga: Dark Magician": `Cards_RowNames` is set while
+  `CardList_CreateSlotTextBox` makes the row's text box and the name command
+  asks `Cards_RowNameText`, so the card viewer and the rest of the game keep
+  the plain name. The deck's and the trade's rows do the same. A row shows
+  sixteen letters (the row's text stops there), so the active pane's cursor
+  row scrolls a longer name, as an electronic sign does (any card, not only
+  variants): `Cards_RowScroll` is called each frame from the pane's input,
+  waits (`ROW_PAUSE_START`), moves a letter every `ROW_STEP` frames, waits at
+  the end and starts again, and each step makes the page's text boxes again
+  with the name's window from that letter;
 - `BuildDeck_ReturnCardToChest` and `BuildDeck_TakeCardFromChest` set the
   entry's row again after every move.
 

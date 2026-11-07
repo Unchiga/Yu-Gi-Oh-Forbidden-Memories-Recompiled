@@ -93,6 +93,10 @@ void BuildDeck_UpdateChestPaneInput(BuildDeckTransitionState *state)
         return;
     }
 #ifdef MEMORIES_PC
+    /* A name too long for the row scrolls under the cursor (cards.h). */
+    if (e->first == e->first_target && Cards_RowScroll(BuildDeck_GetActiveCardID(e))) {
+        func_80031E04(e, 8);
+    }
     /* L3 and R3 step through the cards of the row's entry that the player has (build_deck_fold.h): L1/R1 and L2/R2
        are the list's pages. */
     if ((gInput_wPad1Pressed & PAD_BUTTON_L3_R3_MASK) != 0 && BuildDeckFold_Active()) {
