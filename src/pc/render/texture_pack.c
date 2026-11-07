@@ -43,6 +43,7 @@ typedef struct Entry {
     struct Decode *decode; /* the read whose image and texels these are (admit); NULL: its own */
 } Entry;
 static void entry_release(Entry *entry);
+static int entries_reserve(int wanted);
 
 /* Named replacements use the extractor's layouts, compiled into the game. */
 typedef struct AssetSpec {
@@ -57,6 +58,7 @@ typedef struct AssetSpec {
 
 static Entry *entries;
 static int entry_count, resolved; /* offsets are absolute on the disc, entries sorted */
+static int entries_room;
 /* For each sorted entry, the furthest byte any entry up to it can cover.
  * A lookup uses this to skip the prefix which cannot possibly overlap. */
 static uint32_t *prefix_end;
@@ -517,6 +519,20 @@ static long archive_start(const char *name)
     return (long)lba * 2048;
 }
 
+/* Doubling: since the cards' art is made when it is first seen (cards.c, own_art), an
+ * entry can be added once per picture during play. */
+static int entries_reserve(int wanted)
+{
+    Entry *more;
+    int want = entries_room * 2 > wanted ? entries_room * 2 : wanted;
+    if (wanted <= entries_room) return 1;
+    more = realloc(entries, (size_t)want * sizeof(*entries));
+    if (!more) return 0;
+    entries = more;
+    entries_room = want;
+    return 1;
+}
+
 /* By offset, then geometry, depth and palette: readings of the same words
  * end up adjacent, whatever packs they came from and in whatever order.
  * The same reading from two packs goes the later pack first, since the first
@@ -837,12 +853,9 @@ static int keep_disc_image(const Entry *entry)
  * any lazy read could). 0 out of memory. */
 static int add_kept(void)
 {
-    Entry *more;
     int i;
     if (!kept_count) return 1;
-    more = realloc(entries, (size_t)(entry_count + kept_count) * sizeof(*entries));
-    if (!more) return 0;
-    entries = more;
+    if (!entries_reserve(entry_count + kept_count)) return 0;
     for (i = 0; i < kept_count; i++) {
         Entry *entry = &entries[entry_count];
         *entry = kept[i];
@@ -864,7 +877,7 @@ int TexturePack_AddDiscImageGroup(unsigned group, const char *file, const char *
                                   int crop_left, int crop_width, int source_x, int source_y, int source_w,
                                   int source_h, unsigned rank)
 {
-    Entry entry, *more;
+    Entry entry;
     if (!file || !archive || !*archive || !*file || words < 1 || words > SOFT_GPU_WIDTH || rows < 1 ||
         rows > SOFT_GPU_HEIGHT || (bpp != 4 && bpp != 8 && bpp != 16) || clut_entries < 0 ||
         (clut_entries && !clut_offset) || stride < words || crop_left < 0 || crop_width < 1 ||
@@ -895,9 +908,7 @@ int TexturePack_AddDiscImageGroup(unsigned group, const char *file, const char *
     entry.group = group;
     entry.rank = rank;
     entry.position = entry_count;
-    more = realloc(entries, (size_t)(entry_count + 1) * sizeof(*entries));
-    if (!more) { free(entry.file); return 0; }
-    entries = more;
+    if (!entries_reserve(entry_count + 1)) { free(entry.file); return 0; }
     entries[entry_count++] = entry;
     if (!keep_disc_image(&entry)) {
         entry_count--;
@@ -1148,7 +1159,7 @@ typedef struct {
     const unsigned char *data; /* a made block's bytes (not on the disc), else NULL */
 } Recalled;
 static Recalled *recalled;
-static int recalled_count;
+static int recalled_count, recalled_room;
 
 static int compare_recalled(const void *a, const void *b) { return memcmp(a, b, RECALL_BYTES); }
 
@@ -1185,13 +1196,57 @@ static uint32_t hash_disc(uint32_t offset, uint32_t bytes)
     return hash;
 }
 
+/* A made block as recall knows it; 0 if it is not to be known. A head of one value is
+ * fine (a picture's plain sky): recall checks the whole block. One value throughout
+ * would be a fill. */
+static int recall_block(const Block *block, Recalled *out)
+{
+    uint32_t k;
+    for (k = 1; k < block->bytes && block->data[k] == block->data[0]; k++) {}
+    if (block->bytes < RECALL_BYTES || k == block->bytes) return 0;
+    memcpy(out->head, block->data, RECALL_BYTES);
+    out->disc = block->offset;
+    out->bytes = block->bytes;
+    out->hash = hash_bytes(block->data, block->bytes);
+    out->data = block->data;
+    return 1;
+}
+
+/* A block made after the index was built, in its place: the upload right after it (a
+ * card seen for the first time) is known by its bytes at once. */
+static void recall_add(const Block *block)
+{
+    Recalled item;
+    int low = 0, high = recalled_count;
+    if (!recall_block(block, &item)) return;
+    if (recalled_count == recalled_room) {
+        int room = recalled_room ? recalled_room * 2 : 64;
+        Recalled *more = realloc(recalled, (size_t)room * sizeof(*recalled));
+        if (!more) return;
+        recalled = more;
+        recalled_room = room;
+    }
+    while (low < high) {
+        int middle = (low + high) / 2;
+        if (memcmp(item.head, recalled[middle].head, RECALL_BYTES) > 0) low = middle + 1;
+        else high = middle;
+    }
+    memmove(recalled + low + 1, recalled + low, (size_t)(recalled_count - low) * sizeof(*recalled));
+    recalled[low] = item;
+    recalled_count++;
+}
+
 static void recall_heads(void)
 {
     int i, n = 0;
     free(recalled);
     recalled_count = 0;
-    recalled = malloc(sizeof(*recalled) * ((size_t)entry_count * 2 + (size_t)block_count + 1));
-    if (!recalled) return;
+    recalled_room = entry_count * 2 + block_count + 1;
+    recalled = malloc(sizeof(*recalled) * (size_t)recalled_room);
+    if (!recalled) {
+        recalled_room = 0;
+        return;
+    }
     for (i = 0; i < entry_count; i++) {
         const Entry *entry = &entries[i];
         int whole;
@@ -1208,19 +1263,7 @@ static void recall_heads(void)
         }
     }
     for (i = 0; i < n; i++) recalled[i].data = NULL;
-    for (i = 0; i < block_count; i++) {
-        const Block *block = &blocks[i];
-        uint32_t k;
-        /* A head of one value is fine (a picture's plain sky): recall
-         * checks the whole block. One value throughout would be a fill. */
-        for (k = 1; k < block->bytes && block->data[k] == block->data[0]; k++) {}
-        if (block->bytes < RECALL_BYTES || k == block->bytes) continue;
-        memcpy(recalled[n].head, block->data, RECALL_BYTES);
-        recalled[n].disc = block->offset;
-        recalled[n].bytes = block->bytes;
-        recalled[n].hash = hash_bytes(block->data, block->bytes);
-        recalled[n++].data = block->data;
-    }
+    for (i = 0; i < block_count; i++) n += recall_block(&blocks[i], &recalled[n]);
     qsort(recalled, (size_t)n, sizeof(*recalled), compare_recalled);
     for (i = 0; i < n; i++)
         if (!recalled[i].data) recalled[i].hash = hash_disc(recalled[i].disc, recalled[i].bytes);
@@ -1256,6 +1299,23 @@ static uint32_t recall(const uint16_t *pixels, size_t words)
         found = recalled[i].disc;
     }
     return found;
+}
+
+/* The disc byte past an entry's last. */
+static uint32_t entry_end(const Entry *entry)
+{
+    uint64_t end;
+    if (entry->row_offsets) {
+        int r;
+        end = entry->offset;
+        for (r = 0; r < entry->rows; r++) {
+            int64_t row_end = (int64_t)entry->offset + entry->row_offsets[r] + entry->words * 2;
+            if (row_end > (int64_t)end) end = (uint64_t)row_end;
+        }
+    } else {
+        end = (uint64_t)entry->offset + (uint64_t)entry->stride * entry->rows * 2;
+    }
+    return end > UINT32_MAX ? UINT32_MAX : (uint32_t)end;
 }
 
 /* The disc is open after the mods are applied, so the archives' places are
@@ -1297,19 +1357,8 @@ static int resolve(void)
         uint32_t furthest = 0;
         for (i = 0; i < entry_count; i++) {
             const Entry *entry = &entries[i];
-            uint64_t end;
-            if (entry->row_offsets) {
-                int r;
-                end = entry->offset;
-                for (r = 0; r < entry->rows; r++) {
-                    int64_t row_end = (int64_t)entry->offset + entry->row_offsets[r] + entry->words * 2;
-                    if (row_end > (int64_t)end) end = (uint64_t)row_end;
-                }
-            } else {
-                end = (uint64_t)entry->offset + (uint64_t)entry->stride * entry->rows * 2;
-            }
-            if (end > UINT32_MAX) end = UINT32_MAX;
-            if ((uint32_t)end > furthest) furthest = (uint32_t)end;
+            uint32_t end = entry_end(entry);
+            if (end > furthest) furthest = end;
             prefix_end[i] = furthest;
             if (entry->rank > highest_rank) highest_rank = entry->rank;
         }
@@ -1515,13 +1564,14 @@ static void free_entries(void)
     }
     free(entries);
     entries = NULL;
+    entries_room = 0;
     entry_count = 0;
     free(prefix_end);
     prefix_end = NULL;
     highest_rank = 0;
     free(recalled);
     recalled = NULL;
-    recalled_count = 0;
+    recalled_count = recalled_room = 0;
 }
 
 /* What was wrong with a pack's entries, kind by kind: how many, and the
@@ -1791,12 +1841,9 @@ void TexturePack_RemoveEntriesFrom(unsigned mark)
  * the file's path (free_entries frees it). 0 out of memory. */
 static int add_made(int first)
 {
-    Entry *more;
     int i;
     if (first >= made_count) return 1;
-    more = realloc(entries, (size_t)(entry_count + made_count - first) * sizeof(*entries));
-    if (!more) return 0;
-    entries = more;
+    if (!entries_reserve(entry_count + made_count - first)) return 0;
     for (i = first; i < made_count; i++) {
         Entry *entry = &entries[entry_count];
         *entry = made[i];
@@ -1826,11 +1873,31 @@ static uint32_t block_place(const void *data, uint32_t bytes)
     blocks[block_count].bytes = bytes;
     blocks[block_count].offset = made_next;
     made_next += (bytes + 0xFFFu) & ~0xFFFu;
+    recall_add(&blocks[block_count]);
     return blocks[block_count++].offset;
 }
 
-static int add_made_entry(const void *pixels, int words, int rows, int bpp, const void *clut, int clut_entries,
-                          const char *file, int x, int y, int w, int h, int see_through)
+/* The last entry, just added, is in order after the others (a block at a new place is
+ * past every other): it joins them as it is, with nothing moved, no generation for the
+ * renderers to drop their pictures for, and no other entry looked at. 0 if not: the
+ * entries are sorted again between frames, the disc and every pack image read for
+ * the index. */
+static int joined_in_order(void)
+{
+    const Entry *entry = &entries[entry_count - 1];
+    uint32_t *more, end;
+    if (!resolved || !prefix_end || entry_count < 2 || compare(&entries[entry_count - 2], entry) >= 0) return 0;
+    more = realloc(prefix_end, (size_t)entry_count * sizeof(*prefix_end));
+    if (!more) return 0;
+    prefix_end = more;
+    end = entry_end(entry);
+    prefix_end[entry_count - 1] = end > prefix_end[entry_count - 2] ? end : prefix_end[entry_count - 2];
+    if (entry->rank > highest_rank) highest_rank = entry->rank;
+    return 1;
+}
+
+static int add_made_held(const void *pixels, int words, int rows, int bpp, const void *clut, int clut_entries,
+                         const char *file, int x, int y, int w, int h, int see_through)
 {
     Entry *more, entry;
     int i;
@@ -1866,8 +1933,28 @@ static int add_made_entry(const void *pixels, int words, int rows, int bpp, cons
     entry.file = strdup(file);
     if (!entry.file) return 0;
     made[made_count++] = entry;
-    if (!add_made(made_count - 1) || !install()) return 0;
-    return 1;
+    if (!add_made(made_count - 1)) return 0;
+    return joined_in_order() || install();
+}
+
+/* With the clock held: the upload in its tick reads what this changes, and a card is
+ * first seen while the game runs. */
+static int add_made_entry(const void *pixels, int words, int rows, int bpp, const void *clut, int clut_entries,
+                          const char *file, int x, int y, int w, int h, int see_through)
+{
+    sigset_t held, previous;
+    int added;
+    sigemptyset(&held);
+    sigaddset(&held, SIGALRM);
+    sigprocmask(SIG_BLOCK, &held, &previous);
+    added = add_made_held(pixels, words, rows, bpp, clut, clut_entries, file, x, y, w, h, see_through);
+    sigprocmask(SIG_SETMASK, &previous, NULL);
+    return added;
+}
+
+int TexturePack_PrepareMade(void)
+{
+    return TextureDump_Recall == recall || install();
 }
 
 int TexturePack_AddMade(const void *pixels, int words, int rows, int bpp, const void *clut, int clut_entries,
