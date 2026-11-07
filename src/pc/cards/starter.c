@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "pc/mods/saved_text.inc"
+
 typedef struct {
     const char *mod;    /* the manifest's, which outlives these */
     char *name;         /* its "name", or NULL for the mod's own: a copy, as this block is in a save state */
@@ -68,10 +70,7 @@ static int control_key(const char *name)
 static char *name_of(const JsonValue *entry)
 {
     const char *name = Json_String(Json_Member(entry, "name"), NULL);
-    size_t size = name ? strlen(name) + 1 : 0;
-    char *copy = size ? malloc(size) : NULL;
-    if (copy) memcpy(copy, name, size);
-    return copy;
+    return name ? saved_text(name) : NULL;
 }
 
 /* One deck: { "name": ..., "weight": ..., card: copies, ... }, the copies
