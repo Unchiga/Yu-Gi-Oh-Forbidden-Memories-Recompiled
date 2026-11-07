@@ -1,6 +1,6 @@
 /* The hash tables behind Cards_Named find what going down the names in order
  * found: the same id for every spelling, the lower of two that match. */
-#include "pc/cards/name_index.h"
+#include "pc/cards/name_index.inc"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>

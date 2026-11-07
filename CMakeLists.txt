@@ -933,7 +933,7 @@ if(BUILD_TESTING)
         target_compile_options(memories_mod_import_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mod_import COMMAND memories_mod_import_test)
-    # What Cards_Named finds through its tables (src/pc/cards/name_index.h),
+    # What Cards_Named finds through its tables (src/pc/cards/name_index.inc),
     # against going down the names.
     add_executable(memories_name_index_test tests/pc/name_index_test.c)
     target_include_directories(memories_name_index_test PRIVATE src)

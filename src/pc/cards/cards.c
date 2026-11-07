@@ -37,7 +37,7 @@
 #include "pc/rng.h"
 #include "pc/compat/posix.h"
 #include "game/card_constants.h"
-#include "name_index.h"
+#include "name_index.inc"
 #include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
