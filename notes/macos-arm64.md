@@ -95,7 +95,8 @@ is cached across a module switch; the interpreter fallback is unchanged.
 Texture-pack tables, resampled pixels and decoded PNG caches are exclusively
 host data with LP64 pointers. Their allocations retain native libc ownership
 and consume no guest tokens. They are rebuilt by the renderer rather than
-serialized as guest heaps. Game allocations, guest globals, mod storage and
+serialized as guest heaps. A parsed manifest (`src/pc/mods/json.c`) is host data too:
+only `src/pc` reads it, through 64-bit pointers. Game allocations, guest globals, mod storage and
 callback bridges keep their registered memory contracts.
 
 ## Code and test entry points
