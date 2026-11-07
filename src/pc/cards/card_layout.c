@@ -331,6 +331,17 @@ int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step)
     return *w > 0 && *h > 0 && *step > 0;
 }
 
+int CardLayout_PartsOverArt(void)
+{
+    LayoutSource source = current_source();
+    const JsonValue *styles, *style_node;
+
+    if (source.mod < 0 || !full_bleed_of(&source)) return 0;
+    styles = Json_Member(source.layout, "frame_styles");
+    style_node = styles && *current.name ? Json_Member(styles, current.name) : NULL;
+    return Json_Bool(Json_Member(style_node, "parts_over_art"), 0);
+}
+
 int CardLayout_StarImage(char *path, size_t size, int *w, int *h, int *step)
 {
     LayoutSource source = current_source();

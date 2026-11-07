@@ -411,6 +411,8 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
     CardLayoutPart star_layout = CardLayout_Part(CARD_LAYOUT_LEVEL_STARS);
     CardLayoutPart attr_layout = CardLayout_Part(CARD_LAYOUT_ATTRIBUTE);
     CardLayoutPart art_layout = CardLayout_Part(CARD_LAYOUT_ART);
+    SpritePrim art_prim;      /* the art's quad, drawn after the parts: see below */
+    s32 art_deferred = 0;
 #endif
 
     wrap = 0xFFFF;
@@ -491,10 +493,18 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
      * the original attribute/tpage/cxcy/uv/extent at this point, which is
      * exactly what that helper reads its texel footprint from. */
     if (art_layout.visible && art_layout.w != 0) {
-        CardLayout_DrawArt(PRM, win->field_30.h.field_30 + art_layout.x,
-                           win->field_30.h.field_32 + art_layout.y,
-                           art_layout.w, art_layout.h, arg1, arg, EXT,
-                           win->field_30.h.field_30, win->field_30.h.field_32, frame_layout.w, frame_layout.h);
+        if (CardLayout_PartsOverArt()) {
+            /* Kept for later (art_prim, drawn below the name, stars, element and ATK/DEF and above the frame): a
+             * picture may be bigger than its window (a full art card's), and those must show over it. The packet
+             * submitted last is drawn first, so the art goes in after the parts and before the frame. */
+            art_prim = *PRM;
+            art_deferred = 1;
+        } else {
+            CardLayout_DrawArt(PRM, win->field_30.h.field_30 + art_layout.x,
+                               win->field_30.h.field_32 + art_layout.y,
+                               art_layout.w, art_layout.h, arg1, arg, EXT,
+                               win->field_30.h.field_30, win->field_30.h.field_32, frame_layout.w, frame_layout.h);
+        }
     } else if (art_layout.visible)
 #endif
     DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
@@ -842,6 +852,12 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
 #endif
     DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
 #ifdef MEMORIES_PC
+    if (art_deferred) {
+        CardLayout_DrawArt(&art_prim, win->field_30.h.field_30 + art_layout.x,
+                           win->field_30.h.field_32 + art_layout.y,
+                           art_layout.w, art_layout.h, arg1, arg, EXT,
+                           win->field_30.h.field_30, win->field_30.h.field_32, frame_layout.w, frame_layout.h);
+    }
     /* Last on purpose (CardLayout_DrawFrame's own comment explains why):
      * submitted after art/digits/stars/attribute above, so it ends up
      * drawn before them -- underneath. */

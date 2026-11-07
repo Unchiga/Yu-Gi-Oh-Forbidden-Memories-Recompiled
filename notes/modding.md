@@ -1276,6 +1276,17 @@ one for a full art card) is squeezed to that shape in the PNG, and the
 rectangle gives it its own shape back (the FM Editor's Variants tab does that
 for **Full art**).
 
+A card's own `art` PNG may have transparent parts (a cut-out figure on a clear
+background) when the card says `"art_transparent": true`: a pixel under half
+alpha is then see-through, so the frame behind the picture shows there. (Left
+out, a picture is drawn over black, as always.)
+
+The picture is drawn over the card's name, stars, element and ATK/DEF, which
+a layout like the HD pack's relies on (it covers the game's own "[Trap Card]"
+captions with it). A frame style with `"parts_over_art": true` draws the
+picture under them instead (and still over the frame), so a picture that runs
+past its window does not hide them.
+
 ### Frame styles and the rules that pick them
 
 A card is drawn in a frame **style**: a picture and the color its small card

@@ -841,6 +841,29 @@ static void star_picture(void)
     CHECK(!CardLayout_StarImage(path, sizeof(path), &w, &h, &step));
 }
 
+/* "parts_over_art": the picture goes under the card's other parts, for the style that says so. */
+static void parts_over_art(void)
+{
+    reset();
+    add_mod("x", "/mods/x",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {"
+            "\"plain\": {\"image\": \"f.png\", \"hand_color\": \"gold\"},"
+            "\"over\": {\"image\": \"f.png\", \"hand_color\": \"gold\", \"parts_over_art\": true},"
+            "\"no\": {\"image\": \"f.png\", \"hand_color\": \"gold\", \"parts_over_art\": false}}}}",
+            1, "full_bleed", 1);
+    snprintf(fake_frame_style[1], sizeof(fake_frame_style[1]), "%s", "plain");
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "over");
+    snprintf(fake_frame_style[3], sizeof(fake_frame_style[3]), "%s", "no");
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_PartsOverArt());
+    CardLayout_SetCard(2);
+    CHECK(CardLayout_PartsOverArt());
+    CardLayout_SetCard(3);
+    CHECK(!CardLayout_PartsOverArt());
+    CardLayout_SetCard(0);
+    CHECK(!CardLayout_PartsOverArt());                       /* a card of no style: as always */
+}
+
 /* A mod with several full-bleed styles, each its own frame image, can give
  * each its own atk/def/stars/attribute/art instead of them all sharing one
  * top-level box (card_layout.c's layout_part): two cards in two different
@@ -1269,6 +1292,7 @@ int main(void)
     digits_from_mod();
     color_tint();
     star_picture();
+    parts_over_art();
     per_style_layout();
     partial_art_rect_uses_retail_defaults();
     frame_box_is_bounded();

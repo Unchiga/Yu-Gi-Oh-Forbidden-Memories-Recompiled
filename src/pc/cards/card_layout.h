@@ -119,6 +119,12 @@ int CardLayout_FramePaths(char (*paths)[1024], int max);
  * the retail digits are drawn then. */
 int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step);
 
+/* Whether the active style draws the card's picture under the name, the stars, the element and ATK/DEF
+ * ("parts_over_art": true in its frame style; the picture stays over the frame): a full art card's, which
+ * runs past its window. Off, as it was always, the picture is over those (a layout that relies on it covers
+ * the game's own captions with it). */
+int CardLayout_PartsOverArt(void);
+
 /* The active style's own picture for a level star (its "stars" part's "image", with "width", "height" and "step"
  * in card units: 9, 9 and the width left out): the stars are drawn from it, a row going left from the first as
  * the game's own go, in the part's "color". 0, with `path` empty, when the style gives none (or full-bleed is
