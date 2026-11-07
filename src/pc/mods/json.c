@@ -567,7 +567,8 @@ no_room:
 
 /* One element: `text` is the caller's buffer, parsed where it is, with the
  * blocks of `document` used again. */
-static const JsonValue *parse_element(JsonDocument *document, char *text, char *error, size_t error_size)
+static const JsonValue *parse_element(JsonDocument *document, char *text, char *error, size_t error_size,
+                                      int *no_memory)
 {
     Parser parser;
     Block *block = document->blocks;
@@ -583,10 +584,14 @@ static const JsonValue *parse_element(JsonDocument *document, char *text, char *
     parser.error = error;
     parser.error_size = error_size;
     parser.depth = 0;
+    parser.no_memory = 0;
     if (error && error_size) error[0] = '\0';
     {
         JsonValue *value = parse_value(&parser);
-        if (!value) return NULL;
+        if (!value) {
+            *no_memory = parser.no_memory;
+            return NULL;
+        }
         skip_space(&parser);
         if (*parser.at) { fail(&parser, "trailing text"); return NULL; }
         return value;
@@ -601,13 +606,14 @@ static void list_mistake(int *mistakes, long index, const char *why, char *error
 
 /* One whole element in `element`: `each` has it, or `error` the mistake. 0 to stop. */
 static int read_element(JsonDocument *document, char *element, size_t used, int (*each)(const JsonValue *, long, void *),
-                        long *index, void *context, char *error, size_t error_size, int *mistakes)
+                        long *index, void *context, char *error, size_t error_size, int *mistakes, int *no_memory)
 {
     char why[64];
     const JsonValue *value;
     element[used] = 0;
-    value = parse_element(document, element, why, sizeof(why));
+    value = parse_element(document, element, why, sizeof(why), no_memory);
     if (value) return each(value, (*index)++, context);
+    if (*no_memory) return 0;
     list_mistake(mistakes, *index, why, error, error_size);
     (*index)++;
     return 1;
@@ -622,6 +628,7 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     size_t used = 0, room = 0;
     long left, index = 0;
     int depth = 0, in_string = 0, escape = 0, inside = 0, good = 1, mistakes = 0;
+    int no_memory = 0;
     int after = 0;     /* an element has ended and its comma has not come */
     int too_long = 0;  /* this element is being passed over */
     JsonDocument document;
@@ -633,8 +640,9 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     if (!file || !chunk || fseek(file, deferred->start + 1, SEEK_SET)) {
         if (error && error_size) snprintf(error, error_size, "cannot read %s", path);
         if (file) fclose(file);
+        no_memory = file && !chunk;
         free(chunk);
-        return -1;
+        return no_memory ? JSON_NO_MEMORY : -1;
     }
     left = deferred->end - deferred->start - 1;
     while (good && left > 0) {
@@ -664,7 +672,7 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
                 char *bigger = NULL;
                 if (wanted > ELEMENT_MAX) too_long = 1;
                 else if (!(bigger = realloc(element, wanted))) {
-                    list_mistake(&mistakes, index, "out of memory", error, error_size);
+                    no_memory = 1;
                     good = 0;
                     break;
                 }
@@ -690,7 +698,8 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
             }
             if (ends) {
                 if (too_long) list_mistake(&mistakes, index++, "over a megabyte", error, error_size);
-                else good = read_element(&document, element, used, each, &index, context, error, error_size, &mistakes);
+                else good = read_element(&document, element, used, each, &index, context, error, error_size, &mistakes,
+                                         &no_memory);
                 used = 0;
                 inside = too_long = 0;
             }
@@ -698,7 +707,7 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     }
     if (good && inside && too_long) list_mistake(&mistakes, index++, "over a megabyte", error, error_size);
     else if (good && inside && used)
-        read_element(&document, element, used, each, &index, context, error, error_size, &mistakes);
+        read_element(&document, element, used, each, &index, context, error, error_size, &mistakes, &no_memory);
     while (document.blocks) {
         Block *next = document.blocks->next;
         free(document.blocks);
@@ -707,6 +716,10 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     free(element);
     free(chunk);
     fclose(file);
+    if (no_memory) {
+        if (error && error_size) snprintf(error, error_size, "out of memory");
+        return JSON_NO_MEMORY;
+    }
     return mistakes ? -1 : index;
 }
 

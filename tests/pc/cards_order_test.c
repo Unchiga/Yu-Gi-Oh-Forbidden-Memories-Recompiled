@@ -234,7 +234,7 @@ int main(int argc, char **argv)
         assert(Mods_Active(id) && !strcmp(Mods_Id(id), "cardorder-a"));
         for (id = 0; id < Mods_Count(); id++)
             if (!strcmp(Mods_Id(id), "cardorder-b")) {
-                assert(!Mods_Active(id) && Mods_Failed(id));
+                assert(!Mods_Active(id) && Mods_Refused(id));
                 assert(strstr(Mods_Status(id), "cannot read them"));
             } else if (!strcmp(Mods_Id(id), "cardorder-c")) {
                 /* What needs it does not stay on. */
