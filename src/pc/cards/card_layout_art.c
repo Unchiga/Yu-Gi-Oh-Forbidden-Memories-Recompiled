@@ -156,10 +156,13 @@ static const short stat_label_cells[][3] = {
 static const short type_label_cells[][3] = {
     {640, 256, 449}, {672, 256, 450}, {704, 256, 451}, {736, 256, 452},
     {768, 256, 453}, {800, 256, 454}, {832, 256, 455}, {864, 256, 456}};
+/* 32x32 cells (16x32 halfwords), not padded: a custom level star, a few at once (an attack shows two cards). */
+static const short star_cells[][3] = {{640, 396, 492}, {656, 396, 493}, {672, 396, 494}, {688, 396, 495}};
 #define SLOTS_OF(cells) ((int)(sizeof(cells) / sizeof(cells[0])))
 static SmallSlot hand_slots[SLOTS_OF(hand_cells)], field_slots[SLOTS_OF(field_cells)],
     field_back_slots[SLOTS_OF(field_back_cells)], library_slots[SLOTS_OF(library_cells)],
-    stat_label_slots[SLOTS_OF(stat_label_cells)], type_label_slots[SLOTS_OF(type_label_cells)];
+    stat_label_slots[SLOTS_OF(stat_label_cells)], type_label_slots[SLOTS_OF(type_label_cells)],
+    star_slots[SLOTS_OF(star_cells)];
 static SmallKind hand_kind = {"hand frame", SPRITE_W, SPRITE_H, 1, SLOTS_OF(hand_cells), hand_cells, hand_slots};
 static SmallKind field_kind = {"field frame", SPRITE_W, SPRITE_H, 1, SLOTS_OF(field_cells), field_cells, field_slots};
 static SmallKind field_back_kind = {"field back", SPRITE_W, SPRITE_H, 1, SLOTS_OF(field_back_cells),
@@ -169,8 +172,9 @@ static SmallKind stat_label_kind = {"stat label", 64, 32, 0, SLOTS_OF(stat_label
                                     stat_label_slots};
 static SmallKind type_label_kind = {"type label", 64, 32, 0, SLOTS_OF(type_label_cells), type_label_cells,
                                     type_label_slots};
+static SmallKind star_kind = {"level star", 32, 32, 0, SLOTS_OF(star_cells), star_cells, star_slots};
 static SmallKind *const small_kinds[] = {&hand_kind, &field_kind, &field_back_kind, &library_kind,
-                                         &stat_label_kind, &type_label_kind};
+                                         &stat_label_kind, &type_label_kind, &star_kind};
 
 /* `path`'s cell of `kind`, decoded and stored into a slot first when it is in
  * none; 0 when there is no picture or it cannot be read. */
@@ -586,6 +590,7 @@ int CardLayoutArt_DigitCell(int digit, int dim, int *tpage, int *u, int *v, int 
  * palette x=512..767, y448. The rest (the small cells' tables are above
  * small_cell):
  *
+ *   level stars  4 x 16x32: x=640..703, y396..427 (palettes: rows 492..495)
  *   type labels  8 x 32x32: x=640..895, y256..287
  *   stat labels  8 x 32x32: x=640..895, y288..319
  *   titles       3 x 48x14: x=640..783, y320..333
@@ -607,6 +612,16 @@ int CardLayoutArt_StatLabelCell(int dfd, int *tpage, int *u, int *v, int *clut, 
      * would crop the transparent top-left of a centred label image. */
     if (!CardLayout_StatLabel(dfd, path, sizeof(path), &x, &y, &draw_w, &draw_h)) return 0;
     return small_cell(&stat_label_kind, path, tpage, u, v, clut, w, h);
+}
+
+/* The style's own level star (CardLayout_StarImage): one picture, a cell of its own. */
+int CardLayoutArt_StarCell(int *tpage, int *u, int *v, int *clut, int *w, int *h)
+{
+    char path[1024];
+    int star_w, star_h, step;
+
+    if (!CardLayout_StarImage(path, sizeof(path), &star_w, &star_h, &step)) return 0;
+    return small_cell(&star_kind, path, tpage, u, v, clut, w, h);
 }
 
 /* The "[Trap Card]"-style caption retail draws for every non-monster card:

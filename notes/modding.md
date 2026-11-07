@@ -1234,6 +1234,13 @@ above, not retail's right-anchored first-star position: a card can carry
 up to 12 stars at a fixed 9px each, and `func_80028B08.c` centres however
 many a card has around this point so a wide row never runs past the frame.
 
+A style's `stars` takes an `"image"` too (a PNG, any size, drawn square; only
+while the layout is on): the stars are then that picture instead of the game's
+round star, `"width"` and `"height"` card units each (9 and 9, at most 32), a
+row going left from the first by `"step"` units (the width left out), in the
+part's `"color"`, which multiplies the picture (white ink takes any color):
+`"stars": {"image": "star.png", "x": 130, "y": 30, "color": {"r": 255, "g": 176, "b": 32}}`.
+
 Retail draws a small frame with a title plate, the card's picture at its
 own fixed size, and ATK/DEF stacked under a separate plaque. A mod's own
 `full_bleed` setting (a `bool` the mod declares, as every setting is)

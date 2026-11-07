@@ -77,6 +77,9 @@ int CardLayoutArt_DigitCell(int digit, int dim, int *tpage, int *u, int *v, int 
  * label, read from card_layout.h's CardLayout_StatLabel. */
 int CardLayoutArt_StatLabelCell(int dfd, int *tpage, int *u, int *v, int *clut, int *w, int *h);
 
+/* The current style's own level star, read from card_layout.h's CardLayout_StarImage. */
+int CardLayoutArt_StarCell(int *tpage, int *u, int *v, int *clut, int *w, int *h);
+
 /* `kind`'s (card_constants.h's CARD_TYPE_MAGIC..CARD_TYPE_EQUIP) optional
  * replacement "[Trap Card]"-style caption, read from card_layout.h's
  * CardLayout_TypeLabel. */

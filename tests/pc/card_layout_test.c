@@ -801,6 +801,46 @@ static void color_tint(void)
     CHECK(p.r == 0x80 && p.g == 0x80 && p.b == 0x80);
 }
 
+/* A style's own level star: a picture, drawn by the game in the part's color; 9 x 9 and a step of the width
+ * when left out, full-bleed only, and only for the style that names it. */
+static void star_picture(void)
+{
+    char path[1024];
+    int w, h, step;
+
+    reset();
+    add_mod("x", "/mods/x",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {"
+            "\"plain\": {\"image\": \"f.png\", \"hand_color\": \"gold\"},"
+            "\"starry\": {\"image\": \"f.png\", \"hand_color\": \"gold\", "
+            "\"stars\": {\"image\": \"star.png\", \"width\": 12, \"x\": 90, \"y\": 30, \"color\": {\"r\": 5}}},"
+            "\"wide\": {\"image\": \"f.png\", \"hand_color\": \"gold\", "
+            "\"stars\": {\"image\": \"star.png\", \"width\": 8, \"height\": 7, \"step\": 11}},"
+            "\"huge\": {\"image\": \"f.png\", \"hand_color\": \"gold\", "
+            "\"stars\": {\"image\": \"star.png\", \"width\": 999, \"step\": 999}}}}}",
+            1, "full_bleed", 1);
+    snprintf(fake_frame_style[1], sizeof(fake_frame_style[1]), "%s", "plain");
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "starry");
+    snprintf(fake_frame_style[3], sizeof(fake_frame_style[3]), "%s", "wide");
+    snprintf(fake_frame_style[4], sizeof(fake_frame_style[4]), "%s", "huge");
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_StarImage(path, sizeof(path), &w, &h, &step) && !path[0]);   /* no picture: the game's */
+    CardLayout_SetCard(2);
+    CHECK(CardLayout_StarImage(path, sizeof(path), &w, &h, &step));
+    CHECK(!strcmp(path, "/mods/x/star.png") && w == 12 && h == 9 && step == 12);
+    CHECK(CardLayout_Part(CARD_LAYOUT_LEVEL_STARS).x == 90 && CardLayout_Part(CARD_LAYOUT_LEVEL_STARS).r == 5);
+    CardLayout_SetCard(3);
+    CHECK(CardLayout_StarImage(path, sizeof(path), &w, &h, &step) && w == 8 && h == 7 && step == 11);
+    CardLayout_SetCard(4);
+    CHECK(CardLayout_StarImage(path, sizeof(path), &w, &h, &step) && w == 32 && h == 9 && step == 64);   /* bounded */
+    /* The mod off: the game's own star. */
+    reset();
+    add_mod("x", "/mods/x",
+            "{\"id\": \"x\", \"card_layout\": {\"stars\": {\"image\": \"star.png\"}}}", 1, "full_bleed", 0);
+    CardLayout_SetCard(0);
+    CHECK(!CardLayout_StarImage(path, sizeof(path), &w, &h, &step));
+}
+
 /* A mod with several full-bleed styles, each its own frame image, can give
  * each its own atk/def/stars/attribute/art instead of them all sharing one
  * top-level box (card_layout.c's layout_part): two cards in two different
@@ -1228,6 +1268,7 @@ int main(void)
     legacy_ritual_wears_magic();
     digits_from_mod();
     color_tint();
+    star_picture();
     per_style_layout();
     partial_art_rect_uses_retail_defaults();
     frame_box_is_bounded();

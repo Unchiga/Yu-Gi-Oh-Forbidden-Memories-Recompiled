@@ -119,6 +119,12 @@ int CardLayout_FramePaths(char (*paths)[1024], int max);
  * the retail digits are drawn then. */
 int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step);
 
+/* The active style's own picture for a level star (its "stars" part's "image", with "width", "height" and "step"
+ * in card units: 9, 9 and the width left out): the stars are drawn from it, a row going left from the first as
+ * the game's own go, in the part's "color". 0, with `path` empty, when the style gives none (or full-bleed is
+ * off): the game's own star is drawn then. */
+int CardLayout_StarImage(char *path, size_t size, int *w, int *h, int *step);
+
 /* An optional, active-style-only static ATK or DFD label. `dfd` is non-zero
  * for the defense label. The PNG's own texture is drawn at x/y and w/h in
  * card units; 0 means that style does not supply that label. */

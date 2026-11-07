@@ -331,6 +331,24 @@ int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step)
     return *w > 0 && *h > 0 && *step > 0;
 }
 
+int CardLayout_StarImage(char *path, size_t size, int *w, int *h, int *step)
+{
+    LayoutSource source = current_source();
+    const JsonValue *styles, *style_node, *stars;
+
+    path[0] = 0;
+    if (source.mod < 0 || !full_bleed_of(&source)) return 0;
+    styles = Json_Member(source.layout, "frame_styles");
+    style_node = styles && *current.name ? Json_Member(styles, current.name) : NULL;
+    stars = layout_part(style_node, source.layout, "stars");
+    mod_file(source.mod, Json_String(Json_Member(stars, "image"), NULL), "\"stars\"", path, size);
+    if (!path[0]) return 0;
+    *w = frame_box_dimension(stars, "width", 9, 32);
+    *h = frame_box_dimension(stars, "height", 9, 32);
+    *step = frame_box_dimension(stars, "step", *w, 64);
+    return 1;
+}
+
 int CardLayout_StatLabel(int dfd, char *path, size_t size, int *x, int *y, int *w, int *h)
 {
     LayoutSource source = current_source();

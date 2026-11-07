@@ -254,6 +254,25 @@ static int CardLayout_DrawDigits(s32 base_x, s32 base_y, s32 cx, s32 cy, const u
     return 1;
 }
 
+/* The style's own level star (card_layout.h's CardLayout_StarImage), `count` of them, the first's left edge
+ * at (x, y) and the rest each a step to its left; the row centred on x instead when `centered` (the layout's
+ * older convention, as the game's own row is). 1 when drawn, 0 when the style has none: the game's own stars
+ * are drawn then. */
+static int CardLayout_DrawStars(s32 x, s32 y, s32 count, s32 centered, s32 ot, s32 mode, u32 rgb,
+                                Func80028B08Extra *EXT)
+{
+    char path[1024];
+    s32 w, h, step, tpage, u, v, clut, cell_w, cell_h, i;
+
+    if (!CardLayout_StarImage(path, sizeof(path), &w, &h, &step) ||
+        !CardLayoutArt_StarCell(&tpage, &u, &v, &clut, &cell_w, &cell_h)) return 0;
+    if (centered) x += step * count / 2 - step;
+    for (i = 0; i < count; i++) {
+        CardLayout_DrawCell(x - i * step, y, w, h, tpage, u, v, clut, cell_w, cell_h, ot, mode, rgb, EXT);
+    }
+    return 1;
+}
+
 /* A frame style's static ATK/DFD caption. It is separate from the digit
  * strip so a style can use any art and move either caption independently. */
 static void CardLayout_DrawStatLabel(s32 base_x, s32 base_y, s32 dfd, s32 ot, s32 mode, u32 rgb, Func80028B08Extra *EXT)
@@ -708,6 +727,15 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
         PRM->uv.b.lo = 0;
         PRM->cxcy.h.cx = 0x1C0;
         PRM->cxcy.h.cy = 0xF8;
+#ifdef MEMORIES_PC
+        /* The style's own star picture, when it has one: drawn instead of the game's row. */
+        if (star_layout.visible && rec->field_3A != 0 &&
+            CardLayout_DrawStars(win->field_30.h.field_30 + star_layout.x,
+                                 win->field_30.h.field_32 + star_layout.y, (s32)rec->field_3A,
+                                 CardLayout_StarsCentered(), arg1, arg,
+                                 CardLayout_Tint(win->field_0C, star_layout.r, star_layout.g, star_layout.b), EXT)) {
+        } else
+#endif
         if (star_layout.visible && rec->field_3A != 0) {
             i = 0;
             do {
