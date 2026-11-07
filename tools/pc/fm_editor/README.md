@@ -808,6 +808,11 @@ that the game leaves out).
   The frame keys need mod API 18 (a style's images, `hand`, parts and
   `hide`, `default_styles`, a card's `frame_style`): Save raises `min_api`
   to it, so a game of v0.3.0 refuses the mod rather than draw the retail frame.
+  The ATK and DFD captions work on a style that keeps the game's own frame
+  too (no frame image): until you choose an image the preview shows the game's
+  own caption where the game has it, which no style moves; an image replaces
+  it, starts in that place and then drags. That needs API 25 (a game of API 24
+  would leave the game's caption), and Save raises `min_api` to it.
 
 Colors are the game's: a tint multiplies, so it can only darken what is
 there. The pictures are the console's size here; the game draws a PNG of

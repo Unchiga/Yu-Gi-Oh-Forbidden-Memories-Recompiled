@@ -255,15 +255,18 @@ static int CardLayout_DrawDigits(s32 base_x, s32 base_y, s32 cx, s32 cy, const u
 }
 
 /* A frame style's static ATK/DFD caption. It is separate from the digit
- * strip so a style can use any art and move either caption independently. */
-static void CardLayout_DrawStatLabel(s32 base_x, s32 base_y, s32 dfd, s32 ot, s32 mode, u32 rgb, Func80028B08Extra *EXT)
+ * strip so a style can use any art and move either caption independently.
+ * 1 when the style's image was drawn; 0 when it has none (or it did not
+ * load), so the caller draws retail's own caption, as for a type label. */
+static int CardLayout_DrawStatLabel(s32 base_x, s32 base_y, s32 dfd, s32 ot, s32 mode, u32 rgb, Func80028B08Extra *EXT)
 {
     char path[1024];
     s32 x, y, w, h, tpage, u, v, clut, cell_w, cell_h;
 
     if (!CardLayout_StatLabel(dfd, path, sizeof(path), &x, &y, &w, &h) ||
-        !CardLayoutArt_StatLabelCell(dfd, &tpage, &u, &v, &clut, &cell_w, &cell_h)) return;
+        !CardLayoutArt_StatLabelCell(dfd, &tpage, &u, &v, &clut, &cell_w, &cell_h)) return 0;
     CardLayout_DrawCell(base_x + x, base_y + y, w, h, tpage, u, v, clut, cell_w, cell_h, ot, mode, rgb, EXT);
+    return 1;
 }
 
 /* The "[Trap Card]"-style caption's own replacement image (card_layout.h's
@@ -505,8 +508,14 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
          * relocated, side-by-side boxes may not, so it is left out
          * entirely while one is active -- the boxes read by position
          * alone, no label text, as the reference layout this feature
-         * followed did. */
-        if (!CardLayout_FullBleed() && atk_label_layout.visible)
+         * followed did.
+         * A style that keeps retail's frame may give its own "atk_label"
+         * picture: it is drawn here, in the caption's place in the draw
+         * order, and retail's sprite (a separate one on the font page, not
+         * part of the plate) is not submitted under it. */
+        if (!CardLayout_FullBleed() && atk_label_layout.visible &&
+            !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
+                                      0, arg1, arg, win->field_0C, EXT))
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;
@@ -516,7 +525,9 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             PRM->cxcy.h.cy = 0xF9;
         }
 #ifdef MEMORIES_PC
-        if (!CardLayout_FullBleed() && def_label_layout.visible)
+        if (!CardLayout_FullBleed() && def_label_layout.visible &&
+            !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
+                                      1, arg1, arg, win->field_0C, EXT))
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;

@@ -646,6 +646,52 @@ class UiTabTest(GuiCase):
             page.view.fit()
         self.assertAlmostEqual(page.stage.zoom, (600 - page.view.tools.winfo_reqheight() - 6) / 196)
 
+    def test_frames_label_on_the_games_own_frame(self):
+        """A style with no frame image keeps retail's frame, and the game
+        draws retail's ATK/DFD caption there until a picture replaces it: the
+        preview keeps that caption still, then the picture starts over it."""
+        from fm_editor import ui_frames
+        page = self.page("frames")
+        layout = self.app.project.other.setdefault("card_layout", {})
+        layout["frame_styles"] = {"hp": {"hand_color": "gold"}}
+        page.style_name.set("hp")
+        style = layout["frame_styles"]["hp"]
+        page.chosen = page.list_chosen = "dfd_label"
+        self.assertTrue(page.keeps_retail_frame())
+        self.assertTrue(page.fixed_caption("dfd_label"))
+        self.assertEqual(page.rect("dfd_label"), ui_frames.RETAIL_CAPTIONS["dfd_label"])
+        page.paint()
+        self.assertNotIn("dfd_label", page.stage.draggable)         # retail's own sprite: nothing to drag
+        page.moved("dfd_label", 5, 5); page.wheel("dfd_label", 1)
+        self.assertEqual(style, {"hand_color": "gold"})              # and nothing written
+        # A picture replaces it, starting where retail's caption is.
+        page.set_asset("dfd_label", "frames/hp.png")
+        self.assertEqual(style["dfd_label"], {"image": "frames/hp.png", "x": 72, "y": 173, "width": 21, "height": 8})
+        self.assertFalse(page.fixed_caption("dfd_label"))
+        page.paint()
+        self.assertIn("dfd_label", page.stage.draggable)
+        page.moved("dfd_label", -72, -173)                           # the game's own (0, 0) is written too
+        self.assertEqual((style["dfd_label"]["x"], style["dfd_label"]["y"]), (0, 0))
+        self.assertEqual(page.rect("dfd_label"), (0, 0, 21, 8))
+        page.chosen = "dfd_label"
+        for name, value in (("x", 12), ("y", 184)):                 # the editor's old start places, typed
+            page.vars[name].set(str(value)); page.typed(name)
+        self.assertEqual((style["dfd_label"]["x"], style["dfd_label"]["y"]), (12, 184))
+        self.assertEqual(page.rect("dfd_label")[:2], (12, 184))
+        del style["dfd_label"]["x"], style["dfd_label"]["y"]         # a hand-written one: the game's places
+        self.assertEqual(page.rect("dfd_label")[:2], (0, 0))
+        page.set_asset("dfd_label", None)
+        self.assertTrue(page.fixed_caption("dfd_label"))
+        # A style with a frame image of its own: the editor's start places, as before.
+        style["image"] = "frames/f.png"
+        self.assertFalse(page.keeps_retail_frame())
+        self.assertFalse(page.fixed_caption("atk_label"))
+        style["dfd_label"] = {}
+        page.set_asset("atk_label", "frames/a.png")
+        self.assertEqual(style["atk_label"], {"image": "frames/a.png", "x": 12, "y": 171, "width": 16, "height": 8})
+        style["full_bleed"] = False                                  # a frame image the style says not to use
+        self.assertTrue(page.keeps_retail_frame())
+
     def test_deleting_frame_style_clears_its_assignments(self):
         """Deleting a referenced style must not leave stale fallback rules."""
         from fm_editor import ui_frames
