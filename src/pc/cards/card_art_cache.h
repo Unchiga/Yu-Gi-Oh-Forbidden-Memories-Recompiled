@@ -39,7 +39,7 @@ void ArtCache_Paths(int handle, const char **art, const char **thumbnail);
  * forgotten. From the game's thread. */
 void ArtCache_Prefer(const int *handles, int count);
 /* With every entry added: the disk cache in `directory` (made if need be), which only
- * this may be told, and the thread. Without it records live in memory alone.
+ * this may be told, and the thread. With "" records live in memory alone.
  * `in_interrupt`, which may be NULL, says the caller is in the clock's interrupt
  * (MEMORIES_CLOCK=interrupt): nothing here then takes a lock, allocates or reads a file. */
 void ArtCache_Start(const char *directory, unsigned build, int (*in_interrupt)(void));

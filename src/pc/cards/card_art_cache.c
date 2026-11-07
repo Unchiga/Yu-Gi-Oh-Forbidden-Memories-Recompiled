@@ -538,7 +538,6 @@ static int worth_making(const Entry *entry)
 static int next_work(int *asked)
 {
     int seen, i;
-    if (!most_files) return 0;
     *asked = 1;
     while (ahead_count) {
         int handle = ahead[--ahead_count];
@@ -597,7 +596,7 @@ static void *work(void *unused)
 #if defined(MEMORIES_TEST_HOOKS) && defined(MEMORIES_TRANSLATED)
     GuestRuntime_ForbidHeapOnThisThread();
 #endif
-    going = scan() && count && record;
+    going = scan() && count && record && most_files;
     while (going) {
         int handle, parts = 0, asked = 0, whole = 0, written = 0;
         Entry *entry;
@@ -680,7 +679,7 @@ void ArtCache_Start(const char *folder, unsigned build, int (*in_interrupt)(void
 #endif
     interrupted = in_interrupt;
     started = 1;
-    if (snprintf(directory, sizeof(directory), "%s", folder) >= (int)sizeof(directory)) {
+    if (!folder[0] || snprintf(directory, sizeof(directory), "%s", folder) >= (int)sizeof(directory)) {
         directory[0] = 0;
         return;
     }

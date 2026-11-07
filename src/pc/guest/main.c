@@ -249,7 +249,8 @@ int main(int argc, char **argv)
     Mods_Applied();
     {
         char folder[1024];
-        if (!Paths_User(folder, sizeof(folder), "cache/card-art")) ArtCache_Start(folder, Memories_StateBuildId(), Platform_InInterrupt);
+        if (Paths_User(folder, sizeof(folder), "cache/card-art")) folder[0] = 0;
+        ArtCache_Start(folder, Memories_StateBuildId(), Platform_InInterrupt);
     }
     Text_SortCards();
     note_settings(SET_COUNT, 0);
