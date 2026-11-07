@@ -11,6 +11,12 @@
 #include <string.h>
 #include <sys/mman.h>
 
+/* The last region's `identity`. Loading replaces or frees every live block whose
+ * token a saved one meets, while src/pc statics go on pointing at them, so a state
+ * loads only over the blocks of the same kinds of allocation. 1: parsed manifests
+ * and the overlap report left the token arena for the host heap, and every token
+ * after them moved. */
+#define REGIONS_FORMAT 1u
 typedef struct SavedRegion {
     uint64_t host, length, identity;
     uint32_t guest, flags;
@@ -67,7 +73,7 @@ int Memories_NativeMemorySave(MemoriesState *state)
         saved[i] = (SavedRegion){region->host, region->length, region->identity, region->guest, region->flags};
         if (stored(region->flags)) fields[field_count++] = (MemoriesStateField){(void *)region->host, region->length};
     }
-    saved[count - 1] = (SavedRegion){(uintptr_t)GuestRuntime_Memory(), sizeof(MemoriesMemory), 0, 0x80000000u, 0};
+    saved[count - 1] = (SavedRegion){(uintptr_t)GuestRuntime_Memory(), sizeof(MemoriesMemory), REGIONS_FORMAT, 0x80000000u, 0};
     Memories_StateChunk(state, "arm64-regions", fields, field_count);
     free(fields); free(saved);
     return ferror(state->file) ? -1 : 0;
@@ -100,11 +106,16 @@ MemoriesNativeMemoryState *Memories_NativeMemoryPrepare(MemoriesState *state, ch
     pending->created = calloc(count ? count : 1, 1);
     if (!pending->saved || !pending->current || !pending->payload || !pending->created) goto invalid;
     memcpy(pending->saved, chunk + sizeof(count), count * sizeof(SavedRegion));
+    if (count && pending->saved[count - 1].identity != REGIONS_FORMAT) {
+        snprintf(why, size, "saved by an older build, whose allocations do not match this one's");
+        Memories_NativeMemoryFree(pending);
+        return NULL;
+    }
     for (unsigned i = 0; i < count; ++i) {
         const SavedRegion *saved = &pending->saved[i];
         const GuestRuntimeRegion *now = find_region(saved->guest);
         if (i + 1 == count && saved->host > UINT32_MAX && saved->length <= UINT64_MAX - saved->host &&
-            saved->guest == 0x80000000u && saved->length == sizeof(MemoriesMemory) && !saved->flags && !saved->identity) {
+            saved->guest == 0x80000000u && saved->length == sizeof(MemoriesMemory) && !saved->flags) {
             pending->current[i] = (uintptr_t)GuestRuntime_Memory();
             continue;
         }

@@ -24,7 +24,7 @@
 
 typedef struct {
     const char *mod;    /* the manifest's, which outlives these */
-    const char *name;   /* its "name", or NULL for the mod's own */
+    char *name;         /* its "name", or NULL for the mod's own: a copy, as this block is in a save state */
     unsigned weight;
     unsigned short cards[STARTER_DECK_SIZE];
 } StarterDeck;
@@ -63,6 +63,13 @@ static int control_key(const char *name)
 /* The most a weight may be: the game's rand() tops out at 0x7FFF, and
  * Starter_Roll spreads one of its numbers over every deck's weight. */
 #define STARTER_WEIGHT_LIMIT 32767
+
+/* An entry's "name", kept apart from the manifest. */
+static char *name_of(const JsonValue *entry)
+{
+    const char *name = Json_String(Json_Member(entry, "name"), NULL);
+    return name ? strdup(name) : NULL;
+}
 
 /* One deck: { "name": ..., "weight": ..., card: copies, ... }, the copies
  * adding up to the forty cards of a deck. */
@@ -139,7 +146,7 @@ static void read_deck(const char *mod, const char *where, const JsonValue *entry
     }
     memset(&deck, 0, sizeof(deck));
     deck.mod = mod;
-    deck.name = Json_String(Json_Member(entry, "name"), NULL);
+    deck.name = name_of(entry);
     deck.weight = (unsigned)weight;
     for (i = 0; i < n; i++) {
         int copy;
@@ -147,7 +154,10 @@ static void read_deck(const char *mod, const char *where, const JsonValue *entry
     }
     free(list);
     slot = grow(&decks, &deck_room, deck_count, sizeof(*decks));
-    if (!slot) return;
+    if (!slot) {
+        free(deck.name);
+        return;
+    }
     *slot = deck;
     deck_count++;
 }
@@ -187,7 +197,7 @@ typedef struct {
 
 typedef struct {
     const char *mod;        /* the manifest's, which outlives these */
-    const char *name;       /* its "name", for the log */
+    char *name;             /* its "name", for the log: a copy, as for a deck */
     int draws;
     StarterWeight *cards;
     int count;
@@ -280,12 +290,13 @@ static void read_pool(const char *mod, const char *where, const JsonValue *entry
         return;
     }
     pool.mod = mod;
-    pool.name = Json_String(Json_Member(entry, "name"), NULL);
+    pool.name = name_of(entry);
     pool.draws = (int)draws;
     pool.cards = list;
     pool.count = n;
     slot = grow(&pools, &pool_room, pool_count, sizeof(*pools));
     if (!slot) {
+        free(pool.name);
         free(list);
         return;
     }
@@ -412,10 +423,14 @@ void Starter_Add(const char *mod, const JsonValue *manifest)
 void Starter_Clear(void)
 {
     int i;
+    for (i = 0; i < deck_count; i++) free(decks[i].name);
     free(decks);
     decks = NULL;
     deck_count = deck_room = 0;
-    for (i = 0; i < pool_count; i++) free(pools[i].cards);
+    for (i = 0; i < pool_count; i++) {
+        free(pools[i].name);
+        free(pools[i].cards);
+    }
     free(pools);
     pools = NULL;
     pool_count = pool_room = 0;
