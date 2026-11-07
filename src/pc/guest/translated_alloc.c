@@ -46,13 +46,7 @@ void GuestRuntime_free(void *pointer)
 }
 void *GuestRuntime_realloc(void *pointer, size_t length)
 {
-    void *old, *p;
     if (!pointer) return GuestRuntime_malloc(length);
     if (!length) { GuestRuntime_free(pointer); return NULL; }
-    old = GuestRuntime_ResolveData(pointer, 1);
-    p = realloc(old, length);
-    if (!p) return NULL;
-    GuestRuntime_UnregisterData(old);
-    if (GuestRuntime_IsBound()) GuestRuntime_RegisterAllocation(p, length);
-    return p;
+    return GuestRuntime_ReallocRegistered(GuestRuntime_ResolveData(pointer, 1), length);
 }
