@@ -619,6 +619,15 @@ if(BUILD_TESTING)
         target_compile_options(memories_card_variants_test PRIVATE -Wall -Wextra)
     endif()
     add_test(NAME pc_card_variants COMMAND memories_card_variants_test)
+    # The Build Deck's chest with a card and its variants as one row
+    # (build_deck_fold.c): the picks, the steps, the row's flag.
+    add_executable(memories_build_deck_fold_test tests/pc/build_deck_fold_test.c src/pc/cards/build_deck_fold.c)
+    target_include_directories(memories_build_deck_fold_test PRIVATE src)
+    target_compile_definitions(memories_build_deck_fold_test PRIVATE MEMORIES_PC)
+    if(NOT MSVC)
+        target_compile_options(memories_build_deck_fold_test PRIVATE -Wall -Wextra)
+    endif()
+    add_test(NAME pc_build_deck_fold COMMAND memories_build_deck_fold_test)
     # Custom monster types (API 15, cards.c's "card_types"):
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods

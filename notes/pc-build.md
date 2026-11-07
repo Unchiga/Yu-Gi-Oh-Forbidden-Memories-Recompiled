@@ -2997,14 +2997,41 @@ added, the grid is the retail one.
 What a save keeps stays by card (owned, seen); the entry is a view of it. In
 `func_8002BFCC` an entry is seen once its card or any variant is, owned once
 any is, and counted once in the heading's "seen". In its card view
-(`func_8002ACA4`), L1 and R1 step through the entry: the card, then each
+(`func_8002ACA4`), L3 and R3 (the stick clicks: L1/R1 and L2/R2 scroll the lists) step through the entry: the card, then each
 variant seen (every one while View > Library: show every card is on). The new
 card's picture, frame, stars and text are made again as the view makes them
 and set where the opening's slide leaves a card (state 1's end), and the
 view's own fade (state 3) shows them; a small line under the card says which
-(`Cards_LibraryVariantNote`, "L1 < 2/3 Rainbow foil > R1", a string of its own,
+(`Cards_LibraryVariantNote`, "L3 < 2/3 Rainbow foil > R3", a string of its own,
 `LIBRARY_VARIANT_TEXT_ID`). The entry's own card stays the one the cell, the
 record and the closing slide use. The 3D model view is not stepped.
+
+### Build Deck: variants in one row
+
+View > Build Deck: variants in one row (`build_deck_fold_variants`,
+`MEMORIES_BUILD_DECK_FOLD_VARIANTS`, on by default) gives the chest one row for
+a card and its variants (notes/more-cards.md, Variants), as the Library has one
+entry. It changes nothing while no mod adds a variant, and the save is by
+card as ever: the chest's counts and the deck's cards.
+`src/pc/cards/build_deck_fold.c` keeps, per Build Deck workspace, which card of
+an entry the row shows (the card itself at first); everything else is in
+`MEMORIES_PC` blocks of the Build Deck's own code:
+
+- the chest's rows are built in `func_800323F8`: a variant's row has no flag
+  (not shown), the card's row has the entry's (`on` for any copy in the chest,
+  `held` for a copy only in the deck, none otherwise) and takes the latest
+  drop's rank of the entry, so the sorts see one card;
+- `BuildDeck_GetActiveCardID` (the viewer, the add) and the row's name box
+  (`CardList_CreateSlotTextBox`: the name, the type icon, the Guardian Stars)
+  answer for the card on show; `func_80031874` draws its number, its ATK and
+  DEF, its own count and, dim above it, the whole entry's copies in the chest
+  when they are more; the deck's count is the entry's, red at the limit, which
+  the entry shares (`Cards_FamilyCopies`);
+- L3 and R3 step through the cards of the entry the player has (L1/R1 and
+  L2/R2 are the list's pages); the deck pane stays one row a card, and a card
+  returned from the deck is the one the chest's row shows;
+- `BuildDeck_ReturnCardToChest` and `BuildDeck_TakeCardFromChest` set the
+  entry's row again after every move.
 
 ### Card passwords (View)
 

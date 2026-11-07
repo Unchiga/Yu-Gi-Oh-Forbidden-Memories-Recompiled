@@ -2258,7 +2258,7 @@ void Cards_LibraryVariantNote(int shown, int head)
     const char *p;
     for (at = 0; at < size && Cards_LibraryFamilyMember(head, at) != shown; at++) {}
     if (at == size) at = 0;   /* not one of them (a state loaded in the viewer): the card itself */
-    snprintf(line, sizeof(line), "L1 < %d/%d %.24s > R1", at + 1, size, label && *label ? label : "Variant");
+    snprintf(line, sizeof(line), "L3 < %d/%d %.24s > R3", at + 1, size, label && *label ? label : "Variant");
     /* The game's font has the ASCII letters, digits and punctuation: a label's other letters are left out. */
     for (p = line; *p && n + 1 < (int)sizeof(variant_text); p++) {
         if ((unsigned char)*p < 0x80) variant_text[n++] = (unsigned char)glyph_of((unsigned char)*p);
@@ -2514,6 +2514,11 @@ int Cards_VariantPermille(int id)
 const char *Cards_VariantLabel(int id)
 {
     return Cards_VariantOf(id) ? variant_label[id] : NULL;
+}
+
+int Cards_HaveVariants(void)
+{
+    return family_members != NULL;
 }
 
 int Cards_FamilyCopies(const unsigned char *quantities, int id)

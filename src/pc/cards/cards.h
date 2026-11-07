@@ -300,6 +300,8 @@ int Cards_VariantMember(int base, int index);
 int Cards_VariantPermille(int id);
 const char *Cards_VariantLabel(int id);
 int Cards_FamilyCopies(const unsigned char *quantities, int id);
+/* Whether any mod added a variant (a card with "variant_permille"). */
+int Cards_HaveVariants(void);
 
 /* The Library with its variants folded (SET_LIBRARY_FOLD_VARIANTS): a retail
  * card's variants are not cells of the grid; the card is one cell, and its

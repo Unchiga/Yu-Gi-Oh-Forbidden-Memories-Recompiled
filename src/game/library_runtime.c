@@ -105,7 +105,7 @@
 #ifdef MEMORIES_PC
 /* The card view of a card that has variants (cards.h, Cards_LibraryBegin):
  * H(state, 6) stays the entry's own card (its cell, its record), and
- * gLibrary_shownCard is the card of the entry on show. L1 and R1 step through
+ * gLibrary_shownCard is the card of the entry on show. L3 and R3 step through
  * the entry; a line under the card says which and the variant's label. */
 static s32 gLibrary_shownCard;
 static s32 gLibrary_noteUp;
@@ -131,7 +131,7 @@ static void Library_VariantNote(u8 *state)
     gLibrary_noteUp = 1;
 }
 
-/* The next card of the entry (`step` 1 for R1, -1 for L1). Its picture, frame
+/* The next card of the entry (`step` 1 for R3, -1 for L3). Its picture, frame
  * and text are made again as the card view makes them, where the card rests,
  * and the view's own fade (state 3) shows it. 1 when the card changed. */
 static s32 Library_ShowVariant(u8 *state, s32 step)
@@ -519,8 +519,8 @@ void func_8002ACA4(u8 *state)
         break;
     case 5:
 #ifdef MEMORIES_PC
-        if ((gInput_wPad1Pressed & PAD_BUTTON_L1_R1_MASK) && state[3] == 0 && state[4] == 0 &&
-            Library_ShowVariant(state, (gInput_wPad1Pressed & PAD_BUTTON_R1) ? 1 : -1)) {
+        if ((gInput_wPad1Pressed & PAD_BUTTON_L3_R3_MASK) && state[3] == 0 && state[4] == 0 &&
+            Library_ShowVariant(state, (gInput_wPad1Pressed & PAD_BUTTON_R3) ? 1 : -1)) {
             return;
         }
 #endif

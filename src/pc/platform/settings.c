@@ -38,9 +38,12 @@ static const SettingInfo info[SET_COUNT] = {
      * is open; nothing is given or saved (Cards_LibraryPlaceholder, cards.h). */
     [SET_LIBRARY_ALL_CARDS] = {"library_all_cards", NULL, "MEMORIES_LIBRARY_ALL_CARDS", NULL, 0, 0, 1},
     /* 1: a card and its variants (notes/more-cards.md) are one entry of the Library, the variants
-     * browsed with L1 and R1 in its card view (Cards_LibraryBegin, cards.h). Nothing differs
+     * browsed with L3 and R3 in its card view (Cards_LibraryBegin, cards.h). Nothing differs
      * while no mod adds a variant. */
     [SET_LIBRARY_FOLD_VARIANTS] = {"library_fold_variants", NULL, "MEMORIES_LIBRARY_FOLD_VARIANTS", NULL, 1, 0, 1},
+    /* 1: the Build Deck's chest has one row for a card and its variants, L3 and R3 stepping through them
+     * (build_deck_fold.h). Nothing differs while no mod adds a variant. */
+    [SET_BUILD_DECK_FOLD_VARIANTS] = {"build_deck_fold_variants", NULL, "MEMORIES_BUILD_DECK_FOLD_VARIANTS", NULL, 1, 0, 1},
     /* Help > updates (update_check.h): look for a newer release at start
      * (on unless the player turns it off: it only tells, never installs)
      * and count pre-releases as newer. */

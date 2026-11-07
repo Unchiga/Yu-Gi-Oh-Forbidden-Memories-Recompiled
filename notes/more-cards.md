@@ -533,9 +533,16 @@ own.
   window and the card is an ordinary copy.
 * **The Library** shows a card and its variants as one entry (View > Library:
   variants in one entry, on unless the player turns it off, [pc-build.md](pc-build.md#library-variants-in-one-entry)).
-  The card's view steps through the entry with L1 and R1: the card itself,
+  The card's view steps through the entry with L3 and R3 (L1 and R1 turn the list's pages): the card itself,
   then each variant seen. The entry counts once in the heading, is seen once
   any of its cards is and owned once any is. What a save keeps is by card.
+* **The Build Deck's chest** has one row for a card and its variants too
+  (View > Build Deck: variants in one row, on unless the player turns it off,
+  [pc-build.md](pc-build.md#build-deck-variants-in-one-row)). The row shows one
+  of the entry's cards, L3 and R3 step through the ones the player has, and it
+  shows that card's own count with what the player has of the whole entry
+  dim above it. The deck stays one row a card, and the limit of copies in the
+  deck is the entry's.
 * A copy with the older `drops: true` (no `variant_permille`) still takes its
   base's place in an even share, and is its own card for the deck limit.
 

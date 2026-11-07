@@ -6,6 +6,10 @@
 #include "text_box_lifecycle.h"
 #include "text_box_runtime.h"
 #include "card_list_text_boxes.h"
+#ifdef MEMORIES_PC
+#include "build_deck_transition_state.h"
+#include "pc/cards/build_deck_fold.h"
+#endif
 
 /* Builds the text box for one card slot of a trade or deck screen. The entry
    is picked out of the list at the scroll offset plus the slot, and the list
@@ -17,6 +21,12 @@ void CardList_CreateSlotTextBox(CardList *list, s32 slot)
     s32 style;
 
     gDuel_wSelectedCardID = list->entries[list->first + slot].id;
+#ifdef MEMORIES_PC
+    /* The chest's row of a card with variants shows the one on show (build_deck_fold.h). */
+    if (gBuildDeck_pState != 0 && list == &gBuildDeck_pState->lists[0] && BuildDeckFold_Active()) {
+        gDuel_wSelectedCardID = BuildDeckFold_Shown(gBuildDeck_pState, gDuel_wSelectedCardID);
+    }
+#endif
     style = 0;
     if (list->entries[list->first + slot].flags != 0) {
         style = 6;
