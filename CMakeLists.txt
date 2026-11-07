@@ -598,7 +598,16 @@ if(BUILD_TESTING)
     if(NOT MSVC)
         target_compile_options(memories_cards_stars_test PRIVATE -Wall -Wextra)
     endif()
+    # Under the sanitizers a value kept into a freed "cards" document is an error.
+    if(MEMORIES_SANITIZERS)
+        target_compile_options(memories_cards_stars_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(memories_cards_stars_test PRIVATE -fsanitize=address,undefined)
+    endif()
     add_test(NAME pc_cards_stars COMMAND memories_cards_stars_test)
+    if(MEMORIES_SANITIZERS)
+        # What it builds lives until exit, as in the game: use after free, not leaks.
+        set_tests_properties(pc_cards_stars PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+    endif()
     # Two mods' "cards" in the load order the settings give, through the real
     # mod loader and cards.c's Cards_Build: once as the folders sort, once
     # with the second moved first (notes/more-cards.md).

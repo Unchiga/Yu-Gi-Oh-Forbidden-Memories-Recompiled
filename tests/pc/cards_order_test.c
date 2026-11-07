@@ -206,6 +206,10 @@ int main(int argc, char **argv)
                "{\"copy\":1,\"id\":\"of-one\",\"name\":\"Beta copy\"},"
                "{\"replace\":1,\"name\":\"Beta\",\"attack\":2200},"
                "{\"replace\":4,\"attack\":500}]}");
+    if (gone) {
+        make_dir("mods/cardorder-c");
+        write_text("mods/cardorder-c/mod.json", "{\"id\":\"cardorder-c\",\"enabled\":true,\"requires\":[\"cardorder-b\"]}");
+    }
     /* What the Mods window writes: both applied, and b moved up. */
     write_text("settings.txt", b_first ? "mod.cardorder-a=1\nmod.cardorder-b=1\nmod.cardorder-b.order=-1\n"
                                        : "mod.cardorder-a=1\nmod.cardorder-b=1\n");
@@ -216,7 +220,7 @@ int main(int argc, char **argv)
     assert(!setenv("MEMORIES_USER_DIR", root, 1));
     Settings_Load();
     Mods_Load();
-    assert(Mods_LoadedCount() == 2);
+    assert(Mods_LoadedCount() == (gone ? 3 : 2));
     assert(!strcmp(Mods_Id(Mods_Loaded(0)), first) && !strcmp(Mods_Id(Mods_Loaded(1)), last));
 
     /* The file goes between the scan and the build: the mod does not stay active
@@ -232,6 +236,9 @@ int main(int argc, char **argv)
             if (!strcmp(Mods_Id(id), "cardorder-b")) {
                 assert(!Mods_Active(id) && Mods_Failed(id));
                 assert(strstr(Mods_Status(id), "cannot read them"));
+            } else if (!strcmp(Mods_Id(id), "cardorder-c")) {
+                /* What needs it does not stay on. */
+                assert(!Mods_Active(id) && strstr(Mods_Status(id), "cardorder-b"));
             }
         printf("cards order (%s): ok\n", argv[1]);
         return 0;

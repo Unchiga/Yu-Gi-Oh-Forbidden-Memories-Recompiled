@@ -4627,6 +4627,24 @@ void Mods_SetEnabled(int mod, int enabled)
     activate(mod, enabled);
 }
 
+/* An active mod that needed one gone broken goes too, with the reason. */
+static void off_with_broken(void)
+{
+    int wanted[MODS_MAX], changed = 1;
+    char error[160];
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < mod_count; i++) wanted[i] = mods[i].enabled && !mods[i].broken;
+        for (int i = 0; i < mod_count; i++) {
+            if (!mods[i].active || Mods_Compatible(i, wanted, error, sizeof(error))) continue;
+            activate(i, 0);
+            mods[i].broken = 1;
+            note(&mods[i], "%s", error);
+            changed = 1;
+        }
+    }
+}
+
 void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const struct JsonValue *cards, void *context),
                      void *context)
 {
@@ -4647,6 +4665,7 @@ void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const 
         activate(loaded[i], 0);
         mod->broken = 1;
         note(mod, "cards: cannot read them from its mod.json");
+        off_with_broken();
     }
 }
 void Mods_CardsRelease(void)
