@@ -25,6 +25,7 @@ FileTransferDescriptor *func_80029164(s32 slot, s32 value)
 
     D_800EA0E8[slot].field_30 = value;
 #ifdef MEMORIES_PC
+    Cards_PrepareArt(value);
     /* A card past the disc's has its base's artwork (Cards_BaseId). */
     object = File_TryRequestAsyncTransfer(
         0, 0, (Cards_BaseId(value) - 1) * 7 + CARD_COUNT, 7, func_800289BC, 0, 0);

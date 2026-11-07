@@ -93,8 +93,8 @@ every equal-address candidate's current overlay residency. No callable target
 is cached across a module switch; the interpreter fallback is unchanged.
 
 Texture-pack tables, resampled pixels, decoded PNG caches, fusion rules and the
-cards' art records (`src/pc/cards/card_art_cache.c`) are exclusively host data with
-LP64 pointers. Their allocations retain native libc ownership
+cards' art records and the buffers they are made in (`src/pc/cards/card_art_cache.c`,
+`art.c`) are exclusively host data with LP64 pointers. Their allocations retain native libc ownership
 and consume no guest tokens. They are rebuilt by the renderer rather than
 serialized as guest heaps. A parsed manifest (`src/pc/mods/json.c`) and the overlap
 report (`overlap.c`) are host data too: only `src/pc` reads them, through 64-bit

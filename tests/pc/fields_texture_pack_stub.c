@@ -21,6 +21,7 @@ int TexturePack_ImageSize(const char *path, int *width, int *height)
     return 0;
 }
 
+int TexturePack_PrepareMade(void) { return 1; }
 unsigned TexturePack_EntryCount(void) { return 0; }
 void TexturePack_RemoveEntriesFrom(unsigned mark) { (void)mark; }
 void TexturePack_SelectGroup(unsigned group) { (void)group; }

@@ -40,6 +40,23 @@ char *Memories_WideToUtf8(const wchar_t *wide)
     return text;
 }
 
+int Memories_FileTimes(const char *path, long long *size, long long *written, long long *created)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    wchar_t *wide = Memories_Utf8ToWide(path);
+    BOOL ok;
+    if (!wide) return -1;
+    ok = GetFileAttributesExW(wide, GetFileExInfoStandard, &data);
+    free(wide);
+    if (!ok) return -1;
+    *size = (long long)(((unsigned long long)data.nFileSizeHigh << 32) | data.nFileSizeLow);
+    *written = (long long)(((unsigned long long)data.ftLastWriteTime.dwHighDateTime << 32) |
+                           data.ftLastWriteTime.dwLowDateTime);
+    *created = (long long)(((unsigned long long)data.ftCreationTime.dwHighDateTime << 32) |
+                           data.ftCreationTime.dwLowDateTime);
+    return 0;
+}
+
 FILE *Memories_Fopen(const char *path, const char *mode)
 {
     wchar_t *wide = Memories_Utf8ToWide(path), *wide_mode;

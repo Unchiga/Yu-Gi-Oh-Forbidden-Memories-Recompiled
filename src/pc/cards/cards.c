@@ -307,6 +307,7 @@ static unsigned char own_password[CARD_TABLE_ID_END];
 #define ART_PICTURE 1
 #define ART_THUMBNAIL 2
 static int art_handles[CARD_TABLE_ID_END]; /* card_art_cache.h: read when the card is seen */
+static int art_bigger; /* some PNG is bigger than the console's picture (add_full_picture) */
 static unsigned char art_parts[CARD_TABLE_ID_END];
 static unsigned char *plates[CARD_TABLE_ID_END];
 /* Field-only artwork ("field_art"): a card's picture and CLUT (art.h's
@@ -1768,6 +1769,7 @@ static void add_entry(const char *mod, const char *directory, int index, const J
                 ok = CardArt_Crop(path, CARD_THUMB_WIDTH, CARD_THUMB_HEIGHT, &ignored[0], &ignored[1], &ignored[2],
                                   &ignored[3], &ignored[4], &ignored[5]);
                 if (!ok) snprintf(why, sizeof(why), "%s is not a PNG it could read", path);
+                if (ok && (ignored[2] > CARD_THUMB_WIDTH || ignored[3] > CARD_THUMB_HEIGHT)) art_bigger = 1;
                 if (ok) parts |= k == 0 ? ART_PICTURE | ART_THUMBNAIL : ART_THUMBNAIL;
                 if (ok) snprintf(full[k], sizeof(full[k]), "%s", path);
             }
@@ -2050,6 +2052,8 @@ void Cards_Build(void)
     /* Nothing goes on pointing into the mods' "cards": they are read once. */
     read_own_fusions();
     Mods_CardsRelease();
+    /* Their pictures come when each card is first seen (own_art). */
+    if (art_bigger) TexturePack_PrepareMade();
 }
 
 /* --- what the game asks -------------------------------------------- */
@@ -2192,6 +2196,7 @@ static const unsigned char *own_art(int id, int part)
     int handle = art_handles[id], parts = 0;
     const char *art, *thumbnail;
     const unsigned char *record = ArtCache_Record(handle, &parts);
+    if (!record && parts < 0) return NULL; /* not now: see Cards_PrepareArt */
     if (!record) parts = 0;
     if (art_parts[id] != (unsigned char)parts) art_parts[id] = (unsigned char)parts;
     if (!record || !(parts & part)) return NULL;
@@ -2208,6 +2213,23 @@ static int art_of(int id, int part)
     if (!Cards_Valid(id)) return 0;
     if (art_parts[id] & part) return id;
     return art_parts[Cards_BaseId(id)] & part ? Cards_BaseId(id) : 0;
+}
+
+void Cards_ArtAhead(const unsigned short *ids, int count)
+{
+    int handles[CARDS_ART_AHEAD], used = 0, i;
+    for (i = 0; i < count && used < CARDS_ART_AHEAD; i++) {
+        int from = art_of((short)ids[i], ART_THUMBNAIL);
+        if (from) handles[used++] = art_handles[from];
+    }
+    if (used) ArtCache_Prefer(handles, used);
+}
+
+void Cards_PrepareArt(int id)
+{
+    int from;
+    if ((from = art_of(id, ART_PICTURE)) != 0) own_art(from, ART_PICTURE);
+    if ((from = art_of(id, ART_THUMBNAIL)) != 0) own_art(from, ART_THUMBNAIL);
 }
 
 /* The plate of a retail card a translation renames (its name, string
