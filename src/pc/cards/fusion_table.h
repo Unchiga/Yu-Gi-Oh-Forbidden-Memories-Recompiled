@@ -14,4 +14,11 @@ int FusionTable_Count(void);
 void FusionTable_Clear(void);
 /* The latest rule for the pair, in either order: 1 with its result and order. */
 int FusionTable_Find(int a, int b, int *result, unsigned *order);
+
+/* A card's own "fusions" (cards.c), in the order the list has them, the cards in
+ * ascending order: with whom, and what it gives, as the entry says it. */
+int FusionTable_AddOwn(int card, int with, int result);
+void FusionTable_ClearOwn(void);
+/* The first row of `card` for `with`: 1 with *result. */
+int FusionTable_FindOwn(int card, int with, int *result);
 #endif

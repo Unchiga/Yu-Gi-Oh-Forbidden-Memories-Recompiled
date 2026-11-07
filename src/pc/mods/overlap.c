@@ -624,7 +624,22 @@ static int notes_only(const JsonValue *entry)
 }
 static void read_cards(ModsOverlaps *x, int mod)
 {
-    for (const JsonValue *e = Json_At(list_of(member(x, mod, "cards")), 0); e; e = Json_Next(e)) {
+    const JsonValue *cards = list_of(member(x, mod, "cards"));
+    if (x->source.cards) {
+        JsonDocument *document = x->source.cards(mod, x->source.context), **documents;
+        if (document) {
+            documents = grow(x->documents, &x->document_room, x->document_count, sizeof(*x->documents));
+            if (!documents) {
+                Json_Free(document);
+                x->failed = 1;
+                return;
+            }
+            x->documents = documents;
+            documents[x->document_count++] = document;
+            cards = Json_Root(document);
+        }
+    }
+    for (const JsonValue *e = Json_At(cards, 0); e; e = Json_Next(e)) {
         const JsonValue *replaced = Json_Member(e, "replace");
         const char *text = Json_String(replaced, NULL);
         uint64_t key;

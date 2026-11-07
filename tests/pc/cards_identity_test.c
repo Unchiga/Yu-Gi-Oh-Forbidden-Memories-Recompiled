@@ -25,6 +25,7 @@ int Glyphs_Code(uint32_t character) { return character >= 'A' && character <= 'z
 int Mods_ModelCount(void) { return 0; }
 int Mods_ModelBaseCard(int i, int *card) { (void)i; (void)card; return 0; }
 void Mods_ModelsSettle(int (*card)(const struct JsonValue *)) { (void)card; }
+void Mods_CardsRelease(void) {}
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod)
 {
     (void)i; (void)name; (void)base; (void)mod;

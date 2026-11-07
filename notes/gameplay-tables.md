@@ -653,7 +653,12 @@ skipped, its brackets and strings looked at and its bytes hashed
 `mod.json` when the tables are built (`Mods_EachFusion`). So a mistake inside an
 entry is a note on the mod in the Mods window, naming the entry, with the rest of
 the list read; before, it refused the whole `mod.json`. A list that never ends
-still refuses it.
+still refuses it. `cards` is out of the kept manifest too: checked at the scan, as
+ever, read whole for `Cards_Build` and freed as it ends (`Mods_CardsRelease`), a
+card's own `fusions` list being rows of the fusion table from then on. The overlap
+report reads it again when two mods have cards (`Mods_CardsDocument`). The rest of a
+manifest stays for as long as the game runs: `card_layout`, the settings, `data`
+and more are read while it plays.
 
 ## Where two mods disagree
 

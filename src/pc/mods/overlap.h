@@ -80,6 +80,9 @@ typedef struct {
      * which list is the longest. NULL: the manifests hold them all. */
     long (*fusions)(int mod, int (*each)(const struct JsonValue *, long, void *), void *each_context, void *context);
     long (*fusion_bytes)(int mod, void *context);
+    /* A mod's "cards" that are not in its manifest, for the report to keep and
+     * free, or NULL for none (Mods_CardsDocument). NULL: the manifests have them. */
+    struct JsonDocument *(*cards)(int mod, void *context);
     /* An opponent by name ("Heishin", "8"), -1 for none (Duelists_Named). */
     int (*duelist)(const char *text, void *context);
     /* Mod `mod`'s setting `key` (a "setting" of a text file or a pack's

@@ -67,6 +67,16 @@ int main(void)
     FusionTable_Clear();
     assert(!FusionTable_Count() && !FusionTable_Find(5, 9, &result, &at));
     assert(FusionTable_Add(2, 1, 3, 1) && FusionTable_Find(1, 2, &result, &at) && result == 3);
+    /* A card's own list: in its order, the first for a partner. */
+    assert(!FusionTable_FindOwn(7, 8, &result));
+    assert(FusionTable_AddOwn(7, 8, 100) && FusionTable_AddOwn(7, 9, 0) && FusionTable_AddOwn(7, 8, 101));
+    assert(FusionTable_AddOwn(9, 8, -1));
+    assert(FusionTable_FindOwn(7, 8, &result) && result == 100);
+    assert(FusionTable_FindOwn(7, 9, &result) && result == 0);
+    assert(FusionTable_FindOwn(9, 8, &result) && result == -1);
+    assert(!FusionTable_FindOwn(8, 7, &result) && !FusionTable_FindOwn(7, 10, &result) && !FusionTable_FindOwn(10, 8, &result));
+    FusionTable_ClearOwn();
+    assert(!FusionTable_FindOwn(7, 8, &result));
     puts("Fusion table: the latest rule of a plain list");
     return 0;
 }

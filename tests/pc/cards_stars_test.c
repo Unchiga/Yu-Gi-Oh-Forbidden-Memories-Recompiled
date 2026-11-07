@@ -47,6 +47,7 @@ static int model_count_here;
 int Mods_ModelCount(void) { return model_count_here; }
 int Mods_ModelBaseCard(int i, int *card) { (void)i; (void)card; return 0; }
 void Mods_ModelsSettle(int (*card)(const struct JsonValue *)) { (void)card; }
+void Mods_CardsRelease(void) {}
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod)
 {
     if (i < 0 || i >= model_count_here) return -1;

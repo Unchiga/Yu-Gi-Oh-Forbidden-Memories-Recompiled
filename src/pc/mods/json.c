@@ -437,17 +437,18 @@ int Json_Bool(const JsonValue *value, int fallback)
 #define STREAM_CHUNK (1u << 20)
 #define ELEMENT_MAX (1u << 20) /* one element read from the file: a fusion is a hundred bytes */
 
-JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDeferred *deferred, char *error,
-                                      size_t error_size)
+JsonDocument *Json_ParseFileDeferring(const char *path, const char *const *keys, int count, JsonDeferred *deferred,
+                                      char *error, size_t error_size)
 {
     FILE *file = fopen(path, "rb");
     unsigned char *chunk = malloc(STREAM_CHUNK);
     char *kept = NULL, name[64];
-    size_t kept_used = 0, kept_room = 0, length, name_used = 0, key_length = strlen(key);
+    size_t kept_used = 0, kept_room = 0, length, name_used = 0;
     long at = 0;
-    int depth = 0, in_string = 0, escape = 0, armed = 0, skipping = 0, named = 0, unmatched = 0;
+    int depth = 0, in_string = 0, escape = 0, named = 0, unmatched = 0;
+    int armed = 0, skipping = 0; /* 1 + the index in `keys` */
     unsigned hash = 2166136261u;
-    memset(deferred, 0, sizeof(*deferred));
+    memset(deferred, 0, (size_t)count * sizeof(*deferred));
     if (error && error_size) error[0] = '\0';
     if (!file || !chunk) {
         if (error && error_size) snprintf(error, error_size, "cannot read %s", path);
@@ -468,7 +469,7 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
             unsigned char c = chunk[i];
             if (skipping) {
                 hash = (hash ^ c) * 16777619u;
-                if (!isspace(c) && c != ']') deferred->filled = 1;
+                if (!isspace(c) && c != ']') deferred[skipping - 1].filled = 1;
             }
             if (in_string) {
                 if (escape) escape = 0;
@@ -492,10 +493,10 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
                     memcpy(kept + kept_used, chunk + run, i + 1 - run);
                     kept_used += i + 1 - run;
                     kept[kept_used++] = ']';
-                    deferred->start = at;
-                    deferred->found = 1;
-                    skipping = 1;
-                    hash = (hash ^ c) * 16777619u;
+                    skipping = armed;
+                    deferred[skipping - 1].start = at;
+                    deferred[skipping - 1].found = 1;
+                    hash = (2166136261u ^ c) * 16777619u;
                 }
                 depth++;
                 armed = 0;
@@ -503,9 +504,9 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
             }
             if (c == '}' || c == ']') {
                 if (--depth == 1 && skipping) {
+                    deferred[skipping - 1].end = at;
+                    deferred[skipping - 1].hash = hash;
                     skipping = 0;
-                    deferred->end = at;
-                    deferred->hash = hash;
                     run = i + 1;
                     unmatched |= c != ']';
                 }
@@ -513,8 +514,12 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
                 continue;
             }
             if (c == ':' && depth == 1 && !skipping) {
-                armed = named && !deferred->named && name_used == key_length && !memcmp(name, key, key_length);
-                deferred->named |= armed;
+                armed = 0;
+                for (int k = 0; named && k < count; k++)
+                    if (!deferred[k].named && name_used == strlen(keys[k]) && !memcmp(name, keys[k], name_used)) {
+                        armed = k + 1;
+                        deferred[k].named = 1;
+                    }
                 named = 0;
             } else if (!isspace(c)) {
                 armed = 0;
@@ -696,4 +701,20 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     free(chunk);
     fclose(file);
     return mistakes ? -1 : index;
+}
+
+JsonDocument *Json_ParseDeferred(const char *path, const JsonDeferred *deferred, char *error, size_t error_size)
+{
+    FILE *file = fopen(path, "rb");
+    size_t length = (size_t)(deferred->end - deferred->start + 1);
+    char *text = malloc(length + 1);
+    if (!file || !text || fseek(file, deferred->start, SEEK_SET) || fread(text, 1, length, file) != length) {
+        if (file) fclose(file);
+        free(text);
+        if (error && error_size) snprintf(error, error_size, "cannot read %s", path);
+        return NULL;
+    }
+    fclose(file);
+    text[length] = 0;
+    return parse_owned(text, error, error_size);
 }

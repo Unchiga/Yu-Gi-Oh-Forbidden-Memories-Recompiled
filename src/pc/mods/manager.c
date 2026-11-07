@@ -440,9 +440,10 @@ unsigned Mods_Signature(void)
         char number[40];
         hash = hash_text(hash, Mods_Id(i));
         hash = hash_json(hash, Mods_Manifest(i));
-        /* Only a mod with fusions: the signature of one without stays what it was,
+        /* Only a mod with these lists: the signature of one without stays what it was,
          * and with it the save states made under it. */
         if (Mods_FusionsHash(i)) hash = (hash ^ Mods_FusionsHash(i)) * 16777619u;
+        if (Mods_CardsHash(i)) hash = (hash ^ Mods_CardsHash(i)) * 16777619u;
         hash = (hash ^ Mods_CodeHash(i)) * 16777619u;
         for (int j = 0; j < Mods_OptionCount(i); j++) {
             snprintf(number, sizeof(number), "%d", Mods_RuntimeOption(i, j));
@@ -575,6 +576,11 @@ static long source_fusions(int mod, int (*each)(const JsonValue *, long, void *)
     (void)context;
     return Mods_EachFusion(Mods_Id(overlap_mod[mod]), each, each_context, ignored, sizeof(ignored));
 }
+static JsonDocument *source_cards(int mod, void *context)
+{
+    (void)context;
+    return Mods_CardsDocument(overlap_mod[mod]);
+}
 static long source_fusion_bytes(int mod, void *context)
 {
     (void)context;
@@ -613,6 +619,7 @@ const ModsOverlaps *Mods_Overlaps(const int *enabled, const int *ranks, const in
     source.setting = source_setting;
     source.fusions = source_fusions;
     source.fusion_bytes = source_fusion_bytes;
+    source.cards = source_cards;
     source.hook = source_hook;
     source.event = source_event;
     overlaps = Mods_OverlapCompute(list, n, &source);

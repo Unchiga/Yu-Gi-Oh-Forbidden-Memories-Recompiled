@@ -334,7 +334,8 @@ static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifes
 {
     char unpacked[1200];
     FILE *out;
-    JsonDeferred fusions;
+    static const char *const lists[] = {"fusions", "cards"};
+    JsonDeferred deferred[2];
     JsonDocument *document;
     const JsonValue *root;
     const char *id, *name, *slash;
@@ -366,7 +367,7 @@ static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifes
         remove(unpacked);
         return 0;
     }
-    document = Json_ParseFileDeferring(unpacked, "fusions", &fusions, error, sizeof(error));
+    document = Json_ParseFileDeferring(unpacked, lists, 2, deferred, error, sizeof(error));
     remove(unpacked);
     /* Its copy did not fit (no reason given) or its nodes did not. */
     if (!document && (!error[0] || !strcmp(error, "out of memory"))) {
@@ -725,14 +726,15 @@ int Mods_ImportFolderId(const char *directory, char *id, size_t size)
 {
     char path[2048], error[128];
     const char *slash = strrchr(directory, '/'), *text;
-    JsonDeferred fusions;
+    static const char *const lists[] = {"fusions", "cards"};
+    JsonDeferred deferred[2];
     JsonDocument *document;
     FILE *file;
     if (snprintf(path, sizeof(path), "%s/mod.json", directory) >= (int)sizeof(path) || !(file = fopen(path, "rb")))
         return 0;
     fclose(file);
     /* Only the id: a mod with millions of fusions is named as cheaply as any. */
-    document = Json_ParseFileDeferring(path, "fusions", &fusions, error, sizeof(error));
+    document = Json_ParseFileDeferring(path, lists, 2, deferred, error, sizeof(error));
     text = Json_String(Json_Member(Json_Root(document), "id"), NULL);
     /* as the loader names it (mods.c read_manifest): the folder without one */
     copy(id, size, text && *text ? text : slash ? slash + 1 : directory);

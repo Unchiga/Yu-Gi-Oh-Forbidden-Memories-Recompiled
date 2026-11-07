@@ -253,6 +253,12 @@ const struct JsonValue *Mods_Manifest(int mod);
 long Mods_EachFusion(const char *id, int (*each)(const struct JsonValue *, long, void *), void *context, char *error,
                      size_t error_size);
 unsigned Mods_FusionsHash(int mod); /* 0 with none */
+/* "cards", also not in the manifest: read for Mods_VisitCards and kept until
+ * Mods_CardsRelease, as Cards_Build ends; or a document of them for the caller, which
+ * Json_Frees it. */
+unsigned Mods_CardsHash(int mod); /* 0 with none */
+struct JsonDocument *Mods_CardsDocument(int mod);
+void Mods_CardsRelease(void);
 long Mods_FusionsSize(int mod); /* bytes in the file, 0 for none */
 const char *Mods_Metadata(int mod, const char *key);
 const char *Mods_Directory(int mod);

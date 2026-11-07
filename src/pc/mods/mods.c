@@ -127,7 +127,8 @@ typedef struct {
     JsonDocument *manifest;
     JsonDeferred fusions; /* "fusions", read from the file as it is used */
     const JsonValue *data;       /* the "data" array, applied when enabled */
-    const JsonValue *cards;      /* the "cards" array: cards the mod adds (src/pc/cards) */
+    JsonDeferred cards;          /* "cards", read from the file for Cards_Build and gone */
+    JsonDocument *cards_read;    /* while Cards_Build reads them */
     const JsonValue *models;     /* the "models" array: battle models the mod adds */
     char textures[PATH_MAX_];    /* a texture pack directory inside the mod, or empty */
     const JsonValue *assets;     /* named image replacements from mod.json, or NULL */
@@ -3497,7 +3498,13 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
     memset(mod, 0, sizeof(*mod));
     copy_text(mod->directory, sizeof(mod->directory), directory);
     mod->origin = origin;
-    mod->manifest = Json_ParseFileDeferring(path, "fusions", &mod->fusions, error, sizeof(error));
+    {
+        static const char *const lists[] = {"fusions", "cards"};
+        JsonDeferred deferred[2];
+        mod->manifest = Json_ParseFileDeferring(path, lists, 2, deferred, error, sizeof(error));
+        mod->fusions = deferred[0];
+        mod->cards = deferred[1];
+    }
     root = Json_Root(mod->manifest);
     if (!root || Json_TypeOf(root) != JSON_OBJECT) {
         const char *slash = strrchr(directory, '/');
@@ -3603,10 +3610,17 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         mod->broken = 1;
         note(mod, "\"audio\" is not an object");
     }
-    mod->cards = Json_Member(root, "cards");
-    if (mod->cards && Json_TypeOf(mod->cards) != JSON_ARRAY) {
+    if (Json_Member(root, "cards") && Json_TypeOf(Json_Member(root, "cards")) != JSON_ARRAY) {
         mod->broken = 1;
         note(mod, "\"cards\" is not an array");
+    } else if (mod->cards.found) {
+        /* Refused here, as a mistake anywhere else in the file is. */
+        JsonDocument *cards = Json_ParseDeferred(path, &mod->cards, error, sizeof(error));
+        if (!cards) {
+            mod->broken = 1;
+            note(mod, "mod.json %s", error);
+        }
+        Json_Free(cards);
     }
     mod->models = Json_Member(root, "models");
     if (mod->models && Json_TypeOf(mod->models) != JSON_ARRAY) {
@@ -3621,7 +3635,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         const JsonValue *entry = Json_At(mod->data, i);
         if (Json_Member(entry, "file") && Json_Member(entry, "replace")) mod->restart = 1;
     }
-    if (Json_Count(mod->cards) || Json_Count(mod->models)) mod->restart = 1;
+    if (mod->cards.filled || Json_Count(mod->models)) mod->restart = 1;
     {   /* So are the rule tables (src/pc/cards/tables.c), the starter decks
          * (src/pc/cards/starter.c) and a translation (src/pc/text): all are
          * read once, at startup. */
@@ -4621,9 +4635,27 @@ void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const 
      * where two replace one card the later one wins, and the copies take
      * their ids in that order. Cards_Build runs once, after the first load. */
     for (i = 0; i < loaded_count; i++) {
-        const Mod *mod = &mods[loaded[i]];
-        if (mod->active && Json_Count(mod->cards)) visit(mod->id, mod->directory, mod->cards, context);
+        Mod *mod = &mods[loaded[i]];
+        if (!mod->active || !mod->cards.filled) continue;
+        mod->cards_read = Mods_CardsDocument(loaded[i]);
+        if (mod->cards_read) visit(mod->id, mod->directory, Json_Root(mod->cards_read), context);
+        else note(mod, "cards: cannot read them from its mod.json");
     }
+}
+void Mods_CardsRelease(void)
+{
+    for (int i = 0; i < mod_count; i++) {
+        Json_Free(mods[i].cards_read);
+        mods[i].cards_read = NULL;
+    }
+}
+JsonDocument *Mods_CardsDocument(int index)
+{
+    char path[PATH_MAX_], error[128];
+    if (!at(index) || !mods[index].cards.found ||
+        snprintf(path, sizeof(path), "%s/mod.json", mods[index].directory) >= (int)sizeof(path))
+        return NULL;
+    return Json_ParseDeferred(path, &mods[index].cards, error, sizeof(error));
 }
 
 void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,
@@ -4699,6 +4731,7 @@ long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *
     return Json_EachElement(path, &mods[index].fusions, each, context, error, error_size);
 }
 unsigned Mods_FusionsHash(int index) { return at(index) && mods[index].fusions.filled ? mods[index].fusions.hash : 0; }
+unsigned Mods_CardsHash(int index) { return at(index) && mods[index].cards.filled ? mods[index].cards.hash : 0; }
 long Mods_FusionsSize(int index) { return at(index) && mods[index].fusions.found ? mods[index].fusions.end - mods[index].fusions.start : 0; }
 const JsonValue *Mods_Manifest(int index) { return at(index) ? Json_Root(mods[index].manifest) : NULL; }
 const char *Mods_Metadata(int index, const char *key) { return Json_String(Json_Member(Mods_Manifest(index), key), ""); }
