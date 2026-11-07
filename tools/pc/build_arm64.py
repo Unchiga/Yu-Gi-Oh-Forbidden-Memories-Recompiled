@@ -57,6 +57,7 @@ HOST_HEAP_UNITS = {
     "src/pc/mods/json.c",
     "src/pc/mods/overlap.c",
     "src/pc/cards/fusion_table.c",
+    "src/pc/cards/card_art_cache.c",
 }
 
 

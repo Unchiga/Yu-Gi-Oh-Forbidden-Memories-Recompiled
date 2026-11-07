@@ -504,3 +504,12 @@ second time, it goes on without the mod. Turning the mod on again in the window 
 its line, so the next start tries it; so does a change to one of those three. A refused
 mod is off, not failed: it stops no other change from being applied. An out-of-memory
 kill by the system leaves no line: the next start tries again.
+
+## A card's art
+
+A card a mod adds has its picture made from its PNGs when the game first reads it
+(`src/pc/cards/card_art_cache.c`), not while the game starts: about 30 ms on a phone,
+once. A thread reads ahead from the last card seen and keeps what it made in
+`cache/card-art` in the user folder, named by the PNGs' paths, sizes and times and the
+build; the mods' folders are never written to. A file that is not a PNG gets its note
+at the start, one that fails later when it is read.

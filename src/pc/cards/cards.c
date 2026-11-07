@@ -9,6 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "cards.h"
 #include "art.h"
+#include "card_art_cache.h"
 #include "card_layout.h"
 #include "card_layout_art.h"
 #include "card_notes.h"
@@ -305,7 +306,7 @@ static unsigned char own_password[CARD_TABLE_ID_END];
  * parts are the card's own, and the card's own title plate. */
 #define ART_PICTURE 1
 #define ART_THUMBNAIL 2
-static unsigned char *art_records[CARD_TABLE_ID_END];
+static int art_handles[CARD_TABLE_ID_END]; /* card_art_cache.h: read when the card is seen */
 static unsigned char art_parts[CARD_TABLE_ID_END];
 static unsigned char *plates[CARD_TABLE_ID_END];
 /* Field-only artwork ("field_art"): a card's picture and CLUT (art.h's
@@ -1460,7 +1461,8 @@ static void add_entry(const char *mod, const char *directory, int index, const J
     const char *setting = Json_String(Json_Member(entry, "count_setting"), NULL);
     const char *description = Json_String(Json_Member(entry, "description"), NULL);
     const JsonValue *password_value = Json_Member(entry, "password");
-    unsigned char *record = NULL, *title = NULL, *named_plate = NULL, *field_art_record = NULL;
+    int art_handle = 0;
+    unsigned char *title = NULL, *named_plate = NULL, *field_art_record = NULL;
     int parts = 0;
     int base = 0, count, n, value, has_password;
     unsigned stats, password = CARD_PASSWORD_NONE, entry_fusion_groups = 0;
@@ -1761,16 +1763,20 @@ static void add_entry(const char *mod, const char *directory, int index, const J
                 if (!title) title = calloc(1, CARD_TITLE_BYTES);
                 ok = title && CardArt_TitleFromImage(path, title, why, sizeof(why));
             } else {
-                if (!record) record = calloc(1, CARD_ART_RECORD);
-                ok = record && (k == 0 ? CardArt_FromImage(path, record, why, sizeof(why))
-                                       : CardArt_ThumbnailFromImage(path, record, why, sizeof(why)));
+                /* The picture is made when the card is seen; the file is looked at now. */
+                int ignored[6];
+                ok = CardArt_Crop(path, CARD_THUMB_WIDTH, CARD_THUMB_HEIGHT, &ignored[0], &ignored[1], &ignored[2],
+                                  &ignored[3], &ignored[4], &ignored[5]);
+                if (!ok) snprintf(why, sizeof(why), "%s is not a PNG it could read", path);
                 if (ok) parts |= k == 0 ? ART_PICTURE | ART_THUMBNAIL : ART_THUMBNAIL;
                 if (ok) snprintf(full[k], sizeof(full[k]), "%s", path);
             }
             if (!ok) Mods_Note(mod, "cards[%d]: \"%s\": %s", index, keys[k], why);
         }
-        if (parts & ART_PICTURE) add_full_picture(full[0], record, 0);
-        if (parts & ART_THUMBNAIL) add_full_picture(full[1][0] ? full[1] : full[0], record, 1);
+        if (parts) {
+            art_handle = ArtCache_Add(mod, index, full[0][0] ? full[0] : NULL, full[1][0] ? full[1] : NULL);
+            if (!art_handle) parts = 0;
+        }
     }
     /* Field-only artwork: its own PNG, never shared with "art" and never
      * patched into the card's own record, so only the field cutout ever
@@ -1908,7 +1914,7 @@ static void add_entry(const char *mod, const char *directory, int index, const J
          * the same card without one does not keep an earlier mod's. */
         own_password[id] = (unsigned char)(has_password != 0);
         if (has_password) passwords[id] = password;
-        art_records[id] = parts ? record : NULL;
+        art_handles[id] = parts ? art_handle : 0;
         art_parts[id] = (unsigned char)parts;
         field_art_records[id] = field_art_record;
         if (title) {
@@ -2178,6 +2184,25 @@ static void patch(unsigned char *to, const unsigned char *from, size_t bytes)
 
 /* Whose artwork a card shows for `part`: its own, else its base's (a retail
  * card a mod replaced), else none (0). */
+/* A card's own art record, which only stays until the next one is asked for; it may
+ * prove to have less than the entry promised (a PNG that does not read). The pictures
+ * bigger than the console's can only be told from the made bytes, so now. */
+static const unsigned char *own_art(int id, int part)
+{
+    int handle = art_handles[id], parts = 0;
+    const char *art, *thumbnail;
+    const unsigned char *record = ArtCache_Record(handle, &parts);
+    if (!record) parts = 0;
+    if (art_parts[id] != (unsigned char)parts) art_parts[id] = (unsigned char)parts;
+    if (!record || !(parts & part)) return NULL;
+    if (ArtCache_FirstSight(handle)) {
+        ArtCache_Paths(handle, &art, &thumbnail);
+        if ((parts & ART_PICTURE) && art) add_full_picture(art, record, 0);
+        if (thumbnail || art) add_full_picture(thumbnail ? thumbnail : art, record, 1);
+    }
+    return record;
+}
+
 static int art_of(int id, int part)
 {
     if (!Cards_Valid(id)) return 0;
@@ -2260,7 +2285,7 @@ int Cards_ArtOverridden(void)
 
 void Cards_PatchArtRecord(int id, unsigned char *record)
 {
-    const unsigned char *translated;
+    const unsigned char *translated, *own;
     int from;
     if (!Cards_Valid(id)) return;
     if (override_id && id == override_id && override_record) {
@@ -2270,7 +2295,8 @@ void Cards_PatchArtRecord(int id, unsigned char *record)
         patch(record, override_record, CARD_THUMB_PIXELS);
         return;
     }
-    if ((from = art_of(id, ART_PICTURE)) != 0) patch(record, art_records[from], CARD_TITLE_PIXELS);
+    if ((from = art_of(id, ART_PICTURE)) != 0 && (own = own_art(from, ART_PICTURE)) != NULL)
+        patch(record, own, CARD_TITLE_PIXELS);
     /* The plate is not reported: it sits in the middle of the sector that
      * also ends the base's palette, and a write inside a delivery drops all
      * of it (texture_dump.c, forget), so a copy with only a name of its own
@@ -2281,8 +2307,8 @@ void Cards_PatchArtRecord(int id, unsigned char *record)
     } else if (!names[id] && (translated = translated_plate(Cards_BaseId(id))) != NULL) {
         memcpy(record + CARD_TITLE_PIXELS, translated, CARD_TITLE_BYTES);
     }
-    if ((from = art_of(id, ART_THUMBNAIL)) != 0) {
-        patch(record + CARD_THUMB_PIXELS, art_records[from] + CARD_THUMB_PIXELS, CARD_THUMB_BLOCK);
+    if ((from = art_of(id, ART_THUMBNAIL)) != 0 && (own = own_art(from, ART_THUMBNAIL)) != NULL) {
+        patch(record + CARD_THUMB_PIXELS, own + CARD_THUMB_PIXELS, CARD_THUMB_BLOCK);
     }
     if (override_id && id == override_id && override_plate) {
         /* A pack shown by its cover card's art: the pack's name on the plate. */
@@ -2295,7 +2321,8 @@ void Cards_PatchArtRecord(int id, unsigned char *record)
 void Cards_PatchThumbnail(int id, unsigned char *block)
 {
     int from = art_of(id, ART_THUMBNAIL);
-    if (from) patch(block, art_records[from] + CARD_THUMB_PIXELS, CARD_THUMB_BLOCK);
+    const unsigned char *own = from ? own_art(from, ART_THUMBNAIL) : NULL;
+    if (own) patch(block, own + CARD_THUMB_PIXELS, CARD_THUMB_BLOCK);
 }
 
 /* The card's own field_art record (picture at CARD_ART_PIXELS, CLUT at

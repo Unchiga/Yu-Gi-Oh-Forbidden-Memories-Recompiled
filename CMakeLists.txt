@@ -547,16 +547,18 @@ if(BUILD_TESTING)
     # that need the game and renderer. ELF linkers resolve symbols after GC;
     # the PE linker reports them before it, so this test is ELF-only.
     if(NOT WIN32 AND NOT MSVC)
-        add_executable(memories_cards_identity_test tests/pc/cards_identity_test.c src/pc/cards/fusion_table.c src/pc/platform/paths.c
+        add_executable(memories_cards_identity_test tests/pc/cards_identity_test.c src/pc/cards/fusion_table.c src/pc/cards/card_art_cache.c src/pc/platform/paths.c
                        src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
-        target_include_directories(memories_cards_identity_test PRIVATE src)
+        target_link_libraries(memories_cards_identity_test PRIVATE Threads::Threads)
+    target_include_directories(memories_cards_identity_test PRIVATE src)
         target_compile_definitions(memories_cards_identity_test PRIVATE MEMORIES_PC)
         target_compile_options(memories_cards_identity_test PRIVATE -ffunction-sections -fdata-sections)
         target_link_options(memories_cards_identity_test PRIVATE -Wl,--gc-sections)
         add_test(NAME pc_cards_identity COMMAND memories_cards_identity_test)
-        add_executable(memories_card_notes_test tests/pc/card_notes_test.c src/pc/cards/fusion_table.c src/pc/cards/card_notes.c
+        add_executable(memories_card_notes_test tests/pc/card_notes_test.c src/pc/cards/fusion_table.c src/pc/cards/card_art_cache.c src/pc/cards/card_notes.c
                        src/pc/mods/json.c src/pc/platform/paths.c)
-        target_include_directories(memories_card_notes_test PRIVATE src)
+        target_link_libraries(memories_card_notes_test PRIVATE Threads::Threads)
+    target_include_directories(memories_card_notes_test PRIVATE src)
         target_compile_definitions(memories_card_notes_test PRIVATE MEMORIES_PC)
         target_compile_options(memories_card_notes_test PRIVATE -ffunction-sections -fdata-sections)
         target_link_options(memories_card_notes_test PRIVATE -Wl,--gc-sections)
@@ -601,9 +603,10 @@ if(BUILD_TESTING)
     add_test(NAME pc_attributes COMMAND memories_attributes_test)
     # A card's "stars" through cards.c's own add_entry, on a stand-in for the
     # disc's tables (notes/modding.md, "No star").
-    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/cards/fusion_table.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
+    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/cards/fusion_table.c src/pc/cards/card_art_cache.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
                    src/pc/mods/json.c src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_stars_test PRIVATE src)
+    target_link_libraries(memories_cards_stars_test PRIVATE Threads::Threads)
     target_compile_definitions(memories_cards_stars_test PRIVATE MEMORIES_PC)
     if(WIN32)
         target_link_libraries(memories_cards_stars_test PRIVATE memories_pc_fs)
@@ -624,8 +627,9 @@ if(BUILD_TESTING)
     # Two mods' "cards" in the load order the settings give, through the real
     # mod loader and cards.c's Cards_Build: once as the folders sort, once
     # with the second moved first (notes/more-cards.md).
-    add_executable(memories_cards_order_test tests/pc/cards_order_test.c src/pc/cards/fusion_table.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_cards_order_test tests/pc/cards_order_test.c src/pc/cards/fusion_table.c src/pc/cards/card_art_cache.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
+    target_link_libraries(memories_cards_order_test PRIVATE Threads::Threads)
     target_include_directories(memories_cards_order_test PRIVATE src)
     target_compile_definitions(memories_cards_order_test PRIVATE MEMORIES_PC)
     target_link_libraries(memories_cards_order_test PRIVATE m Threads::Threads PNG::PNG)
@@ -639,8 +643,9 @@ if(BUILD_TESTING)
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods
     # redefining one id, and a name the game has no letters for.
-    add_executable(memories_card_types_test tests/pc/card_types_test.c src/pc/cards/fusion_table.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_card_types_test tests/pc/card_types_test.c src/pc/cards/fusion_table.c src/pc/cards/card_art_cache.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
+    target_link_libraries(memories_card_types_test PRIVATE Threads::Threads)
     target_include_directories(memories_card_types_test PRIVATE src)
     target_compile_definitions(memories_card_types_test PRIVATE MEMORIES_PC)
     target_link_libraries(memories_card_types_test PRIVATE m Threads::Threads PNG::PNG)
@@ -967,6 +972,14 @@ if(BUILD_TESTING)
         target_sources(memories_mod_budget_test PRIVATE src/pc/compat/fs.c)
     endif()
     add_test(NAME pc_mod_budget COMMAND memories_mod_budget_test)
+    # The cards' art records, made when asked (src/pc/cards/card_art_cache.c).
+    if(NOT WIN32)
+        add_executable(memories_card_art_cache_test tests/pc/card_art_cache_test.c src/pc/cards/card_art_cache.c)
+        target_include_directories(memories_card_art_cache_test PRIVATE src)
+        target_link_libraries(memories_card_art_cache_test PRIVATE Threads::Threads)
+        add_test(NAME pc_card_art_cache COMMAND memories_card_art_cache_test)
+        set_tests_properties(pc_card_art_cache PROPERTIES TIMEOUT 60)
+    endif()
     # The fusions mods add (src/pc/cards/fusion_table.c), against a plain list.
     add_executable(memories_fusion_table_test tests/pc/fusion_table_test.c src/pc/cards/fusion_table.c)
     target_include_directories(memories_fusion_table_test PRIVATE src)

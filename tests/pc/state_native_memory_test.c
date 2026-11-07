@@ -111,7 +111,7 @@ int main(void)
         memcpy(&count, chunk, sizeof(count));
         at = sizeof(count) + (count - 1) * (3 * sizeof(uint64_t) + 2 * sizeof(uint32_t)) + 2 * sizeof(uint64_t);
         memcpy(&format, chunk + at, sizeof(format));
-        assert(format == 2);
+        assert(format == 3);
         memcpy(chunk + at, &none, sizeof(none));
         assert(!Memories_NativeMemoryPrepare(&load, why, sizeof(why)) && strstr(why, "older build"));
         memcpy(chunk + at, &format, sizeof(format));
