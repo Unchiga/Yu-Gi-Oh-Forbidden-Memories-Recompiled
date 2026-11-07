@@ -1,6 +1,7 @@
 /* The loading screen's pacing (loading.h). The drawing is the platform's
  * (sdl.c, Platform_ShowLoading); this file only decides when to ask for it,
  * so a start that takes a fraction of a second never does. */
+#define _POSIX_C_SOURCE 200809L
 #include "pc/compat/fs.h"
 #include "pc/platform/loading.h"
 #include <stdio.h>
