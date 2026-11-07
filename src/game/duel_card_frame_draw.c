@@ -232,23 +232,46 @@ void func_80016784(DisplayObject *object, s32 arg1, s32 arg2, s32 arg3) {
                                                         0x78, 0x78, 8, 8, arg1, fl,
                                                         CARD_FRAME_SCRATCH_BYTES(o));
                             }
+                            /* A digit at its own size (8 x 8) is drawn as the retail one is, through
+                             * DisplayObject_SubmitPacket, which is where a mod that colors the numbers (the
+                             * field's boost, say) takes hold of it; one made bigger or smaller is a quad. */
                             for (i = hand_digits - 1; i >= 0; i--) {
-                                if (hand_atk.visible)
-                                    CardLayout_DrawHandCell(k, t,
-                                                            o->pos.h.x + hand_atk.x + (hand_digits - 1 - i) * hand_atk.w,
-                                                            o->pos.h.y + hand_atk.y,
-                                                            hand_atk.w, hand_atk.h,
-                                                            sp18[i] * 8, 0x58, 8, 8, arg1, fl,
-                                                            CARD_FRAME_SCRATCH_BYTES(o));
+                                if (hand_atk.visible) {
+                                    if (hand_atk.w == 8 && hand_atk.h == 8) {
+                                        k->extent.word = 0x80008;
+                                        k->uv.b.hi = 0x58;
+                                        k->uv.b.lo = sp18[i] * 8;
+                                        k->xy.h.x = o->pos.h.x + hand_atk.x + (hand_digits - 1 - i) * hand_atk.w;
+                                        k->xy.h.y = o->pos.h.y + hand_atk.y;
+                                        DisplayObject_SubmitPacket(k, POLY_FT4_BYTES(y), arg1, fl,
+                                                                   CARD_FRAME_SCRATCH_BYTES(o));
+                                    } else
+                                        CardLayout_DrawHandCell(k, t,
+                                                                o->pos.h.x + hand_atk.x + (hand_digits - 1 - i) * hand_atk.w,
+                                                                o->pos.h.y + hand_atk.y,
+                                                                hand_atk.w, hand_atk.h,
+                                                                sp18[i] * 8, 0x58, 8, 8, arg1, fl,
+                                                                CARD_FRAME_SCRATCH_BYTES(o));
+                                }
                             }
                             for (i = hand_digits - 1; i >= 0; i--) {
-                                if (hand_def.visible)
-                                    CardLayout_DrawHandCell(k, t,
-                                                            o->pos.h.x + hand_def.x + (hand_digits - 1 - i) * hand_def.w,
-                                                            o->pos.h.y + hand_def.y,
-                                                            hand_def.w, hand_def.h,
-                                                            sp20[i] * 8, 0x58, 8, 8, arg1, fl,
-                                                            CARD_FRAME_SCRATCH_BYTES(o));
+                                if (hand_def.visible) {
+                                    if (hand_def.w == 8 && hand_def.h == 8) {
+                                        k->extent.word = 0x80008;
+                                        k->uv.b.hi = 0x58;
+                                        k->uv.b.lo = sp20[i] * 8;
+                                        k->xy.h.x = o->pos.h.x + hand_def.x + (hand_digits - 1 - i) * hand_def.w;
+                                        k->xy.h.y = o->pos.h.y + hand_def.y;
+                                        DisplayObject_SubmitPacket(k, POLY_FT4_BYTES(y), arg1, fl,
+                                                                   CARD_FRAME_SCRATCH_BYTES(o));
+                                    } else
+                                        CardLayout_DrawHandCell(k, t,
+                                                                o->pos.h.x + hand_def.x + (hand_digits - 1 - i) * hand_def.w,
+                                                                o->pos.h.y + hand_def.y,
+                                                                hand_def.w, hand_def.h,
+                                                                sp20[i] * 8, 0x58, 8, 8, arg1, fl,
+                                                                CARD_FRAME_SCRATCH_BYTES(o));
+                                }
                             }
                             break;
                         }
