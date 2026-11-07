@@ -435,6 +435,7 @@ int Json_Bool(const JsonValue *value, int fallback)
 /* --- a member read from the file as it is used ---------------------------- */
 
 #define STREAM_CHUNK (1u << 20)
+#define ELEMENT_MAX (1u << 20) /* one element read from the file: a fusion is a hundred bytes */
 
 JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDeferred *deferred, char *error,
                                       size_t error_size)
@@ -444,7 +445,7 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
     char *kept = NULL, name[64];
     size_t kept_used = 0, kept_room = 0, length, name_used = 0, key_length = strlen(key);
     long at = 0;
-    int depth = 0, in_string = 0, escape = 0, armed = 0, skipping = 0, named = 0;
+    int depth = 0, in_string = 0, escape = 0, armed = 0, skipping = 0, named = 0, unmatched = 0;
     unsigned hash = 2166136261u;
     memset(deferred, 0, sizeof(*deferred));
     if (error && error_size) error[0] = '\0';
@@ -467,11 +468,11 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
             unsigned char c = chunk[i];
             if (skipping) {
                 hash = (hash ^ c) * 16777619u;
-                if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != ']') deferred->filled = 1;
+                if (!isspace(c) && c != ']') deferred->filled = 1;
             }
             if (in_string) {
                 if (escape) escape = 0;
-                else if (c == '\\') escape = 1;
+                else if (c == '\\') { escape = 1; name_used = sizeof(name); } /* the parser's to read: not the key */
                 else if (c == '"') { in_string = 0; named = depth == 1 && !skipping; }
                 else if (depth == 1 && !skipping && name_used < sizeof(name)) name[name_used++] = (char)c;
                 continue;
@@ -506,14 +507,16 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
                     deferred->end = at;
                     deferred->hash = hash;
                     run = i + 1;
+                    unmatched |= c != ']';
                 }
                 armed = 0;
                 continue;
             }
             if (c == ':' && depth == 1 && !skipping) {
-                armed = named && !deferred->found && name_used == key_length && !memcmp(name, key, key_length);
+                armed = named && !deferred->named && name_used == key_length && !memcmp(name, key, key_length);
+                deferred->named |= armed;
                 named = 0;
-            } else if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+            } else if (!isspace(c)) {
                 armed = 0;
             }
         }
@@ -533,6 +536,11 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDef
     }
     fclose(file);
     free(chunk);
+    if (unmatched) {
+        free(kept);
+        if (error && error_size) snprintf(error, error_size, "a list closed with }");
+        return NULL;
+    }
     if (!kept) kept = calloc(1, 1);
     if (!kept) return NULL;
     kept[kept_used] = 0;
@@ -564,11 +572,22 @@ static const JsonValue *parse_element(JsonDocument *document, char *text, char *
     parser.error_size = error_size;
     parser.depth = 0;
     if (error && error_size) error[0] = '\0';
-    return parse_value(&parser);
+    {
+        JsonValue *value = parse_value(&parser);
+        if (!value) return NULL;
+        skip_space(&parser);
+        if (*parser.at) { fail(&parser, "trailing text"); return NULL; }
+        return value;
+    }
 }
 
-/* One whole element in `element`: `each` has it, or `error` the first mistake.
- * 0 to stop. */
+/* The first mistake in a list; the rest of it is still read. */
+static void list_mistake(int *mistakes, long index, const char *why, char *error, size_t error_size)
+{
+    if (!(*mistakes)++ && error && error_size) snprintf(error, error_size, "entry %ld: %s", index, why);
+}
+
+/* One whole element in `element`: `each` has it, or `error` the mistake. 0 to stop. */
 static int read_element(JsonDocument *document, char *element, size_t used, int (*each)(const JsonValue *, long, void *),
                         long *index, void *context, char *error, size_t error_size, int *mistakes)
 {
@@ -577,7 +596,7 @@ static int read_element(JsonDocument *document, char *element, size_t used, int 
     element[used] = 0;
     value = parse_element(document, element, why, sizeof(why));
     if (value) return each(value, (*index)++, context);
-    if (!(*mistakes)++ && error && error_size) snprintf(error, error_size, "entry %ld: %s", *index, why);
+    list_mistake(mistakes, *index, why, error, error_size);
     (*index)++;
     return 1;
 }
@@ -591,6 +610,8 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     size_t used = 0, room = 0;
     long left, index = 0;
     int depth = 0, in_string = 0, escape = 0, inside = 0, good = 1, mistakes = 0;
+    int after = 0;     /* an element has ended and its comma has not come */
+    int too_long = 0;  /* this element is being passed over */
     JsonDocument document;
     if (error && error_size) error[0] = '\0';
     if (!deferred->found) return 0;
@@ -606,46 +627,66 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     left = deferred->end - deferred->start - 1;
     while (good && left > 0) {
         size_t length = fread(chunk, 1, left < (long)STREAM_CHUNK ? (size_t)left : STREAM_CHUNK, file);
-        if (!length) break;
+        if (!length) { /* it was shorter than the scan found it */
+            list_mistake(&mistakes, index, "the file ended", error, error_size);
+            break;
+        }
         left -= (long)length;
         for (size_t i = 0; good && i < length; i++) {
             unsigned char c = chunk[i];
             int ends = 0;
             if (!inside) {
-                if (c == ',' || c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+                if (isspace(c)) continue;
+                if (c == ',') {
+                    if (!after) list_mistake(&mistakes, index, "a comma with no entry before it", error, error_size);
+                    after = 0;
+                    continue;
+                }
+                if (after) list_mistake(&mistakes, index, "no comma before it", error, error_size);
+                after = 0;
                 inside = 1;
                 depth = 0;
             }
-            if (used + 2 > room) {
+            if (used + 2 > room && !too_long) {
                 size_t wanted = room ? room * 2 : 4096;
-                char *bigger = realloc(element, wanted);
-                if (!bigger) { good = 0; if (error && error_size) snprintf(error, error_size, "out of memory"); break; }
-                element = bigger;
-                room = wanted;
+                char *bigger = NULL;
+                if (wanted > ELEMENT_MAX) too_long = 1;
+                else if (!(bigger = realloc(element, wanted))) {
+                    list_mistake(&mistakes, index, "out of memory", error, error_size);
+                    good = 0;
+                    break;
+                }
+                if (bigger) {
+                    element = bigger;
+                    room = wanted;
+                }
             }
             if (in_string) {
-                element[used++] = (char)c;
+                if (!too_long) element[used++] = (char)c;
                 if (escape) escape = 0;
                 else if (c == '\\') escape = 1;
                 else if (c == '"') { in_string = 0; ends = !depth; }
                 if (!ends) continue;
+                after = 1;
             } else if (!depth && c == ',') {
-                ends = 1; /* a number or a word, whole */
+                ends = 1; /* a number or a word, whole, and its comma */
             } else {
-                element[used++] = (char)c;
+                if (!too_long) element[used++] = (char)c;
                 if (c == '"') in_string = 1;
                 else if (c == '{' || c == '[') depth++;
-                else if (c == '}' || c == ']') ends = !--depth;
+                else if (c == '}' || c == ']') ends = after = !--depth;
             }
             if (ends) {
-                good = read_element(&document, element, used, each, &index, context, error, error_size, &mistakes);
+                if (too_long) list_mistake(&mistakes, index++, "over a megabyte", error, error_size);
+                else good = read_element(&document, element, used, each, &index, context, error, error_size, &mistakes);
                 used = 0;
-                inside = 0;
+                inside = too_long = 0;
             }
         }
     }
-    if (good && inside && used)
-        good = read_element(&document, element, used, each, &index, context, error, error_size, &mistakes);
+    if (good && inside && too_long) list_mistake(&mistakes, index++, "over a megabyte", error, error_size);
+    else if (good && inside && used)
+        read_element(&document, element, used, each, &index, context, error, error_size, &mistakes);
     while (document.blocks) {
         Block *next = document.blocks->next;
         free(document.blocks);
@@ -654,5 +695,5 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     free(element);
     free(chunk);
     fclose(file);
-    return mistakes || (error && error_size && error[0]) ? -1 : index;
+    return mistakes ? -1 : index;
 }

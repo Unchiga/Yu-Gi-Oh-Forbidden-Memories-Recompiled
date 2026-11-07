@@ -252,7 +252,7 @@ const struct JsonValue *Mods_Manifest(int mod);
  * file, gone when `each` returns (json.h). The count, -1 on a mistake. */
 long Mods_EachFusion(const char *id, int (*each)(const struct JsonValue *, long, void *), void *context, char *error,
                      size_t error_size);
-unsigned Mods_FusionsHash(int mod);
+unsigned Mods_FusionsHash(int mod); /* 0 with none */
 long Mods_FusionsSize(int mod); /* bytes in the file, 0 for none */
 const char *Mods_Metadata(int mod, const char *key);
 const char *Mods_Directory(int mod);

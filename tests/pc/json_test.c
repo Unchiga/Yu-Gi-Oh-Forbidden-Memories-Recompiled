@@ -34,7 +34,7 @@ static void stream_tests(void)
     /* What is around the list stays, strings that look like it are not it, and an
      * empty list stands in for it. */
     write_stream("\xEF\xBB\xBF{\"a\": \"fusions\", \"note\": \"\\\"fusions\\\": [\", \"inner\": {\"fusions\": [1]},\n"
-                 "  \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 ,, {\"n\": 3},\n 4,], \"b\": [5]}");
+                 "  \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 , {\"n\": 3},\n 4,], \"b\": [5]}");
     document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
     assert(document && list.found);
     assert(!strcmp(Json_String(Json_Member(Json_Root(document), "a"), ""), "fusions"));
@@ -46,11 +46,11 @@ static void stream_tests(void)
     assert(count == 4 && seen_sum == 10 && !error[0]);
     Json_Free(document);
     /* The hash is of the list alone. */
-    write_stream("{\"z\": 1, \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 ,, {\"n\": 3},\n 4,]}");
+    write_stream("{\"z\": 1, \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 , {\"n\": 3},\n 4,]}");
     document = Json_ParseFileDeferring(stream_path, "fusions", &other, error, sizeof(error));
     assert(document && other.hash == list.hash);
     Json_Free(document);
-    write_stream("{\"z\": 1, \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 ,, {\"n\": 3},\n 5,]}");
+    write_stream("{\"z\": 1, \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 , {\"n\": 3},\n 5,]}");
     document = Json_ParseFileDeferring(stream_path, "fusions", &other, error, sizeof(error));
     assert(document && other.hash != list.hash);
     Json_Free(document);
@@ -70,6 +70,84 @@ static void stream_tests(void)
     assert(document);
     assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
     assert(count == 2 && seen_sum == 5 && strstr(error, "entry 1:"));
+    Json_Free(document);
+    /* What the parser would not have taken in a list is a mistake, and the rest read. */
+    {
+        static const struct { const char *text; long sum; const char *why; } lists[] = {
+            {"{\"fusions\": [{\"n\": 1} {\"n\": 2}]}", 3, "no comma"},
+            {"{\"fusions\": [1,,2]}", 3, "a comma with no entry"},
+            {"{\"fusions\": [,1]}", 1, "a comma with no entry"},
+            {"{\"fusions\": [1 2,3]}", 3, "trailing text"},
+            {"{\"fusions\": [\"a\" 4]}", 4, "no comma"},
+            {"{\"fusions\": [{\"n\": 1}x, 2]}", 3, "no comma"},
+        };
+        for (size_t i = 0; i < sizeof(lists) / sizeof(lists[0]); i++) {
+            write_stream(lists[i].text);
+            document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+            assert(document);
+            seen_sum = count = 0;
+            assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+            assert(seen_sum == lists[i].sum && strstr(error, lists[i].why));
+            Json_Free(document);
+        }
+        /* A trailing comma stays allowed; form feed and vertical tab are spaces. */
+        write_stream("{\"fusions\": [1\f,\v2,]}");
+        document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+        seen_sum = count = 0;
+        assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == 2);
+        assert(seen_sum == 3 && !error[0]);
+        Json_Free(document);
+        write_stream("{\"fusions\": [\f]}");
+        document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+        assert(document && list.found && !list.filled);
+        assert(!Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)));
+        Json_Free(document);
+    }
+    /* A list closed with the wrong bracket refuses the file, as the parser did. */
+    write_stream("{\"fusions\": [1}}");
+    assert(!Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error)) && error[0]);
+    /* The first of a key is the one that counts, list or not; an escaped one is not it. */
+    write_stream("{\"fusions\": 5, \"fusions\": [1, 2]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && !list.found && Json_Count(Json_At(Json_Root(document), 1)) == 2);
+    Json_Free(document);
+    write_stream("{\"fu\\tsions\": [1, 2], \"fusions\\n\": [3]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && !list.found && Json_Count(Json_At(Json_Root(document), 0)) == 2);
+    Json_Free(document);
+    /* One entry over the limit is its mistake alone, whichever kind it is. */
+    {
+        size_t size = 3u << 20;
+        char *big = malloc(size);
+        size_t used = 0;
+        assert(big);
+        used += (size_t)sprintf(big + used, "{\"fusions\": [1, {\"s\": \"");
+        memset(big + used, 'x', 1500000);
+        used += 1500000;
+        used += (size_t)sprintf(big + used, "\"}, 2, ");
+        big[used++] = '"';
+        memset(big + used, 'y', 1200000);
+        used += 1200000;
+        strcpy(big + used, "\", 4]}");
+        write_stream(big);
+        free(big);
+        document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+        assert(document);
+        seen_sum = count = 0;
+        assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+        assert(seen_sum == 7 && count == 3 && strstr(error, "entry 1:") && strstr(error, "megabyte"));
+        Json_Free(document);
+    }
+    /* A file shorter than it was at the scan says so. */
+    write_stream("{\"fusions\": [1, 2, 3, 4, 5, 6, 7, 8]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document);
+    write_stream("{\"fusions\": [1, 2");
+    seen_sum = count = 0;
+    assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1 && error[0]);
+    Json_Free(document);
+    write_stream("{\"fusions\": [{\"n\": 1}]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
     Json_Free(document);
     /* Whether anything is in it. */
     assert(list.filled);

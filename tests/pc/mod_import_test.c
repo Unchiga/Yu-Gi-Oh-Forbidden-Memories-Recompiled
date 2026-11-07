@@ -311,6 +311,16 @@ int main(void)
         free(big);
         free(code);
     }
+    /* An installed mod is named without reading its fusions: a mistake among them
+     * does not lose its id, as parsing the whole file would. */
+    reset();
+    {
+        char id[64], path[2048];
+        make("mods/folder");
+        file_write("mods/folder/mod.json", "{\"id\": \"named\", \"fusions\": [{\"with\" 1}]}");
+        snprintf(path, sizeof(path), "%s/folder", mods);
+        CHECK(Mods_ImportFolderId(path, id, sizeof(id)) && !strcmp(id, "named"));
+    }
     /* A mod.json that says it unpacks to more than the importer reads (1536 MB)
      * is refused, before a byte of it is allocated: the loader would read the
      * whole file at every launch. A deflated one that says more than deflate

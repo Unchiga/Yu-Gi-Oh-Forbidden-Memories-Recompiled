@@ -4698,7 +4698,7 @@ long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *
         return 0;
     return Json_EachElement(path, &mods[index].fusions, each, context, error, error_size);
 }
-unsigned Mods_FusionsHash(int index) { return at(index) ? mods[index].fusions.hash : 0; }
+unsigned Mods_FusionsHash(int index) { return at(index) && mods[index].fusions.filled ? mods[index].fusions.hash : 0; }
 long Mods_FusionsSize(int index) { return at(index) && mods[index].fusions.found ? mods[index].fusions.end - mods[index].fusions.start : 0; }
 const JsonValue *Mods_Manifest(int index) { return at(index) ? Json_Root(mods[index].manifest) : NULL; }
 const char *Mods_Metadata(int index, const char *key) { return Json_String(Json_Member(Mods_Manifest(index), key), ""); }

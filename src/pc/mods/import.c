@@ -725,12 +725,14 @@ int Mods_ImportFolderId(const char *directory, char *id, size_t size)
 {
     char path[2048], error[128];
     const char *slash = strrchr(directory, '/'), *text;
+    JsonDeferred fusions;
     JsonDocument *document;
     FILE *file;
     if (snprintf(path, sizeof(path), "%s/mod.json", directory) >= (int)sizeof(path) || !(file = fopen(path, "rb")))
         return 0;
     fclose(file);
-    document = Json_ParseFile(path, error, sizeof(error));
+    /* Only the id: a mod with millions of fusions is named as cheaply as any. */
+    document = Json_ParseFileDeferring(path, "fusions", &fusions, error, sizeof(error));
     text = Json_String(Json_Member(Json_Root(document), "id"), NULL);
     /* as the loader names it (mods.c read_manifest): the folder without one */
     copy(id, size, text && *text ? text : slash ? slash + 1 : directory);

@@ -440,7 +440,9 @@ unsigned Mods_Signature(void)
         char number[40];
         hash = hash_text(hash, Mods_Id(i));
         hash = hash_json(hash, Mods_Manifest(i));
-        hash = (hash ^ Mods_FusionsHash(i)) * 16777619u;
+        /* Only a mod with fusions: the signature of one without stays what it was,
+         * and with it the save states made under it. */
+        if (Mods_FusionsHash(i)) hash = (hash ^ Mods_FusionsHash(i)) * 16777619u;
         hash = (hash ^ Mods_CodeHash(i)) * 16777619u;
         for (int j = 0; j < Mods_OptionCount(i); j++) {
             snprintf(number, sizeof(number), "%d", Mods_RuntimeOption(i, j));
