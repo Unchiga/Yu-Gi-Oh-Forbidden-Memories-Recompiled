@@ -2266,6 +2266,49 @@ void Cards_LibraryVariantNote(int shown, int head)
     variant_text[n] = 0xFF;
 }
 
+static int row_names;
+
+void Cards_RowNames(int on)
+{
+    row_names = on;
+}
+
+#define ROW_NAME_BUFFERS 32   /* a page of rows is eight; each text box reads its name as it builds */
+#define ROW_NAME_SIZE 72
+#define ROW_LABEL_WITH_NAME 9
+
+const unsigned char *Cards_RowNameText(int id)
+{
+    static unsigned char buffers[ROW_NAME_BUFFERS][ROW_NAME_SIZE];
+    static int next;
+    const char *label = row_names ? Cards_VariantLabel(id) : NULL;
+    const unsigned char *name, *p;
+    unsigned char *out;
+    int n = 0, colon = glyph_of(':');
+    if (!label || !*label || !(name = Cards_NameCodes(id))) return NULL;
+    out = buffers[next++ % ROW_NAME_BUFFERS];
+    for (; *label && n < 24; label++) {
+        int code = (unsigned char)*label < 0x80 ? glyph_of((unsigned char)*label) : -1;
+        if (code >= 0 && code < GLYPHS_EXTENDED_FIRST) out[n++] = (unsigned char)code;
+    }
+    if (n == 0) return NULL;
+    /* A row shows about sixteen letters: a label that would leave the name fewer than five is shown alone. */
+    if (n > ROW_LABEL_WITH_NAME) {
+        out[n] = 0xFF;
+        return out;
+    }
+    if (colon >= 0 && colon < GLYPHS_EXTENDED_FIRST) out[n++] = (unsigned char)colon;
+    out[n++] = 0;   /* the space */
+    for (p = name; *p != 0xFF && n + 3 < ROW_NAME_SIZE; ) {
+        out[n++] = *p;
+        /* F1-F5 and a low byte are one added letter (glyphs.h) */
+        if (*p >= 0xF1 && *p <= 0xF5 && p[1] != 0xFF) out[n++] = *++p;
+        p++;
+    }
+    out[n] = 0xFF;
+    return out;
+}
+
 void Cards_MarkSeen(int id)
 {
     if (id >= CARD_ID_FIRST && id <= CARD_COUNT) {

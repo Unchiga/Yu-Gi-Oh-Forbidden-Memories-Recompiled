@@ -302,6 +302,16 @@ const char *Cards_VariantLabel(int id);
 int Cards_FamilyCopies(const unsigned char *quantities, int id);
 /* Whether any mod added a variant (a card with "variant_permille"). */
 int Cards_HaveVariants(void);
+/* The Build Deck's and the trade's card rows name a variant with its label in
+ * front ("Manga: Dark Magician"), so that the player can tell which card of an
+ * entry a row shows: the row's name is clipped at the right, not the left.
+ * Cards_RowNames(1) is set while a row's text box is made, and then
+ * Cards_RowNameText is the name text of a variant with a label (letters the
+ * game's font lacks are left out of the label; a long label stands alone,
+ * the row being sixteen letters wide); NULL for any other card, and
+ * whenever it is not set. */
+void Cards_RowNames(int on);
+const unsigned char *Cards_RowNameText(int id);
 
 /* The Library with its variants folded (SET_LIBRARY_FOLD_VARIANTS): a retail
  * card's variants are not cells of the grid; the card is one cell, and its

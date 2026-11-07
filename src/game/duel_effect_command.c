@@ -85,6 +85,11 @@ void func_80037DA4(DuelEffectChannel *object)
 #ifdef MEMORIES_PC
         /* A card past the disc's has a name of its own, from its mod, or
            its base's (cards.h); the text bank only has the retail ones. */
+        text = (u8 *)Cards_RowNameText(gDuel_wSelectedCardID);   /* a variant's row: its label first */
+        if (text != 0) {
+            object->stream_58++;
+            goto store;
+        }
         if (Cards_NameText(gDuel_wSelectedCardID) != 0) {
             object->stream_58++;
             text = (u8 *)Cards_NameText(gDuel_wSelectedCardID);

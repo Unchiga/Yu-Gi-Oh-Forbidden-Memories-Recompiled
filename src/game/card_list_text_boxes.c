@@ -9,6 +9,7 @@
 #ifdef MEMORIES_PC
 #include "build_deck_transition_state.h"
 #include "pc/cards/build_deck_fold.h"
+#include "pc/cards/cards.h"
 #endif
 
 /* Builds the text box for one card slot of a trade or deck screen. The entry
@@ -31,6 +32,9 @@ void CardList_CreateSlotTextBox(CardList *list, s32 slot)
     if (list->entries[list->first + slot].flags != 0) {
         style = 6;
     }
+#ifdef MEMORIES_PC
+    Cards_RowNames(1);   /* a variant's row names it with its label */
+#endif
     box = TextBox_Create(list->kind + 1, style, 0x22, 0x2B, 0x120, 0xB0);
     box->field_3A = slot * 22;
     box->field_28->flags &=
@@ -45,6 +49,9 @@ void CardList_CreateSlotTextBox(CardList *list, s32 slot)
         box->flags_34 |= 0x40;
     }
     func_80039A14(box);
+#ifdef MEMORIES_PC
+    Cards_RowNames(0);
+#endif
 }
 
 void func_80031E04(CardList *list, s32 count)

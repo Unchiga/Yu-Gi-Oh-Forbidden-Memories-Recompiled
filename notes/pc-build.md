@@ -3029,7 +3029,14 @@ an entry the row shows (the card itself at first); everything else is in
   the entry shares (`Cards_FamilyCopies`);
 - L3 and R3 step through the cards of the entry the player has (L1/R1 and
   L2/R2 are the list's pages); the deck pane stays one row a card, and a card
-  returned from the deck is the one the chest's row shows;
+  returned from the deck is the one the chest's row shows; they step the
+  card viewer (Triangle) too (`card_browse.c`), keeping the row in step;
+- a row of a variant with a `variant_label` names it with the label in front,
+  "Manga: Dark Magician" (a long label stands alone, the row being sixteen
+  letters wide): `Cards_RowNames` is set while `CardList_CreateSlotTextBox`
+  makes the row's text box and the name command asks `Cards_RowNameText`, so
+  the card viewer and the rest of the game keep the plain name. The deck's
+  and the trade's rows do the same;
 - `BuildDeck_ReturnCardToChest` and `BuildDeck_TakeCardFromChest` set the
   entry's row again after every move.
 

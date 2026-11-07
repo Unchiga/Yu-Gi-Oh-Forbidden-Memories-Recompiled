@@ -541,7 +541,8 @@ own.
   [pc-build.md](pc-build.md#build-deck-variants-in-one-row)). The row shows one
   of the entry's cards, L3 and R3 step through the ones the player has, and it
   shows that card's own count with what the player has of the whole entry
-  dim above it. The deck stays one row a card, and the limit of copies in the
+  dim above it, and a variant's row has its `variant_label` before the name.
+  L3 and R3 step the card viewer (Triangle) as well. The deck stays one row a card, and the limit of copies in the
   deck is the entry's.
 * A copy with the older `drops: true` (no `variant_permille`) still takes its
   base's place in an even share, and is its own card for the deck limit.
