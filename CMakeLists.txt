@@ -1000,6 +1000,14 @@ if(BUILD_TESTING)
             target_compile_options(memories_translated_arena_test PRIVATE -O2)
         endif()
         add_test(NAME pc_translated_arena COMMAND memories_translated_arena_test)
+        # The thread kept off the guest heap in builds with the test hooks: it stops
+        # there, and a later thread with the same pthread_t does not.
+        add_executable(memories_translated_forbid_test tests/pc/translated_forbid_test.c
+            src/pc/guest/translated_runtime.c src/pc/guest/translated_alloc.c src/pc/memory.c)
+        target_include_directories(memories_translated_forbid_test PRIVATE src)
+        target_compile_definitions(memories_translated_forbid_test PRIVATE _DEFAULT_SOURCE MEMORIES_TEST_HOOKS)
+        target_link_libraries(memories_translated_forbid_test PRIVATE Threads::Threads)
+        add_test(NAME pc_translated_forbid COMMAND memories_translated_forbid_test)
         add_executable(memories_saved_text_test tests/pc/saved_text_test.c
             src/pc/guest/translated_runtime.c src/pc/guest/translated_alloc.c src/pc/memory.c)
         target_include_directories(memories_saved_text_test PRIVATE src)

@@ -14,8 +14,13 @@
 static pthread_t forbidden;
 static int forbidden_set;
 
-void GuestRuntime_ForbidHeapOnThisThread(void)
+/* 1 as the thread starts, 0 as it ends: a later thread can be given the same pthread_t. */
+void GuestRuntime_ForbidHeapOnThisThread(int forbid)
 {
+    if (!forbid) {
+        __atomic_store_n(&forbidden_set, 0, __ATOMIC_RELEASE);
+        return;
+    }
     forbidden = pthread_self();
     __atomic_store_n(&forbidden_set, 1, __ATOMIC_RELEASE);
     fprintf(stderr, "translated runtime: this thread stays out of the guest heap\n");

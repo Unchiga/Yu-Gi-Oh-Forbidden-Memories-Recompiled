@@ -179,6 +179,7 @@ static void path_of_nth(int n, char *out, size_t size)
 static void made_when_asked(void)
 {
     const unsigned char *record;
+    const char *art, *thumbnail;
     int parts = 0, one, two, again, bad, half;
     put("a.png", "A");
     one = add(0, "a.png", NULL);
@@ -197,6 +198,8 @@ static void made_when_asked(void)
     /* The thumbnail over the picture's. */
     record = ArtCache_Record(two, &parts);
     assert(record && record[0] == 'A' && record[CARD_ART_RECORD - 1] == 'B' && made == 3);
+    ArtCache_Paths(two, &art, &thumbnail);
+    assert(art && thumbnail);
     /* A bad picture says so when it is read; its thumbnail still counts. */
     put("bad.png", "x");
     half = add(3, "bad.png", "b.png");
@@ -372,6 +375,7 @@ static void bad_thumbnail(void)
 {
     int parts = 0, handle;
     const unsigned char *record;
+    const char *art, *thumbnail;
     put("g.png", "G");
     put("bad.png", "x");
     handle = add(0, "g.png", "bad.png");
@@ -381,6 +385,9 @@ static void bad_thumbnail(void)
     assert(!notes);
     record = ArtCache_Record(handle, &parts);
     assert(record && record[0] == 'G' && notes == 1);
+    /* The thumbnail in the record is the picture's, so that is the PNG to draw it from. */
+    ArtCache_Paths(handle, &art, &thumbnail);
+    assert(art && !thumbnail);
     wait_ms(60);
     assert(files_in(NULL) == 0);
 }

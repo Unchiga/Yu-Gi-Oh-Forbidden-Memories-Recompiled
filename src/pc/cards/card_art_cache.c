@@ -20,7 +20,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #if defined(MEMORIES_TEST_HOOKS) && defined(MEMORIES_TRANSLATED)
-void GuestRuntime_ForbidHeapOnThisThread(void); /* translated_alloc.c */
+void GuestRuntime_ForbidHeapOnThisThread(int forbid); /* translated_alloc.c */
 #endif
 
 #define SLOTS ((12u << 20) / CARD_ART_RECORD) /* what More Cards' 958 cards take */
@@ -43,7 +43,7 @@ typedef struct {
     int index;
     unsigned char no_disk;         /* a PNG's stat failed, so the key says nothing of its file */
     int slot;                      /* the game's thread: */
-    unsigned char parts, failed, seen;
+    unsigned char parts, failed, seen, thumbnail_bad;
     unsigned char work, suspect;   /* under `lock`; suspect: its file did not check out */
     unsigned char on_disk;         /* the worker's */
 } Entry;
@@ -280,20 +280,21 @@ static int write_file(const Entry *entry, const unsigned char *record, int parts
 }
 
 /* As add_entry did: the picture brings a thumbnail, and "thumbnail" takes its place.
- * *whole: no PNG failed, which is what may go on disk: a bad one is noted when a
- * record is made, so its record must be made again next run to say so. `note` from
- * the game's thread only. No lock: art.c's picture paths hold no state of their own. */
-static int make(const Entry *entry, unsigned char *record, int note, int *whole)
+ * *failed: the PNGs that did not decode (ART_CACHE_*). Only with none may a record go on
+ * disk: a bad one is noted when a record is made, so its record must be made again next
+ * run to say so. `note` from the game's thread only. No lock: art.c's picture paths hold
+ * no state of their own. */
+static int make(const Entry *entry, unsigned char *record, int note, int *failed)
 {
     char why[1300];
     int parts = 0;
-    *whole = 1;
+    *failed = 0;
     memset(record, 0, CARD_ART_RECORD);
     if (entry->art) {
         if (CardArt_FromImage(entry->art, record, why, sizeof(why))) {
             parts |= ART_CACHE_PICTURE | ART_CACHE_THUMBNAIL;
         } else {
-            *whole = 0;
+            *failed |= ART_CACHE_PICTURE;
             if (note) Mods_Note(entry->mod, "cards[%d]: \"art\": %s", entry->index, why);
         }
     }
@@ -301,7 +302,7 @@ static int make(const Entry *entry, unsigned char *record, int note, int *whole)
         if (CardArt_ThumbnailFromImage(entry->thumbnail, record, why, sizeof(why))) {
             parts |= ART_CACHE_THUMBNAIL;
         } else {
-            *whole = 0;
+            *failed |= ART_CACHE_THUMBNAIL;
             if (note) Mods_Note(entry->mod, "cards[%d]: \"thumbnail\": %s", entry->index, why);
         }
     }
@@ -368,7 +369,7 @@ static void hand_over(Entry *entry, int handle, const unsigned char *record, int
 const unsigned char *ArtCache_Record(int handle, int *parts)
 {
     Entry *entry;
-    int slot, got = 0, bad = 0, whole = 0;
+    int slot, got = 0, bad = 0, failed = 0;
     if (handle < 1 || handle > count) return NULL;
     entry = &entries[handle - 1];
     if (entry->failed) return NULL;
@@ -391,8 +392,9 @@ const unsigned char *ArtCache_Record(int handle, int *parts)
         }
         got = from_worker(entry, handle, slot_record[slot]);
         if (!got) {
-            got = make(entry, slot_record[slot], 1, &whole);
-            hand_over(entry, handle, slot_record[slot], got, whole);
+            got = make(entry, slot_record[slot], 1, &failed);
+            entry->thumbnail_bad = (failed & ART_CACHE_THUMBNAIL) != 0;
+            hand_over(entry, handle, slot_record[slot], got, !failed);
         }
     }
     if (!got) {
@@ -418,7 +420,7 @@ int ArtCache_FirstSight(int handle)
 void ArtCache_Paths(int handle, const char **art, const char **thumbnail)
 {
     *art = entries[handle - 1].art;
-    *thumbnail = entries[handle - 1].thumbnail;
+    *thumbnail = entries[handle - 1].thumbnail_bad ? NULL : entries[handle - 1].thumbnail;
 }
 
 void ArtCache_Prefer(const int *handles, int wanted)
@@ -594,11 +596,11 @@ static void *work(void *unused)
     int going;
     (void)unused;
 #if defined(MEMORIES_TEST_HOOKS) && defined(MEMORIES_TRANSLATED)
-    GuestRuntime_ForbidHeapOnThisThread();
+    GuestRuntime_ForbidHeapOnThisThread(1);
 #endif
     going = scan() && count && record && most_files;
     while (going) {
-        int handle, parts = 0, asked = 0, whole = 0, written = 0;
+        int handle, parts = 0, asked = 0, failed = 0, whole, written = 0;
         Entry *entry;
         pthread_mutex_lock(&lock);
         for (;;) {
@@ -622,8 +624,8 @@ static void *work(void *unused)
             going = keep(handle, record, parts, 1) >= 0;
             continue;
         }
-        parts = make(entry, record, 0, &whole);
-        whole = whole && parts == wanted_parts(entry);
+        parts = make(entry, record, 0, &failed);
+        whole = !failed && parts == wanted_parts(entry);
         made_one(entry, handle, record, parts, whole);
         if (whole) {
             int kept = keep(handle, record, parts, asked);
@@ -639,6 +641,9 @@ static void *work(void *unused)
     worker_running = 0;
     write_count = ahead_count = 0;
     pthread_mutex_unlock(&lock);
+#if defined(MEMORIES_TEST_HOOKS) && defined(MEMORIES_TRANSLATED)
+    GuestRuntime_ForbidHeapOnThisThread(0);
+#endif
     return NULL;
 }
 

@@ -512,14 +512,17 @@ A card a mod adds has its picture made from its PNGs when the game first reads i
 of the game, a duel's decks first as soon as they are known, then on from the last card
 seen, and keeps them in `cache/card-art` in the user folder; the mods' folders are never
 written to. A file is named by the PNGs' paths, sizes and times (the time of the last
-change too, which a tool that keeps a file's dates cannot keep) and the build. It holds a
-length and a hash: one that does not check out counts as not there and is replaced.
+change too, which a tool that keeps a file's dates cannot keep; FAT and exFAT have no
+such time) and the build. It holds a length and a hash: one that does not check out counts
+as not there and is replaced.
 What an earlier build left goes as the thread starts.
 
-`MEMORIES_ART_CACHE_MB` sets how much the folder may hold, 512 by default, in files of
-16 KB on a disk of 4 KB blocks; anything but a whole number up to 1048576 is ignored and
-0 keeps nothing. Once it is full of the run's cards the thread stops, so no start decodes
-what it would throw away, and a card the game reads takes the place of the oldest file.
+`MEMORIES_ART_CACHE_MB` sets how much the folder may hold, 512 by default, counted as
+files of 16 KB each, what a file takes on a disk of 4 KB blocks (larger clusters take
+more); anything but a whole number up to 1048576 is ignored and 0 keeps nothing. Once it
+is full of the run's cards the thread stops, so no start decodes what it would throw away,
+and a card the game reads takes the place of the oldest file, which can be one of the
+deck in use if the size is set lower than the decks need.
 If a write fails (a full or read-only folder) the thread stops for that run and records
 are made as the game reads them. A file that is not a PNG gets its note at the start,
 one that fails later when it is read, in every run: such a record is never kept. A

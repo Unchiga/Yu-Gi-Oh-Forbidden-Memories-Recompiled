@@ -33,6 +33,8 @@ const unsigned char *ArtCache_Record(int handle, int *parts);
 /* 1 the first time it is asked for this handle: for what is done once per picture.
  * Never 1 in an interrupt, which leaves that first time for later. */
 int ArtCache_FirstSight(int handle);
+/* The PNGs the record's pictures come from, after ArtCache_Record: no thumbnail once
+ * that PNG has proved bad, when the record's thumbnail is the picture's. */
 void ArtCache_Paths(int handle, const char **art, const char **thumbnail);
 /* These are read soon (a duel's decks): the thread makes them before anything else,
  * the last of them first, as the game reads from the first. Any earlier ones are
