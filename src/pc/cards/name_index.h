@@ -8,6 +8,7 @@
  * its letters and digits alone (Names_SameLetters: "Blue-Eyes White Dragon"
  * finds the disc's "Blue-eyes White Dragon"). Each way has a hash table of the
  * ids, added in order, so that of two ids that match, the lower one is found. */
+#include <assert.h>
 #include <ctype.h>
 
 #define NAME_INDEX_SLOTS 2048u /* more than twice the disc's 722 */
@@ -54,9 +55,11 @@ static inline void NameIndex_Place(unsigned short *table, unsigned hash, int id)
     table[slot] = (unsigned short)id;
 }
 
-/* Call in order of id, at most NAME_INDEX_SLOTS - 1 of them, ids from 1. */
+/* Call in order of id, ids from 1, well under half of NAME_INDEX_SLOTS of them:
+ * a full table would never end a lookup, and a crowded one makes it long. */
 static inline void NameIndex_Add(NameIndex *index, int id, const char *name)
 {
+    assert(id > 0 && id < (int)(NAME_INDEX_SLOTS / 2));
     NameIndex_Place(index->by_words, NameIndex_Hash(name, 0), id);
     NameIndex_Place(index->by_letters, NameIndex_Hash(name, 1), id);
 }

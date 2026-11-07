@@ -76,6 +76,8 @@ extern unsigned char gDuel_abCardLevelAttr[];
 extern int Campaign_TestStoryFlag(int flag);
 extern void Library_UpdateCardUsedFlag(int flag);
 
+/* Append-only once set: a card's identity is made when the card is added, and
+ * never changes or goes (Cards_FindIdentity indexes it as far as the cards go). */
 static char *identities[CARD_TABLE_ID_END];
 static const JsonValue *definitions[CARD_TABLE_ID_END];
 static unsigned short model_ids[CARD_TABLE_ID_END], effect_ids[CARD_TABLE_ID_END], ai_effect_ids[CARD_TABLE_ID_END];
@@ -141,8 +143,12 @@ static unsigned int fusion_groups[CARD_TABLE_ID_END];
 static unsigned char has_fusion_groups[CARD_TABLE_ID_END];
 const char *Cards_Identity(int id) { return id > CARD_COUNT && Cards_Valid(id) && identities[id] ? identities[id] : ""; }
 /* The ids by identity, for the same reason as NameIndex: a big mod's fusions name
- * the cards it adds a million times. Made as far as the cards go when asked. */
-#define IDENTITY_SLOTS 65536u /* more than twice CARD_ID_LIMIT */
+ * the cards it adds a million times. Made as far as the cards go when asked.
+ * Asked from the game's thread only (it fills the table as it is asked). The
+ * hash folds case, as the names' does, though identities compare exactly: two
+ * that differ only in case share a chain, and the strcmp tells them apart. */
+#define IDENTITY_SLOTS 65536u
+_Static_assert(CARD_TABLE_ID_END * 2u <= IDENTITY_SLOTS, "the identity table is more than half empty");
 static unsigned short *identity_slots;
 static int identity_indexed;
 
@@ -156,7 +162,7 @@ int Cards_FindIdentity(const char *identity)
 {
     int id;
     unsigned slot;
-    if (!identity || !*identity) return 0;
+    if (!identity || !*identity || gCard_nCount < CARD_ID_END) return 0;   /* no card mod: no identity */
     if (!identity_slots) identity_slots = calloc(IDENTITY_SLOTS, sizeof(*identity_slots));
     if (!identity_slots) {
         for (id = CARD_ID_END; id <= gCard_nCount; id++) if (identities[id] && !strcmp(identities[id], identity)) return id;
@@ -172,7 +178,7 @@ int Cards_FindIdentity(const char *identity)
     if (gCard_nCount > identity_indexed) identity_indexed = gCard_nCount;
     for (slot = NameIndex_Hash(identity, 0) & (IDENTITY_SLOTS - 1u); identity_slots[slot];
          slot = (slot + 1u) & (IDENTITY_SLOTS - 1u)) {
-        if (!strcmp(identities[identity_slots[slot]], identity)) return identity_slots[slot];
+        if (identities[identity_slots[slot]] && !strcmp(identities[identity_slots[slot]], identity)) return identity_slots[slot];
     }
     return 0;
 }
