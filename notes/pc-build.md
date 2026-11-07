@@ -1163,7 +1163,9 @@ quick start.
   start would flash the screen. The window's mode (`apply_display_settings`:
   a phone's immersive fullscreen, a desktop's fullscreen or borderless) is
   applied before the screen's first draw, so it is not drawn in bars and then
-  moves; the screen takes the window's size each time it draws.
+  moves; the screen takes the window's size each time it draws. That call
+  comes before `Menu_Init` and the one after it stays: it is idempotent, so a
+  fullscreen or borderless desktop (and always Android) runs it twice.
 - **Drawing.** `Platform_ShowLoading` draws into a picture of a fixed size
   (960x540 pixels for a 16:9 window, the same area in the window's shape
   otherwise), in the Mods window's colors and the menu font, stretched to the
@@ -1171,6 +1173,14 @@ quick start.
   SDL renderer (Android's OpenGL ES). It does not touch the picture, the
   overlay or the layout, none of which exist before the first frame;
   `Platform_EndLoading` frees it and the game's first frame replaces it.
+  On Android the window's surface comes a moment after the window, and again
+  after the immersive-mode change, and a frame presented before that never
+  reaches the display, so the first draw first pumps events until the window
+  is shown and its size has held for three checks (15 ms apart), at most
+  500 ms, then presents the first frame twice. Not while the app is in the
+  background (nothing is drawn then, and no wait). The first draw logs one
+  line, `memories-pc: loading screen: first draw, WxH (window WxH): "<line>"`,
+  once per start, to tell from a log that the screen was up.
   Headless runs never begin it; the x11 backend's `Platform_ShowLoading`
   answers -1.
 - **Events.** Each draw calls `SDL_PumpEvents`, which keeps Windows from
@@ -1187,9 +1197,15 @@ quick start.
   happened, drops the key, text, mouse (not the device events), finger,
   joystick and gamepad input of the wait so a tap or a stick's drift is not
   replayed into the first frame; window, quit, device and background events
-  stay.
-- **Names.** `Loading_Begin`, `Loading_Step`, `Loading_Finish`,
-  `Loading_SetQuit` and `Platform_ShowLoading` are port globals, so a code mod
+  stay. A Back pressed after the last draw and before `Loading_Finish` is
+  dropped with the keys, so it has to be pressed again.
+- **Windows.** The window now exists while the mods are read, where before it
+  did not. Events are pumped only when a step draws, so a long stretch with no
+  step in it (one huge HD pack, a slow code mod's init) can still make Windows
+  call the window not responding after about five seconds.
+- **Names.** `Loading_Begin`, `Loading_Step`, `Loading_Show`,
+  `Loading_Finish`, `Loading_SetQuit`, `Platform_ShowLoading` and
+  `Platform_EndLoading` are port globals, so a code mod
   can bind them like every other.
 
 ### Screenshots

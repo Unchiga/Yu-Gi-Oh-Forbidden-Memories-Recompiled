@@ -3040,6 +3040,9 @@ int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
     int w, h, output_w = 0, output_h = 0, cw, ch;
     int pass, passes;
     if (!window || (!renderer && !use_gl)) return -1;
+    /* Away: the surface may be gone until the app is back, and waiting for it
+     * would only stall. (Pumping first lets the system's events in.) */
+    if (background_paused) { SDL_PumpEvents(); return loading_quit ? 1 : 0; }
     if (loading_first) loading_wait_for_surface();
     passes = loading_first ? 2 : 1; /* the first frame twice: one swap alone may not reach the screen */
     SDL_PumpEvents(); /* the window answers the system, and Android its input */
