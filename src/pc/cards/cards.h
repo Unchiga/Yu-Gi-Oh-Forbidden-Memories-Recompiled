@@ -305,7 +305,7 @@ int Cards_HaveVariants(void);
 
 /* The Library with its variants folded (SET_LIBRARY_FOLD_VARIANTS): a retail
  * card's variants are not cells of the grid; the card is one cell, and its
- * card view steps through the family with L1 and R1. Cards_LibraryBegin, as
+ * card view steps through the family with L3 and R3. Cards_LibraryBegin, as
  * the Library opens, works out which cards have a cell: every card but the
  * variants, in card order (while the setting is off, or no mod has variants,
  * every card, so a cell is its card's number). Cards_LibraryEntryCount is how
@@ -314,8 +314,8 @@ int Cards_HaveVariants(void);
  * variant of it has been seen (the entry is then); Cards_LibraryFamilySize and
  * Cards_LibraryFamilyMember are the entry's cards the Library may show, the
  * card first, then each variant seen (every one while View > Library: show
- * every card is on). Cards_LibraryVariantNote makes the line "L1 < 2/3 Rainbow
- * foil > R1" for card `shown` of `head`'s entry, the text of string
+ * every card is on). Cards_LibraryVariantNote makes the line "L3 < 2/3 Rainbow
+ * foil > R3" for card `shown` of `head`'s entry, the text of string
  * LIBRARY_VARIANT_TEXT_ID. Only the grid and the card view change: what a
  * save keeps of a card (owned, seen) stays by card. */
 #define LIBRARY_VARIANT_TEXT_ID 0xFFFE
