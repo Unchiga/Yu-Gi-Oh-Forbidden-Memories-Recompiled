@@ -30,6 +30,7 @@
 #include "pc/mods/json.h"
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
+#include "pc/platform/loading.h"
 #include "pc/debug/log.h"
 #include "pc/guest/low_memory.h"
 #include "pc/render/texture_dump.h"
@@ -1944,11 +1945,24 @@ static void add_entry(const char *mod, const char *directory, int index, const J
     }
 }
 
+/* The loading screen's count (loading.h): the entries of every mod's
+ * "cards", counted before they are added so the screen has a total. */
+static unsigned entries_total, entries_done;
+
+static void count_mod(const char *mod, const char *directory, const struct JsonValue *cards, void *context)
+{
+    (void)mod, (void)directory, (void)context;
+    entries_total += (unsigned)Json_Count(cards);
+}
+
 static void add_mod(const char *mod, const char *directory, const struct JsonValue *cards, void *context)
 {
     const struct JsonValue *entry;
     int i;
-    for (i = 0, entry = Json_At(cards, 0); entry; i++, entry = Json_Next(entry)) add_entry(mod, directory, i, entry, context);
+    for (i = 0, entry = Json_At(cards, 0); entry; i++, entry = Json_Next(entry)) {
+        add_entry(mod, directory, i, entry, context);
+        Loading_Step("Cards", ++entries_done, entries_total);
+    }
 }
 
 void Cards_Build(void)
@@ -1970,6 +1984,7 @@ void Cards_Build(void)
     for (id = 0; id <= CARD_COUNT; id++) gCard_awBaseId[id] = (unsigned short)id;
     context = calloc(1, sizeof(*context));
     if (!context) return;
+    Mods_VisitCards(count_mod, NULL);
     Mods_VisitCards(add_mod, context);
     Mods_SetCardResolver(Cards_FindIdentity);
     Mods_SetOverlapCards(overlap_card, Cards_NameUtf8, overlap_card_info);
@@ -2011,21 +2026,27 @@ void Cards_Build(void)
      * new ones included. */
     /* The duelists a mod adds, before the tables: "drops" and "decks" name
      * them, so they have to exist by the time those are read. */
+    Loading_Step("Duelists", 0, 0);
     Duelists_Build();
+    Loading_Step("Tables", 0, 0);
     Tables_Build();
     /* What the stars a mod adds are worth noting, now the cards have them
      * and "limits" has set the stat cap (stars.h). */
+    Loading_Step("Stars and starter decks", 0, 0);
     Stars_Check();
     /* And so do the starter decks a new game may be dealt (starter.h). */
     Starter_Build();
     /* And the card packs (packs.h), whose files and pictures a state's
      * mod signature covers. */
+    Loading_Step("Card packs", 0, 0);
     Packs_Build();
     Mods_SetPackSignature(Packs_Signature());
     /* The tower (tower.h), whose floors name duelists and cards. */
+    Loading_Step("Tower", 0, 0);
     Tower_Build();
     /* The duel's pictures (ui_config.h), read now so that a mistake in a
      * mod's "ui" is noted in the Mods window before any duel. */
+    Loading_Step("Duel pictures", 0, 0);
     UiConfig_Load();
 }
 

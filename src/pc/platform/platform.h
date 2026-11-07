@@ -7,6 +7,13 @@
  * Platform_VBlankCount must be called from the main thread only.
  * MEMORIES_HEADLESS=1 skips the window; MEMORIES_SCALE picks the zoom. */
 int Platform_Open(const char *title);
+/* The loading screen's two ends (loading.h): `line` on a dark window, with a
+ * bar done/total when total is not 0, and the window's events handled so it
+ * stays responsive. Platform_ShowLoading returns 0 when drawn, 1 when the
+ * player asked to quit (the close button, a phone's Back), -1 where there is
+ * no window to draw on. Platform_EndLoading lets go of what it made. */
+int Platform_ShowLoading(const char *line, unsigned done, unsigned total);
+void Platform_EndLoading(void);
 /* A problem the player has to fix before the game can start:
  * a message box where there is a window system to show
  * one (and not MEMORIES_HEADLESS), and standard error always. */
