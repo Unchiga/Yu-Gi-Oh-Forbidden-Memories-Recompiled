@@ -1156,6 +1156,14 @@ quick start.
   sink's, so `tests/pc/loading_test.c` runs it with a fake clock. A stage
   label skipped for the 50 ms floor is not drawn later by itself, and a stage
   with no step inside (`Text_Build`) shows only its label.
+- **Before the delay.** A manifest over 1 MB is one blocking parse with no
+  loop to step from, so `read_manifest` calls `Loading_Show` ("Reading mod
+  <folder>") before it: drawn at once, whatever the delay (50 ms floor
+  only), and the delay is over from then on. Nothing else uses it, or a quick
+  start would flash the screen. The window's mode (`apply_display_settings`:
+  a phone's immersive fullscreen, a desktop's fullscreen or borderless) is
+  applied before the screen's first draw, so it is not drawn in bars and then
+  moves; the screen takes the window's size each time it draws.
 - **Drawing.** `Platform_ShowLoading` draws into a picture of a fixed size
   (960x540 pixels for a 16:9 window, the same area in the window's shape
   otherwise), in the Mods window's colors and the menu font, stretched to the

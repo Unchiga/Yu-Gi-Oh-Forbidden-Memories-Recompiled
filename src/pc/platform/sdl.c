@@ -3214,6 +3214,15 @@ int Platform_Open(const char *title)
      * set up above reads them; the window's pointer, mouse and overlay hooks
      * are in place, which a mod only calls once the game runs. */
     Menu_PrepareFont();
+    /* The window's mode first, so the screen is not drawn in bars and then
+     * moves: a phone's is the whole screen, in immersive mode, from the start.
+     * (Where the window is a plain one the mode waits for Menu_Init, below.)
+     * The screen takes the window's size each time it draws. */
+#ifdef SDL_PLATFORM_ANDROID
+    apply_display_settings();
+#else
+    if (covers_screen()) apply_display_settings();
+#endif
     loading_watch = 1;
     Loading_Begin(&loading_sink);
     open_mods();

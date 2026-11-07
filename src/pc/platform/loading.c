@@ -33,6 +33,17 @@ int LoadingPace_Due(LoadingPace *pace, uint64_t now_us, const char *what)
     return 1;
 }
 
+int LoadingPace_Now(LoadingPace *pace, uint64_t now_us, const char *what)
+{
+    if (!pace->started) return 0;
+    if (pace->drawn && now_us - pace->drawn_us < LOADING_FLOOR_US) return 0;
+    snprintf(pace->what, sizeof(pace->what), "%s", what);
+    pace->drawn_us = now_us;
+    pace->drawn = 1;
+    pace->delay_us = 0;
+    return 1;
+}
+
 static LoadingSink sink;
 static LoadingPace pace;
 static void (*quit_hook)(void);
@@ -68,11 +79,10 @@ void Loading_Begin(const LoadingSink *to)
     active = 1;
 }
 
-void Loading_Step(const char *what, unsigned done, unsigned total)
+static void draw(const char *what, unsigned done, unsigned total)
 {
     char line[160];
     int shown;
-    if (!active || !LoadingPace_Due(&pace, now_us(), what)) return;
     if (total) snprintf(line, sizeof(line), "%s %u of %u", what, done, total);
     else snprintf(line, sizeof(line), "%s", what);
     shown = sink.show(line, done, total);
@@ -84,6 +94,16 @@ void Loading_Step(const char *what, unsigned done, unsigned total)
         if (quit_hook) quit_hook();
         else exit(0);
     }
+}
+
+void Loading_Step(const char *what, unsigned done, unsigned total)
+{
+    if (active && LoadingPace_Due(&pace, now_us(), what)) draw(what, done, total);
+}
+
+void Loading_Show(const char *what, unsigned done, unsigned total)
+{
+    if (active && LoadingPace_Now(&pace, now_us(), what)) draw(what, done, total);
 }
 
 void Loading_Finish(void)

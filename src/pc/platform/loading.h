@@ -38,6 +38,10 @@ void LoadingPace_Begin(LoadingPace *pace, uint64_t now_us);
  * drawn. A stage label skipped for the floor is not drawn later by itself:
  * the next step of any stage asks again. */
 int LoadingPace_Due(LoadingPace *pace, uint64_t now_us, const char *what);
+/* The same for a step about to block for long (a big file's parse): due
+ * whatever the delay, for the 50 ms floor alone, and the delay is over from
+ * then on, the screen being up. */
+int LoadingPace_Now(LoadingPace *pace, uint64_t now_us, const char *what);
 
 /* What shows the screen (platform.h: Platform_ShowLoading and
  * Platform_EndLoading). `show` draws `line` (and a bar done/total when total
@@ -61,6 +65,11 @@ void Loading_Begin(const LoadingSink *sink);
  * total, "Cards" without (0). A new `what` is drawn at once, the same one a
  * few times a second at most. */
 void Loading_Step(const char *what, unsigned done, unsigned total);
+/* A step that is about to block with no step inside it (a mod.json of
+ * megabytes is one parse): drawn at once, before the delay, so the wait has
+ * its label. Only for what is known to be long, or a quick start would flash
+ * the screen. */
+void Loading_Show(const char *what, unsigned done, unsigned total);
 void Loading_Finish(void);
 
 #endif

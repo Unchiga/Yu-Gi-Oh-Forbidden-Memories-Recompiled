@@ -95,6 +95,30 @@ static void slow_start(void)
     assert(ended == 1);
 }
 
+static void big_file(void)
+{
+    LoadingPace pace;
+    reset();
+    Loading_Begin(&sink);
+    clock_now += 10000; /* 10 ms in: far under the delay */
+    Loading_Step("Reading mods", 0, 3);
+    assert(!shown && "a step waits for the delay");
+    Loading_Show("Reading mod big", 0, 0);
+    assert(shown == 1 && !strcmp(last_line, "Reading mod big") && "a big file's label at once");
+    clock_now += 1000;
+    Loading_Show("Reading mod bigger", 0, 0);
+    assert(shown == 1 && "but not within the floor");
+    clock_now += LOADING_FLOOR_US;
+    Loading_Step("Reading mods", 1, 3); /* the delay is over once the screen is up */
+    assert(shown == 2 && !strcmp(last_line, "Reading mods 1 of 3"));
+    Loading_Finish();
+    Loading_Show("Reading mod big", 0, 0); /* outside Begin/Finish: nothing */
+    assert(shown == 2);
+    LoadingPace_Begin(&pace, 0);
+    assert(LoadingPace_Now(&pace, 1, "x") && !LoadingPace_Due(&pace, 2, "x"));
+    assert(LoadingPace_Due(&pace, 2 + LOADING_FLOOR_US, "y") && "delay_us is 0 after a forced draw");
+}
+
 static void without_a_window(void)
 {
     reset();
@@ -123,6 +147,7 @@ int main(void)
     pace_alone();
     fast_start();
     slow_start();
+    big_file();
     without_a_window();
     closed_while_loading();
     puts("loading screen: nothing before half a second, ten a second at most, a stage at once, none outside Begin/Finish passed");

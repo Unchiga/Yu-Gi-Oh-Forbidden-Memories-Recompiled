@@ -3470,6 +3470,16 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
     memset(mod, 0, sizeof(*mod));
     copy_text(mod->directory, sizeof(mod->directory), directory);
     mod->origin = origin;
+    {   /* A manifest of megabytes is one blocking parse: the screen has to
+         * be up, with its label, before it starts (loading.h). */
+        struct stat info;
+        if (!stat(path, &info) && info.st_size > 1024 * 1024) {
+            const char *slash = strrchr(directory, '/');
+            char label[160];
+            snprintf(label, sizeof(label), "Reading mod %s", slash ? slash + 1 : directory);
+            Loading_Show(label, 0, 0);
+        }
+    }
     mod->manifest = Json_ParseFile(path, error, sizeof(error));
     root = Json_Root(mod->manifest);
     if (!root || Json_TypeOf(root) != JSON_OBJECT) {
