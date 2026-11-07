@@ -737,6 +737,8 @@ static int body(MenuCanvas *c, int w, int y)
                 y = wrap(c, 0, y, w, line, TEXT);
             }
         }
+        if (Mods_Refused(selected))
+            y = wrap(c, 0, y + 12 * unit, w, Mods_Status(selected), WARN);
         if (!Mods_Validate(wanted, line, sizeof(line)))
             y = wrap(c, 0, y + 12 * unit, w, line, WARN);
         else

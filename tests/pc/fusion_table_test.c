@@ -77,6 +77,20 @@ int main(void)
     assert(!FusionTable_FindOwn(8, 7, &result) && !FusionTable_FindOwn(7, 10, &result) && !FusionTable_FindOwn(10, 8, &result));
     FusionTable_ClearOwn();
     assert(!FusionTable_FindOwn(7, 8, &result));
+    /* Rows taken out before sealing: the rest are found, at their order. */
+    FusionTable_Clear();
+    assert(FusionTable_Add(1, 2, 3, 1) && FusionTable_Add(1, 4, 5, 2) && FusionTable_Add(2, 3, 6, 3));
+    FusionTable_Remove(1, 1);
+    assert(FusionTable_Count() == 2);
+    assert(FusionTable_Find(1, 2, &result, &at) && result == 3);
+    assert(FusionTable_Find(2, 3, &result, &at) && result == 6 && at == 3);
+    assert(!FusionTable_Find(1, 4, &result, &at));
+    FusionTable_Clear();
+    /* The limit stands for memory running out. */
+    FusionTable_LimitRows(2);
+    assert(FusionTable_Add(1, 2, 3, 1) && FusionTable_Add(1, 3, 4, 2) && !FusionTable_Add(1, 4, 5, 3));
+    FusionTable_LimitRows(-1);
+    assert(FusionTable_Add(1, 4, 5, 3));
     puts("Fusion table: the latest rule of a plain list");
     return 0;
 }

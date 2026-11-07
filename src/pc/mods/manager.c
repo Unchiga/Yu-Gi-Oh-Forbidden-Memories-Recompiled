@@ -579,7 +579,7 @@ static long source_fusions(int mod, int (*each)(const JsonValue *, long, void *)
 static JsonDocument *source_cards(int mod, void *context)
 {
     (void)context;
-    return Mods_CardsDocument(overlap_mod[mod]);
+    return Mods_CardsDocument(overlap_mod[mod], NULL);
 }
 static long source_fusion_bytes(int mod, void *context)
 {

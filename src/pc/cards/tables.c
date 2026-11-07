@@ -315,9 +315,24 @@ static int target(const char *mod, const char *where, const JsonValue *value, Eq
 
 /* --- fusions --------------------------------------------------------- */
 
-static void add_fusion(int a, int b, int result)
+static int fusions_refused;
+/* Where each mod's rules are, in the order added, for the one that has to go. */
+#define FUSION_SPANS 256
+static struct { const char *mod; int first, rows; } fusion_spans[FUSION_SPANS];
+static int fusion_span_count;
+static void add_fusion(const char *mod, int a, int b, int result)
 {
-    FusionTable_Add(a, b, result, ++order_counter);
+    (void)mod;
+    if (!FusionTable_Add(a, b, result, ++order_counter)) fusions_refused = 1;
+}
+
+static void read_rows_limit(void)
+{
+    const char *named = getenv("MEMORIES_FUSION_ROWS_MAX");
+    char *end;
+    long rows = named && *named ? strtol(named, &end, 10) : 0;
+    /* A value that makes no sense limits nothing. */
+    if (rows > 0 && !*end) FusionTable_LimitRows(rows);
 }
 
 static int removes_all(const JsonValue *removed)
@@ -339,7 +354,7 @@ static void read_fusions(const char *mod, const JsonValue *list)
     /* One pass down the list: Json_Count and Json_At each walk it from the
      * start, which made a mod of every pair (261,003 rules, the editor's
      * bulk fusions) take minutes to read. */
-    for (i = 0, rule = Json_At(list, 0); rule; i++, rule = Json_Next(rule)) read_fusion(mod, rule, i);
+    for (i = 0, rule = Json_At(list, 0); rule && !fusions_refused; i++, rule = Json_Next(rule)) read_fusion(mod, rule, i);
 }
 
 /* One entry of "fusions", from the manifest or from the file (Mods_EachFusion). */
@@ -389,13 +404,13 @@ static void read_fusion(const char *mod, const JsonValue *rule, long i)
         made = card(mod, where, result);
         if (!made) return;
     }
-    add_fusion(a, b, made);
+    add_fusion(mod, a, b, made);
 }
 
 static int read_streamed_fusion(const JsonValue *rule, long index, void *mod)
 {
     read_fusion(mod, rule, index);
-    return 1;
+    return !fusions_refused;
 }
 
 int Tables_Fusion(int a, int b, int *result)
@@ -2373,11 +2388,24 @@ void Tables_AddFrom(const char *mod, const char *directory, const JsonValue *man
     Fields_Build();
     forget_pools();
     pool_directory = directory;
-    read_fusions(mod, Json_Member(manifest, "fusions"));
     {
         char why[128];
-        if (Mods_EachFusion(mod, read_streamed_fusion, (void *)mod, why, sizeof(why)) < 0)
+        int first = FusionTable_Count();
+        fusions_refused = 0;
+        read_fusions(mod, Json_Member(manifest, "fusions"));
+        if (!fusions_refused && Mods_EachFusion(mod, read_streamed_fusion, (void *)mod, why, sizeof(why)) < 0)
             Mods_Note(mod, "\"fusions\": %s", why);
+        /* Memory ran out: none of this mod's, and on with the next. */
+        if (fusions_refused) {
+            FusionTable_Remove(first, FusionTable_Count() - first);
+            Mods_RefuseApplying(mod, "not enough memory for its fusions");
+            return;
+        }
+        if (fusion_span_count < FUSION_SPANS) {
+            fusion_spans[fusion_span_count].mod = mod;
+            fusion_spans[fusion_span_count].first = first;
+            fusion_spans[fusion_span_count++].rows = FusionTable_Count() - first;
+        }
     }
     read_equips(mod, Json_Member(manifest, "equips"));
     read_equip_default(mod, Json_Member(manifest, "equip_bonus_default"));
@@ -2442,6 +2470,7 @@ void Tables_Clear(void)
 
 void Tables_Build(void)
 {
+    read_rows_limit();
     static int built;
     int i;
     if (built) return;
@@ -2477,5 +2506,17 @@ void Tables_Build(void)
             if (value_given[i]) LOG(LOG_MODS, "tables: value %s %ld", value_keys[i].key, value_set[i]);
     }
     /* Before any duel asks: sorting millions of rules takes seconds. */
-    FusionTable_Seal();
+    if (!FusionTable_Seal()) {
+        /* No room to sort them: the mod with the most of them goes, and with it the
+         * memory that wants. If even so there is none, no rules beat a table that is
+         * walked at every fusion. */
+        int most = 0;
+        for (int i = 1; i < fusion_span_count; i++)
+            if (fusion_spans[i].rows > fusion_spans[most].rows) most = i;
+        if (fusion_span_count) {
+            Mods_RefuseApplying(fusion_spans[most].mod, "not enough memory for its fusions");
+            FusionTable_Remove(fusion_spans[most].first, fusion_spans[most].rows);
+        }
+        if (!FusionTable_Seal()) FusionTable_Clear();
+    }
 }

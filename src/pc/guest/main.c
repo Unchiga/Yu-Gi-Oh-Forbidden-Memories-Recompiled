@@ -236,6 +236,7 @@ int main(int argc, char **argv)
     if (Memories_ModulesInit() != 0) {
         return 1;
     }
+    Mods_SetRestart(Platform_RestartGame, Memories_StateBuildId());
     if (Platform_Open("Yu-Gi-Oh! Forbidden Memories") != 0) {
         return 1;
     }
@@ -244,6 +245,7 @@ int main(int argc, char **argv)
      * the executable is in place: the cards they add come after its own. */
     Text_Build();   /* the mods' translations and fonts, which the cards' names may use */
     Cards_Build();
+    Mods_Applied();
     Text_SortCards();
     note_settings(SET_COUNT, 0);
     Settings_Observe(note_settings);

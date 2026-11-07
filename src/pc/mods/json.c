@@ -39,6 +39,7 @@ typedef struct {
     char *error;
     size_t error_size;
     int depth;
+    int no_memory;
 } Parser;
 
 static void fail(Parser *parser, const char *why)
@@ -53,7 +54,7 @@ static JsonValue *make(Parser *parser)
     Block *block = parser->document->blocks;
     if (!block || block->used == BLOCK) {
         block = calloc(1, sizeof(*block));
-        if (!block) { fail(parser, "out of memory"); return NULL; }
+        if (!block) { fail(parser, "out of memory"); parser->no_memory = 1; return NULL; }
         block->next = parser->document->blocks;
         parser->document->blocks = block;
     }
@@ -295,16 +296,18 @@ JsonDocument *Json_Parse(const char *text, char *error, size_t error_size)
 }
 
 /* `text` is the caller's and becomes the document's. */
-static JsonDocument *parse_owned(char *text, char *error, size_t error_size)
+static JsonDocument *parse_owned(char *text, char *error, size_t error_size, int *no_memory)
 {
     JsonDocument *document = calloc(1, sizeof(*document));
     Parser parser;
     if (error && error_size) error[0] = '\0';
     if (!document) {
         free(text);
+        if (no_memory) *no_memory = 1;
         return NULL;
     }
     document->text = text;
+    parser.no_memory = 0;
     parser.document = document;
     parser.at = text;
     if (!strncmp(parser.at, "\xEF\xBB\xBF", 3)) parser.at += 3;
@@ -316,7 +319,11 @@ static JsonDocument *parse_owned(char *text, char *error, size_t error_size)
         skip_space(&parser);
         if (*parser.at) { fail(&parser, "trailing text"); document->root = NULL; }
     }
-    if (!document->root) { Json_Free(document); return NULL; }
+    if (!document->root) {
+        if (no_memory && parser.no_memory) *no_memory = 1;
+        Json_Free(document);
+        return NULL;
+    }
     return document;
 }
 
@@ -346,7 +353,7 @@ JsonDocument *Json_ParseFile(const char *path, char *error, size_t error_size)
     }
     fclose(file);
     text[size] = '\0';
-    document = parse_owned(text, error, error_size);
+    document = parse_owned(text, error, error_size, NULL);
     return document;
 }
 
@@ -549,7 +556,7 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *const *keys,
     if (!kept) kept = calloc(1, 1);
     if (!kept) return NULL;
     kept[kept_used] = 0;
-    return parse_owned(kept, error, error_size);
+    return parse_owned(kept, error, error_size, NULL);
 no_room:
     fclose(file);
     free(chunk);
@@ -703,12 +710,15 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     return mistakes ? -1 : index;
 }
 
-JsonDocument *Json_ParseDeferred(const char *path, const JsonDeferred *deferred, char *error, size_t error_size)
+JsonDocument *Json_ParseDeferred(const char *path, const JsonDeferred *deferred, char *error, size_t error_size,
+                                 int *no_memory)
 {
     FILE *file = fopen(path, "rb");
     size_t length = (size_t)(deferred->end - deferred->start + 1);
     char *text = malloc(length + 1);
+    if (no_memory) *no_memory = 0;
     if (!file || !text || fseek(file, deferred->start, SEEK_SET) || fread(text, 1, length, file) != length) {
+        if (no_memory) *no_memory = !text;
         if (file) fclose(file);
         free(text);
         if (error && error_size) snprintf(error, error_size, "cannot read %s", path);
@@ -716,5 +726,5 @@ JsonDocument *Json_ParseDeferred(const char *path, const JsonDeferred *deferred,
     }
     fclose(file);
     text[length] = 0;
-    return parse_owned(text, error, error_size);
+    return parse_owned(text, error, error_size, no_memory);
 }

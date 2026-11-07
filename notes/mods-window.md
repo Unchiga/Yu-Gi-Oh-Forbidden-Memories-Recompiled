@@ -491,3 +491,16 @@ checks actual SDL/OpenGL context ownership during secondary-window operations.
 repository's `mods/` to `tmp/pc/mods-*.ppm` for review (`PREVIEW_SCALE=2` for
 the doubled UI); `tools/pc/preview_panels.sh` renders the window at both
 scales and, with `PREVIEW_TOUCH=1`, the panel on six phones and tablets.
+
+## Mods too big for the machine
+
+`src/pc/mods/mod_budget.c`. At the scan a mod costs a quarter of its `mod.json`, and the
+mods may take 60% of the machine's memory less the 200 MB the game takes, in load order:
+one past that stays off for the run, its row says Warning and its Compatibility tab
+says why. If memory runs out while a mod is applied (`Mods_RefuseApplying`) it goes in
+`refused-mods.txt` in the user folder, with its `mod.json`'s size and time and the
+build, and the game restarts once, if that file could be written; if not, or on a
+second time, it goes on without the mod. Turning the mod on again in the window clears
+its line, so the next start tries it; so does a change to one of those three. A refused
+mod is off, not failed: it stops no other change from being applied. An out-of-memory
+kill by the system leaves no line: the next start tries again.

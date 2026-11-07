@@ -83,6 +83,7 @@ long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *
     (void)id; (void)each; (void)context; (void)error; (void)error_size;
     return 0;
 }
+void Mods_RefuseApplying(const char *id, const char *why) { (void)id; (void)why; }
 static char notes[2048];
 void Mods_Note(const char *id, const char *format, ...)
 {
