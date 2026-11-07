@@ -93,7 +93,8 @@ void TexturePack_DecodeSettle(void);
  * TEXTURE_MADE_BASE up); the same picture twice is kept once. Made images
  * are kept across the packs' loads and unloads. The upload may come right after
  * the call, in the same frame: the block is known from here on, and the packs are not
- * resolved again for it unless it reuses a block with a new palette. 1 added, 0 not. */
+ * resolved again for it unless it has to sort among the others (it reuses a block that
+ * newer ones have come after, with a new palette). 1 added, 0 not. */
 int TexturePack_AddMade(const void *pixels, int words, int rows, int bpp, const void *clut, int clut_entries,
                         const char *file, int x, int y, int w, int h);
 /* The hooks a made image needs, at the start, for the images that come only when the

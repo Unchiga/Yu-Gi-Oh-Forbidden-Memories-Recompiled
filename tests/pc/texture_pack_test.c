@@ -310,7 +310,7 @@ static void made_image(void)
     /* Added between frames, as a card's on its first sight: the upload right after it is
      * known by its bytes and drawn from the PNG, and nothing else had to happen. */
     {
-        uint16_t later[640], later_clut[64], other_clut[64];
+        uint16_t later[640], later_clut[64], other_clut[64], third_clut[64];
         unsigned generation = TexturePack_Generation();
         for (i = 0; i < 640; i++) later[i] = (uint16_t)((i * 11 + 5) % 61 + 1) * 0x101;
         for (i = 0; i < 64; i++) later_clut[i] = (uint16_t)(0x2000 + i * 5);
@@ -326,9 +326,9 @@ static void made_image(void)
         assert(TextureDump_Sample(704, 0, 1, 5 << 16, 5 << 16, &rgb) == 1 && rgb == 0xff0000);
         assert(TextureDump_Sample(704, 0, 1, 30 << 16, 5 << 16, &rgb) == 1 && rgb == 0x0000ff);
         assert(TexturePack_EntryFor(640, 0, 1, 640, 300, 0, 0) == entry); /* the others stay */
-        /* Words known already, through a palette that is not: the one case that sorts the
-         * entries again, and the upload after it is still known. */
+        /* The newest words again, through a new palette: last in the order, so it joins. */
         assert(TexturePack_AddMade(later, 20, 32, 8, other_clut, 64, path, 2, 0, 4, 4) == 1);
+        assert(TexturePack_Generation() == generation);
         assert(TextureDump_Recall(other_clut, 64) >= TEXTURE_MADE_BASE);
         SoftGpu_Load(640, 303, 64, 1, other_clut);
         TexturePack_Service();
@@ -337,7 +337,46 @@ static void made_image(void)
         assert(TexturePack_EntryFor(704, 0, 1, 640, 303, 0, 0) != 0);
         assert(TextureDump_Sample(704, 0, 1, 30 << 16, 5 << 16, &rgb) == 1 && rgb == 0x0000ff);
         assert(TexturePack_EntryFor(704, 0, 1, 640, 302, 0, 0) != 0);
+        /* Words with newer ones after them, through a new palette: they sort among the
+         * others, the one case that sorts the entries again, and the upload after it is
+         * still known. */
+        for (i = 0; i < 64; i++) third_clut[i] = (uint16_t)(0x3000 + i * 9);
+        assert(TexturePack_AddMade(pixels, 20, 32, 8, third_clut, 64, path, 2, 0, 4, 4) == 1);
+        assert(TexturePack_Generation() != generation);
+        assert(TextureDump_Recall(third_clut, 64) >= TEXTURE_MADE_BASE);
+        SoftGpu_Load(640, 304, 64, 1, third_clut);
+        TexturePack_Service();
+        (void)TexturePack_EntryFor(640, 0, 1, 640, 304, 0, 0);
+        TexturePack_Service();
+        assert(TexturePack_EntryFor(640, 0, 1, 640, 304, 0, 0) != 0);
+        assert(TextureDump_Sample(640, 0, 1, 30 << 16, 5 << 16, &rgb) == 1 && rgb == 0x0000ff);
+        assert(TexturePack_EntryFor(704, 0, 1, 640, 302, 0, 0) != 0);
     }
+}
+
+/* A pack loaded over made entries and more made after it: the entries' room stays true
+ * (under the sanitizers, an overflow past them if it does not). */
+static void made_around_a_pack(void)
+{
+    char path[1024], problems[256];
+    uint16_t pixels[640], clut[64];
+    int n, i;
+    make_dir("over");
+    write_text("over/a.png", "\x89PNG\r\n\x1a\n");
+    write_text("over/manifest.json", "[" ENTRY("a.png", 0, "") "]");
+    snprintf(path, sizeof(path), "%s/made/art.png", root);
+    for (n = 0; n < 16; n++) {
+        if (n == 12) {
+            char pack[1024];
+            snprintf(pack, sizeof(pack), "%s/over", root);
+            assert(TexturePack_Load(pack, 1, NULL, NULL, problems, sizeof(problems)) == 1);
+        }
+        for (i = 0; i < 640; i++) pixels[i] = (uint16_t)(i * 13 + n * 197 + 1);
+        for (i = 0; i < 64; i++) clut[i] = (uint16_t)(0x5000 + i + n * 7);
+        assert(TexturePack_AddMade(pixels, 20, 32, 8, clut, 64, path, 2, 0, 4, 4) == 1);
+        assert(TextureDump_Recall(pixels, 640) >= TEXTURE_MADE_BASE);
+    }
+    TexturePack_Unload();
 }
 
 /* The campaign map's palettes reach VRAM from memory with the
@@ -929,6 +968,7 @@ int main(void)
     /* A made image is read where it is wanted, by none of the threads. */
     TexturePack_DecodeStats(&made_now, &made_ahead, &made_shared, &threads);
     made_image();
+    made_around_a_pack();
     TexturePack_DecodeStats(&now, &ahead, &shared, &threads);
     assert(now == made_now && ahead == made_ahead && shared == made_shared);
     stp_palette();

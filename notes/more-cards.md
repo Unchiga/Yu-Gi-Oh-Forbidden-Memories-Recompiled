@@ -669,8 +669,9 @@ which follows in the same frame, has no disc provenance (the patch reported
 it written), so `TextureDump_Loaded` asks `recall`, which checks the whole
 block, and the words are tagged with the made place. The entry joins the
 pack's where it is, so the first sight of a card does not sort the pack again
-or read the disc, and the renderers keep the pictures they hold; only a block
-already known under a new palette has to sort. `Cards_Build` installs the
+or read the disc, and the renderers keep the pictures they hold; the one entry
+that has to sort is a block already known, under a new palette, with newer
+blocks after it. `Cards_Build` installs the
 pack's hooks when any PNG is bigger than the console's, so uploads are tagged
 from the start, as they were when the blocks were all made there. After a
 state is loaded, a card already in VRAM whose block has not been made in this

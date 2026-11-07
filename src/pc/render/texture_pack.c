@@ -520,7 +520,8 @@ static long archive_start(const char *name)
 }
 
 /* Doubling: since the cards' art is made when it is first seen (cards.c, own_art), an
- * entry can be added once per picture during play. */
+ * entry can be added once per picture during play. Never smaller, and all that resizes
+ * `entries` goes through here: entries_room has to stay true. */
 static int entries_reserve(int wanted)
 {
     Entry *more;
@@ -1877,11 +1878,12 @@ static uint32_t block_place(const void *data, uint32_t bytes)
     return blocks[block_count++].offset;
 }
 
-/* The last entry, just added, is in order after the others (a block at a new place is
- * past every other): it joins them as it is, with nothing moved, no generation for the
- * renderers to drop their pictures for, and no other entry looked at. 0 if not: the
- * entries are sorted again between frames, the disc and every pack image read for
- * the index. */
+/* The last entry, just added, is in order after the others: it joins them as it is, with
+ * nothing moved, no generation for the renderers to drop their pictures for, and no
+ * other entry looked at. A block at a new place is past every other, and so is a known
+ * block when it is the newest, under a new palette. 0 if not, which is a known block with
+ * newer ones after it: the entries are sorted again between frames, the disc and every
+ * pack image read for the index. */
 static int joined_in_order(void)
 {
     const Entry *entry = &entries[entry_count - 1];
@@ -2206,11 +2208,8 @@ static int load_entries(const char *from, const JsonValue *list, int named, Fold
                        : Json_Member(list, asset_specs[i].name) != NULL) room++;
     }
     if (folder) memset(folder->used, 0, (size_t)folder->count);   /* the count pass marked them */
-    more = realloc(entries, (size_t)(entry_count + (room ? room : 1)) * sizeof(*entries));
-    if (more) {
-        entries = more;
-        memset(entries + entry_count, 0, (size_t)(room ? room : 1) * sizeof(*entries));
-    }
+    more = entries_reserve(entry_count + (room ? room : 1)) ? entries : NULL;
+    if (more) memset(entries + entry_count, 0, (size_t)(room ? room : 1) * sizeof(*entries));
     /* Walked in one pass: a pack can list tens of thousands of images. */
     item = Json_At(list, 0);
     for (; more && position < count; position++, item = named ? item : Json_Next(item)) {
