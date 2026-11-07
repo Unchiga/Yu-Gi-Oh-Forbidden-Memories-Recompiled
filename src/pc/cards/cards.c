@@ -156,6 +156,7 @@ int Cards_TrapThreshold(int id, int fallback)
                ? (int)trap_thresholds[id] - 1 : fallback;
 }
 static int retail_monster(int id);
+static int cards_built;
 /* A model a mod adds, by its model id or its name ("models", Mods_Model):
  * its place in Mods_Model's list, or -1. A later mod's name wins. */
 static int mod_model(int model)
@@ -190,8 +191,11 @@ static int model_base(int model)
     const JsonValue *base = NULL;
     int i = mod_model(model), id;
     if (i < 0) return 0;
-    Mods_Model(i, NULL, &base, NULL);
-    id = Cards_Reference(base);
+    if (!Mods_ModelBaseCard(i, &id)) {
+        Mods_Model(i, NULL, &base, NULL);
+        id = Cards_Reference(base);
+        if (cards_built) Mods_ModelSetBaseCard(i, id);
+    }
     return retail_monster(id) ? id : 0;
 }
 int Cards_ModelStatsIndex(int model)
@@ -2027,6 +2031,10 @@ void Cards_Build(void)
     /* The duel's pictures (ui_config.h), read now so that a mistake in a
      * mod's "ui" is noted in the Mods window before any duel. */
     UiConfig_Load();
+    /* What the models' "base"s name is settled: the ids, not the manifest, go in
+     * a save state. */
+    cards_built = 1;
+    for (int i = 0; i < Mods_ModelCount(); i++) model_base(CARDS_MODEL_MOD_FIRST + i);
 }
 
 /* --- what the game asks -------------------------------------------- */

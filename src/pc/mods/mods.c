@@ -176,8 +176,11 @@ static int region_count;
  * (host_disc_read, at Mods_ModelSector). */
 typedef struct {
     int mod;
-    const char *name;
+    char *name;
+    /* A save state holds this block and not the manifest: nothing here may
+     * point into one once the cards are built, when `base` becomes `base_card`. */
     const JsonValue *base;
+    int base_card, base_set;
     char *path;
     unsigned size, hash;
     int stale;      /* its file was found gone or changed: not read again until the next launch */
@@ -2465,6 +2468,19 @@ static int read_model(int model, int first, int count, unsigned char *out)
 }
 
 int Mods_ModelCount(void) { return model_count; }
+int Mods_ModelBaseCard(int i, int *card)
+{
+    if (i < 0 || i >= model_count || !models[i].base_set) return 0;
+    *card = models[i].base_card;
+    return 1;
+}
+void Mods_ModelSetBaseCard(int i, int card)
+{
+    if (i < 0 || i >= model_count) return;
+    models[i].base_card = card;
+    models[i].base_set = 1;
+    models[i].base = NULL;
+}
 int Mods_Model(int i, const char **name, const JsonValue **base, int *mod)
 {
     if (i < 0 || i >= model_count || !models[i].path) return -1;
@@ -2766,6 +2782,7 @@ static void drop_overrides(int mod)
         free(models[i].path);
         models[i].path = NULL;
         if (disc_layout_frozen) kept++;
+        else free(models[i].name);
     }
     model_count = kept;
     publish_overrides();
@@ -3032,15 +3049,18 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
             break;
         }
     models[model_count].mod = index;
-    models[model_count].name = name;
     models[model_count].base = Json_Member(entry, "base");
+    models[model_count].base_card = models[model_count].base_set = 0;
     models[model_count].size = (unsigned)info.st_size;
     models[model_count].hash = hash_bytes(2166136261u, image, (size_t)info.st_size);
     models[model_count].stale = 0;
     models[model_count].geometry = geometry;
     models[model_count].pages = (int)pages;
     unmap_file(image, (size_t)info.st_size);
-    if (!(models[model_count].path = strdup(path))) return 0;
+    if (!(models[model_count].name = strdup(name)) || !(models[model_count].path = strdup(path))) {
+        free(models[model_count].name);
+        return 0;
+    }
     model_count++;
     if (!layout_disc_files()) {
         note(mod, "virtual disc address space exhausted by the model windows");
