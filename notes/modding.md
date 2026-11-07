@@ -2340,6 +2340,14 @@ own code, the C library, a function of another mod). `host->unhook` removes
 one hook, and `host->symbol("name")` looks a name up at run time, for a mod
 that can do without it.
 
+A mod must not call a game function that **returns a structure by value**
+(`CardLayout_HandGet`, `CardLayout_Get`, `CardLayout_Part`): the structure comes
+back through a hidden pointer the mod's compiler and the game's handle
+differently, and the stack and the locals after the call are wrong (a mod that
+called `CardLayout_HandGet` drew a card as a spell). Its pointer version,
+`void CardLayout_HandPlace(int card_id, int element, int *out)` (five ints:
+visible, x, y, width, height), is the one to call.
+
 How it works: every game unit is compiled with
 `-fpatchable-function-entry=8,6`, which leaves six bytes of `nop` before
 each function and two at its entry. A hook turns the six into an indirect

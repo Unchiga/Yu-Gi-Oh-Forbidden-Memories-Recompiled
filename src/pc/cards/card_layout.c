@@ -821,6 +821,17 @@ CardLayoutPlacement CardLayout_HandGet(int card_id, CardLayoutHandElement elemen
     return p;
 }
 
+void CardLayout_HandPlace(int card_id, int element, int *out)
+{
+    CardLayoutPlacement p = CardLayout_HandGet(card_id, (CardLayoutHandElement)element);
+
+    out[0] = p.visible;
+    out[1] = p.x;
+    out[2] = p.y;
+    out[3] = p.w;
+    out[4] = p.h;
+}
+
 const char *CardLayout_HandFramePath(int card_id)
 {
     static char path[1024];

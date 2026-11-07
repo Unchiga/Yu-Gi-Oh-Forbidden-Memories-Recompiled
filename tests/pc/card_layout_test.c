@@ -643,6 +643,16 @@ static void styles_hand_elements(void)
     CHECK(p.visible && p.x == 5 && p.y == 51 && p.w == 10 && p.h == 8);
     p = CardLayout_HandGet(1, CARD_LAYOUT_HAND_DEF);
     CHECK(p.visible && p.x == 128 && p.y == -128 && p.w == 128 && p.h == 8);
+    {
+        /* The same through a pointer, which is what a code mod calls. */
+        int place[5], element;
+        for (element = CARD_LAYOUT_HAND_ART; element <= CARD_LAYOUT_HAND_DEF_LABEL; element++) {
+            CardLayoutPlacement want = CardLayout_HandGet(1, (CardLayoutHandElement)element);
+            CardLayout_HandPlace(1, element, place);
+            CHECK(place[0] == want.visible && place[1] == want.x && place[2] == want.y && place[3] == want.w &&
+                  place[4] == want.h);
+        }
+    }
     reset();
     CHECK(!CardLayout_HandStyled(1));
     p = CardLayout_HandGet(1, CARD_LAYOUT_HAND_ART);

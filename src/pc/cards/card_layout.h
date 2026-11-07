@@ -77,6 +77,10 @@ typedef enum {
 } CardLayoutHandElement;
 
 CardLayoutPlacement CardLayout_HandGet(int card_id, CardLayoutHandElement element);
+/* CardLayout_HandGet through a pointer, for a code mod: a function that returns a structure by value cannot be
+ * called across the mod ABI (the i386 and Windows ABIs return it differently: notes/portable-mods-plan.md). `out`
+ * takes five ints: visible, x, y, width, height. */
+void CardLayout_HandPlace(int card_id, int element, int *out);
 int CardLayout_HandStyled(int card_id);
 CardLayoutPlacement CardLayout_Get(CardLayoutElement element);
 /* Older layouts put ``stars`` beside the shared card_layout keys and use
