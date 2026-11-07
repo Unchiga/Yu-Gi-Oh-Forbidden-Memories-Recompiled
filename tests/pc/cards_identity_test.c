@@ -111,6 +111,7 @@ static void recent_drops(unsigned char *state)
     gCard_nCount = 724;
     identities[723] = "alpha:dragon:1"; gCard_awBaseId[723] = 1;
     identities[724] = "beta:mage:1"; gCard_awBaseId[724] = 2;
+    identities_changed();
     /* Saved in order alpha, beta: 730 is a card this run does not have. */
     set_recent(state, saved);
     Cards_SaveWritten(state, 1);
@@ -123,6 +124,7 @@ static void recent_drops(unsigned char *state)
     /* Loaded with the order turned round: beta is 723 now, alpha 724. */
     identities[723] = "beta:mage:1"; gCard_awBaseId[723] = 2;
     identities[724] = "alpha:dragon:1"; gCard_awBaseId[724] = 1;
+    identities_changed();
     Cards_SaveLoaded(state);
     assert(recent_at(state, 0) == 723 && recent_at(state, 1) == 5 && recent_at(state, 2) == 724);
     assert(recent_at(state, 3) == 0 && recent_at(state, 4) == 723 && recent_at(state, 5) == 0);

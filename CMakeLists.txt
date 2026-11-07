@@ -933,6 +933,14 @@ if(BUILD_TESTING)
         target_compile_options(memories_mod_import_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mod_import COMMAND memories_mod_import_test)
+    # What Cards_Named finds through its tables (src/pc/cards/name_index.h),
+    # against going down the names.
+    add_executable(memories_name_index_test tests/pc/name_index_test.c)
+    target_include_directories(memories_name_index_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_name_index_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_name_index COMMAND memories_name_index_test)
     # Card title plates (src/pc/cards/art.c), set from a name in the serif
     # face as a translated card's is: where FreeType is at hand (beside
     # libpng, as in the Windows dependencies), and skipped (77) on a system
