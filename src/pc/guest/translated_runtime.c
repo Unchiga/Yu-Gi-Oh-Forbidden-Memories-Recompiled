@@ -131,12 +131,14 @@ void invalid(const char *operation, uintptr_t address, size_t length)
 static void change_begin(void)
 {
     changing = 1;
+    __atomic_signal_fence(__ATOMIC_SEQ_CST); /* set before the sequence is odd */
     __atomic_store_n(&registry_sequence, registry_sequence + 1, __ATOMIC_RELAXED);
     __atomic_thread_fence(__ATOMIC_RELEASE);
 }
 static void change_end(void)
 {
     __atomic_store_n(&registry_sequence, registry_sequence + 1, __ATOMIC_RELEASE);
+    __atomic_signal_fence(__ATOMIC_SEQ_CST); /* cleared once it is even */
     changing = 0;
 }
 static unsigned read_begin(void)
@@ -522,31 +524,11 @@ void *GuestRuntime_ReallocRegistered(void *host, size_t length)
     pthread_mutex_unlock(&registry_lock);
     return moved;
 }
-void *GuestRuntime_ResolveData(void *pointer, size_t length)
+/* Out of line: the page-cache hit is on the path of every access, and a search
+ * inline would have it spill registers. */
+static __attribute__((noinline, cold)) void *resolve_miss(uintptr_t address, size_t length, unsigned page)
 {
-    uintptr_t address = guest_bits((uintptr_t)pointer);
     unsigned i;
-    void *host;
-    /* Full-width host pointers already address native storage. */
-    if (address > UINT32_MAX) return pointer;
-    if (!GuestRuntime_ActiveMemory) invalid("memory context is unbound", address, length);
-    host = Memories_ResolveSpan(GuestRuntime_ActiveMemory, (u32)address, length, 1);
-    if (host) return host;
-    if (address < EXTERNAL_BASE || address >= EXTERNAL_END)
-        invalid("invalid guest data span", address, length);
-    unsigned page = (address - EXTERNAL_BASE) >> REGION_PAGE_SHIFT;
-    if (region_pages[page].epoch == region_epoch) {
-        unsigned cached = region_pages[page].index;
-        if (cached < __atomic_load_n(&slot_count, __ATOMIC_RELAXED)) {
-            const GuestRuntimeRegion *r = &regions[cached];
-            u32 base = __atomic_load_n(&r->guest, __ATOMIC_RELAXED);
-            if (address >= base) {
-                size_t offset = address - base, span = __atomic_load_n(&r->length, __ATOMIC_RELAXED);
-                if (offset < span && length <= span - offset)
-                    return (void *)(__atomic_load_n(&r->host, __ATOMIC_RELAXED) + offset);
-            }
-        }
-    }
     if (changing) {
         for (i = 0; i < slot_count; ++i) {
             const GuestRuntimeRegion *r = &regions[i];
@@ -587,6 +569,32 @@ void *GuestRuntime_ResolveData(void *pointer, size_t length)
     }
     invalid("invalid guest data span", address, length);
     return NULL;
+}
+void *GuestRuntime_ResolveData(void *pointer, size_t length)
+{
+    uintptr_t address = guest_bits((uintptr_t)pointer);
+    void *host;
+    /* Full-width host pointers already address native storage. */
+    if (address > UINT32_MAX) return pointer;
+    if (!GuestRuntime_ActiveMemory) invalid("memory context is unbound", address, length);
+    host = Memories_ResolveSpan(GuestRuntime_ActiveMemory, (u32)address, length, 1);
+    if (host) return host;
+    if (address < EXTERNAL_BASE || address >= EXTERNAL_END)
+        invalid("invalid guest data span", address, length);
+    unsigned page = (address - EXTERNAL_BASE) >> REGION_PAGE_SHIFT;
+    if (region_pages[page].epoch == region_epoch) {
+        unsigned cached = region_pages[page].index;
+        if (cached < __atomic_load_n(&slot_count, __ATOMIC_RELAXED)) {
+            const GuestRuntimeRegion *r = &regions[cached];
+            u32 base = __atomic_load_n(&r->guest, __ATOMIC_RELAXED);
+            if (address >= base) {
+                size_t offset = address - base, span = __atomic_load_n(&r->length, __ATOMIC_RELAXED);
+                if (offset < span && length <= span - offset)
+                    return (void *)(__atomic_load_n(&r->host, __ATOMIC_RELAXED) + offset);
+            }
+        }
+    }
+    return resolve_miss(address, length, page);
 }
 void *GuestRuntime_ResolveFunction(void *pointer)
 {
@@ -657,16 +665,24 @@ u32 GuestRuntime_EncodePointer(void *pointer)
     }
     if (low < function_count && functions[function_host_order[low]].host == host)
         return functions[function_host_order[low]].guest;
-    if (changing) {
-        for (unsigned slot = 0; slot < slot_count; ++slot) {
-            const GuestRuntimeRegion *r = &regions[slot];
-            if (host >= r->host && host - r->host < r->length) return r->guest + (u32)(host - r->host);
-        }
-    }
     for (;;) {
-        unsigned sequence = changing ? 0 : read_begin();
+        unsigned sequence = __atomic_load_n(&registry_sequence, __ATOMIC_ACQUIRE);
         found_host = found_length = found_guest = 0;
         low = 0;
+        /* The thread-local costs a call on Android: only when a change is on. */
+        if ((sequence & 1) && changing) {
+            for (unsigned slot = 0; slot < slot_count; ++slot) {
+                const GuestRuntimeRegion *r = &regions[slot];
+                if (host < r->host || !r->length || host - r->host > r->length) continue;
+                if (host - r->host < r->length) return r->guest + (u32)(host - r->host);
+                low = 1; /* one past it: last of all, below */
+                found_host = r->host;
+                found_length = r->length;
+                found_guest = r->guest;
+            }
+            break;
+        }
+        if (sequence & 1) sequence = read_begin();
         high = __atomic_load_n(&region_count, __ATOMIC_ACQUIRE);
         while (low < high) {
             unsigned middle = low + (high - low) / 2;
@@ -679,7 +695,7 @@ u32 GuestRuntime_EncodePointer(void *pointer)
             found_length = r->length;
             found_guest = r->guest;
         }
-        if (changing || !read_changed(sequence)) break;
+        if (!read_changed(sequence)) break;
     }
     if (low && host - found_host < found_length) return found_guest + (u32)(host - found_host);
     /* Keep one-past encodings for legal pointer arithmetic only after all
