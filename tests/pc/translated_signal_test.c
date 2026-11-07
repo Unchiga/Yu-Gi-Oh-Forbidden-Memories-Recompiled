@@ -11,7 +11,7 @@
 #define BLOCKS 200000
 static unsigned char *blocks[BLOCKS];
 static u32 tokens[BLOCKS];
-static volatile long in_change, total;
+static volatile long in_change, total, handled;
 static volatile int stop;
 static pthread_t main_thread;
 static unsigned cursor;
@@ -36,14 +36,20 @@ static void on_signal(int number)
         FAIL("a token resolved to the wrong block");
     if (GuestRuntime_EncodePointer(blocks[i] + 4) != tokens[i] + 4) FAIL("a block encoded to the wrong token");
     if (GuestRuntime_EncodePointer(blocks[i] + 48) != tokens[i] + 48) FAIL("one past a block encoded wrong");
+    handled++;
 }
 
+/* One signal at a time, and a gap after it: one that is already waiting when the
+ * handler returns runs before the thread's next instruction, so signals sent on a timer
+ * can stop the thread for good in the middle of a change, on a slow machine. */
 static void *kicker(void *unused)
 {
     struct timespec gap = {0, 20000};
     (void)unused;
     while (!stop) {
+        long seen = handled;
         pthread_kill(main_thread, SIGUSR1);
+        while (!stop && handled == seen) sched_yield();
         nanosleep(&gap, NULL);
     }
     return NULL;
