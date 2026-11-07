@@ -1174,7 +1174,20 @@ static void declared_default_is_the_switch(void)
     add_mod("foil", "/mods/foil", "{\"id\": \"foil\", \"card_layout\": {\"frame_styles\": {\"rainbow\": "
             "{\"image\": \"rainbow.png\", \"hand_color\": \"purple\"}}}}", 1, NULL, 0);
     snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
-    CHECK(!CardLayout_FrameStyleOf(2, &style));                                /* no entry: off */
+    CHECK(CardLayout_FrameStyleOf(2, &style));                                 /* no entry, styles alone: on */
+    CHECK(notes == 0);
+    /* A mod of styles alone that declares no switch has its frames always on: a card has them
+     * only by naming one. A whole layout (HD's) with no switch stays off. */
+    reset();
+    add_mod("foil", "/mods/foil", FOIL_MANIFEST, 1, NULL, 0);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "rainbow");
+    CHECK(CardLayout_FrameStyleOf(2, &style) && CardLayout_Active());
+    CHECK(!CardLayout_FrameStyleOf(1, &style));                                /* other cards: retail */
+    CHECK(!strcmp(path_of(2), "/mods/foil/rainbow.png"));
+    CHECK(CardLayout_FullBleed() && CardLayout_Part(CARD_LAYOUT_ATK).x == 11);   /* and its parts */
+    reset();
+    add_mod("hd", "/mods/hd", HD_MANIFEST, 1, NULL, 0);
+    CHECK(!CardLayout_FrameStyleOf(1, &style) && !CardLayout_Active());
     CHECK(notes == 0);
 }
 

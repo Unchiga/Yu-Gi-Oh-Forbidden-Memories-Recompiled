@@ -1422,7 +1422,9 @@ that declared it: its pictures are in that mod's folder, its own parts
 (`art`, `atk`, `stars`, ...) place the card's elements, and it is on while
 **that mod's** `full_bleed` setting is: off until the player turns it on, or
 on from the start when the mod's `settings` entry for `full_bleed` has
-`"default": 1`. The shared keys (`frame_for`,
+`"default": 1`. (A mod whose `card_layout` holds only `frame_styles`, below,
+and that declares no `full_bleed` setting has its styles always on: only the
+cards that name one are drawn in it.) The shared keys (`frame_for`,
 `default_style`, `default_styles`, the layout's own `art`, `atk`, `def`,
 `stars`, `attribute`, `spell`, `digits` and `type_label`, and the older
 per-kind `frame`) come from one layout, as above.
@@ -1440,8 +1442,8 @@ How a card finds its style:
 - A card's own `frame_style` is looked up in the mod that declared the card
   (the one its identity names), then in the newest mod that has it. The style
   is used while its owner's `full_bleed` is on; off, the card is drawn as any
-  other card of the player's frames (so a variant wears what its base card
-  does). A name no layout has is noted in the Mods window and the card keeps
+  other card of the player's frames (so a card made as a copy wears what its
+  original does). A name no layout has is noted in the Mods window and the card keeps
   retail's frame.
 - Every other card is picked by the shared layout's rules, as before. The rules
   look a name up in the shared layout's own styles first, then the others'. A

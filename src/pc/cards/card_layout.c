@@ -141,6 +141,17 @@ static LayoutSource find_source(void)
  * Reading the default here keeps the window and the game of one mind: a
  * mod whose frames are on by default is not drawn without them until the
  * player has touched the switch. */
+static int setting_declared(int mod, const char *key)
+{
+    const JsonValue *spec;
+
+    for (spec = Json_At(Json_Member(Mods_Manifest(mod), "settings"), 0); spec; spec = Json_Next(spec)) {
+        const char *name = Json_String(Json_Member(spec, "key"), NULL);
+        if (name && !strcmp(name, key)) return 1;
+    }
+    return 0;
+}
+
 static int mod_setting(int mod, const char *key)
 {
     const JsonValue *spec;
@@ -156,11 +167,13 @@ static int mod_setting(int mod, const char *key)
     return Mods_Setting(Mods_Id(mod), key, fallback);
 }
 
+static int mod_full_bleed(int mod);
+
 static int full_bleed_of(const LayoutSource *source)
 {
     /* Off until the player turns it on, or the mod's own "full_bleed"
-     * setting says it is on by default. */
-    return source->mod >= 0 && mod_setting(source->mod, "full_bleed") != 0;
+     * setting says it is on by default (a mod of styles alone: always on). */
+    return source->mod >= 0 && mod_full_bleed(source->mod);
 }
 
 /* A mod's own "card_layout" object, NULL for none (or for no mod). */
@@ -170,10 +183,16 @@ static const JsonValue *layout_of(int mod)
 }
 
 /* A mod's own "full_bleed" setting: the switch of its frame styles, each
- * layout mod having one of its own. */
+ * layout mod having one of its own. A mod that only adds styles (a mod of
+ * alternate frames: they are drawn for the cards that name them, no other) and
+ * declares no such setting has them always on; declaring one gives the
+ * player the switch. */
 static int mod_full_bleed(int mod)
 {
-    return mod >= 0 && mod_setting(mod, "full_bleed") != 0;
+    if (mod < 0) return 0;
+    if (!setting_declared(mod, "full_bleed") && styles_only(layout_of(mod)))
+        return Mods_Setting(Mods_Id(mod), "full_bleed", 1) != 0;      /* on, unless a value was stored */
+    return mod_setting(mod, "full_bleed") != 0;
 }
 
 /* Whether any applied layout mod has its frames on. */
