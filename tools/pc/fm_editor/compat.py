@@ -19,7 +19,7 @@ from pathlib import Path
 from .gamedata import FRAME_COLOR_NAMES, TYPE_MAGIC
 from .model import type_named
 
-HOST_API = 24
+HOST_API = 25
 
 # The release each mod API first shipped in, for the hints. An API past the
 # last listed is newer than every release.
@@ -248,6 +248,10 @@ def features(manifest: dict, project=None) -> list:
     menu = manifest.get("menu")
     if isinstance(menu, dict) and "slide" in menu:
         add(23, "the menu's slide (\"slide\")")
+    # --- API 25 -------------------------------------------------------------
+    for entry in _entries(manifest.get("cards")):
+        if "variant_permille" in entry or "variant_label" in entry:
+            add(25, "a card that is a variant of another (\"variant_permille\")")
     return out
 
 

@@ -228,6 +228,18 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual((api, len(reasons)), (18, 2))
         self.assertIn("newer than v0.3.0", compat.release_text(18))
 
+    def test_api_25_variants(self):
+        """A card's variant keys (notes/more-cards.md, "Variants"): a game of
+        API 24 would read the copy as an ordinary one that takes its base's
+        place in an even share, or not at all."""
+        for entry in ({"copy": 1, "id": "a", "variant_permille": 50},
+                      {"copy": 1, "id": "a", "variant_permille": 50, "variant_label": "Rainbow foil"},
+                      {"copy": 1, "id": "a", "variant_label": "Rainbow foil"}):
+            with self.subTest(entry=entry):
+                self.assertEqual(self.needs({"cards": [entry]}), 25)
+        self.assertEqual(self.needs({"cards": [{"copy": 1, "id": "a", "drops": False}]}), 0)
+        self.assertIn("newer than v0.3.0", compat.release_text(25))
+
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})
         self.assertEqual(api, 11)
