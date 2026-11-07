@@ -119,6 +119,11 @@ int CardLayout_FramePaths(char (*paths)[1024], int max);
  * the retail digits are drawn then. */
 int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step);
 
+/* Whether the active style keeps the game's own frame ("game_frame") and does not give its name (CardLayout_GameTitle)
+ * or its ATK (dfd 0) or DFD (dfd 1) word (CardLayout_GameLabel): the game's own is then drawn where it puts it. */
+int CardLayout_GameTitle(void);
+int CardLayout_GameLabel(int dfd);
+
 /* Whether the active style draws the card's picture under the name, the stars, the element and ATK/DEF
  * ("parts_over_art": true in its frame style; the picture stays over the frame): a full art card's, which
  * runs past its window. Off, as it was always, the picture is over those (a layout that relies on it covers

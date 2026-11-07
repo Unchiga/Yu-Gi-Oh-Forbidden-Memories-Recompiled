@@ -331,6 +331,30 @@ int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step)
     return *w > 0 && *h > 0 && *step > 0;
 }
 
+/* Whether the active style keeps the game's own frame ("game_frame") and does not give the part `key`: the name, the
+ * words and the numbers are then the game's own, where it puts them, though the style is full bleed. */
+static int game_look(const char *key)
+{
+    LayoutSource source = current_source();
+    const JsonValue *styles, *style_node;
+
+    if (source.mod < 0 || !full_bleed_of(&source)) return 0;
+    styles = Json_Member(source.layout, "frame_styles");
+    style_node = styles && *current.name ? Json_Member(styles, current.name) : NULL;
+    if (!Json_Bool(Json_Member(style_node, "game_frame"), 0)) return 0;
+    return !strcmp(key, "digits") ? 1 : !Json_Member(style_node, key);
+}
+
+int CardLayout_GameTitle(void)
+{
+    return game_look("title");
+}
+
+int CardLayout_GameLabel(int dfd)
+{
+    return game_look(dfd ? "dfd_label" : "atk_label");
+}
+
 int CardLayout_PartsOverArt(void)
 {
     LayoutSource source = current_source();
@@ -968,7 +992,7 @@ CardLayoutPart CardLayout_Part(CardLayoutElement element)
          * localized name. A full-bleed frame keeps it only when the style
          * (or shared layout) explicitly supplies a title placement. */
         part = layout_part(style_node, source.layout, "title");
-        p.visible = !full_bleed || part != NULL;
+        p.visible = !full_bleed || part != NULL || game_look("title");
         point(part, &p.x, &p.y, 0xC, 0xE);
         tint(part, &p.r, &p.g, &p.b);
         break;
@@ -1006,12 +1030,16 @@ CardLayoutPart CardLayout_Part(CardLayoutElement element)
     case CARD_LAYOUT_ATK:
         /* Spell: never reached (same gate as CARD_LAYOUT_LEVEL_STARS). */
         part = digit_stat_part(style_node, source.layout, "atk");
-        point(part, &p.x, &p.y, 0x61, 0x9D);
+        /* On the game's own frame the numbers' default is the game's place: 0x61, 0x9D is their top left corner
+         * and a full bleed's x, y their centre (four digits 6 wide and 13 high). */
+        if (!part && game_look("digits")) point(part, &p.x, &p.y, 0x61 + 12, 0x9D + 6);
+        else point(part, &p.x, &p.y, 0x61, 0x9D);
         tint(part, &p.r, &p.g, &p.b);
         break;
     case CARD_LAYOUT_DEF:
         part = digit_stat_part(style_node, source.layout, "def");
-        point(part, &p.x, &p.y, 0x61, 0xAB);
+        if (!part && game_look("digits")) point(part, &p.x, &p.y, 0x61 + 12, 0xAB + 6);
+        else point(part, &p.x, &p.y, 0x61, 0xAB);
         tint(part, &p.r, &p.g, &p.b);
         break;
     case CARD_LAYOUT_ATK_LABEL:

@@ -1291,7 +1291,10 @@ A full-bleed style with no `image` has no frame at all (the game's own is
 left out, the card is the picture and its parts). `"game_frame": true` keeps
 the game's own frame behind it: the card's colour (monster, magic, trap...),
 its name bar and stat boxes, under a picture and parts the style places where
-it likes (the FM Editor's Full art uses it).
+it likes (the FM Editor's Full art uses it). On that frame the card's name, its
+ATK and DFD words and its numbers are the game's own, where the game puts them
+(`title`, `atk_label`, `dfd_label` and `digits`' `atk`/`def` left out), and a
+part the style gives is the style's, as in any full bleed.
 
 ### Frame styles and the rules that pick them
 

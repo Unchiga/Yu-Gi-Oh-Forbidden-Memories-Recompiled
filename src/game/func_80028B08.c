@@ -528,7 +528,7 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
     PRM->xy.h.y = win->field_30.h.field_32 + title_layout.y;
     PRM->rgb = CardLayout_Tint(win->field_0C, title_layout.r, title_layout.g, title_layout.b);
     if (title_layout.visible) {
-        if (!HdText_Enabled() && CardLayout_FullBleed() &&
+        if (!HdText_Enabled() && CardLayout_FullBleed() && !CardLayout_GameTitle() &&
             CardLayout_DrawTitleMask(PRM, PRM->xy.h.x, PRM->xy.h.y, arg1, arg, PRM->rgb, EXT)) {
             /* The low-resolution white mask was submitted. */
         } else
@@ -562,7 +562,7 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
          * entirely while one is active -- the boxes read by position
          * alone, no label text, as the reference layout this feature
          * followed did. */
-        if (!CardLayout_FullBleed() && atk_label_layout.visible)
+        if ((!CardLayout_FullBleed() || CardLayout_GameLabel(0)) && atk_label_layout.visible)
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;
@@ -572,7 +572,7 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             PRM->cxcy.h.cy = 0xF9;
         }
 #ifdef MEMORIES_PC
-        if (!CardLayout_FullBleed() && def_label_layout.visible)
+        if ((!CardLayout_FullBleed() || CardLayout_GameLabel(1)) && def_label_layout.visible)
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;

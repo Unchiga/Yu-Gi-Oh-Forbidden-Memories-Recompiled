@@ -862,6 +862,45 @@ static void game_frame_kept(void)
     CHECK(CardLayout_FullBleed() && !CardLayout_Part(CARD_LAYOUT_FRAME).visible);    /* its own picture replaces it */
 }
 
+/* On the game's own frame, the name, the words and the numbers are the game's unless the style gives them. */
+static void game_look_kept(void)
+{
+    CardLayoutPart p;
+
+    reset();
+    add_mod("x", "/mods/x",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {"
+            "\"bare\": {\"full_bleed\": true, \"hand_color\": \"gold\"},"
+            "\"kept\": {\"full_bleed\": true, \"game_frame\": true, \"hand_color\": \"gold\"},"
+            "\"given\": {\"full_bleed\": true, \"game_frame\": true, \"hand_color\": \"gold\","
+            " \"title\": {\"x\": 5, \"y\": 6}, \"atk_label\": {\"image\": \"a.png\"},"
+            " \"digits\": {\"atk\": {\"x\": 50, \"y\": 60}}}}}}",
+            1, "full_bleed", 1);
+    snprintf(fake_frame_style[1], sizeof(fake_frame_style[1]), "%s", "bare");
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "kept");
+    snprintf(fake_frame_style[3], sizeof(fake_frame_style[3]), "%s", "given");
+    CardLayout_SetCard(1);                                           /* a full bleed with no frame: nothing of the game's */
+    CHECK(!CardLayout_GameTitle() && !CardLayout_GameLabel(0) && !CardLayout_GameLabel(1));
+    CHECK(!CardLayout_Part(CARD_LAYOUT_TITLE).visible);
+    CHECK(CardLayout_Part(CARD_LAYOUT_ATK).x == 0x61 && CardLayout_Part(CARD_LAYOUT_ATK).y == 0x9D);
+    CardLayout_SetCard(2);                                           /* the game's frame: its name, words, numbers */
+    CHECK(CardLayout_GameTitle() && CardLayout_GameLabel(0) && CardLayout_GameLabel(1));
+    p = CardLayout_Part(CARD_LAYOUT_TITLE);
+    CHECK(p.visible && p.x == 0xC && p.y == 0xE);
+    p = CardLayout_Part(CARD_LAYOUT_ATK);
+    CHECK(p.x == 0x61 + 12 && p.y == 0x9D + 6);                      /* the corner of the game's, as a centre */
+    p = CardLayout_Part(CARD_LAYOUT_DEF);
+    CHECK(p.x == 0x61 + 12 && p.y == 0xAB + 6);
+    CardLayout_SetCard(3);                                           /* what the style gives is its own */
+    CHECK(!CardLayout_GameTitle() && !CardLayout_GameLabel(0) && CardLayout_GameLabel(1));
+    p = CardLayout_Part(CARD_LAYOUT_TITLE);
+    CHECK(p.visible && p.x == 5 && p.y == 6);
+    p = CardLayout_Part(CARD_LAYOUT_ATK);
+    CHECK(p.x == 50 && p.y == 60);
+    p = CardLayout_Part(CARD_LAYOUT_DEF);
+    CHECK(p.x == 0x61 + 12 && p.y == 0xAB + 6);                      /* DEF not given: the game's */
+}
+
 /* "parts_over_art": the picture goes under the card's other parts, for the style that says so. */
 static void parts_over_art(void)
 {
@@ -1315,6 +1354,7 @@ int main(void)
     star_picture();
     parts_over_art();
     game_frame_kept();
+    game_look_kept();
     per_style_layout();
     partial_art_rect_uses_retail_defaults();
     frame_box_is_bounded();
