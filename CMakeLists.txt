@@ -946,6 +946,11 @@ if(BUILD_TESTING)
             target_compile_options(memories_translated_arena_test PRIVATE -O2)
         endif()
         add_test(NAME pc_translated_arena COMMAND memories_translated_arena_test)
+        add_executable(memories_saved_text_test tests/pc/saved_text_test.c
+            src/pc/guest/translated_runtime.c src/pc/guest/translated_alloc.c src/pc/memory.c)
+        target_include_directories(memories_saved_text_test PRIVATE src)
+        target_compile_definitions(memories_saved_text_test PRIVATE _DEFAULT_SOURCE)
+        add_test(NAME pc_saved_text COMMAND memories_saved_text_test)
         set_tests_properties(pc_translated_arena PROPERTIES TIMEOUT 60)
         # The registry from several threads, as Import and the picture reader
         # use it beside the game: this file natively, with no game around it.

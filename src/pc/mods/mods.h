@@ -226,10 +226,12 @@ unsigned Mods_DiscSignature(void);
  * model in slot `slot`'s window, 64x256 halfwords each, and how many; NULL
  * and 0 for none. */
 int Mods_ModelCount(void);
-/* A model's "base" once the cards can say what it names: Cards_Build sets it, and
- * Mods_Model's `base` is NULL from then on. 0 from Mods_ModelBaseCard before. */
+/* A model's "base", once the cards can say what it names. Mods_ModelBaseCard: 0
+ * until then, when Mods_Model's `base` has it; from then on Mods_Model's `base` is
+ * NULL, and a model dropped since still answers (it loads as that). */
 int Mods_ModelBaseCard(int i, int *card);
-void Mods_ModelSetBaseCard(int i, int card);
+/* As Cards_Build ends: no block a save state holds keeps a manifest's value. */
+void Mods_ModelsSettle(int (*card)(const struct JsonValue *));
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod);
 int Mods_ModelSector(int i);
 int Mods_ModelRead(int lba, int sectors, void *out);

@@ -156,7 +156,6 @@ int Cards_TrapThreshold(int id, int fallback)
                ? (int)trap_thresholds[id] - 1 : fallback;
 }
 static int retail_monster(int id);
-static int cards_built;
 /* A model a mod adds, by its model id or its name ("models", Mods_Model):
  * its place in Mods_Model's list, or -1. A later mod's name wins. */
 static int mod_model(int model)
@@ -194,7 +193,6 @@ static int model_base(int model)
     if (!Mods_ModelBaseCard(i, &id)) {
         Mods_Model(i, NULL, &base, NULL);
         id = Cards_Reference(base);
-        if (cards_built) Mods_ModelSetBaseCard(i, id);
     }
     return retail_monster(id) ? id : 0;
 }
@@ -2033,8 +2031,7 @@ void Cards_Build(void)
     UiConfig_Load();
     /* What the models' "base"s name is settled: the ids, not the manifest, go in
      * a save state. */
-    cards_built = 1;
-    for (int i = 0; i < Mods_ModelCount(); i++) model_base(CARDS_MODEL_MOD_FIRST + i);
+    Mods_ModelsSettle(Cards_Reference);
 }
 
 /* --- what the game asks -------------------------------------------- */
