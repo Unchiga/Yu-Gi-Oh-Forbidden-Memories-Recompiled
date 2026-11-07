@@ -79,10 +79,13 @@
  * rather than the default case, since the default case is exactly the
  * extent-coupled path this function exists to avoid. */
 static void CardLayout_DrawArt(SpritePrim *src, s32 x, s32 y, s32 w, s32 h,
-                                s32 ot, s32 mode, Func80028B08Extra *EXT)
+                                s32 ot, s32 mode, Func80028B08Extra *EXT, s32 clip_x, s32 clip_y, s32 clip_w,
+                                s32 clip_h)
 {
     POLY_GT4 art;
     u32 attr = src->attribute;
+    s32 u_left, u_right, v_top, v_bottom;
+    s32 x0 = x, y0 = y, x1 = x + w, y1 = y + h;
     s32 projected = ((u32)mode >> 16) == 0xF;
     s32 packet_attr = (projected ? 0x04000000 : 0) | (attr & 0x70000000);
     s32 art_mode = (mode & 0xFFFF) | 0x50000;
@@ -118,8 +121,31 @@ static void CardLayout_DrawArt(SpritePrim *src, s32 x, s32 y, s32 w, s32 h,
         }
     }
 
-    setXY4(&art, (short)x, (short)y, (short)(x + w), (short)y,
-           (short)x, (short)(y + h), (short)(x + w), (short)(y + h));
+    /* A picture bigger than the card (a full art card's: its rectangle runs past the card's edges) is
+     * cut at the card's box (clip_w/clip_h 0: not cut): the rectangle shrinks to what is inside and the
+     * texture's corners move in the same proportion. A picture inside the box is drawn as ever. */
+    if (clip_w > 0 && clip_h > 0 && w > 0 && h > 0 &&
+        (x0 < clip_x || y0 < clip_y || x1 > clip_x + clip_w || y1 > clip_y + clip_h)) {
+        s32 nx0 = x0 < clip_x ? clip_x : x0, ny0 = y0 < clip_y ? clip_y : y0;
+        s32 nx1 = x1 > clip_x + clip_w ? clip_x + clip_w : x1, ny1 = y1 > clip_y + clip_h ? clip_y + clip_h : y1;
+
+        if (nx1 <= nx0 || ny1 <= ny0) return;
+        u_left = art.u0;
+        u_right = art.u1;
+        v_top = art.v0;
+        v_bottom = art.v2;
+        art.u0 = art.u2 = (u8)(u_left + ((u_right - u_left) * (nx0 - x0) + (u_right >= u_left ? w / 2 : -w / 2)) / w);
+        art.u1 = art.u3 = (u8)(u_left + ((u_right - u_left) * (nx1 - x0) + (u_right >= u_left ? w / 2 : -w / 2)) / w);
+        art.v0 = art.v1 = (u8)(v_top + ((v_bottom - v_top) * (ny0 - y0) + (v_bottom >= v_top ? h / 2 : -h / 2)) / h);
+        art.v2 = art.v3 = (u8)(v_top + ((v_bottom - v_top) * (ny1 - y0) + (v_bottom >= v_top ? h / 2 : -h / 2)) / h);
+        x0 = nx0;
+        y0 = ny0;
+        x1 = nx1;
+        y1 = ny1;
+    }
+
+    setXY4(&art, (short)x0, (short)y0, (short)x1, (short)y0,
+           (short)x0, (short)y1, (short)x1, (short)y1);
 
     DisplayObject_SubmitPacket((SpritePrim *)packet_attr, (Func80028B08Ctx *)&art,
                                ot, art_mode, EXT);
@@ -467,7 +493,8 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
     if (art_layout.visible && art_layout.w != 0) {
         CardLayout_DrawArt(PRM, win->field_30.h.field_30 + art_layout.x,
                            win->field_30.h.field_32 + art_layout.y,
-                           art_layout.w, art_layout.h, arg1, arg, EXT);
+                           art_layout.w, art_layout.h, arg1, arg, EXT,
+                           win->field_30.h.field_30, win->field_30.h.field_32, frame_layout.w, frame_layout.h);
     } else if (art_layout.visible)
 #endif
     DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
@@ -810,7 +837,7 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
     if (attr_layout.visible && attr_layout.w != 0) {
         CardLayout_DrawArt(PRM, win->field_30.h.field_30 + attr_layout.x,
                            win->field_30.h.field_32 + attr_layout.y,
-                           attr_layout.w, attr_layout.h, arg1, arg, EXT);
+                           attr_layout.w, attr_layout.h, arg1, arg, EXT, 0, 0, 0, 0);
     } else if (attr_layout.visible)
 #endif
     DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);

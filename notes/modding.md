@@ -1266,6 +1266,16 @@ This makes a position-only override such as `"art": {"y": 84}` valid: it
 keeps the retail size and X position while moving the picture down. Leave
 the whole `art` object out to keep the unmodified retail art draw path.
 
+The rectangle may be bigger than the card, or start before its top-left corner
+(`"art": {"x": -5, "y": 0, "width": 150, "height": 205}`): what is past the
+card's edges (its `width` x `height`, 140 x 196 as the frame's own) is cut off,
+so a full art card's picture can run past its frame. The picture is always
+stretched whole into the rectangle: a card's own `art` PNG is cut to the
+picture's 102:96 shape when it is read, so a picture of another shape (a tall
+one for a full art card) is squeezed to that shape in the PNG, and the
+rectangle gives it its own shape back (the FM Editor's Variants tab does that
+for **Full art**).
+
 ### Frame styles and the rules that pick them
 
 A card is drawn in a frame **style**: a picture and the color its small card
