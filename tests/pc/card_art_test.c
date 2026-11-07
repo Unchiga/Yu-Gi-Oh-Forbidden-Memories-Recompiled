@@ -205,6 +205,20 @@ int main(int argc, char **argv)
         CHECK(CardArt_HasHoles(path), "the wide picture has see-through parts");
         for (i = 0; i < CARD_ART_WIDTH * CARD_ART_HEIGHT; i++) clear += see[CARD_ART_PIXELS + i] == 0;
         CHECK(clear > 0 && see[CARD_ART_CLUT] == 0 && see[CARD_ART_CLUT + 1] == 0, "its see-through texels stay clear");
+        {
+            /* the small picture too (what the hand shows), from the same picture */
+            int thumb_clear = 0;
+            memset(see, 0, sizeof(see));
+            CHECK(CardArt_ThumbnailFromImageSeeThrough(path, see, why, sizeof(why)), "%s: %s", pictures[which].name, why);
+            for (i = 0; i < CARD_THUMB_WIDTH * CARD_THUMB_HEIGHT; i++) thumb_clear += see[CARD_THUMB_PIXELS + i] == 0;
+            CHECK(thumb_clear > 0 && see[CARD_THUMB_CLUT] == 0 && see[CARD_THUMB_CLUT + 1] == 0,
+                  "its small picture keeps the clear texels too");
+            memset(see, 0, sizeof(see));
+            CHECK(CardArt_ThumbnailFromImage(path, see, why, sizeof(why)), "%s: %s", pictures[which].name, why);
+            thumb_clear = 0;
+            for (i = 0; i < CARD_THUMB_WIDTH * CARD_THUMB_HEIGHT; i++) thumb_clear += see[CARD_THUMB_PIXELS + i] == 0;
+            CHECK(thumb_clear == 0, "the small picture is over black unless asked otherwise");
+        }
         remove(path);
     }
     if (failures) return 1;

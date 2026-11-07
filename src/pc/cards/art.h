@@ -33,6 +33,7 @@ int CardArt_FromImage(const char *path, unsigned char *record, char *why, size_t
 /* The same, but a part of the picture that is mostly transparent stays see-through (index 0, as the field
  * art's): what is behind the picture shows there. A card's "art_transparent". */
 int CardArt_FromImageSeeThrough(const char *path, unsigned char *record, char *why, size_t why_size);
+int CardArt_ThumbnailFromImageSeeThrough(const char *path, unsigned char *record, char *why, size_t why_size);
 int CardArt_ThumbnailFromImage(const char *path, unsigned char *record, char *why, size_t why_size);
 /* Like CardArt_FromImage, but keeps the PNG's own transparency as a
  * silhouette instead of flattening it to black: for "field_art"

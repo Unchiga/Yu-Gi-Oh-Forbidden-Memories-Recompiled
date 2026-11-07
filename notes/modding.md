@@ -1278,8 +1278,9 @@ for **Full art**).
 
 A card's own `art` PNG may have transparent parts (a cut-out figure on a clear
 background) when the card says `"art_transparent": true`: a pixel under half
-alpha is then see-through, so the frame behind the picture shows there. (Left
-out, a picture is drawn over black, as always.)
+alpha is then see-through, so the frame behind the picture shows there; the
+card's `thumbnail` (the small picture the hand shows) and the larger copies of
+both keep it too. (Left out, a picture is drawn over black, as always.)
 
 The picture is drawn over the card's name, stars, element and ATK/DEF, which
 a layout like the HD pack's relies on (it covers the game's own "[Trap Card]"

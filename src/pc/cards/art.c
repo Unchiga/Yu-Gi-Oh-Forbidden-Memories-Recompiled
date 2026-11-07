@@ -444,6 +444,7 @@ static void put_clut(unsigned char *out, const unsigned short *clut, int entries
 }
 
 static int holes_into(const char *path, unsigned char *record);
+static int thumbnail_holes_into(const char *path, unsigned char *record);
 
 static int image_into(const char *path, unsigned char *record, int thumbnail_only, int see_through, char *why,
                       size_t why_size)
@@ -464,9 +465,11 @@ static int image_into(const char *path, unsigned char *record, int thumbnail_onl
         quantize(art, CARD_ART_WIDTH * CARD_ART_HEIGHT, 255, clut, record + CARD_ART_PIXELS);
         put_clut(record + CARD_ART_CLUT, clut, 256);
     }
-    resample(source, width, height, art, CARD_THUMB_WIDTH, CARD_THUMB_HEIGHT);
-    quantize(art, CARD_THUMB_WIDTH * CARD_THUMB_HEIGHT, 63, clut, record + CARD_THUMB_PIXELS);
-    put_clut(record + CARD_THUMB_CLUT, clut, 64);
+    if (!(see_through && thumbnail_holes_into(path, record))) {
+        resample(source, width, height, art, CARD_THUMB_WIDTH, CARD_THUMB_HEIGHT);
+        quantize(art, CARD_THUMB_WIDTH * CARD_THUMB_HEIGHT, 63, clut, record + CARD_THUMB_PIXELS);
+        put_clut(record + CARD_THUMB_CLUT, clut, 64);
+    }
     free(art);
     free(source);
     return 1;
@@ -485,6 +488,11 @@ int CardArt_FromImageSeeThrough(const char *path, unsigned char *record, char *w
 int CardArt_ThumbnailFromImage(const char *path, unsigned char *record, char *why, size_t why_size)
 {
     return image_into(path, record, 1, 0, why, why_size);
+}
+
+int CardArt_ThumbnailFromImageSeeThrough(const char *path, unsigned char *record, char *why, size_t why_size)
+{
+    return image_into(path, record, 1, 1, why, why_size);
 }
 
 /* Like load_png, but keeps the PNG's own alpha instead of flattening it
@@ -573,11 +581,12 @@ static void resample_alpha(const unsigned char *source, int sw, int sh, unsigned
  * see-through: index 0, never quantize's own output (every real pixel is 1-255), its CLUT entry the PS1's own
  * transparent color, 0x0000 (to555's own comment) -- unlike quantize's own default for it, 0x8000, opaque black,
  * since index 0 never reaches a real pixel anywhere else a card's art is drawn. */
-static int art_with_holes(const Rgb *source, const unsigned char *alpha, int width, int height, unsigned char *record)
+static int record_with_holes(const Rgb *source, const unsigned char *alpha, int width, int height, int w, int h,
+                              int colors, unsigned char *pixels, unsigned char *clut_out, int entries)
 {
     int i;
-    Rgb *art = malloc(CARD_ART_WIDTH * CARD_ART_HEIGHT * sizeof(*art));
-    unsigned char *art_alpha = malloc(CARD_ART_WIDTH * CARD_ART_HEIGHT);
+    Rgb *art = malloc((size_t)w * h * sizeof(*art));
+    unsigned char *art_alpha = malloc((size_t)w * h);
     unsigned short clut[256];
 
     if (!art || !art_alpha) {
@@ -585,17 +594,23 @@ static int art_with_holes(const Rgb *source, const unsigned char *alpha, int wid
         free(art_alpha);
         return 0;
     }
-    resample(source, width, height, art, CARD_ART_WIDTH, CARD_ART_HEIGHT);
-    resample_alpha(alpha, width, height, art_alpha, CARD_ART_WIDTH, CARD_ART_HEIGHT);
-    quantize(art, CARD_ART_WIDTH * CARD_ART_HEIGHT, 255, clut, record + CARD_ART_PIXELS);
+    resample(source, width, height, art, w, h);
+    resample_alpha(alpha, width, height, art_alpha, w, h);
+    quantize(art, w * h, colors, clut, pixels);
     clut[0] = 0;
-    for (i = 0; i < CARD_ART_WIDTH * CARD_ART_HEIGHT; i++) {
-        if (art_alpha[i] < FIELD_ART_ALPHA_CUTOFF) record[CARD_ART_PIXELS + i] = 0;
+    for (i = 0; i < w * h; i++) {
+        if (art_alpha[i] < FIELD_ART_ALPHA_CUTOFF) pixels[i] = 0;
     }
-    put_clut(record + CARD_ART_CLUT, clut, 256);
+    put_clut(clut_out, clut, entries);
     free(art);
     free(art_alpha);
     return 1;
+}
+
+static int art_with_holes(const Rgb *source, const unsigned char *alpha, int width, int height, unsigned char *record)
+{
+    return record_with_holes(source, alpha, width, height, CARD_ART_WIDTH, CARD_ART_HEIGHT, 255,
+                             record + CARD_ART_PIXELS, record + CARD_ART_CLUT, 256);
 }
 
 int CardArt_FieldArtFromImage(const char *path, unsigned char *record, char *why, size_t why_size)
@@ -622,6 +637,22 @@ int CardArt_HasHoles(const char *path)
 
     if (!source) return 0;
     for (i = 0; i < width * height && !holes; i++) holes = alpha[i] < FIELD_ART_ALPHA_CUTOFF;
+    free(source);
+    free(alpha);
+    return holes;
+}
+
+/* The small picture of a card (40x32, 63 colors) with see-through parts: the same, for the picture the hand shows. */
+static int thumbnail_holes_into(const char *path, unsigned char *record)
+{
+    int width, height, i, holes = 0;
+    unsigned char *alpha;
+    Rgb *source = load_png_rgba(path, &width, &height, &alpha);
+
+    if (!source) return 0;
+    for (i = 0; i < width * height && !holes; i++) holes = alpha[i] < FIELD_ART_ALPHA_CUTOFF;
+    if (holes) holes = record_with_holes(source, alpha, width, height, CARD_THUMB_WIDTH, CARD_THUMB_HEIGHT, 63,
+                                         record + CARD_THUMB_PIXELS, record + CARD_THUMB_CLUT, 64);
     free(source);
     free(alpha);
     return holes;
