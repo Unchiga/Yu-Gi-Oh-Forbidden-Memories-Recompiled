@@ -612,6 +612,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_cards_order_found COMMAND memories_cards_order_test found)
     add_test(NAME pc_cards_order_moved COMMAND memories_cards_order_test b-first)
+    add_test(NAME pc_cards_order_gone COMMAND memories_cards_order_test gone)
     # Custom monster types (API 15, cards.c's "card_types"):
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods

@@ -4638,8 +4638,15 @@ void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const 
         Mod *mod = &mods[loaded[i]];
         if (!mod->active || !mod->cards.filled) continue;
         mod->cards_read = Mods_CardsDocument(loaded[i]);
-        if (mod->cards_read) visit(mod->id, mod->directory, Json_Root(mod->cards_read), context);
-        else note(mod, "cards: cannot read them from its mod.json");
+        if (mod->cards_read) {
+            visit(mod->id, mod->directory, Json_Root(mod->cards_read), context);
+            continue;
+        }
+        /* The file changed or went since the scan. Never active without its cards:
+         * the tables that name them are read after this. */
+        activate(loaded[i], 0);
+        mod->broken = 1;
+        note(mod, "cards: cannot read them from its mod.json");
     }
 }
 void Mods_CardsRelease(void)

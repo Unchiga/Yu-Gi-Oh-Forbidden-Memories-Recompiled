@@ -147,8 +147,6 @@ static void stream_tests(void)
     seen_sum = count = 0;
     assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1 && error[0]);
     Json_Free(document);
-    write_stream("{\"fusions\": [{\"n\": 1}]}");
-    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
     /* Two lists, either way round, each with its own hash and read whole. */
     {
         static const char *const both[] = {"fusions", "cards"};
@@ -170,6 +168,8 @@ static void stream_tests(void)
         assert(again[0].hash != again[1].hash);
         Json_Free(document);
     }
+    write_stream("{\"fusions\": [{\"n\": 1}]}");
+    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
     Json_Free(document);
     /* Whether anything is in it. */
     assert(list.filled);
