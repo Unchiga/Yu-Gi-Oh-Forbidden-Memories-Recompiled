@@ -40,20 +40,24 @@ char *Memories_WideToUtf8(const wchar_t *wide)
     return text;
 }
 
-int Memories_FileTimes(const char *path, long long *size, long long *written, long long *created)
+int Memories_FileTimes(const char *path, long long *size, long long *written, long long *changed)
 {
-    WIN32_FILE_ATTRIBUTE_DATA data;
+    FILE_BASIC_INFO basic;
+    LARGE_INTEGER length;
     wchar_t *wide = Memories_Utf8ToWide(path);
+    HANDLE file;
     BOOL ok;
     if (!wide) return -1;
-    ok = GetFileAttributesExW(wide, GetFileExInfoStandard, &data);
+    file = CreateFileW(wide, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                       OPEN_EXISTING, 0, NULL);
     free(wide);
+    if (file == INVALID_HANDLE_VALUE) return -1;
+    ok = GetFileInformationByHandleEx(file, FileBasicInfo, &basic, sizeof(basic)) && GetFileSizeEx(file, &length);
+    CloseHandle(file);
     if (!ok) return -1;
-    *size = (long long)(((unsigned long long)data.nFileSizeHigh << 32) | data.nFileSizeLow);
-    *written = (long long)(((unsigned long long)data.ftLastWriteTime.dwHighDateTime << 32) |
-                           data.ftLastWriteTime.dwLowDateTime);
-    *created = (long long)(((unsigned long long)data.ftCreationTime.dwHighDateTime << 32) |
-                           data.ftCreationTime.dwLowDateTime);
+    *size = length.QuadPart;
+    *written = basic.LastWriteTime.QuadPart;
+    *changed = basic.ChangeTime.QuadPart;
     return 0;
 }
 

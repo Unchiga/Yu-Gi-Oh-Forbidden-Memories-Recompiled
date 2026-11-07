@@ -103,17 +103,17 @@ static uint64_t mix(uint64_t hash, const void *data, size_t size)
 
 /* Its size and its times to the nanosecond, as far as the system tells them. The time
  * of the last change, not only of the last write: a tool that keeps a file's time
- * (an unzip, a copy) keeps the second and cannot keep the first. On Windows, the time
- * the file was created instead. 0 when there is no such file. */
+ * (an unzip, a copy) keeps the second and cannot keep the first. 0 when there is no
+ * such file. */
 static int file_stamp(const char *path, int64_t stamp[5])
 {
 #ifdef _WIN32
-    long long size, written, created;
-    if (Memories_FileTimes(path, &size, &written, &created)) return 0;
+    long long size, written, changed;
+    if (Memories_FileTimes(path, &size, &written, &changed)) return 0;
     stamp[0] = size;
     stamp[1] = written;
     stamp[2] = 0;
-    stamp[3] = created;
+    stamp[3] = changed;
     stamp[4] = 0;
 #else
     struct stat info;
