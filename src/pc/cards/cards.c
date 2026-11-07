@@ -190,8 +190,10 @@ static int model_base(int model)
     const JsonValue *base = NULL;
     int i = mod_model(model), id;
     if (i < 0) return 0;
-    Mods_Model(i, NULL, &base, NULL);
-    id = Cards_Reference(base);
+    if (!Mods_ModelBaseCard(i, &id)) {
+        Mods_Model(i, NULL, &base, NULL);
+        id = Cards_Reference(base);
+    }
     return retail_monster(id) ? id : 0;
 }
 int Cards_ModelStatsIndex(int model)
@@ -2027,6 +2029,9 @@ void Cards_Build(void)
     /* The duel's pictures (ui_config.h), read now so that a mistake in a
      * mod's "ui" is noted in the Mods window before any duel. */
     UiConfig_Load();
+    /* What the models' "base"s name is settled: the ids, not the manifest, go in
+     * a save state. */
+    Mods_ModelsSettle(Cards_Reference);
 }
 
 /* --- what the game asks -------------------------------------------- */
