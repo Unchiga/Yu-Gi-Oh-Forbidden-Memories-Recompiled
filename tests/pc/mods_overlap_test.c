@@ -115,6 +115,71 @@ static char *read_all(const char *path)
     return text;
 }
 
+/* Lists as Mods_EachFusion gives them: rules gone when `each` returns. */
+static const JsonValue *stream_lists[4];
+static int streamed;
+static long stream_fusions(int mod, int (*each)(const JsonValue *, long, void *), void *each_context, void *context)
+{
+    long i = 0;
+    (void)context;
+    streamed++;
+    for (const JsonValue *rule = Json_At(stream_lists[mod], 0); rule; rule = Json_Next(rule)) each(rule, i++, each_context);
+    return i;
+}
+static long stream_bytes(int mod, void *context)
+{
+    (void)context;
+    return (long)Json_Count(stream_lists[mod]);
+}
+
+/* The same mods give the same lines with their fusions in the manifests and
+ * read from the files. */
+static void streamed_fusions(void)
+{
+    static const char *const in_manifest[3] = {
+        "{\"id\": \"a\", \"fusions\": [{\"with\": [1, 2], \"result\": 3}, {\"with\": [4, 5], \"result\": 6},"
+        " {\"remove\": 7}, {\"with\": [8, 9], \"result\": 10}]}",
+        "{\"id\": \"b\", \"fusions\": [{\"with\": [2, 1], \"result\": 11}, {\"remove\": 7}, {\"remove\": \"all\"}]}",
+        "{\"id\": \"c\", \"fusions\": [{\"with\": [9, 8], \"result\": 10}, {\"remove\": \"all\"},"
+        " {\"with\": [1, 2], \"result\": 12}]}"};
+    JsonDocument *with[3], *empty[3];
+    ModsOverlapMod held[3], read[3];
+    ModsOverlapSource source = {0};
+    ModsOverlaps *a, *b;
+    char error[128], x[512], y[512];
+    memset(held, 0, sizeof(held));
+    memset(read, 0, sizeof(read));
+    for (int i = 0; i < 3; i++) {
+        with[i] = Json_Parse(in_manifest[i], error, sizeof(error));
+        empty[i] = Json_Parse("{\"fusions\": []}", error, sizeof(error));
+        assert(with[i] && empty[i]);
+        stream_lists[i] = Json_Member(Json_Root(with[i]), "fusions");
+        held[i].id = read[i].id = i == 0 ? "a" : i == 1 ? "b" : "c";
+        held[i].name = read[i].name = held[i].id;
+        held[i].manifest = Json_Root(with[i]);
+        read[i].manifest = Json_Root(empty[i]);
+    }
+    a = Mods_OverlapCompute(held, 3, &source);
+    source.fusions = stream_fusions;
+    source.fusion_bytes = stream_bytes;
+    b = Mods_OverlapCompute(read, 3, &source);
+    assert(a && b && streamed);
+    assert(Mods_OverlapCount(a) == Mods_OverlapCount(b) && Mods_OverlapCount(a) >= 3);
+    for (int i = 0; i < Mods_OverlapCount(a); i++) {
+        Mods_OverlapText(a, i, x, sizeof(x));
+        Mods_OverlapText(b, i, y, sizeof(y));
+        assert(!strcmp(x, y));
+        assert(!strcmp(Mods_OverlapOutcome(a, i), Mods_OverlapOutcome(b, i)));
+        assert(Mods_OverlapSeverity(a, i) == Mods_OverlapSeverity(b, i));
+    }
+    Mods_OverlapFree(a);
+    Mods_OverlapFree(b);
+    for (int i = 0; i < 3; i++) {
+        Json_Free(with[i]);
+        Json_Free(empty[i]);
+    }
+}
+
 int main(void)
 {
     char path[1024], error[256], line[8192], label[512], mods[512], text[4096];
@@ -523,6 +588,7 @@ int main(void)
     }
     free(expected);
     Json_Free(setup);
+    streamed_fusions();
     printf("mods_overlap: %d lines as expected\n", n);
     return 0;
 }

@@ -3,7 +3,8 @@
 /* Enough JSON to read a mod manifest (mods.h): objects, arrays, strings,
  * whole numbers, true/false and null. Numbers keep their text as well, so a
  * manifest can write a disc offset as "0x5D800" and have it read either way.
- * Nothing here allocates while the game runs: a manifest is parsed once.
+ * Nothing here allocates while the game runs: a manifest is parsed once, and a
+ * list too big to hold is read from the file an element at a time (below).
  * Numbers follow JSON's grammar in base 10 and must be whole and fit a long;
  * arrays and objects nest at most 64 deep. */
 #include <stddef.h>
@@ -18,6 +19,27 @@ typedef struct JsonDocument JsonDocument;
 /* Parses `text`; on failure returns NULL and writes why into `error`. */
 JsonDocument *Json_Parse(const char *text, char *error, size_t error_size);
 JsonDocument *Json_ParseFile(const char *path, char *error, size_t error_size);
+
+/* A list too big to hold parsed: where it is in the file, and a hash of it. */
+typedef struct JsonDeferred {
+    long start, end; /* of the '[' and the ']' */
+    unsigned hash;
+    int found;
+    int filled; /* anything in it */
+} JsonDeferred;
+
+/* Reads a file a chunk at a time and parses all of it but the top-level member
+ * `key`, when that is a list: an empty list stands in its place in the document,
+ * and *deferred says where it is. Nothing of it is looked into but its brackets
+ * and strings; a mistake inside comes out when it is read. */
+JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDeferred *deferred, char *error,
+                                      size_t error_size);
+/* Each element of that list in turn, parsed alone and gone when `each` returns;
+ * `each` returns 0 to stop. An element that does not parse is left out and the
+ * rest are read. The number of elements seen, or -1 when one did not parse or the
+ * file could not be read (`error` has the first mistake). */
+long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each)(const JsonValue *, long, void *),
+                      void *context, char *error, size_t error_size);
 void Json_Free(JsonDocument *document);
 const JsonValue *Json_Root(const JsonDocument *document);
 

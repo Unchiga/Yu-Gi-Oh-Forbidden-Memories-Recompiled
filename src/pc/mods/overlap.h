@@ -75,6 +75,11 @@ typedef struct {
      * (0-23, cards.c type_names) and attribute (0-5), 0 when unknown: an
      * equip's rules by type, a copy of an attack trap. */
     int (*card_info)(int id, int *base, int *type, int *attribute, void *context);
+    /* A mod's "fusions" that are not in its manifest: each entry in turn, gone
+     * when `each` returns (Mods_EachFusion); and how many bytes they are, for
+     * which list is the longest. NULL: the manifests hold them all. */
+    long (*fusions)(int mod, int (*each)(const struct JsonValue *, long, void *), void *each_context, void *context);
+    long (*fusion_bytes)(int mod, void *context);
     /* An opponent by name ("Heishin", "8"), -1 for none (Duelists_Named). */
     int (*duelist)(const char *text, void *context);
     /* Mod `mod`'s setting `key` (a "setting" of a text file or a pack's

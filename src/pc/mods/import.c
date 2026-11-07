@@ -25,7 +25,7 @@
 
 #define ZIP_MAX MODS_IMPORT_ZIP_BYTES
 #define DIRECTORY_MAX (32u << 20)       /* its central directory */
-#define MANIFEST_MAX (128u << 20)       /* a mod.json read to name the mod */
+#define MANIFEST_MAX (1536u << 20)      /* a mod.json read to name the mod: the fusions of 25 More Cards */
 #define NAME_MAX_ 512
 #define CHUNK 65536
 #define PARTS_MAX 32                    /* folders deep, in a name */
@@ -329,9 +329,12 @@ static int folder_valid(const char *s)
  * manifest, else the folder; code by the loader's own test
  * (Manifest_HasCode): a "library", or "libraries" with any entry, whether
  * or not the .zip has an object for this game. */
-static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifest, char *why, size_t why_size)
+static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifest, const char *zip, char *why,
+                    size_t why_size)
 {
-    unsigned char *text;
+    char unpacked[1200];
+    FILE *out;
+    JsonDeferred fusions;
     JsonDocument *document;
     const JsonValue *root;
     const char *id, *name, *slash;
@@ -344,16 +347,27 @@ static int describe(ModsImport *import, ModsImportMod *mod, const Entry *manifes
                  MANIFEST_MAX >> 20);
         return 0;
     }
-    if (!(text = malloc((size_t)manifest->size + 1))) {
-        snprintf(why, why_size, "The mod.json in the .zip is too large to read. Nothing was imported.");
+    /* Read as the loader reads it, which needs a file: it goes beside the .zip,
+     * as the fetched .zip's own ".incoming" leftovers do, and is gone below. */
+    if (snprintf(unpacked, sizeof(unpacked), "%s.mod-json", zip) >= (int)sizeof(unpacked) ||
+        !(out = fopen(unpacked, "wb"))) {
+        snprintf(why, why_size, "The mod.json in the .zip could not be unpacked: %s. Nothing was imported.",
+                 strerror(errno));
         return 0;
     }
-    if (!unpack(import, manifest, NULL, text, why, why_size)) {
-        free(text);
+    if (!unpack(import, manifest, out, NULL, why, why_size)) {
+        fclose(out);
+        remove(unpacked);
         return 0;
     }
-    document = Json_Parse((const char *)text, error, sizeof(error));
-    free(text);
+    if (fclose(out)) {
+        snprintf(why, why_size, "The mod.json in the .zip could not be unpacked: %s. Nothing was imported.",
+                 strerror(errno));
+        remove(unpacked);
+        return 0;
+    }
+    document = Json_ParseFileDeferring(unpacked, "fusions", &fusions, error, sizeof(error));
+    remove(unpacked);
     /* Its copy did not fit (no reason given) or its nodes did not. */
     if (!document && (!error[0] || !strcmp(error, "out of memory"))) {
         snprintf(why, why_size, "The mod.json in the .zip is too large to read. Nothing was imported.");
@@ -614,7 +628,7 @@ ModsImport *Mods_ImportOpen(const char *zip, char *why, size_t why_size)
             import->mod_count++;
         }
         for (int i = 0; i < import->mod_count; i++) {
-            if (!describe(import, &import->mods[i], manifests[i], why, why_size))
+            if (!describe(import, &import->mods[i], manifests[i], zip, why, why_size))
                 goto fail;
             for (int j = 0; j < i; j++)
                 if (same_name(import->mods[i].folder, import->mods[j].folder)) {

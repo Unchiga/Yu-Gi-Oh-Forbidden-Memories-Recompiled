@@ -326,11 +326,12 @@ static int removes_all(const JsonValue *removed)
            Cards_Reference(removed) <= 0;
 }
 
+static void read_fusion(const char *mod, const JsonValue *rule, long i);
+
 static void read_fusions(const char *mod, const JsonValue *list)
 {
-    int i;
+    long i;
     const JsonValue *rule;
-    char where[64];
     if (list && Json_TypeOf(list) != JSON_ARRAY) {
         Mods_Note(mod, "\"fusions\" is not an array");
         return;
@@ -338,52 +339,63 @@ static void read_fusions(const char *mod, const JsonValue *list)
     /* One pass down the list: Json_Count and Json_At each walk it from the
      * start, which made a mod of every pair (261,003 rules, the editor's
      * bulk fusions) take minutes to read. */
-    for (i = 0, rule = Json_At(list, 0); rule; i++, rule = Json_Next(rule)) {
-        const JsonValue *with = Json_Member(rule, "with");
-        const JsonValue *result = Json_Member(rule, "result");
-        const JsonValue *removed = Json_Member(rule, "remove");
-        int a, b, made = 0;
-        snprintf(where, sizeof(where), "fusions[%d]", i);
-        if (!Mods_EntryUsed(mod, rule, where)) continue;
-        if (removed) {
-            /* { "remove": card }: no recipe on the disc makes it any more;
-             * { "remove": "all" }: none makes anything (a card of that
-             * name first, as a type name for an equip's target). */
-            int id;
-            if (removes_all(removed)) {
-                removed_all = 1;
-                continue;
-            }
-            id = card(mod, where, removed);
-            if (!id) continue;
-            if (id >= removed_room) {
-                int room = gCard_nCount + 1 > id + 1 ? gCard_nCount + 1 : id + 1;
-                unsigned char *bigger = realloc(removed_results, (size_t)room);
-                if (!bigger) continue;
-                memset(bigger + removed_room, 0, (size_t)(room - removed_room));
-                removed_results = bigger;
-                removed_room = room;
-            }
-            removed_results[id] = 1;
-            continue;
+    for (i = 0, rule = Json_At(list, 0); rule; i++, rule = Json_Next(rule)) read_fusion(mod, rule, i);
+}
+
+/* One entry of "fusions", from the manifest or from the file (Mods_EachFusion). */
+static void read_fusion(const char *mod, const JsonValue *rule, long i)
+{
+    char where[64];
+    const JsonValue *with = Json_Member(rule, "with");
+    const JsonValue *result = Json_Member(rule, "result");
+    const JsonValue *removed = Json_Member(rule, "remove");
+    int a, b, made = 0;
+    snprintf(where, sizeof(where), "fusions[%ld]", i);
+    if (!Mods_EntryUsed(mod, rule, where)) return;
+    if (removed) {
+        /* { "remove": card }: no recipe on the disc makes it any more;
+         * { "remove": "all" }: none makes anything (a card of that
+         * name first, as a type name for an equip's target). */
+        int id;
+        if (removes_all(removed)) {
+            removed_all = 1;
+            return;
         }
-        if (Json_Count(with) != 2) {
-            Mods_Note(mod, "%s: \"with\" names two cards", where);
-            continue;
+        id = card(mod, where, removed);
+        if (!id) return;
+        if (id >= removed_room) {
+            int room = gCard_nCount + 1 > id + 1 ? gCard_nCount + 1 : id + 1;
+            unsigned char *bigger = realloc(removed_results, (size_t)room);
+            if (!bigger) return;
+            memset(bigger + removed_room, 0, (size_t)(room - removed_room));
+            removed_results = bigger;
+            removed_room = room;
         }
-        a = card(mod, where, Json_At(with, 0));
-        b = card(mod, where, Json_At(with, 1));
-        if (!a || !b) continue;
-        if (!result) {
-            Mods_Note(mod, "%s: \"result\" is a card, or null to forbid the fusion", where);
-            continue;
-        }
-        if (Json_TypeOf(result) != JSON_NULL && !(Json_TypeOf(result) == JSON_NUMBER && Json_Number(result, 0) == 0)) {
-            made = card(mod, where, result);
-            if (!made) continue;
-        }
-        add_fusion(a, b, made);
+        removed_results[id] = 1;
+        return;
     }
+    if (Json_Count(with) != 2) {
+        Mods_Note(mod, "%s: \"with\" names two cards", where);
+        return;
+    }
+    a = card(mod, where, Json_At(with, 0));
+    b = card(mod, where, Json_At(with, 1));
+    if (!a || !b) return;
+    if (!result) {
+        Mods_Note(mod, "%s: \"result\" is a card, or null to forbid the fusion", where);
+        return;
+    }
+    if (Json_TypeOf(result) != JSON_NULL && !(Json_TypeOf(result) == JSON_NUMBER && Json_Number(result, 0) == 0)) {
+        made = card(mod, where, result);
+        if (!made) return;
+    }
+    add_fusion(a, b, made);
+}
+
+static int read_streamed_fusion(const JsonValue *rule, long index, void *mod)
+{
+    read_fusion(mod, rule, index);
+    return 1;
 }
 
 int Tables_Fusion(int a, int b, int *result)
@@ -2362,6 +2374,11 @@ void Tables_AddFrom(const char *mod, const char *directory, const JsonValue *man
     forget_pools();
     pool_directory = directory;
     read_fusions(mod, Json_Member(manifest, "fusions"));
+    {
+        char why[128];
+        if (Mods_EachFusion(mod, read_streamed_fusion, (void *)mod, why, sizeof(why)) < 0)
+            Mods_Note(mod, "\"fusions\": %s", why);
+    }
     read_equips(mod, Json_Member(manifest, "equips"));
     read_equip_default(mod, Json_Member(manifest, "equip_bonus_default"));
     read_rituals(mod, Json_Member(manifest, "rituals"));

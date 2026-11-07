@@ -282,8 +282,10 @@ file that is no mod gets the usual refusal ("That file is not a .zip.",
   a file that is not a `.zip`, or more mods than the game takes (256, in
   one `.zip` or with those installed). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
   The `id`, the name and whether it carries code come from its `mod.json`, as
-  the loader reads them; one over 128 MB (a card mod's is tens of MB) is
-  refused, as the game would read the whole file at every launch.
+  the loader reads them: unpacked to `<zip>.mod-json` beside the `.zip` for that
+  moment, its `fusions` skipped, so a mod with millions of them takes no more
+  memory to name than one without. One over 1536 MB (More Cards is 42 MB, a mod
+  of 25 times its fusions 1 GB) is refused.
   Unpacking goes into a hidden `mods/.import-XXXXXX` folder (the scan skips
   names starting with a dot), checking each file's size and CRC; only then
   is each mod renamed into place, and any failure puts back what was moved

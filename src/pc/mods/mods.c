@@ -125,6 +125,7 @@ typedef struct {
     MemoriesMod hooks;
     MemoriesModHost host;
     JsonDocument *manifest;
+    JsonDeferred fusions; /* "fusions", read from the file as it is used */
     const JsonValue *data;       /* the "data" array, applied when enabled */
     const JsonValue *cards;      /* the "cards" array: cards the mod adds (src/pc/cards) */
     const JsonValue *models;     /* the "models" array: battle models the mod adds */
@@ -3496,7 +3497,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
     memset(mod, 0, sizeof(*mod));
     copy_text(mod->directory, sizeof(mod->directory), directory);
     mod->origin = origin;
-    mod->manifest = Json_ParseFile(path, error, sizeof(error));
+    mod->manifest = Json_ParseFileDeferring(path, "fusions", &mod->fusions, error, sizeof(error));
     root = Json_Root(mod->manifest);
     if (!root || Json_TypeOf(root) != JSON_OBJECT) {
         const char *slash = strrchr(directory, '/');
@@ -3634,6 +3635,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
             /* "text": "text.txt" is one file named as a string. */
             if (Json_Count(value) || *Json_String(value, "")) mod->restart = 1;
         }
+        if (mod->fusions.filled) mod->restart = 1;   /* not in the document (json.h) */
         if (Json_Member(root, "equip_bonus_default")) mod->restart = 1;   /* a number */
     }
     {   /* A roster need not be in the manifest at all: four folders beside it,
@@ -4686,6 +4688,18 @@ void Mods_Reset(void)
     }
 }
 
+long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *), void *context, char *error,
+                     size_t error_size)
+{
+    int index = by_id(id);
+    char path[PATH_MAX_];
+    if (index < 0 || !mods[index].fusions.found ||
+        snprintf(path, sizeof(path), "%s/mod.json", mods[index].directory) >= (int)sizeof(path))
+        return 0;
+    return Json_EachElement(path, &mods[index].fusions, each, context, error, error_size);
+}
+unsigned Mods_FusionsHash(int index) { return at(index) ? mods[index].fusions.hash : 0; }
+long Mods_FusionsSize(int index) { return at(index) && mods[index].fusions.found ? mods[index].fusions.end - mods[index].fusions.start : 0; }
 const JsonValue *Mods_Manifest(int index) { return at(index) ? Json_Root(mods[index].manifest) : NULL; }
 const char *Mods_Metadata(int index, const char *key) { return Json_String(Json_Member(Mods_Manifest(index), key), ""); }
 const char *Mods_Directory(int index) { return at(index) ? mods[index].directory : ""; }
