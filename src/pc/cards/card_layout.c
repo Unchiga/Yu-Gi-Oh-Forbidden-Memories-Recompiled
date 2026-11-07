@@ -987,9 +987,11 @@ CardLayoutPart CardLayout_Part(CardLayoutElement element)
         break;
     case CARD_LAYOUT_ATK_LABEL:
         part = layout_part(style_node, source.layout, "atk_label");
+        tint(part, &p.r, &p.g, &p.b);
         break;
     case CARD_LAYOUT_DEF_LABEL:
         part = layout_part(style_node, source.layout, "dfd_label");
+        tint(part, &p.r, &p.g, &p.b);
         break;
     case CARD_LAYOUT_ART:
         /* w/h stay 0 (retail) unless full-bleed and the layout gives an

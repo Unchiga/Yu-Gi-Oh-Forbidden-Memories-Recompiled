@@ -772,9 +772,15 @@ static void color_tint(void)
             "\"atk\": {\"x\": 38, \"y\": 178, \"color\": {\"r\": 255, \"g\": 96, \"b\": 96}},"
             "\"def\": {\"color\": {\"r\": 96, \"g\": 96, \"b\": 255}},"
             "\"stars\": {\"color\": {\"r\": 200}},"
+            "\"atk_label\": {\"color\": {\"r\": 10, \"g\": 20, \"b\": 30}},"
+            "\"dfd_label\": {\"x\": 5},"
             "\"attribute\": {\"color\": {\"g\": 50}}}}",
             1, "full_bleed", 1);
     CardLayout_SetCard(0);
+    p = CardLayout_Part(CARD_LAYOUT_ATK_LABEL);        /* a label's tint, like the numbers' */
+    CHECK(p.r == 10 && p.g == 20 && p.b == 30);
+    p = CardLayout_Part(CARD_LAYOUT_DEF_LABEL);
+    CHECK(p.r == 0x80 && p.g == 0x80 && p.b == 0x80);
     p = CardLayout_Part(CARD_LAYOUT_ATK);
     CHECK(p.x == 38 && p.y == 178 && p.r == 255 && p.g == 96 && p.b == 96);
     p = CardLayout_Part(CARD_LAYOUT_DEF);

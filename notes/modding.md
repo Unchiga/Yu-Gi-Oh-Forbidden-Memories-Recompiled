@@ -1185,6 +1185,14 @@ independent paint over it, so it still dims and fades with the rest of the
 card. `"atk": {"x": 38, "y": 179, "color": {"r": 255, "g": 96, "b": 96}}`
 reddens just the ATK number, retail position and all.
 
+A tint on the *game's own* ATK/DEF numbers cannot give them a color: they are
+drawn by subtraction, so they can only darken what is behind them (a darker
+tint makes them fainter, and a strong red turns them cyan on a light card).
+Numbers drawn from a `digits` strip, and the `atk_label`/`dfd_label` pictures,
+are ordinary pictures: their `color` multiplies the picture, so a picture of
+white ink takes any color (`#000000` is black ink). `atk`'s and `def`'s
+`color` tints the strip's digits, `atk_label`'s and `dfd_label`'s their word.
+
 `digits` (optional) replaces the ATK/DFD numbers with the mod's own while the
 layout is on: `{"image": "digits.png", "width": 10, "height": 12, "step": 10}`.
 Put it inside a `frame_styles` entry to use that image only for cards wearing

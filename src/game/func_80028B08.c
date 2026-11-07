@@ -569,24 +569,35 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
              * attack screen dims (rec->field_3C's 0x80 ATK, 0x40 DEF: the
              * retail digits' grey palette row) is drawn from the strip's
              * greyed digits. */
+            /* A label's and a digit strip's own "color" multiplies the picture (white
+             * ink takes any color); the game's own digits below are drawn by
+             * subtraction instead, and cannot be given a color of their own. */
             if (CardLayout_FullBleed() && atk_label_layout.visible) {
                 CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
-                                         0, arg1, arg, win->field_0C, EXT);
+                                         0, arg1, arg,
+                                         CardLayout_Tint(win->field_0C, atk_label_layout.r, atk_label_layout.g,
+                                                         atk_label_layout.b), EXT);
             }
             if (CardLayout_FullBleed() && def_label_layout.visible) {
                 CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
-                                         1, arg1, arg, win->field_0C, EXT);
+                                         1, arg1, arg,
+                                         CardLayout_Tint(win->field_0C, def_label_layout.r, def_label_layout.g,
+                                                         def_label_layout.b), EXT);
             }
             {
             s32 atk_custom = 0, def_custom = 0;
             if (CardLayout_FullBleed() && atk_layout.visible)
                 atk_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
                                                     atk_layout.x, atk_layout.y, buf1, digits,
-                                                    (rec->field_3C & 0x80) != 0, arg1, arg, win->field_0C, EXT);
+                                                    (rec->field_3C & 0x80) != 0, arg1, arg,
+                                                    CardLayout_Tint(win->field_0C, atk_layout.r, atk_layout.g,
+                                                                    atk_layout.b), EXT);
             if (CardLayout_FullBleed() && def_layout.visible)
                 def_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
                                                     def_layout.x, def_layout.y, buf2, digits,
-                                                    (rec->field_3C & 0x40) != 0, arg1, arg, win->field_0C, EXT);
+                                                    (rec->field_3C & 0x40) != 0, arg1, arg,
+                                                    CardLayout_Tint(win->field_0C, def_layout.r, def_layout.g,
+                                                                    def_layout.b), EXT);
 
             /* A fallback style's own "color" (card_layout.h's CardLayoutPart):
              * a filter on the card's own fade tint, not a replacement for it,
