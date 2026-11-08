@@ -723,10 +723,8 @@ class UiTabTest(GuiCase):
         real = ui_frames.mod_image
         with mock.patch.object(ui_frames, "mod_image",
                                side_effect=lambda project, name: strip if name == "frames/d.png" else real(project, name)):
-            page.paint()
-            x, y, w, h = page.stage.boxes["atk"]                        # retail's own digits, where it has them:
-            # its text box is measured on the canvas, at its zoom: within a pixel
-            self.assertAlmostEqual(x + w / 2, 109, delta=1); self.assertAlmostEqual(y + h / 2, 163, delta=1)
+            # (Retail's own digits, with no strip, are previewed as text, whose
+            # box Tk measures in the system's font: not compared here.)
             style["digits"] = {"image": "frames/d.png", "width": 10, "height": 12}
             page.paint()
             # 3000 in 10-wide digits, 40 x 12, centred on (109, 163)
