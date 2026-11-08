@@ -978,6 +978,15 @@ at `screen[0]`, which only the particle branches' `RotTransPersN` fills, so
 the plain sweep differed in five battles (records 252, 279, 350, 577, 590, a
 pixel in the white flash).
 
+**A module's `printf` format string is covered by the span.** The
+interpreter only logs a module's format string (`mips.c`, `LOG_MIPS_PRINTF`);
+native C calls the host's `printf` with it, so a mod that changed the string
+past the span could make it read or write anywhere (`%s`, `%n`).
+`model_gate.py check --disc` therefore finds each `printf(D_8013xxxx, ...)`
+of a native shape's C and fails when the string, through its NUL, is not
+inside the span; 643's and 672's spans are widened by 24 bytes over theirs
+(their data start was the string's first byte).
+
 ### Credits
 
 The ending's credits (`Main_RunCredits` phase 2, `func_800507D0`) load 16

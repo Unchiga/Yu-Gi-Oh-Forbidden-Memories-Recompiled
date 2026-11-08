@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from array import array  # noqa: E402
+from unittest import mock  # noqa: E402
 import build_config  # noqa: E402
 import model_gate  # noqa: E402
 import model_oracle  # noqa: E402
@@ -83,6 +84,23 @@ class SpanRules(unittest.TestCase):
         model_gate.hashed(shape, "A", 0x400)
         with self.assertRaises(SystemExit):
             model_gate.hashed(shape, "A", 0x404)
+
+    def test_printf_format_strings_are_found(self):
+        """A format string from the slot's data handed to printf, directly or
+        cast, is found by its symbol (native C passes it to the host's printf)."""
+        text = 'printf(D_8013D298, sizeof(Model643State));\nprintf((char *)D_8013CB00, x);\nGPU_printf(D_8013C000);'
+        self.assertEqual(model_gate.PRINTF.findall(text), ["D_8013D298", "D_8013CB00"])
+
+    def test_a_format_string_past_the_span_is_a_problem(self):
+        shape = self.shape(0x400)
+        for image in list(shape.images["A"]):
+            data = bytearray(shape.images["A"][image])
+            data[0x200:0x208] = b"%d bad\0\0"
+            shape.images["A"][image] = bytes(data)
+        row = self.row(span="0x204")
+        with mock.patch.object(model_gate, "printf_formats", return_value=[0x200]):
+            self.assertTrue(model_gate.printf_problems({418: shape}, [row]))
+            self.assertFalse(model_gate.printf_problems({418: shape}, [self.row(span="0x208")]))
 
     def row(self, **fields):
         base = dict(shape="418", backend="native", span="0x3F60", data_start="0x396C", sources="",

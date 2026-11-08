@@ -553,6 +553,43 @@ def command_problems(rows: list[Row], find=indexed_tables) -> list[str]:
     return bad
 
 
+PRINTF = re.compile(r"\bprintf\s*\(\s*\(?\s*(?:const\s+)?(?:char\s*\*\s*\)\s*)?(D_8013[0-9A-F]{4})\b")
+
+
+def printf_formats(row: Row) -> list[int]:
+    """Offsets in the slot A image of the format strings the shape's C hands
+    to printf. The interpreter only logs a module's format string
+    (mips.c); native C calls the host's printf with it, so a mod that
+    changed the string could make it read or write anywhere (%s, %n). The
+    span must therefore cover each one through its NUL (check --disc)."""
+    found = set()
+    for pattern in source_patterns(row, "A"):
+        for source in ROOT.glob(pattern):
+            for path in port_closure(source):
+                text = without_comments(_text(path))
+                aliases = dict(ALIAS.findall(text))
+                for symbol in PRINTF.findall(text):
+                    symbol = aliases.get(symbol, symbol)
+                    found.add(int(symbol[2:], 16) - 0x8013B000)
+    return sorted(found)
+
+
+def printf_problems(shapes: dict[int, Shape], rows: list[Row]) -> list[str]:
+    bad = []
+    for row in rows:
+        if row["backend"] != "native":
+            continue
+        for offset in printf_formats(row):
+            for image in shapes[row.shape].images["A"].values():
+                end = image.find(b"\0", offset)
+                if end < 0 or end + 1 > row.span:
+                    bad.append(f"shape {row.shape}: printf's format string at 0x{offset:X} ends at "
+                               f"0x{end + 1:X}, past the span 0x{row.span:X}: a mod could change it, and native C "
+                               f"passes it to the host's printf (widen the span over it)")
+                    break
+    return bad
+
+
 def check_sources(rows: list[Row]) -> list[str]:
     """A native shape has the C of its slot A and the wrappers of slot B,
     and the committed address sections are what the C gives."""
@@ -634,6 +671,7 @@ def main() -> int:
                     differing = [c for c in COLUMNS if str(want[c]) != row[c]]
                     failed.append(f"shape {row.shape}: {', '.join(differing)} differ from the disc: update --disc")
             failed += [f"shape {number} is on the disc and not in the table" for number in shapes if number not in {r.shape for r in rows}]
+            failed += printf_problems(shapes, rows)
             print("\n".join(boundaries(shapes, rows)))
     for line in failed:
         print("model_gate: " + line, file=sys.stderr)
