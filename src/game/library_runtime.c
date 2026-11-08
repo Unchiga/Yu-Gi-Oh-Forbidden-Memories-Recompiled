@@ -123,8 +123,9 @@ static void Library_VariantNote(u8 *state)
     }
     if (Cards_LibraryFamilySize(head) < 2) return;
     Cards_LibraryVariantNote(gLibrary_shownCard, head);
-    /* In the strip between the card and the footer, clear of the footer's cell number. */
-    box = TextBox_Create(LIBRARY_NOTE_CHANNEL, LIBRARY_VARIANT_TEXT_ID, 0x32, 0xC9, 0x108, 0x10);
+    /* In the strip between the card and the footer, a little to the right of the footer's cell number so that it
+       does not touch it. */
+    box = TextBox_Create(LIBRARY_NOTE_CHANNEL, LIBRARY_VARIANT_TEXT_ID, 0x3A, 0xC8, 0x100, 0x10);
     B(box, 0x54) = 0;
     B(box, 0x53) = 1;
     B(box, 0x59) = 4;
