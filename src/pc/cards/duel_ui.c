@@ -18,6 +18,7 @@
 #include "art.h"
 #include "stars.h"
 #include "pc/mods/mods.h"
+#include "pc/platform/platform.h"
 #include "pc/platform/settings.h"
 #include "pc/platform/ui_config.h"
 #include "pc/render/soft_gpu.h"
@@ -56,6 +57,15 @@ DisplayObjectCapture *DisplayObject_Capture = NULL;
 
 static int prepared, wide;
 static const UiConfig *config;
+static UiConfig edged;   /* the config with the HUD at the edges (DuelUi_Prepare) */
+
+/* How far the widescreen picture reaches past the 320 of the 4:3 one, each side (426 across). */
+enum { WIDE_MARGIN = (426 - 320) / 2 };
+
+static int margin(void)
+{
+    return Platform_Widescreen() ? WIDE_MARGIN : 0;
+}
 
 typedef struct {
     int made, ready, w, h;         /* made: tried for this w x h */
@@ -74,6 +84,18 @@ void DuelUi_Prepare(void)
 {
     int band;
     config = UiConfig_Load();
+    if (Settings_Get(SET_DUEL_HUD_EDGES) && Platform_Widescreen()) {
+        /* The life-point panel (the right side) and the FIELD box (the left) a margin further out, the way a mod's
+         * "x" would move them but for the game's slide off the side, which carries them the same way: they leave
+         * the picture at its edge, as they leave the 4:3 one at its. */
+        edged = *config;
+        edged.element[UI_LP_OPPONENT].x += WIDE_MARGIN;
+        edged.element[UI_LP_PLAYER].x += WIDE_MARGIN;
+        edged.element[UI_FIELD].x -= WIDE_MARGIN;
+        edged.element[UI_LP_OPPONENT].set = edged.element[UI_LP_PLAYER].set = edged.element[UI_FIELD].set = 1;
+        edged.any = 1;
+        config = &edged;
+    }
     TexturePack_BankSpritesClear(TEXTURE_BANK_OWNER_DUEL_UI);
     memset(pictures, 0, sizeof(pictures));
     for (band = 0; band < 2; band++) {
@@ -146,7 +168,8 @@ static u8 tinted(int level, uint32_t tint, int shift)
  * applied to where a piece is drawn, not where the game has it. */
 static int off_screen(int x0, int y0, int x1, int y1)
 {
-    return x1 <= 0 || x0 >= 320 || y1 <= 0 || y0 >= 240;
+    const int side = margin();   /* a widescreen picture shows this much past each side */
+    return x1 <= -side || x0 >= 320 + side || y1 <= 0 || y0 >= 240;
 }
 
 /* A sprite's texels u, v (w x h of them, from its own u, v) drawn at x, y
@@ -168,7 +191,10 @@ static void draw_piece(const GsSPRITE *sprite, int mode, int du, int dv, int w, 
     piece.r = tinted(sprite->r, place->tint, 16);
     piece.g = tinted(sprite->g, place->tint, 8);
     piece.b = tinted(sprite->b, place->tint, 0);
-    if (place->scale == 100 || mode == 3) {
+    /* The game's own sprite where it is whole inside the 4:3 frame. The widescreen renderer clips sprites to that frame
+     * (the 2D screens park what they do not show just past its edge) and lets polygons run on past it, so a piece
+     * that reaches over an edge, as the HUD does moved out to the edges, is drawn as a quad. */
+    if ((place->scale == 100 && x0 >= 0 && x0 + w <= 320) || mode == 3) {
         if (off_screen(x0, y0, x0 + w, y0 + h)) return;
         piece.x = (short)x0;
         piece.y = (short)y0;
