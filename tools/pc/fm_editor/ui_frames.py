@@ -79,9 +79,11 @@ CAPTION_KEYS = ("magic_label", "trap_label", "ritual_label", "equip_label")
 # replaces retail's caption); without one retail's own caption sprite stays,
 # where the game has it and never moves it, so the preview keeps it still.
 LABEL_KEYS = ("atk_label", "dfd_label")
-# Where retail's caption is, in card pixels from the card's top-left (measured
-# on the game's frames: its ink is 21 x 7 and 21 x 6).  A picture given to a
-# style that keeps retail's frame starts here, over the caption it replaces.
+# Where retail's caption is, in card pixels from the card's top-left, measured
+# on the game's frames and its texture dump: the sprites are 24 x 12 cells at
+# (71, 157) and (71, 168); the lettering in them is 21 x 7 at (72, 159) and
+# 20 x 6 at (72, 174).  A picture given to a style that keeps retail's frame
+# starts in a 21 x 8 box over the lettering it replaces.
 RETAIL_CAPTIONS = {"atk_label": (72, 158, 21, 8), "dfd_label": (72, 173, 21, 8)}
 # What the game uses for a label picture's omitted places (card_layout.c
 # CardLayout_StatLabel): not the editor's own start places below.
@@ -454,6 +456,7 @@ class FramesPage(ttk.Frame):
         if key in DIRECT_ASSETS: set_member(self.style(True), path[0], image)
         elif key in IMAGE_PARTS:
             part = self.part(key, True)
+            first = not part.get("image")
             set_member(part, "image", image)
             # The game's replacement-caption API defaults omitted coordinates
             # to zero, unlike the transparent retail sprite.  Materialize the
@@ -461,7 +464,10 @@ class FramesPage(ttk.Frame):
             # saved preview and in-game placement agree.  An ATK/DFD picture
             # on a style that keeps retail's frame starts over retail's own
             # caption, the one it replaces.
-            if image and (key in CAPTION_KEYS or key in LABEL_KEYS):
+            # An ATK/DFD label is given its places only with its first picture:
+            # replacing one on a hand-written label with no x/y must not move it
+            # from the game's (0, 0).
+            if image and (key in CAPTION_KEYS or (key in LABEL_KEYS and first)):
                 x, y, w, h = RETAIL_CAPTIONS[key] if key in LABEL_KEYS and self.keeps_retail_frame() else SPECS[key][3]
                 part.setdefault("x", x); part.setdefault("y", y)
                 part.setdefault("width", w); part.setdefault("height", h)

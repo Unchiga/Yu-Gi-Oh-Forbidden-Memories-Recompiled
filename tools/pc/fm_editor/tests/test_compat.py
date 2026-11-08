@@ -254,6 +254,13 @@ class FeatureTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(self.needs(value), 18)
         self.assertEqual(self.needs({"card_layout": {"atk_label": label}}), 18)   # not read by the game
+        # The game reads "full_bleed" with Json_Bool: a number is a bool (0 false), another value says nothing.
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=0, dfd_label=label)), 25)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=0.0, dfd_label=label)), 25)
+        self.assertEqual(self.needs(layout(full_bleed=1, dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=2.5, dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed="no", dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(full_bleed=None, dfd_label=label)), 25)
         self.assertIn("newer than v0.3.0", compat.release_text(25))
 
     def test_reasons_are_the_highest_apis(self):

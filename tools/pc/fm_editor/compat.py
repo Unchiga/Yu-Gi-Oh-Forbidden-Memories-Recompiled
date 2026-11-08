@@ -286,12 +286,14 @@ def _frame_features(layout) -> list:
 def keeps_retail_frame(style) -> bool:
     """Whether a frame style leaves retail's own card frame on screen: it has
     no "image" of its own, or says "full_bleed": false (card_layout.c
-    resolve_style: a style with a picture is full-bleed unless it says not)."""
+    resolve_style: a style with a picture is full-bleed unless it says not).
+    The game reads the flag with Json_Bool, so a number counts too (0 is
+    false, any other is true); another kind of value says nothing."""
     if not isinstance(style, dict):
         return False
     flag = style.get("full_bleed")
-    if isinstance(flag, bool):
-        return not flag
+    if isinstance(flag, (bool, int, float)):
+        return not bool(flag)
     image = style.get("image")
     return not (isinstance(image, str) and image)
 

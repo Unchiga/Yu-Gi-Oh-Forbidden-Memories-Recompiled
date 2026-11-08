@@ -1202,13 +1202,21 @@ frame. On a style that keeps retail's frame (no `image`, or `"full_bleed":
 false`) it takes the place of retail's own "ATK"/"DFD" caption, which is then
 not drawn under it: retail's caption is a sprite of its own, not part of the
 frame, so this is how a mod that keeps the stock frame renames "DFD" to "HP".
-Give it the `x`/`y`/`width`/`height` of where it should sit: retail's ATK
-caption is at `x` 72, `y` 158, about 21 wide and 8 high, and DFD's is 15
-lower (the FM Editor starts a new picture there); a label with no `x`/`y`
-lands at 0, 0, the card's corner. A label left out keeps retail's caption,
-and `"hide": true` removes it. As for
+Give it the `x`/`y`/`width`/`height` of where it should sit. Retail's
+lettering is 21 pixels wide: ATK's at `x` 72 from row `y` 159 (7 high), DFD's
+at `x` 72 from row 174 (6 high). (The two sprites are 24x12 cells at `x` 71,
+`y` 157 and 168, overlapping by a row; it is the lettering a picture has to
+cover.) The FM Editor starts a new picture in a box around it, 21x8 at `y` 158
+for ATK and 173 for DFD; a label with no `x`/`y` lands at 0, 0, the card's
+corner, and the editor previews it there. A label left out keeps retail's
+caption, and `"hide": true` removes it. A style's `"full_bleed"` is read as
+a number too (0 is `false`). As for
 every other `card_layout` key, none of this shows while the mod's `full_bleed`
-setting is off. A mod that uses it needs mod API 25: a game of API 24 would
+setting is off. Retail greys its caption with the attack screen's dimmed stat;
+a picture is never greyed (a tint can only darken, where retail's grey is
+lighter than its ink), on a style's own frame as on retail's. A mod that
+wants a dimmed caption draws the number, which has a greyed strip
+(`digits`), but not the word. A mod that uses it needs mod API 25: a game of API 24 would
 draw retail's caption and not the picture.
 A non-monster card (magic, trap, ritual or equip) also carries retail's own
 "[Normal Magic Card]"/"[Trap Card]"/"[Ritual Magic Card]"/"[Equip Magic

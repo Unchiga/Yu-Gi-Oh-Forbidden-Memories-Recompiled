@@ -689,8 +689,19 @@ class UiTabTest(GuiCase):
         style["dfd_label"] = {}
         page.set_asset("atk_label", "frames/a.png")
         self.assertEqual(style["atk_label"], {"image": "frames/a.png", "x": 12, "y": 171, "width": 16, "height": 8})
+        # Replacing the picture of a hand-written label with no x/y moves nothing: it is at the game's (0, 0).
+        style["dfd_label"] = {"image": "frames/old.png"}
+        page.set_asset("dfd_label", "frames/new.png")
+        self.assertEqual(style["dfd_label"], {"image": "frames/new.png"})
+        self.assertEqual(page.rect("dfd_label"), (0, 0, 16, 8))
         style["full_bleed"] = False                                  # a frame image the style says not to use
         self.assertTrue(page.keeps_retail_frame())
+        style["full_bleed"] = 0                                      # the game reads a number as a bool
+        self.assertTrue(page.keeps_retail_frame())
+        style["full_bleed"] = 1
+        self.assertFalse(page.keeps_retail_frame())
+        del style["image"]
+        self.assertFalse(page.keeps_retail_frame())                  # 1 without an image: full-bleed, as the game has it
 
     def test_deleting_frame_style_clears_its_assignments(self):
         """Deleting a referenced style must not leave stale fallback rules."""
