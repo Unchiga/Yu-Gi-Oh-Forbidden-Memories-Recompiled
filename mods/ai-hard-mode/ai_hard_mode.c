@@ -22,6 +22,8 @@
 #include "game/func_80018004.h"
 #include "game/display_object_core.h"
 #include "pc/cards/cards.h"
+#include "pc/cards/monster_effects.h"
+#include "pc/cards/monster_effects_duel.h"
 #include "pc/cards/tables.h"
 #include "pc/mods/modapi.h"
 #include <string.h>
@@ -126,6 +128,8 @@ static HmCard card_info(int id)
     c.defense = ((stats >> CARD_STAT_DEFENSE_SHIFT) & CARD_STAT_VALUE_MASK) * CARD_STAT_SCALE;
     c.star = (stats >> CARD_STAT_GUARDIAN_STAR_1_SHIFT) & 15;
     c.star2 = (stats >> CARD_STAT_GUARDIAN_STAR_2_SHIFT) & 15;
+    c.combat = MonsterEffects_CombatFlags(id);
+    c.attack_limit = MonsterEffects_CombatAttackLimit(id);
     return c;
 }
 static int terrain(int type, int field)
@@ -144,6 +148,7 @@ static HmCard snapshot(int index, int effective, int secret)
 {
     AiActiveCard a = gDuel_aActiveCards[index];
     HmCard c = {0};
+    int record = -1, side = D_8009B1D5;
     if (!a.card_id) return c;
     /* Redact before looking up metadata, including custom effect identities. */
     if (secret && !sees_hidden() && (a.flags & HM_DOWN)) {
@@ -152,6 +157,10 @@ static HmCard snapshot(int index, int effective, int secret)
         return c;
     }
     c = card_info(a.card_id);
+    if (index >= 1 && index <= 5) record = side * 15 + 5 + index - 1;
+    else if (index >= 56 && index <= 60) record = (side ^ 1) * 15 + 5 + index - 56;
+    if (record >= 0 && record < MONSTER_RECORDS && D_801A7AD8[record].card_id == a.card_id)
+        c.attacks_used = MonsterEffects_AttacksUsed(record);
     c.flags = a.flags;
     if (effective) { c.attack = a.attack; c.defense = a.defense; }
     c.star = a.guardian_star;

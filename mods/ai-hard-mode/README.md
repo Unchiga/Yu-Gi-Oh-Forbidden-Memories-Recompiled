@@ -61,6 +61,13 @@ exhaustive solver or a search across future turns. Hand scoring also values
 immediate matchups and survival; it does not run a full attack search for
 every fusion candidate. No win-rate improvement has yet been measured.
 
+Combat effects on visible monsters are part of that attack model:
+`cannot_be_destroyed_by_battle`, both destroy-both variants, `piercing`, and
+`multiple_attacks`. The planner predicts post-damage destruction precedence,
+uses piercing damage against defenders, and may continue a sequence with a
+monster that has attacks remaining. Hidden monsters remain unknown rather
+than having their effects inferred.
+
 Card definitions, fusion recipes and equip compatibility use the running
 game's rules, including table/card mods. Effect evaluation models the retail
 effects identified by `Cards_EffectId`. Arbitrary replacement effects, damage

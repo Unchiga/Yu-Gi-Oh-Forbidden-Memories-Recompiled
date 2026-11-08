@@ -105,6 +105,18 @@
 s8 D_8009B208;
 s8 D_8009B209;
 
+#ifdef MEMORIES_PC
+/* The retail battle scene consumes these flags for both the damage/death
+ * presentation and the actual field removal.  Post-battle rules therefore
+ * must update them before it advances to states 6--11, rather than merely
+ * deciding whether it recreates a field display at the end. */
+static void apply_monster_battle_outcome(int attacker, int defender)
+{
+    MonsterEffects_ApplyBattleOutcome(attacker, defender);
+    MonsterEffects_ApplyBattleSurvivors(D_8009B1B0);
+}
+#endif
+
 void DuelScene_UpdateBattle(void)
 {
     DisplayObject *o;
@@ -128,6 +140,9 @@ void DuelScene_UpdateBattle(void)
     DisplayObjectCallback cb;
     s32 one;
     s32 y;
+#ifdef MEMORIES_PC
+    int survives[2];
+#endif
     s32 h;
     s32 w;
     s32 big;
@@ -386,9 +401,25 @@ void DuelScene_UpdateBattle(void)
                 D_8009B1A4[1] = 0;
                 if (result != 0) {
                     if (D_800E9EF0[1] != 0 && (D_8009B178[1] & 0x800)) {
+#ifdef MEMORIES_PC
+                        if (MonsterEffects_HasPiercing(D_800E9EF0[0]->field_6A)) {
+                            view = (u8 *)&D_800E9FF0[D_8009B1D5 ^ 1];
+                            life = Mods_DamageLife(D_8009B1D5 ^ 1, H(view, 0x14), result, 0);
+                            H(view, 0x14) = life;
+                            if ((s16)life < 0) H(view, 0x14) = 0;
+                            /* Take the same damage presentation path as an
+                             * attack-position loss: number popup and impact
+                             * sound are driven by this battle-result entry. */
+                            D_8009B1A4[1] = result;
+                        }
+#endif
                         D_8009B1C8->rank.field_0B++;
                         D_8009B1B0[1] = -1;
                         D_800E9FF0[D_8009B1D5 ^ 1].rank.field_0C++;
+#ifdef MEMORIES_PC
+                        apply_monster_battle_outcome(D_800E9EF0[0]->field_6A,
+                                                     D_800E9EF0[1]->field_6A);
+#endif
                         return;
                     }
                     view = (u8 *)&D_800E9FF0[D_8009B1D5 ^ 1];
@@ -407,6 +438,10 @@ void DuelScene_UpdateBattle(void)
                     }
                     D_8009B1B0[1] = -1;
                     D_8009B1A4[1] = result;
+#ifdef MEMORIES_PC
+                    apply_monster_battle_outcome(D_800E9EF0[0]->field_6A,
+                                                 D_800E9EF0[1] ? D_800E9EF0[1]->field_6A : -1);
+#endif
                     return;
                 }
             } else {
@@ -430,10 +465,21 @@ void DuelScene_UpdateBattle(void)
                     if (D_8009B178[1] & 0x800) {
                         D_8009B1B0[0] = 1;
                         D_800E9FF0[D_8009B1D5 ^ 1].rank.defensive_wins++;
+#ifdef MEMORIES_PC
+                        apply_monster_battle_outcome(D_800E9EF0[0]->field_6A,
+                                                     D_800E9EF0[1]->field_6A);
+#endif
                         return;
                     }
                 }
             }
+#ifdef MEMORIES_PC
+            /* The fade is over and retail has now calculated its outcome.
+             * This path reaches here once; the return paths above apply
+             * their outcomes immediately before returning. */
+            apply_monster_battle_outcome(D_800E9EF0[0]->field_6A,
+                                         D_800E9EF0[1] ? D_800E9EF0[1]->field_6A : -1);
+#endif
         }
         break;
 
@@ -592,6 +638,23 @@ void DuelScene_UpdateBattle(void)
             models[1].field_04 = 0;
             models[1].field_06 = (D_8009B178[1] >> 0xB) & 1;
             result = func_8001EFD4(pair[0], pair[1]);
+#ifdef MEMORIES_PC
+            /* Unlike the normal 2D states, Square goes directly from this
+             * comparison to the animated battle and resume replay list.
+             * Resolve combat rules here, while both lifted records still
+             * identify the tracked participants. */
+            apply_monster_battle_outcome(pair[0]->field_6A, pair[1]->field_6A);
+            /* Retail's 3D presentation has no defense-position LP-damage
+             * branch.  Piercing supplies that missing combat damage while
+             * retaining the 3D battle's own animation and sound. */
+            if (result > 0 && (right->flags & DUEL_CARD_FLAG_DEFENSE_POSITION) &&
+                MonsterEffects_HasPiercing(pair[0]->field_6A)) {
+                view = (u8 *)&D_800E9FF0[D_8009B1D5 ^ 1];
+                life = Mods_DamageLife(D_8009B1D5 ^ 1, H(view, 0x14), result, 0);
+                H(view, 0x14) = life;
+                if ((s16)life < 0) H(view, 0x14) = 0;
+            }
+#endif
             if (result == -1) {
                 D_8009B208 = pair[0]->field_6A;
                 D_8009B209 = pair[1]->field_6A;
@@ -607,6 +670,28 @@ void DuelScene_UpdateBattle(void)
                     }
                 }
             }
+#ifdef MEMORIES_PC
+            /* A Square-button battle returns through DuelScene_UpdateResume,
+             * which removes the records in this two-slot replay list instead
+             * of going through the 2D battle state's destruction steps.
+             * Derive the retail result from that finished list rather than
+             * reimplementing func_8001EFD4's defense and -1 rules. */
+            survives[0] = D_8009B208 != pair[0]->field_6A &&
+                          D_8009B209 != pair[0]->field_6A;
+            survives[1] = D_8009B208 != pair[1]->field_6A &&
+                          D_8009B209 != pair[1]->field_6A;
+            if (MonsterEffects_BattleSurvivorOverride(0) || MonsterEffects_BattleSurvivorOverride(1)) {
+                survives[0] = MonsterEffects_RestoreBattleCard(0, survives[0]);
+                survives[1] = MonsterEffects_RestoreBattleCard(1, survives[1]);
+                D_8009B208 = D_8009B209 = -1;
+                if (!survives[0]) D_8009B208 = pair[0]->field_6A;
+                if (!survives[1]) {
+                    if (D_8009B208 < 0) D_8009B208 = pair[1]->field_6A;
+                    else D_8009B209 = pair[1]->field_6A;
+                }
+            }
+            if (survives[0]) MonsterEffects_RestoreAttack(pair[0]->field_6A);
+#endif
             D_8009B369 = 1;
             D_8009B269 = 3;
             D_8009B26C = 1;
@@ -756,7 +841,7 @@ void DuelScene_UpdateBattle(void)
             /* Bit 0x10 is the replacement-trap abort (above): the battle
              * never reached its presentation, so slots 2 and 3 were not
              * filled, and a removed participant's slot was cleared. */
-            if (((D_8009B174 & 0x10) || D_800E9EF0[2] != 0) && D_800E9EF0[0] != 0) {
+            if (((D_8009B174 & 0x10) || MonsterEffects_RestoreBattleCard(0, D_800E9EF0[2] != 0)) && D_800E9EF0[0] != 0) {
 #else
             if (D_800E9EF0[2] != 0) {
 #endif
@@ -768,9 +853,12 @@ void DuelScene_UpdateBattle(void)
                 left->defense_modifier = gDuel_awSavedDefenseModifier[0];
 #endif
                 Duel_ApplyCardObjectFlags((DuelCardDisplayObject *)left->object);
+#ifdef MEMORIES_PC
+                MonsterEffects_RestoreAttack((int)(left - D_801A7AD8));
+#endif
             }
 #ifdef MEMORIES_PC
-            if ((D_8009B174 & 0x10) || D_800E9EF0[3] != 0) {
+            if ((D_8009B174 & 0x10) || MonsterEffects_RestoreBattleCard(1, D_800E9EF0[3] != 0)) {
 #else
             if (D_800E9EF0[3] != 0) {
 #endif

@@ -103,6 +103,22 @@ void MonsterEffects_Placed(int record, int equip);
 void MonsterEffects_EffectStarted(int ritual);
 /* A battle begins (DuelScene_UpdateBattle, once the attack trap is known). */
 void MonsterEffects_Battle(void);
+/* The battle calculator has decided the normal survivor flags.  Apply a
+ * combatant's post-damage battle-outcome effects before the presentation
+ * consumes those flags. */
+void MonsterEffects_ApplyBattleOutcome(int attacker, int defender);
+/* Apply the forced survivor decisions to the battle scene's two result
+ * flags: negative destroys, positive restores, zero leaves retail's result. */
+void MonsterEffects_ApplyBattleSurvivors(signed char survivors[2]);
+/* -1 forced destruction, +1 forced survival, or 0 for retail's result. */
+int MonsterEffects_BattleSurvivorOverride(int side);
+/* Whether this side's lifted card is restored to its field record. */
+int MonsterEffects_RestoreBattleCard(int side, int retail_survives);
+/* Battle-rule queries and restoration hooks for piercing and repeat attacks. */
+int MonsterEffects_HasPiercing(int record);
+void MonsterEffects_RestoreAttack(int record);
+/* Attacks already made by this field record in the current turn. */
+int MonsterEffects_AttacksUsed(int record);
 /* The CPU puts this monster down face up (its effects want it seen). */
 int MonsterEffects_PlayFaceUp(int card);
 /* Crush Card's removal (DuelEffect_ApplyMonsterRemoval) as a

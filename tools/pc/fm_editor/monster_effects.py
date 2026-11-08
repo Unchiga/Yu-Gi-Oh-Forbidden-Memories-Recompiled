@@ -22,9 +22,11 @@ WHEN_HINTS = (
     "It won a battle that destroyed the other monster, and is still on the field: after the battle.",
     "All the while it is face up on the field: a boost that goes when it does.",
 )
-DO = ("magic", "boost", "heal", "damage", "destroy", "change_field")
+DO = ("magic", "boost", "heal", "damage", "destroy", "change_field", "cannot_be_destroyed_by_battle",
+      "destroy_both_non_battle_immune", "destroy_both", "piercing", "multiple_attacks")
 DO_LABELS = ("Magic card effect", "Boost ATK/DEF", "Heal its owner's LP", "Damage the opponent's LP",
-             "Destroy monsters", "Change field")
+             "Destroy monsters", "Change field", "Battle immunity", "Destroy both except immune cards",
+             "Destroy both cards", "Piercing battle damage", "Multiple attacks")
 TARGET = ("self", "own", "others", "opponent", "all", "battle")
 TARGET_LABELS = ("This card", "Its owner's monsters", "Its owner's other monsters", "The opponent's monsters",
                  "Every monster", "The monster it battles")
@@ -53,7 +55,8 @@ def allowed(when: str, do: str, target: str | None = None) -> bool:
     if when == "face_up":
         return do == "boost" and target != "battle"
     if when == "combat":
-        return do in ("heal", "damage") or (do == "boost" and target in ("self", "battle"))
+        return do in ("heal", "damage") or (do in ("cannot_be_destroyed_by_battle", "destroy_both_non_battle_immune", "destroy_both", "piercing", "multiple_attacks")
+                                            and target == "self") or (do == "boost" and target in ("self", "battle"))
     if target == "battle" and when != "flip":
         return False
     if do == "destroy":
@@ -128,6 +131,13 @@ def normalize(effect: dict, resolve=None, attribute_resolve=None, type_names=Non
             return None
         if not _filter(effect, out, attribute_resolve, type_names):
             return None
+    elif do in ("cannot_be_destroyed_by_battle", "destroy_both_non_battle_immune", "destroy_both", "piercing"):
+        pass
+    elif do == "multiple_attacks":
+        amount = effect.get("amount")
+        if not isinstance(amount, int) or isinstance(amount, bool) or not 2 <= amount <= 8:
+            return None
+        out["amount"] = amount
     else:
         amount = effect.get("amount")
         if not isinstance(amount, int) or isinstance(amount, bool) or not 0 < amount <= AMOUNT_MAX:
@@ -216,6 +226,16 @@ def describe(effect: dict, card_name=lambda cid: f"#{cid}") -> str:
         return f"The opponent loses {effect.get('amount')} LP{each}"
     if do == "change_field":
         return f"Change the field to {effect.get('field')}"
+    if do == "cannot_be_destroyed_by_battle":
+        return "This card survives the battle"
+    if do == "destroy_both":
+        return "Destroy both battling cards after damage"
+    if do == "destroy_both_non_battle_immune":
+        return "Destroy both after damage unless they have battle immunity"
+    if do == "piercing":
+        return "Excess ATK against a defending monster damages its owner"
+    if do == "multiple_attacks":
+        return f"May attack {effect.get('amount')} times each turn"
     target = effect.get("target", default_target(effect.get("when"), do))
     who = TARGET_LABELS[TARGET.index(target)] if target in TARGET else str(target)
     which = " ".join(str(effect[k]) for k in ("attribute", "type") if k in effect)

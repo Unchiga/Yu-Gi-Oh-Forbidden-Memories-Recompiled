@@ -444,6 +444,40 @@ static void monster_effect_for_each(void)
     assert(!MonsterEffect_EachAllowed(MONSTER_DO_MAGIC) && !MonsterEffect_EachAllowed(MONSTER_DO_DESTROY));
 }
 
+/* The three post-damage battle outcomes imported from TEA Phoenix's battle
+ * tool.  Battle immunity is a property of the battling cards, not a list. */
+static void monster_effect_battle_outcomes(void)
+{
+    BuildContext context = {0};
+    char error[128];
+    const JsonValue *entry;
+    const MonsterEffect *effects;
+    int i, before = effect_notes;
+    JsonDocument *doc = Json_Parse(
+        "[{\"replace\":25,\"monster_effects\":["
+        " {\"when\":\"combat\",\"do\":\"cannot_be_destroyed_by_battle\"},"
+        " {\"when\":\"combat\",\"do\":\"destroy_both_non_battle_immune\"},"
+        " {\"when\":\"combat\",\"do\":\"destroy_both\"},"
+        " {\"when\":\"combat\",\"do\":\"piercing\"},"
+        " {\"when\":\"combat\",\"do\":\"multiple_attacks\",\"amount\":3},"
+        " {\"when\":\"draw\",\"do\":\"cannot_be_destroyed_by_battle\"},"
+        " {\"when\":\"combat\",\"do\":\"destroy_both\",\"target\":\"battle\"}]}]",
+        error, sizeof(error));
+    assert(doc);
+    for (i = 0, entry = Json_At(Json_Root(doc), 0); entry; i++, entry = Json_Next(entry))
+        add_entry("f", ".", i, entry, &context);
+    assert(Cards_MonsterEffects(25, &effects) == 5);
+    assert(effects[0].action == MONSTER_DO_BATTLE_SURVIVE);
+    assert(effects[1].action == MONSTER_DO_BATTLE_DESTROY_BOTH_EXCEPT);
+    assert(effects[2].action == MONSTER_DO_BATTLE_DESTROY_BOTH);
+    assert(effects[3].action == MONSTER_DO_PIERCING);
+    assert(effects[4].action == MONSTER_DO_MULTIPLE_ATTACKS && effects[4].amount == 3);
+    assert(MonsterEffects_CombatFlags(25) == (MONSTER_COMBAT_BATTLE_IMMUNE |
+           MONSTER_COMBAT_DESTROY_NON_IMMUNE | MONSTER_COMBAT_DESTROY_BOTH | MONSTER_COMBAT_PIERCING));
+    assert(MonsterEffects_CombatAttackLimit(25) == 3);
+    assert(effect_notes == before + 2);
+}
+
 /* A monster-effect's "type" (monster_effects.c filter()) reads Json_Number's
  * long before narrowing to int: 2^32 must be rejected as out of range, not
  * silently narrowed first and read back as the valid type 0. */
@@ -787,6 +821,7 @@ int main(void)
     mod_models();
     monster_effect_entries();
     monster_effect_for_each();
+    monster_effect_battle_outcomes();
     if (LONG_MAX > INT_MAX) monster_effect_type_overflow();
     if (LONG_MAX > INT_MAX) reference_overflow();
     if (LONG_MAX > INT_MAX) copy_id_overflow();
