@@ -263,6 +263,29 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(self.needs(layout(full_bleed=None, dfd_label=label)), 25)
         self.assertIn("newer than v0.3.0", compat.release_text(25))
 
+    def test_api_25_digits(self):
+        """A digit strip on a style that keeps retail's frame, the style's own
+        or the layout's shared one: a game of API 24 draws a strip only on a
+        full-bleed frame and keeps retail's digits."""
+        strip = {"image": "d.png", "width": 10, "height": 12}
+        def layout(shared=None, **style):
+            value = {"frame_styles": {"s": {"hand_color": "gold", **style}}}
+            if shared is not None:
+                value["digits"] = shared
+            return {"card_layout": value}
+        for value in (layout(digits=strip), layout(shared=strip), layout(image="a.png", full_bleed=False, digits=strip)):
+            with self.subTest(value=value):
+                api, reasons = compat.required(value)
+                self.assertEqual(api, 25)
+                self.assertIn("\"digits\" strip", reasons[0])
+        # A frame of the style's own, a strip with no picture, or a style
+        # whose own "digits" hides the shared one (layout_part): nothing new.
+        for value in (layout(image="a.png", digits=strip), layout(shared=strip, image="a.png"),
+                      layout(digits={"atk": {"x": 90}}), layout(shared=strip, digits={"width": 8}),
+                      layout(shared=strip, digits=None)):
+            with self.subTest(value=value):
+                self.assertLess(self.needs(value), 25)
+
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})
         self.assertEqual(api, 11)

@@ -302,7 +302,9 @@ def _retail_frame_captions(layout) -> list:
     """The ATK/DFD caption pictures a style that keeps retail's frame brings
     (mod API 25). A game of API 24 or older draws a caption picture only on a
     full-bleed frame: on retail's it leaves retail's own "ATK"/"DFD" and
-    ignores the picture, a half-working mod."""
+    ignores the picture, a half-working mod. The same for a "digits" strip,
+    the style's own or the layout's (card_layout.c layout_part: the style's
+    "digits" when it has one, else the layout's)."""
     styles = layout.get("frame_styles") if isinstance(layout, dict) else None
     found = []
     for style in (styles.values() if isinstance(styles, dict) else ()):
@@ -312,6 +314,9 @@ def _retail_frame_captions(layout) -> list:
             label = style.get(key)
             if isinstance(label, dict) and isinstance(label.get("image"), str) and label["image"]:
                 found.append(f"a frame style that keeps retail's frame with a \"{key}\" picture")
+        digits = style["digits"] if "digits" in style else layout.get("digits")
+        if isinstance(digits, dict) and isinstance(digits.get("image"), str) and digits["image"]:
+            found.append("a frame style that keeps retail's frame with a \"digits\" strip")
     return list(dict.fromkeys(found))
 
 

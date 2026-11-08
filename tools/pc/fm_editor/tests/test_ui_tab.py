@@ -703,6 +703,39 @@ class UiTabTest(GuiCase):
         del style["image"]
         self.assertFalse(page.keeps_retail_frame())                  # 1 without an image: full-bleed, as the game has it
 
+    def test_frames_digits_on_the_games_own_frame(self):
+        """ATK/DFD left where they are: the game's own places (0x61, 0x9D and
+        0x61, 0xAB), a box centre on a style's own frame and, on one that
+        keeps retail's frame, the corner of retail's 24 x 13 digit row, which
+        the game centres a strip on (func_80028B08.c)."""
+        from fm_editor import pngio, ui_frames
+        page = self.page("frames")
+        layout = self.app.project.other.setdefault("card_layout", {})
+        layout["frame_styles"] = {"hp": {"hand_color": "gold"}}
+        page.style_name.set("hp")
+        style = layout["frame_styles"]["hp"]
+        self.assertEqual(page.rect("atk")[:2], (97, 157))
+        self.assertEqual(page.rect("def")[:2], (97, 171))
+        page.moved("atk", 0, 12)                                     # y 169 is not the game's: it is written
+        self.assertEqual(style["digits"]["atk"], {"y": 169})
+        del style["digits"]
+        strip = pngio.Image(200, 192, bytes(200 * 192 * 4))
+        real = ui_frames.mod_image
+        with mock.patch.object(ui_frames, "mod_image",
+                               side_effect=lambda project, name: strip if name == "frames/d.png" else real(project, name)):
+            page.paint()
+            x, y, w, h = page.stage.boxes["atk"]                        # retail's own digits, where it has them:
+            # its text box is measured on the canvas, at its zoom: within a pixel
+            self.assertAlmostEqual(x + w / 2, 109, delta=1); self.assertAlmostEqual(y + h / 2, 163, delta=1)
+            style["digits"] = {"image": "frames/d.png", "width": 10, "height": 12}
+            page.paint()
+            # 3000 in 10-wide digits, 40 x 12, centred on (109, 163)
+            self.assertEqual(page.stage.boxes["atk"], (89, 157, 40, 12))
+            self.assertEqual(page.stage.boxes["def"], (89, 171, 40, 12))
+            style["image"] = "frames/f.png"                              # a frame of its own: x/y is the centre
+            page.paint()
+            self.assertEqual(page.stage.boxes["atk"], (77, 151, 40, 12))
+
     def test_deleting_frame_style_clears_its_assignments(self):
         """Deleting a referenced style must not leave stale fallback rules."""
         from fm_editor import ui_frames

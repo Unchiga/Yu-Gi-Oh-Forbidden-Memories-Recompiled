@@ -177,7 +177,7 @@ checked as well, when it starts.
 | 21 | the release after v0.3.0 | `models`: battle models the mod adds ([Battle models](#battle-models-monsters-the-disc-does-not-have)), a model entry's `texture_pages`, and a card's `model` naming one |
 | 22 | the release after v0.3.0 | for a code mod, `packet_area` ([below](#packets-of-the-mods-own-api-22)); nothing in mod.json |
 | 23 | the release after v0.3.0 | a `menu`'s `slide`; for a code mod, the mouse, the overlay's pictures and `clip` (`api` 23, [below](#code-mods)) |
-| 25 | the release after v0.3.0 | a frame style's `atk_label` or `dfd_label` picture on a style that keeps retail's frame (no `image`, or `"full_bleed": false`): it replaces retail's own "ATK"/"DFD" caption ([Frame styles](#frame-styles-and-the-rules-that-pick-them)) |
+| 25 | the release after v0.3.0 | a frame style's `atk_label` or `dfd_label` picture on a style that keeps retail's frame (no `image`, or `"full_bleed": false`): it replaces retail's own "ATK"/"DFD" caption; a `digits` strip on such a style, in place of retail's digits ([Frame styles](#frame-styles-and-the-rules-that-pick-them)) |
 
 The FM Editor writes `min_api` on save as the lowest one of these that has
 everything the mod uses, never lowering one written higher, and its Mod
@@ -1239,6 +1239,14 @@ centred on its own `digits.atk`/`digits.def` point: `"digits": { ...,
 "atk": {"x": 108, "y": 169}, "def": {"x": 108, "y": 184} }`.
 Older style/layout-level `atk`/`def` entries remain a fallback. Left out,
 the retail digits are drawn.
+A style that keeps retail's frame (no `image`, or `"full_bleed": false`) can
+use a strip too: it is drawn in place of retail's digits, centred on the box
+they fill, 24x13 from the row's top-left corner. On such a style `atk`/`def`'s
+`x`/`y` is that corner, as for retail's own digits (97, 157 for ATK and 97,
+171 for DFD when left out), not a centre. A strip changes only the numbers:
+retail's "ATK"/"DFD" caption stays, unless `atk_label`/`dfd_label` replaces
+it. A game of mod API 24 or older draws a strip only on a full-bleed frame
+(retail's digits on retail's), so a mod that uses it needs mod API 25.
 `hd_assets_pack.py` copies `tools/pc/hd_recipes/anime_digits.png` in for the HD
 mod (`--digit-font <ttf>` draws a new one).
 

@@ -42,8 +42,11 @@ PARTS = (
     # The digit strip has one glyph size shared by the ATK and DEF values.
     # Listing it on each value is deliberate: either one can be selected,
     # moved and sized without making the user hunt for the strip asset.
-    ("atk", "ATK value", ("digits", "atk"), (97, 169, 10, 12), True, True),
-    ("def", "DEF value", ("digits", "def"), (97, 184, 10, 12), True, True),
+    # Their places left out are the game's (card_layout.c: 0x61, 0x9D and
+    # 0x61, 0xAB): a full-bleed style's box centre, and on a style that keeps
+    # retail's frame the corner of retail's own digit row.
+    ("atk", "ATK value", ("digits", "atk"), (97, 157, 10, 12), True, True),
+    ("def", "DEF value", ("digits", "def"), (97, 171, 10, 12), True, True),
     ("atk_label", "ATK label", ("atk_label",), (12, 171, 16, 8), True, True),
     ("dfd_label", "DFD label", ("dfd_label",), (12, 184, 16, 8), True, True),
     # Retail's caption sprite has transparent leading pixels: its visible
@@ -529,7 +532,11 @@ class FramesPage(ttk.Frame):
 
     def keeps_retail_frame(self):
         """Whether the chosen style leaves retail's own card frame on screen
-        (no frame image, or "full_bleed": false), as the game decides it."""
+        (no frame image, or "full_bleed": false), as the game decides it.  A
+        layout from before "frame_styles" is full-bleed (card_layout.c
+        resolve_style)."""
+        if not isinstance(self.layout().get("frame_styles"), dict):
+            return False
         return compat.keeps_retail_frame(self.style())
 
     def fixed_caption(self, key):
@@ -680,8 +687,15 @@ class FramesPage(ttk.Frame):
                 # The runtime stores a stat position as its centre and the
                 # digit-strip dimensions as one glyph.  Expand the preview
                 # to its four visible glyphs before putting that centre at
-                # the requested x/y.
+                # the requested x/y.  On a style that keeps retail's frame
+                # x/y is the corner of the 24 x 13 row retail's digits fill,
+                # and the game centres a strip on that row (func_80028B08.c);
+                # with no strip, retail's own 6 x 13 digits fill it.
                 step = as_int(self.part("digits").get("step"), digit_w)
+                if self.keeps_retail_frame():
+                    if not digits_image:
+                        digit_w = step = 6; h = digit_h = 13
+                    x += 12; y += 6
                 w = (len(text) - 1) * step + digit_w
                 x -= w // 2
                 y -= h // 2
