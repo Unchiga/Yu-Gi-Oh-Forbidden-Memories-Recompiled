@@ -37,8 +37,15 @@ int Cards_ExodiaPiece(int id) { (void)id; return 0; }
 static DisplayObject card_object;
 static DuelDeckCardRecord deck_card;
 static int allocated, set_up, placed, sounds, last_k, last_deck;
+/* Whether a card is still sliding into the hand (tag 1). */
+static int sliding;
 
-void *DisplayObject_FindAllocatedByTag(s32 value) { (void)value; allocated++; return &card_object; }
+void *DisplayObject_FindAllocatedByTag(s32 value)
+{
+    (void)value;
+    allocated++;
+    return sliding ? &card_object : 0;
+}
 u8 *Duel_SetupCardRecord(s32 k, s32 deck)
 {
     set_up++;
@@ -72,6 +79,7 @@ static void reset(int empty_slots)
     ((DuelCardReplayRecordBlock *)(D_8015C424 + DUEL_CARD_STAGING_REPLAY_BASE_OFFSET))->record.data =
         (u8 *)&deck_card;
     allocated = set_up = placed = sounds = 0;
+    sliding = 1;
 }
 
 int main(void)
@@ -91,10 +99,22 @@ int main(void)
     assert(!memcmp(&side_before, D_800E9FF0, sizeof(side_before)));
     assert(!memcmp(slots_before, hand_slots, sizeof(slots_before)));
     assert(!set_up && !placed && !sounds);
-    
-    /* The next frame is the settled branch (the Exodia check runs there). */
+
+    /* The next frame is the settled branch: with no card sliding in, the
+     * Exodia check runs and the turn goes on (4). */
+    sliding = 0;
     DuelScene_UpdateDrawResolution();
     assert(allocated == 1 && set_up == 0 && D_8009B1C8->deck_draw_cursor == 6);
+    assert(gDuel_wSceneStateFlags == 4);
+
+    /* A full hand and an empty deck: nothing to draw, so no deck-out. */
+    reset(0);
+    D_8009B1C8->deck_draw_cursor = DECK_SIZE;
+    gDuel_bWinnerSide = 0x77;
+    DuelScene_UpdateDrawResolution();
+    assert(gDuel_wSceneStateFlags & 0x4000);
+    assert(gDuel_wSceneStateFlags != 0xC && gDuel_bWinnerSide == 0x77);
+    assert(D_8009B1C8->deck_draw_cursor == DECK_SIZE);
 
     /* One empty slot: the last slot draws, the deck card is the next one,
      * and the draw ends. */

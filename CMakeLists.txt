@@ -99,7 +99,8 @@ if(BUILD_TESTING)
         add_executable(memories_draw_full_hand_test tests/pc/draw_full_hand_test.c)
         target_include_directories(memories_draw_full_hand_test PRIVATE src)
         target_compile_definitions(memories_draw_full_hand_test PRIVATE MEMORIES_PC)
-        # duel_card_staging.h labels its deck view with `asm`, a GNU keyword.
+        # The unit defines DUEL_CARD_STAGING_DECK_VIEW, and duel_card_staging.h
+        # then labels the deck view with `asm`, a GNU keyword.
         set_target_properties(memories_draw_full_hand_test PROPERTIES C_EXTENSIONS ON)
         target_compile_options(memories_draw_full_hand_test PRIVATE -m32 -ffunction-sections -fdata-sections)
         target_link_options(memories_draw_full_hand_test PRIVATE -m32 -Wl,--gc-sections)
