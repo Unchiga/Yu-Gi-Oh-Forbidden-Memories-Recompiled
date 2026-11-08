@@ -76,6 +76,9 @@
  *      picture_only_frame: a frame the CPU does not raster as well
  *  24  pointer, wheel, take_wheel: where the mouse is over the game's
  *      picture and the wheel, for a mod that points with it
+ *  25  a frame style's richer parts: stars.image, game_frame, parts_over_art;
+ *      a card's art_transparent (notes/modding.md, card_layout)
+ *      only; no host layout or event change
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 

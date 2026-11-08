@@ -177,6 +177,7 @@ checked as well, when it starts.
 | 21 | the release after v0.3.0 | `models`: battle models the mod adds ([Battle models](#battle-models-monsters-the-disc-does-not-have)), a model entry's `texture_pages`, and a card's `model` naming one |
 | 22 | the release after v0.3.0 | for a code mod, `packet_area` ([below](#packets-of-the-mods-own-api-22)); nothing in mod.json |
 | 23 | the release after v0.3.0 | a `menu`'s `slide`; for a code mod, the mouse, the overlay's pictures and `clip` (`api` 23, [below](#code-mods)) |
+| 25 | the release after v0.3.0 | a frame style's `stars` picture, `game_frame` and `parts_over_art`, and a card's `art_transparent` (card_layout, [Frame styles](#frame-styles-and-the-rules-that-pick-them)); a `card_layout` of `frame_styles` alone, which no longer replaces another mod's layout ([Layouts of several mods](#layouts-of-several-mods)) |
 
 The FM Editor writes `min_api` on save as the lowest one of these that has
 everything the mod uses, never lowering one written higher, and its Mod
