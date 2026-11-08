@@ -122,7 +122,7 @@ class SpanRules(unittest.TestCase):
         self.assertIn("0xFFFFFFFFu, 0u, 0u, 0u)", text)
 
     def test_the_committed_418_row_bounds_to_the_retail_table(self):
-        row = model_gate.native_rows()[0]
+        row = next(r for r in model_gate.native_rows() if r.shape == 418)
         table, stride, count, field = row.command_table
         self.assertEqual((count, stride), (18, 0x44))
         self.assertEqual(table + count * stride, 0x3F30)   # where the retail table ends, inside the span

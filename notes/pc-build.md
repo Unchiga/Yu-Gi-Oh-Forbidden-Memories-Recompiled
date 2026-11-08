@@ -923,6 +923,19 @@ before each outermost call (a diagnostic build). The sweep's two sides run
 the same battles in the same order, so they compare alike; native C for such
 a module would read the host's stack instead, and differ.
 
+**A shape's C can read a local before writing it too** (the scan does not
+see it): shape 84's (`variant101_entry.c`) first particle loop tests
+`flags[i]` before `RotTransPersN` fills it, so it takes what the earlier
+call left on the stack. The plain sweep showed it only because record 130's
+second-star battle came out a pixel apart at +716; another battle's garbage
+can happen to agree. **`--poison 0x00` and `--poison 0xFF`** make it
+systematic: the subject (a build with test hooks) fills 32 KiB of its stack
+below `run_module`'s frame with the byte before each native module call
+(`MEMORIES_MODEL_STACK_POISON`), so such a read takes the byte, and for one
+byte or the other differs from the interpreter. Every batch runs both over
+`--records gated`; a shape that differs under either is `keep` with the
+read in its note (84, beside 128), until its C writes what it reads.
+
 ### Credits
 
 The ending's credits (`Main_RunCredits` phase 2, `func_800507D0`) load 16
