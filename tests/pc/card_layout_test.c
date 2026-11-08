@@ -801,7 +801,8 @@ static void stat_label_on_retail_frame(void)
 /* A style that keeps retail's frame may give a digit strip too, its own or
  * the layout's shared one: the layout answers it with the ATK/DEF places
  * where retail has its digits (a corner there, which func_80028B08.c
- * centres the strip on), and the setting off answers none. */
+ * centres the strip on), and the setting off answers none. A card no style
+ * claims is not Styled: func_80028B08.c keeps retail's digits for it. */
 static void digits_on_retail_frame(void)
 {
     char path[1024];
@@ -834,6 +835,18 @@ static void digits_on_retail_frame(void)
     CHECK(!CardLayout_Digits(path, sizeof(path), &w, &h, &step) && !path[0]);   /* its own hides the shared */
     p = CardLayout_Part(CARD_LAYOUT_ATK);
     CHECK(p.x == 90 && p.y == 150);
+    CHECK(CardLayout_Styled());
+
+    reset();                                        /* a card no style claims: no style, retail's digits */
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"digits\": {\"image\": \"shared.png\"}, \"frame_styles\": {"
+            "\"own\": {\"hand_color\": \"gold\"}}}}",
+            1, "full_bleed", 1);
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_Styled() && !CardLayout_FullBleed());
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "own");
+    CardLayout_SetCard(2);
+    CHECK(CardLayout_Styled());
 
     reset();                                        /* the mod's setting off: retail's digits */
     add_mod("a", "/mods/a",
@@ -843,6 +856,7 @@ static void digits_on_retail_frame(void)
             1, "full_bleed", 0);
     CardLayout_SetCard(1);
     CHECK(!CardLayout_Digits(path, sizeof(path), &w, &h, &step) && !path[0]);
+    CHECK(!CardLayout_Styled());
 }
 
 /* "color" (CardLayoutPart's own r/g/b): 0x80 each, the GPU's own

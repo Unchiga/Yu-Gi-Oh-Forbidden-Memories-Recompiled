@@ -97,6 +97,10 @@ int CardLayout_FullBleed(void);
 /* Whether an applied layout is currently enabled.  Unlike FramePaths(), this
  * remains true for a palette/icon-only layout with no large frame image. */
 int CardLayout_Active(void);
+/* Whether the current card (CardLayout_SetCard) wears one of the layout's
+ * styles (or a layout from before "frame_styles"), its full_bleed setting on.
+ * False for a card no style claims, which keeps retail's frame and digits. */
+int CardLayout_Styled(void);
 /* The frame texture's path on disk (the layout mod's own "frame" image,
  * already joined with its directory and validated the way a "title" mod's
  * image is -- card_layout_art.c just opens it), or "" when no mod applies

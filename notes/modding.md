@@ -1243,7 +1243,9 @@ A style that keeps retail's frame (no `image`, or `"full_bleed": false`) can
 use a strip too: it is drawn in place of retail's digits, centred on the box
 they fill, 24x13 from the row's top-left corner. On such a style `atk`/`def`'s
 `x`/`y` is that corner, as for retail's own digits (97, 157 for ATK and 97,
-171 for DFD when left out), not a centre. A strip changes only the numbers:
+171 for DFD when left out), not a centre. A card that no style claims (no
+`default_style` and no rule for it) keeps retail's digits, the layout's
+shared strip included. A strip changes only the numbers:
 retail's "ATK"/"DFD" caption stays, unless `atk_label`/`dfd_label` replaces
 it. A game of mod API 24 or older draws a strip only on a full-bleed frame
 (retail's digits on retail's), so a mod that uses it needs mod API 25.

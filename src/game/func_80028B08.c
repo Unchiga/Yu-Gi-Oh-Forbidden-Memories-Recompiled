@@ -583,7 +583,10 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
              * the one retail's digits fill (atk_left/atk_top are its corner,
              * the glyphs 0x0D high); on a full-bleed frame that centre is
              * atk_layout.x/y itself, as computed above. Retail's digits are
-             * drawn only where the strip was not. */
+             * drawn only where the strip was not. A card no style claims
+             * keeps retail's digits: a layout's shared strip is for its
+             * styles' cards (and a game before mod API 25 drew it only on a
+             * full-bleed frame, which such a card never has). */
             if (CardLayout_FullBleed() && atk_label_layout.visible) {
                 CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
                                          0, arg1, arg, win->field_0C, EXT);
@@ -595,11 +598,11 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             {
             s32 atk_custom = 0, def_custom = 0;
             s32 row_width = (digits - 1) * step + 6;
-            if (atk_layout.visible)
+            if (CardLayout_Styled() && atk_layout.visible)
                 atk_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
                                                     atk_left + row_width / 2, atk_top + 0x0D / 2, buf1, digits,
                                                     (rec->field_3C & 0x80) != 0, arg1, arg, win->field_0C, EXT);
-            if (def_layout.visible)
+            if (CardLayout_Styled() && def_layout.visible)
                 def_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
                                                     def_left + row_width / 2, def_top + 0x0D / 2, buf2, digits,
                                                     (rec->field_3C & 0x40) != 0, arg1, arg, win->field_0C, EXT);
