@@ -136,6 +136,27 @@ class ManifestTest(unittest.TestCase):
         built = manifest.build(Project(self.retail))
         self.assertEqual(set(built), {"id", "name", "version"})
 
+    def test_a_hand_written_manifest_opens(self):
+        """Comments, hexadecimal and leading zeros, as the game reads them
+        (json.c): the editor opens the mod, and Save writes plain JSON."""
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "mine"
+            folder.mkdir()
+            (folder / "mod.json").write_text(
+                '﻿// my mod\n{ "id": "mine", /* shown */ "name": "Mine", "version": "1",\n'
+                '  "limits": {"max_attack": 0x270F, "max_level": 012}, // caps\n}\n', encoding="utf-8")
+            data = manifest.read_json(folder / "mod.json")
+            self.assertEqual(data["limits"], {"max_attack": 9999, "max_level": 12})
+            opened, _ = manifest.open_mod(self.retail, folder)
+            self.assertEqual(opened.info.name, "Mine")
+            manifest.save_mod(opened, folder)
+            saved = json.loads((folder / "mod.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["name"], "Mine")
+            self.assertEqual(saved.get("limits", {}).get("max_attack"), 9999)
+            (folder / "mod.json").write_text('{"id": "mine", /* never ends', encoding="utf-8")
+            with self.assertRaises(json.JSONDecodeError):
+                manifest.read_json(folder / "mod.json")
+
     def edited(self) -> Project:
         p = Project(self.retail)
         p.info.id = "test-mod"

@@ -25,7 +25,7 @@ from pathlib import Path
 from .gamedata import (FUSION_GROUPS, RITUAL_ORIGINS, RITUAL_REQUIREMENT_KEYS, RITUAL_TRIBUTE_MAX, fusion_group_named, ATTRIBUTE_NAMES, CARD_COUNT, DECK_SIZE, DUELIST_NAMES, FRAME_COLOR_NAMES, FRAME_NAMES, POOLS, STAR_NAMES,
                        EQUIP_BONUS_MAX, STARTER_WEIGHT_LIMIT, TYPE_NAMES, TYPE_MAGIC, TYPE_LIMIT, GameData, is_monster_type)
 from .model import AddedCard, ModInfo, Project, StarterDeck, duelist_named, same_letters, KEY_RE
-from . import art, board_art, campaign_map, compat, fixed_decks, guardian_stars, packs as packmath, pools as poolmath, roster
+from . import art, board_art, campaign_map, compat, fixed_decks, guardian_stars, overlaps, packs as packmath, pools as poolmath, roster
 
 INFO_KEYS = ("id", "name", "version", "author", "description")
 TABLE_KEYS = ("settings", "cards", "fusions", "equips", "rituals", "drops", "decks", "starter", "packs", "pack_shop",
@@ -1519,8 +1519,17 @@ def _object(pairs):
 
 
 def read_json(path: Path):
+    """The file's JSON; or, as the game reads it (json.c), with comments, a
+    number in hexadecimal or with leading zeros, or a trailing comma: those
+    are not JSON to Python, and Save writes the file back as plain JSON."""
     text = Path(path).read_text(encoding="utf-8-sig")
-    return json.loads(text, object_pairs_hook=_object)
+    try:
+        return json.loads(text, object_pairs_hook=_object)
+    except json.JSONDecodeError as plain:
+        try:
+            return json.loads(overlaps._as_json(text), object_pairs_hook=_object)
+        except json.JSONDecodeError:
+            raise plain from None
 
 
 def open_mod(retail: GameData, folder) -> tuple:
