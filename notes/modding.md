@@ -1241,7 +1241,9 @@ full custom without moving a single box from where retail already put it.
 Any key left out -- the whole object included -- keeps retail's own place
 and color; a mod that only sets `full_bleed` and gives no positions gets
 retail's own layout with nothing hidden, which is a no-op, not a
-half-finished look.
+half-finished look. The description box is always shown -- its own
+backdrop panel is on screen either way, so there is nothing to gain by
+leaving its text out.
 
 Until the player changes it, `full_bleed` is what the mod's `settings` entry
 declares as its `"default"`: the box the Mods window shows ticked is the
@@ -1249,14 +1251,14 @@ value the game draws with, from the very first launch. A mod that wants its
 frame on at once declares `"default": 1`; one that offers it as an extra
 declares `"default": 0`. (Every setting the game itself reads from a
 manifest -- a `setting` on a pack image, a text file or a `frame_for` rule,
-`count_setting` -- is read this way. A code mod's `host->setting` is not: it
-answers with the fallback the mod passes, which a code mod keeps in step with
-its own declared default.) A `card_layout` in a mod that declares no
+`count_setting` -- is read this way. A setting declared without a `"default"`
+has none to read, and the game's own fallback stands: a `count_setting` card
+keeps its `count`. A code mod's `host->setting` is not read this way: it
+answers with the fallback the mod passes, which a code mod should keep in step
+with its own declared default.) A `card_layout` in a mod that declares no
 `full_bleed` setting has no switch, and stays off: the game never turns a
 mod's presentation on for it. The FM Editor adds the setting, on by default,
-when its Frames page makes the first frame style. The description box is always shown -- its own
-backdrop panel is on screen either way, so there is nothing to gain by
-leaving its text out.
+when its Frames page makes the layout's first frame style.
 
 For `art` specifically, once an `art` object is present, its omitted fields
 use retail's art rectangle (`x: 19`, `y: 50`, `width: 102`, `height: 96`).

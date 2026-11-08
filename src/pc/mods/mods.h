@@ -113,11 +113,12 @@ void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,
 int Mods_LoadedCount(void);
 int Mods_Loaded(int index);
 /* One of a mod's settings (`mod.<id>.<key>`, or MEMORIES_MOD_<ID>_<KEY> for
- * the run), as the game reads it from a manifest (a code mod's host->setting
- * is mods.c's host_setting, with the fallback the mod passes). Until the player (or the
- * environment) gives it a value, a setting the mod declares in "settings"
- * reads as its declared "default" -- what the Mods window shows -- and
- * `fallback` answers only for a key the mod does not declare (or no such mod). */
+ * the run), as the game reads it from a manifest. Until the player or the
+ * environment gives it a value, it reads as the "default" the mod's
+ * "settings" declare for it -- what the Mods window shows. `fallback`
+ * answers for a key the mod does not declare, or declares without a
+ * "default", and for no such mod. (A code mod's host->setting is mods.c's
+ * host_setting: it answers with the fallback the mod passes.) */
 int Mods_Setting(const char *id, const char *key, int fallback);
 /* One of a mod's files of `key` ("text", "font"; src/pc/text): entry `index`
  * of a name or a list of them, each a string or {"file": ..., "setting": ...}

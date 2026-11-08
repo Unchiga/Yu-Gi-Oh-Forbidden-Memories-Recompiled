@@ -705,6 +705,51 @@ class UiTabTest(GuiCase):
         page.style(True)            # "gold" is already there: not a first style
         self.assertEqual(self.app.project.info.settings, [])
 
+    def test_only_a_made_first_style_declares_the_switch(self):
+        """Delete and "back to the game's" on a layout with no styles make
+        nothing, so they declare nothing; New style does, as the first one."""
+        from fm_editor import ui_frames
+        page = self.page("frames")
+        page.style_name.set("ghost")
+        with mock.patch.object(ui_frames.messagebox, "askyesno", return_value=True):
+            page.delete_style()
+        for key in ("frame", "atk"):
+            page.chosen = key
+            page.reset()
+        self.assertEqual(self.app.project.info.settings, [])
+        self.assertNotIn("card_layout", self.app.project.other)
+        with mock.patch.object(ui_frames.simpledialog, "askstring", return_value="gold"):
+            page.new_style()
+        self.assertEqual([s["key"] for s in self.app.project.info.settings], ["full_bleed"])
+        with mock.patch.object(ui_frames.simpledialog, "askstring", return_value="green"):
+            page.new_style()
+        self.assertEqual(len(self.app.project.info.settings), 1)
+
+    def test_declaring_the_switch_commits_mod_info_first(self):
+        """A box with typed settings is stored first, and kept; one that
+        cannot be stored is said so, and nothing is overwritten."""
+        from fm_editor import ui_frames
+        page = self.page("frames")
+        info = self.app.info
+        info.settings.delete("1.0", "end")
+        info.settings.insert("1.0", '[{"key": "other", "type": "bool", "default": 0}]')    # typed, not applied
+        page.style_name.set("gold")
+        page.style(True)
+        self.assertEqual([s["key"] for s in self.app.project.info.settings], ["other", "full_bleed"])
+        self.assertIn('"full_bleed"', info.settings.get("1.0", "end"))
+        self.app.project.other.pop("card_layout", None)
+        self.app.project.info.settings = []
+        info.refresh()
+        info.settings.delete("1.0", "end")
+        info.settings.insert("1.0", "[ not json")
+        page.style_name.set("silver")
+        with mock.patch.object(ui_frames.messagebox, "showwarning") as warned:
+            page.style(True)
+        self.assertTrue(warned.called)
+        self.assertIn("full_bleed", warned.call_args.args[1])
+        self.assertEqual(self.app.project.info.settings, [])
+        self.assertEqual(info.settings.get("1.0", "end").strip(), "[ not json")      # the modder's text stays
+
     def test_deleting_frame_style_clears_its_assignments(self):
         """Deleting a referenced style must not leave stale fallback rules."""
         from fm_editor import ui_frames

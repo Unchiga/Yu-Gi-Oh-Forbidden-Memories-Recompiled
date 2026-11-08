@@ -11,6 +11,7 @@
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
 #include <assert.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -226,7 +227,8 @@ int main(void)
     write_text("mods/people/mod.json",
                "{ \"id\": \"people\","
                "  \"settings\": [ { \"key\": \"names\", \"type\": \"choice\", \"default\": 0,"
-               "                    \"choices\": [ \"US\", \"JP\", \"BR\" ] } ],"
+               "                    \"choices\": [ \"US\", \"JP\", \"BR\" ] },"
+               "                  { \"key\": \"limit\", \"type\": \"int\", \"max\": 1000 } ],"
                "  \"text\": [ { \"file\": \"us.txt\", \"setting\": \"names\", \"value\": 0 },"
                "            { \"file\": \"jp.txt\", \"setting\": \"names\", \"value\": 1 },"
                "            { \"file\": \"br.txt\", \"setting\": \"names\", \"value\": 2 },"
@@ -301,6 +303,19 @@ int main(void)
         assert(Mods_Setting("people", "names", 9) == 0);
         assert(Mods_Setting("wording", "undeclared", 7) == 7 && Mods_Setting("nosuch", "names", 5) == 5);
         assert(Mods_Setting("plain", "names", 3) == 3);
+        /* A key declared with no "default" is not given one: the caller's
+         * fallback stands (a card entry's count_setting keeps its "count"),
+         * until a value is stored. Any stored number, the extremes of an int
+         * included, is what was stored. */
+        assert(Mods_Setting("people", "limit", 100) == 100 && Mods_Setting("people", "limit", -7) == -7);
+        Settings_SetNamed("mod.people.limit", 0);
+        assert(Mods_Setting("people", "limit", 100) == 0);
+        Settings_SetNamed("mod.people.limit", INT_MIN);
+        assert(Mods_Setting("people", "limit", 100) == INT_MIN);
+        Settings_SetNamed("mod.people.limit", INT_MAX);
+        assert(Mods_Setting("people", "limit", 100) == INT_MAX);
+        Settings_SetNamed("mod.people.limit", 250);
+        assert(Mods_Setting("people", "limit", 100) == 250);
         assert(Mods_OptionValue(wording, 0) == 1 && Mods_OptionValue(wording, 1) == 0);
         /* What the player chose beats the default, 0 as much as any other
          * number; and the environment beats both. */

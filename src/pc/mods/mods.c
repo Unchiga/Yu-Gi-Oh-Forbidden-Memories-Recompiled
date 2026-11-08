@@ -4607,37 +4607,44 @@ void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,
     }
 }
 
-/* What the mod's own "settings" entry for `key` declares as its "default" (0
- * when it names none), in `value`; 0 when the mod declares no such key. This
- * is what the Mods window shows until the player changes the setting, so it is
- * what the game must read too (Mods_OptionValue asks the same). */
-static int declared_default(int mod, const char *key, int *value)
+/* The "default" the mod's own "settings" declare for `key`: `fallback` when
+ * the mod declares the key without one (or not at all). This is what the
+ * Mods window shows until the player changes the setting, so it is what the
+ * game must read too. A key declared twice refuses the whole mod
+ * (Mods_CheckManifest); were one to get here, the first entry that gives a
+ * "default" answers for both, as Mods_OptionValue does through here. One
+ * linear walk of the list: Json_At from the start for each entry would be
+ * quadratic, and this runs for every element of a card drawn. */
+static int declared_default(int mod, const char *key, int fallback)
 {
-    int i, count = Mods_OptionCount(mod);
-    for (i = 0; i < count; i++) {
-        const JsonValue *spec = Mods_Option(mod, i);
-        if (!strcmp(key, Json_String(Json_Member(spec, "key"), ""))) {
-            *value = (int)Json_Number(Json_Member(spec, "default"), 0);
-            return 1;
-        }
+    const JsonValue *spec;
+    for (spec = Json_At(Json_Member(Mods_Manifest(mod), "settings"), 0); spec; spec = Json_Next(spec)) {
+        const JsonValue *value = Json_Member(spec, "default");
+        if (value && !strcmp(key, Json_String(Json_Member(spec, "key"), ""))) return (int)Json_Number(value, 0);
     }
-    return 0;
+    return fallback;
 }
 
 int Mods_Setting(const char *id, const char *key, int fallback)
 {
     char name[256];
     const char *text;
-    int mod = by_id(id), declared;
+    int mod = by_id(id), stored;
     if (mod < 0 || !key || !*key) return fallback;
-    /* Nothing stored and nothing in the environment: the mod's declared
-     * default, and the caller's fallback only for a key the mod does not
-     * declare (an undeclared knob of a code mod, say). */
-    if (declared_default(mod, key, &declared)) fallback = declared;
     text = environment_name(name, sizeof(name), id, key) ? getenv(name) : NULL;
     if (text && *text) return (int)strtol(text, NULL, 0);
-    if (!setting_key(name, sizeof(name), id, key)) return fallback;
-    return Settings_GetNamed(name, fallback);
+    /* What the player stored, 0 included. The settings keep no "is it there"
+     * question, so ask twice with fallbacks no stored value equals: both come
+     * back as asked only when nothing is stored. */
+    if (setting_key(name, sizeof(name), id, key)) {
+        stored = Settings_GetNamed(name, INT_MIN);
+        if (stored != INT_MIN || Settings_GetNamed(name, INT_MAX) != INT_MAX) return stored;
+    }
+    /* Nothing stored, nothing in the environment: the "default" the mod
+     * declares for the key, and the caller's fallback for a key it declares
+     * none for (an undeclared knob of a code mod, or a declared one with no
+     * "default" -- a card entry's count_setting then keeps its "count"). */
+    return declared_default(mod, key, fallback);
 }
 
 void Mods_Note(const char *id, const char *format, ...)

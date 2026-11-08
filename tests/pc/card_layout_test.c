@@ -101,8 +101,8 @@ const JsonValue *Mods_Manifest(int mod) { return Json_Root(fake_mods[mod].docume
 
 /* mods.c's Mods_Setting, as far as card_layout.c needs it (mods_test.c holds
  * the real one to account): what the player saved (the add_mod arguments),
- * else the "default" the manifest's own "settings" declares for the key, else
- * the caller's fallback. */
+ * else the "default" the manifest's own "settings" declare for the key (a key
+ * declared with none keeps the caller's fallback), else the caller's fallback. */
 int Mods_Setting(const char *id, const char *key, int fallback)
 {
     int m;
@@ -113,7 +113,7 @@ int Mods_Setting(const char *id, const char *key, int fallback)
         if (fake_mods[m].setting_key2 && !strcmp(fake_mods[m].setting_key2, key)) return fake_mods[m].setting_value2;
         list = Json_Member(Json_Root(fake_mods[m].document), "settings");
         for (spec = Json_At(list, 0); spec; spec = Json_Next(spec)) {
-            if (!strcmp(Json_String(Json_Member(spec, "key"), ""), key))
+            if (Json_Member(spec, "default") && !strcmp(Json_String(Json_Member(spec, "key"), ""), key))
                 return (int)Json_Number(Json_Member(spec, "default"), 0);
         }
         return fallback;
@@ -255,12 +255,11 @@ static void setting_off(void)
 }
 
 /* A player who has never touched the setting (no key at all, not even an
- * explicit 0): off, same as setting_off's explicit case -- a mod's own
- * manifest "default" (hd_assets_pack.py's "default": 0, notes/modding.md)
- * is display-only, read nowhere near this file; this engine-level fallback
- * (full_bleed_of's own Mods_Setting(..., 0)) is what a fresh install
- * actually gets, and it is this, not the manifest, that must change if the
- * answer should ever be different. */
+ * explicit 0), in a mod whose manifest declares no "full_bleed" setting: off,
+ * same as setting_off's explicit case. With no declaration there is no
+ * "default" to read, so full_bleed_of's own Mods_Setting(..., 0) answers; a
+ * mod that declares the setting gets its declared "default" instead
+ * (declared_default, below). */
 static void setting_unset(void)
 {
     reset();

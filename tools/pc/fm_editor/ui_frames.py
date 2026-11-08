@@ -398,9 +398,7 @@ class FramesPage(ttk.Frame):
     def layout(self): return section(self.project, "card_layout")
 
     def styles_dict(self, create=False):
-        if create:
-            if not self.styles_dict(): self.declare_switch()     # the layout's first style
-            return ensure(self.project, "card_layout", "frame_styles")
+        if create: return ensure(self.project, "card_layout", "frame_styles")
         value = self.layout().get("frame_styles")
         return value if isinstance(value, dict) else {}
 
@@ -409,10 +407,19 @@ class FramesPage(ttk.Frame):
         "full_bleed" setting is on, so a first style declares it, on: the
         frame the modder sees here is the one the game draws (they can untick
         it in the Mods window, or give it another default in Mod info)."""
+        if manifest.declares_full_bleed(self.project): return
         info = self.tab.app.info
-        if info in self.tab.app._pending or not manifest.declare_full_bleed(self.project):
+        # What the Mod info box holds goes into the mod first, else its commit
+        # would store the old list over the new one; a box that cannot be
+        # stored is said so, and the switch is left for the modder to add.
+        if not info.commit():
+            messagebox.showwarning("Card layout", "The Mod info tab holds something that cannot be stored, so the "
+                                   "mod's “full_bleed” setting was not added. The game applies a card layout only "
+                                   "while that setting is on: correct Mod info, then add a bool setting “full_bleed” "
+                                   "(default 1).", parent=self)
             return
-        info.refresh()      # its box would otherwise store the old list over this one
+        manifest.declare_full_bleed(self.project)
+        info.refresh()      # the box shows the new list
 
     def style(self, create=False):
         styles = self.styles_dict(create)
@@ -423,6 +430,7 @@ class FramesPage(ttk.Frame):
             # still be assigned per card/type in the Cards tab or mod.json.
             if made and len(styles) == 1:
                 ensure(self.project, "card_layout").setdefault("default_style", self.style_name.get())
+                self.declare_switch()       # a layout's first style, made now
             return value
         value = styles.get(self.style_name.get())
         return value if isinstance(value, dict) else {}
@@ -814,9 +822,11 @@ class FramesPage(ttk.Frame):
 
     def reset(self):
         key = self.chosen; path = SPECS[key][2]
-        if key in DIRECT_ASSETS: self.style(True).pop(path[0], None)
+        # Putting back the game's own makes nothing: no style (and so no
+        # layout, nor its switch) appears for a part that was never set.
+        if key in DIRECT_ASSETS: self.style().pop(path[0], None)
         else:
-            part = self.part(key, True); part.clear()
+            self.part(key).clear()
         self.done()
 
     def new_style(self):
@@ -824,7 +834,10 @@ class FramesPage(ttk.Frame):
         if not name: return
         name = "".join(c for c in name if c.isalnum() or c in "_- ").strip().replace(" ", "_")
         if not name: return
-        self.styles_dict(True).setdefault(name, {"hand_color": "gold"}); self.style_name.set(name); self.done()
+        first = not self.styles_dict()
+        self.styles_dict(True).setdefault(name, {"hand_color": "gold"}); self.style_name.set(name)
+        if first: self.declare_switch()
+        self.done()
 
     def style_references(self, name):
         """Return every manifest assignment that points at *name*.
