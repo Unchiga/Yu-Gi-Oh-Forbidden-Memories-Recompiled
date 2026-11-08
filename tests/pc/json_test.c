@@ -213,6 +213,12 @@ static void stream_tests(void)
     assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
     assert(seen_sum == 3 && strstr(error, "starts no comment"));
     Json_Free(document);
+    write_stream("{\"fusions\": [1, /]}");
+    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
+    seen_sum = count = 0;
+    assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+    assert(seen_sum == 1 && strstr(error, "starts no comment"));
+    Json_Free(document);
     write_stream("{\"fusions\": [1, 2 / 3]}");
     document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
     seen_sum = count = 0;

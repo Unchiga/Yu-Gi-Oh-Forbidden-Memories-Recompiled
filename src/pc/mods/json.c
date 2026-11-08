@@ -783,6 +783,10 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
             }
         }
     }
+    /* A '/' held at the list's end, between entries: no byte came to say it
+     * starts no comment (one inside an entry is in its text, for the parser). */
+    if (good && !inside && comment == COMMENT_SLASH)
+        list_mistake(&mistakes, index, "a '/' that starts no comment", error, error_size);
     if (good && inside && too_long) list_mistake(&mistakes, index++, "over a megabyte", error, error_size);
     else if (good && inside && used)
         read_element(&document, element, used, each, &index, context, error, error_size, &mistakes, &no_memory);

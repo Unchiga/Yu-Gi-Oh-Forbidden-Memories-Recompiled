@@ -147,8 +147,9 @@ class ManifestTest(unittest.TestCase):
                 '  "limits": {"max_attack": 0x270F, "max_level": 012}, // caps\n}\n', encoding="utf-8")
             data = manifest.read_json(folder / "mod.json")
             self.assertEqual(data["limits"], {"max_attack": 9999, "max_level": 12})
-            opened, _ = manifest.open_mod(self.retail, folder)
+            opened, messages = manifest.open_mod(self.retail, folder)
             self.assertEqual(opened.info.name, "Mine")
+            self.assertIn("has comments", messages[0])                 # the modder is told what they ship
             manifest.save_mod(opened, folder)
             saved = json.loads((folder / "mod.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["name"], "Mine")
@@ -156,6 +157,13 @@ class ManifestTest(unittest.TestCase):
             (folder / "mod.json").write_text('{"id": "mine", /* never ends', encoding="utf-8")
             with self.assertRaises(json.JSONDecodeError):
                 manifest.read_json(folder / "mod.json")
+            (folder / "mod.json").write_text('{"id": 0x' + "f" * 5000 + "}", encoding="utf-8")   # past int()'s digits
+            with self.assertRaises(json.JSONDecodeError):
+                manifest.read_json(folder / "mod.json")
+            (folder / "mod.json").write_text('{"id": "plain"}', encoding="utf-8")
+            noted = []
+            self.assertEqual(manifest.read_json(folder / "mod.json", noted), {"id": "plain"})
+            self.assertEqual(noted, [])
 
     def edited(self) -> Project:
         p = Project(self.retail)
