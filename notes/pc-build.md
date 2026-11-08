@@ -973,6 +973,10 @@ below `run_module`'s frame with the byte before each native module call
 byte or the other differs from the interpreter. Every batch runs both over
 `--records gated`; a shape that differs under either is `keep` with the
 read in its note (84, beside 128), until its C writes what it reads.
+Shape 783 (`variant783_entry.c`) was the second: the spray loop sorts a box
+at `screen[0]`, which only the particle branches' `RotTransPersN` fills, so
+the plain sweep differed in five battles (records 252, 279, 350, 577, 590, a
+pixel in the white flash).
 
 ### Credits
 

@@ -6,6 +6,7 @@
 #ifndef MEMORIES_MODEL_GATE_NAMES_H
 #define MEMORIES_MODEL_GATE_NAMES_H
 #include "../game/func_80058E1C.h"
+#include "../game/model_copy_slot_position.h"
 #include "../game/model_effect_state.h"
 #include "../game/model_slot_properties.h"
 #include "../game/model_texture_upload.h"
@@ -13,4 +14,5 @@
 #define Model_QueueCameraOrbitFromPreset func_8005F5C8
 #define Model_QueueCameraShake func_8005F7B0
 #define Model_SetSlotAmbient func_800595C8
+#define Model_TransformPartVertex func_800593D0
 #endif
