@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from . import art, card_icons, card_text, packs, pngio, ttf, ui_assets
+from . import art, card_icons, card_text, manifest, packs, pngio, ttf, ui_assets
 from .ui_tab import (FRAME_IMAGE_DIR, GAME_H, GAME_W, ElementList, StageView, as_int, ensure, import_image,
                      mod_image, section, set_member, sized)
 from .widgets import CardField, px
@@ -398,9 +398,21 @@ class FramesPage(ttk.Frame):
     def layout(self): return section(self.project, "card_layout")
 
     def styles_dict(self, create=False):
-        if create: return ensure(self.project, "card_layout", "frame_styles")
+        if create:
+            if not self.styles_dict(): self.declare_switch()     # the layout's first style
+            return ensure(self.project, "card_layout", "frame_styles")
         value = self.layout().get("frame_styles")
         return value if isinstance(value, dict) else {}
+
+    def declare_switch(self):
+        """The game reads a mod's card layout only while the mod's own
+        "full_bleed" setting is on, so a first style declares it, on: the
+        frame the modder sees here is the one the game draws (they can untick
+        it in the Mods window, or give it another default in Mod info)."""
+        info = self.tab.app.info
+        if info in self.tab.app._pending or not manifest.declare_full_bleed(self.project):
+            return
+        info.refresh()      # its box would otherwise store the old list over this one
 
     def style(self, create=False):
         styles = self.styles_dict(create)
@@ -767,7 +779,7 @@ class FramesPage(ttk.Frame):
         self.choose.state(["!disabled"] if editable_image else ["disabled"])
         self.remove.state(["!disabled"] if image and editable_image else ["disabled"])
         self.restore.state(["!disabled"])
-        self.note.configure(text="Assets are saved in frames/. The first style becomes the layout's default; enable the mod's “full_bleed” setting in-game to use it. The front preview is a game-scale card viewer; hand, field and Library assets are selectable here but belong to their own game screens.")
+        self.note.configure(text="Assets are saved in frames/. The first style becomes the layout's default and declares the mod's “full_bleed” setting, on by default (Mod info): untick it in the Mods window to see the game's own frame. The front preview is a game-scale card viewer; hand, field and Library assets are selectable here but belong to their own game screens.")
         self.loading = False
 
     def typed(self, name):

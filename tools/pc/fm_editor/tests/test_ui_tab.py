@@ -215,6 +215,33 @@ class RulesTest(unittest.TestCase):
         self.assertFalse([i for i in issues if i.area == "Mod info" and i.where in ("title", "menu", "ui")])
 
 
+class CardLayoutSwitchTest(unittest.TestCase):
+    """validate.py: a card_layout with no "full_bleed" setting never applies."""
+
+    def issues(self, project):
+        return [i for i in validate.validate(project) if i.where == "settings" and "never applies" in i.message]
+
+    def test_warns_without_the_switch(self):
+        p = project({"card_layout": {"frame_styles": {"gold": {"image": "frames/g.png"}}}})
+        self.assertEqual(len(self.issues(p)), 1)
+        self.assertEqual(self.issues(p)[0].level, "warning")
+
+    def test_quiet_with_it_or_without_a_layout(self):
+        p = project({"card_layout": {"frame_styles": {"gold": {}}}})
+        p.info.settings = [{"key": "full_bleed", "type": "bool", "default": 0}]
+        self.assertEqual(self.issues(p), [])
+        self.assertEqual(self.issues(project({})), [])
+        self.assertEqual(self.issues(project({"card_layout": {}})), [])
+
+    def test_declare_full_bleed(self):
+        p = project({})
+        self.assertTrue(manifest.declare_full_bleed(p))
+        self.assertFalse(manifest.declare_full_bleed(p))
+        self.assertEqual(p.info.settings, [manifest.FULL_BLEED_SETTING])
+        self.assertIsNot(p.info.settings[0], manifest.FULL_BLEED_SETTING)     # a copy: edits stay with the mod
+        self.assertEqual(len(self.issues(project({"card_layout": {"stars": {"x": 1}}}))), 1)
+
+
 class AssetsTest(unittest.TestCase):
     def test_vram_sprite(self):
         vram = ui_assets.Vram()
@@ -645,6 +672,38 @@ class UiTabTest(GuiCase):
             page.view.seen = None
             page.view.fit()
         self.assertAlmostEqual(page.stage.zoom, (600 - page.view.tools.winfo_reqheight() - 6) / 196)
+
+    def test_first_frame_style_declares_the_switch(self):
+        """The game applies a mod's card layout only while its "full_bleed"
+        setting is on: the Frames page declares it, on, with the first style,
+        and Mod info's box keeps it through the commit of every tab."""
+        page = self.page("frames")
+        self.assertEqual(self.app.project.info.settings, [])
+        page.style_name.set("gold")
+        page.style(True)
+        self.assertEqual(self.app.project.info.settings, [manifest.FULL_BLEED_SETTING])
+        self.assertEqual(self.app.project.info.settings[0]["default"], 1)
+        self.assertIn('"full_bleed"', self.app.info.settings.get("1.0", "end"))
+        self.assertTrue(self.app.commit_all())
+        self.assertEqual([s["key"] for s in self.app.project.info.settings], ["full_bleed"])
+        self.assertEqual(manifest.build(self.app.project)["settings"][0]["key"], "full_bleed")
+        # A second style does not declare it again.
+        page.style_name.set("green")
+        page.style(True)
+        self.assertEqual(len(self.app.project.info.settings), 1)
+
+    def test_declared_frame_switch_is_the_modders(self):
+        """A mod that declares "full_bleed" already, off by default, keeps it
+        as it is; a mod that already has styles is not touched by editing."""
+        page = self.page("frames")
+        self.app.project.info.settings = [{"key": "full_bleed", "type": "bool", "default": 0}]
+        page.style_name.set("gold")
+        page.style(True)
+        self.assertEqual(self.app.project.info.settings, [{"key": "full_bleed", "type": "bool", "default": 0}])
+        self.app.project.info.settings = []
+        page.style_name.set("again")
+        page.style(True)            # "gold" is already there: not a first style
+        self.assertEqual(self.app.project.info.settings, [])
 
     def test_deleting_frame_style_clears_its_assignments(self):
         """Deleting a referenced style must not leave stale fallback rules."""

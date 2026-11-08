@@ -126,9 +126,10 @@ static LayoutSource find_source(void)
 
 static int full_bleed_of(const LayoutSource *source)
 {
-    /* Off until the player turns it on. A mod's own "settings" entry's
-     * "default" is the Mods window's display only -- this fallback is the
-     * one that actually answers; keep both in sync if either changes. */
+    /* The mod's own "full_bleed" setting: what the player chose, else the
+     * "default" its "settings" entry declares (Mods_Setting), as the Mods
+     * window shows it. A mod that declares no such setting has no switch, and
+     * its card_layout stays off -- the 0 here is for that mod only. */
     return source->mod >= 0 && Mods_Setting(Mods_Id(source->mod), "full_bleed", 0) != 0;
 }
 

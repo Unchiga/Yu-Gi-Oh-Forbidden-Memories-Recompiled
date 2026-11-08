@@ -4607,11 +4607,33 @@ void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,
     }
 }
 
+/* What the mod's own "settings" entry for `key` declares as its "default" (0
+ * when it names none), in `value`; 0 when the mod declares no such key. This
+ * is what the Mods window shows until the player changes the setting, so it is
+ * what the game must read too (Mods_OptionValue asks the same). */
+static int declared_default(int mod, const char *key, int *value)
+{
+    int i, count = Mods_OptionCount(mod);
+    for (i = 0; i < count; i++) {
+        const JsonValue *spec = Mods_Option(mod, i);
+        if (!strcmp(key, Json_String(Json_Member(spec, "key"), ""))) {
+            *value = (int)Json_Number(Json_Member(spec, "default"), 0);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int Mods_Setting(const char *id, const char *key, int fallback)
 {
     char name[256];
     const char *text;
-    if (by_id(id) < 0 || !key || !*key) return fallback;
+    int mod = by_id(id), declared;
+    if (mod < 0 || !key || !*key) return fallback;
+    /* Nothing stored and nothing in the environment: the mod's declared
+     * default, and the caller's fallback only for a key the mod does not
+     * declare (an undeclared knob of a code mod, say). */
+    if (declared_default(mod, key, &declared)) fallback = declared;
     text = environment_name(name, sizeof(name), id, key) ? getenv(name) : NULL;
     if (text && *text) return (int)strtol(text, NULL, 0);
     if (!setting_key(name, sizeof(name), id, key)) return fallback;
