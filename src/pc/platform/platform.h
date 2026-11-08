@@ -172,6 +172,12 @@ uint16_t Platform_Pad(int port);
 /* Whether the port has a pad: port 0 always (the keyboard), port 1 when a
  * second controller is connected. Async-signal-safe. */
 int Platform_PadConnected(int port);
+/* The mouse in the window's own pixels (what the port's overlay menus draw
+ * in) and the buttons it holds (bit 0 left, 1 right, 2 middle): 1 when there
+ * is one for them to use, 0 when the window has no input focus, the pointer
+ * is a touch's, on the menu bar, or a menu, a notice or a panel has it, or a
+ * mod has captured it. Main thread. See overlay_pointer.h. */
+int Platform_WindowPointer(int *x, int *y, unsigned *buttons);
 /* The part of Platform_Pad(port) the player's own keys and controllers did
  * not press: scripted input and, on port 0, the mouse. Game > Japanese
  * buttons leaves these alone (button_layout.h). Async-signal-safe. */

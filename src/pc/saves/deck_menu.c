@@ -4,6 +4,7 @@
 #include "flow_text.h"
 #include "pc/platform/button_layout.h"
 #include "pc/platform/menu.h"
+#include "pc/platform/overlay_pointer.h"
 #include "deck_slots.h"
 #include "save_menu.h"
 #include "save_slots.h"
@@ -77,6 +78,14 @@ static struct {
 } menu;
 
 static int requested, allowed, holding, item_enabled = -1, shown_rows = DECK_SLOT_COUNT;
+/* Where the last draw put what the mouse can point at (pointer_pad), in the
+ * canvas's pixels. Good while the menu shows the view and the first slot it
+ * was drawn for. */
+static struct {
+    int valid, view, top;
+    int x, y, w, row_h, rows;   /* the slots: the highlight's left and width, the first one's top */
+    int button[2][4];           /* the Yes and No of the confirm: x, y, w, h */
+} hit;
 static unsigned last_poll = 0xffffff00u, previous_bits;
 
 /* --- the decks: a draft beside the save -----------------------------------
@@ -458,6 +467,7 @@ static void show(void)
     char name[16];
     previous_bits = pad_bits(); /* a button already down is not a press */
     holding = 1;
+    hit.valid = 0;
     menu.top = 0;
     if (!allowed) {
         message(1, "Decks open on the main menu, the map, a card shop, Free Duel and Build Deck.");
@@ -620,6 +630,39 @@ static void press(unsigned pressed)
     }
 }
 
+/* The mouse over the list: the slot it is on is the cursor once it moves
+ * there, and a left click is Cross on it (or on the Yes or No it is over, or
+ * on a message). The pad bits that stand for it, to add to the pad's. Right
+ * click and the wheel are the pad's own Circle, Up and Down. */
+static unsigned pointer_pad(int x, int y, int moved, int clicked)
+{
+    int i;
+    if (menu.view == VIEW_MESSAGE) return clicked ? PAD_CROSS : 0;
+    if (!hit.valid || hit.view != menu.view || hit.top != menu.top) return 0;
+    if (menu.view == VIEW_CONFIRM) {
+        for (i = 0; i < 2; i++) {
+            const int *b = hit.button[i];
+            if (x < b[0] || x >= b[0] + b[2] || y < b[1] || y >= b[1] + b[3]) continue;
+            if ((moved || clicked) && menu.choice != i) {
+                menu.choice = i;
+                SD_SEPlayFull(SOUND_MOVE);
+                changed();
+            }
+            return clicked ? PAD_CROSS : 0;
+        }
+        return 0;
+    }
+    if (x < hit.x || x >= hit.x + hit.w || y < hit.y || y >= hit.y + hit.rows * hit.row_h) return 0;
+    i = menu.top + (y - hit.y) / hit.row_h;
+    if (i >= DECK_SLOT_COUNT) return 0;
+    if ((moved || clicked) && i != menu.cursor) {
+        menu.cursor = i;
+        SD_SEPlayFull(SOUND_MOVE);
+        changed();
+    }
+    return clicked ? PAD_CROSS : 0;
+}
+
 void DeckMenu_Poll(int where)
 {
     unsigned bits, pressed;
@@ -651,6 +694,10 @@ void DeckMenu_Poll(int where)
     if (!allowed && !(menu.view == VIEW_MESSAGE && menu.close_after)) {
         DeckMenu_Close();
         return;
+    }
+    {
+        int x, y, moved, clicked;
+        if (OverlayPointer_Read(&x, &y, &moved, &clicked)) pressed |= pointer_pad(x, y, moved, clicked);
     }
     press(pressed);
 }
@@ -889,6 +936,10 @@ void DeckMenu_Draw(MenuCanvas *canvas, int *x, int *y, int *w, int *h)
     }
     text(canvas, px + 14 * s, py + 20 * s, menu.title, COLOR_TITLE);
     list_y = py + 38 * s;
+    hit.valid = 1;
+    hit.view = menu.view;
+    hit.top = menu.top;
+    hit.x = px + 6 * s, hit.y = list_y, hit.w = pw - 12 * s, hit.row_h = row_h, hit.rows = rows;
     for (i = 0; i < rows && menu.top + i < DECK_SLOT_COUNT; i++) {
         int slot = menu.top + i, ry = list_y + i * row_h, cy = ry + row_h / 2;
         const char *status = status_text(slot);
@@ -937,6 +988,7 @@ void DeckMenu_Draw(MenuCanvas *canvas, int *x, int *y, int *w, int *h)
         for (i = 0; i < 2; i++) {
             int chosen = i == menu.choice, left = bx + i * (bw + 16 * s);
             fill(canvas, left, by + 62 * s, bw, 24 * s, chosen ? 0x3a5aa8u : 0x22263au, 255);
+            hit.button[i][0] = left, hit.button[i][1] = by + 62 * s, hit.button[i][2] = bw, hit.button[i][3] = 24 * s;
             centred(canvas, left, bw, by + 74 * s, labels[i], chosen ? COLOR_TEXT : COLOR_DIM);
         }
     } else if (menu.view == VIEW_MESSAGE) {

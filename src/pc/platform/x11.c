@@ -852,6 +852,13 @@ void Platform_SetStateSlot(int slot)
 
 void Platform_PumpEvents(void) { if (display) pump(); }
 
+/* No mouse for the overlay menus on this backend (platform.h). */
+int Platform_WindowPointer(int *x, int *y, unsigned *buttons)
+{
+    (void)x; (void)y; (void)buttons;
+    return 0;
+}
+
 uint16_t Platform_Pad(int port)
 {
     return port == 0 ? (uint16_t)(ControlsRuntime_Keyboard() | (ControlsRuntime_Blocked()?0:(mouse_bits | wheel_now)) | scripted_bits | Gamepad_Bits(0))
