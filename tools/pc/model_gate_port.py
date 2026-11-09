@@ -31,7 +31,9 @@ by these rules, which are the whole difference between the two trees:
   6. A local that the retail code reads before the call writes it (STALE_LOCALS)
      takes the storage src/pc/overlays/model_stale_locals.h declares, one per
      slot, in place of the stack: the MIPS code reads what the slot's previous
-     call left there, which native C would take from the host's stack. The
+     call left there (or, where no call writes it, what the oracle shows acts
+     as zero), which native C would take from the host's stack. A struct local
+     becomes a pointer to its storage. The
      storage is a game unit's (src/pc/game/zzz_model_stale_locals.c), so it is
      in every save state as the game stack is. `model_gate.py check` fails a
      native row whose C lacks the rule.
@@ -338,28 +340,46 @@ def write_plan(plan: Plan, root: Path = ROOT) -> None:
         target.write_text(text, encoding="utf-8", newline="\n")
 
 
-# Rule 6: {unit: (the local's declaration, what takes its place)}. Shape 169's
-# trail aims its ratan2 at vertices[0].vy/.vz, which only the waiting branch
-# writes (retail images wait 65 frames first); the oracle matches the
-# interpreter with the slot's last value (notes/pc-build.md).
+# Rule 6: {unit: (the local's declaration, what takes its place, and the name
+# of a struct local whose uses become a pointer's)}. Shape 169's trail aims its
+# ratan2 at vertices[0].vy/.vz, which only the waiting branch writes (retail
+# images wait 65 frames first). Shapes 89, 137 and 163 submit `quad` in frames
+# that do not write its colour, so the packet carries the colour of the last
+# frame that did. Shape 102 reads depths[109] and flags[109], one past what its
+# RotTransPersN writes. The oracle matches the interpreter with the slot's last
+# value (notes/pc-build.md).
+def _stale_quad(shape: int) -> tuple[str, str, str]:
+    return ("    POLY_FT4 quad;\n",
+            f"    POLY_FT4 *quad = &gModelVariant{shape}Quad[Model_GetActiveSlotIndex() & 1];\n", "quad")
+
+
 STALE_LOCALS = {
     f"{NATIVE}/model_variant/variant169_entry.c": (
         "    SVECTOR vertices[4];\n",
-        "    SVECTOR *vertices = gModelVariant169Vertices[Model_GetActiveSlotIndex() & 1];\n"),
+        "    SVECTOR *vertices = gModelVariant169Vertices[Model_GetActiveSlotIndex() & 1];\n", None),
+    **{f"{NATIVE}/model_variant/variant{shape}_entry.c": _stale_quad(shape) for shape in (89, 137, 163)},
+    f"{NATIVE}/model_variant/variant102_entry.c": (
+        "    u16 depths[110], projection[110], flags[110];\n",
+        "    u16 *depths = gModelVariant102Depths[Model_GetActiveSlotIndex() & 1], projection[110],"
+        " *flags = gModelVariant102Flags[Model_GetActiveSlotIndex() & 1];\n", None),
 }
 STALE_INCLUDE = '#include "pc/overlays/model_stale_locals.h"\n'
 
 
 def stale_local_text(path: str, text: str) -> str:
-    """Rule 6 on a copied file's text: the declaration once, replaced, and the
-    storage's header included after the file's first include."""
+    """Rule 6 on a copied file's text: the declaration once, replaced, a struct
+    local's uses made a pointer's, and the storage's header included after the
+    file's first include."""
     rule = STALE_LOCALS.get(path)
     if rule is None:
         return text
-    declaration, replacement = rule
+    declaration, replacement, pointer = rule
     if text.count(declaration) != 1:
         raise SystemExit(f"model_gate port: rule 6: {path} does not declare `{declaration.strip()}` once")
     text = text.replace(declaration, replacement)
+    if pointer is not None:
+        text = re.sub(rf"&{pointer}\b(?!\.)", pointer, text)
+        text = re.sub(rf"(?<![\w.>]){pointer}\.", f"{pointer}->", text)
     first = text.find("#include")
     end = text.index("\n", first) + 1 if first >= 0 else 0
     return text[:end] + STALE_INCLUDE + text[end:]

@@ -271,7 +271,7 @@ class PortRules(unittest.TestCase):
     def test_a_stale_local_takes_the_slot_storage(self):
         import model_gate_port as port
         path = "src/native_overlays/model_variant/variant169_entry.c"
-        declaration, replacement = port.STALE_LOCALS[path]
+        declaration, replacement, _ = port.STALE_LOCALS[path]
         text = '#include "../../types.h"\n#include "variant169_entry.h"\n\ns32 f(void)\n{\n' + declaration + "}\n"
         self.assertEqual(port.stale_local_text(path, text),
                          '#include "../../types.h"\n' + port.STALE_INCLUDE + '#include "variant169_entry.h"\n\n'
@@ -282,11 +282,23 @@ class PortRules(unittest.TestCase):
         with self.assertRaises(SystemExit):
             port.stale_local_text(path, text.replace(declaration, ""))
 
+    def test_a_stale_struct_local_becomes_a_pointer(self):
+        import model_gate_port as port
+        path = "src/native_overlays/model_variant/variant163_entry.c"
+        declaration, replacement, _ = port.STALE_LOCALS[path]
+        text = ('#include "../../types.h"\n\ns32 f(void)\n{\n' + declaration +
+                "    SetPolyFT4(&quad);\n    quad.r0 = 1;\n    g(&quad.x0, (u32 *)&quad);\n"
+                "    work->quad.r0 = quads.r0;\n}\n")
+        self.assertEqual(port.stale_local_text(path, text),
+                         '#include "../../types.h"\n' + port.STALE_INCLUDE + '\ns32 f(void)\n{\n' + replacement +
+                         "    SetPolyFT4(quad);\n    quad->r0 = 1;\n    g(&quad->x0, (u32 *)quad);\n"
+                         "    work->quad.r0 = quads.r0;\n}\n")
+
     def test_check_fails_a_native_copy_without_the_stale_local_rule(self):
         import tempfile
         import model_gate_port as port
         path = "src/native_overlays/model_variant/variant169_entry.c"
-        declaration, _ = port.STALE_LOCALS[path]
+        declaration, *_ = port.STALE_LOCALS[path]
         text = '#include "../../types.h"\n\ns32 f(void)\n{\n' + declaration + "}\n"
         listed = {"model_variant_169": [path]}
         with tempfile.TemporaryDirectory() as temporary:
