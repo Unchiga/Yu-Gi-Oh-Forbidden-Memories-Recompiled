@@ -5,8 +5,9 @@
  * manifest can write a disc offset as "0x5D800" and have it read either way.
  * Nothing here allocates while the game runs: a manifest is parsed once, and a
  * list too big to hold is read from the file an element at a time (below).
- * Numbers follow JSON's grammar in base 10 and must be whole and fit a long;
- * arrays and objects nest at most 64 deep. */
+ * Numbers must be whole and fit a long: base 10 (a leading zero is still
+ * decimal) or hexadecimal after 0x. Comments of both of C's kinds and a trailing
+ * comma are allowed; arrays and objects nest at most 64 deep. */
 #include <stddef.h>
 
 typedef enum {
