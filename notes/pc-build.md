@@ -976,7 +976,13 @@ read in its note (84, beside 128), until its C writes what it reads.
 Shape 783 (`variant783_entry.c`) was the second: the spray loop sorts a box
 at `screen[0]`, which only the particle branches' `RotTransPersN` fills, so
 the plain sweep differed in five battles (records 252, 279, 350, 577, 590, a
-pixel in the white flash).
+pixel in the white flash). Shape 169 (`variant169_entry.c`) was the third:
+the `ratan2` that aims the trail reads `vertices[0].vy/.vz`, which only the
+waiting branch fills, so records 197 and 550 differed from frame +696 on
+(under both poison bytes too). A module's stack-frame size matters as well:
+shape 439's C (`variant456_sprays.c`, a 12 KB frame of arrays) makes the
+Windows i386 compiler call `_alloca` as a stack probe, which no table places,
+so the build stops; 439 stays `interpret` until the build ignores that symbol.
 
 **A module's `printf` format string is covered by the span.** The
 interpreter only logs a module's format string (`mips.c`, `LOG_MIPS_PRINTF`);
