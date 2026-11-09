@@ -785,7 +785,7 @@ the same folder under `src/native_overlays` it has under `src/overlays` (not
 `src/overlays`: every C file there must be a subsegment of a split, which
 these modules do not have here; the folders are one level below `src/` in
 both, so `../../types.h` stays right), and a header outside the overlay
-folders the port lacks is copied (`src/game/model_copy_slot_position.h`: one
+folders the port lacks is copied (src/game/model_copy_slot_position.h: one
 the port has stays the port's); (2) an include that reaches another overlay
 folder through `src/` is written relative to `src/native_overlays`; (3) slot
 B's files (`#define`s of the `0x8017Bxxx` names around an include of slot A's
@@ -793,7 +793,7 @@ C) go to `<folder>_slot1`, an include of a file beside them written
 `../<folder>/`; (4) G32 on every cast `check_x64_casts.py` reports in a copied
 unit (a `widened` one too, as `T *G32`); (5) a copied file that calls a
 resident function its headers do not declare under that name includes
-`src/native_overlays/model_gate_names.h` first, which includes the port's
+src/native_overlays/model_gate_names.h first, which includes the port's
 header that declares it and, for a function the port names otherwise (the
 same address in upstream's symbol files: upstream's
 `ModelTexture_PackPageClutCopy` is the port's `func_80059A50`), `#define`s
