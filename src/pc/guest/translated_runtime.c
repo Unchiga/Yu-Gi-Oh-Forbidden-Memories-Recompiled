@@ -510,6 +510,7 @@ int GuestRuntime_UnregisterData(void *host)
 void *GuestRuntime_ReallocRegistered(void *host, size_t length)
 {
     void *moved;
+    uintptr_t key = (uintptr_t)host;
     if (!GuestRuntime_IsBound()) return realloc(host, length);
     /* Held across realloc: the moment it frees the old block another thread can
      * be handed it, and the old region must be gone before that one registers. */
@@ -517,7 +518,9 @@ void *GuestRuntime_ReallocRegistered(void *host, size_t length)
     moved = realloc(host, length);
     if (moved) {
         int slot;
-        unregister_data(host);
+        /* The old address is only a key, never read: by value, so GCC's
+         * -Wuse-after-free does not see a use. */
+        unregister_data((void *)key);
         slot = register_automatic(moved, length, 1);
         if (slot >= 0) regions[slot].flags |= MEMORIES_REGION_HEAP;
     }

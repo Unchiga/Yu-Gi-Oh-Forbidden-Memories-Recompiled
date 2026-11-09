@@ -943,7 +943,7 @@ if(BUILD_TESTING)
         target_include_directories(memories_translated_arena_test PRIVATE src)
         target_compile_definitions(memories_translated_arena_test PRIVATE _DEFAULT_SOURCE)
         if(NOT MSVC)
-            target_compile_options(memories_translated_arena_test PRIVATE -O2)
+            target_compile_options(memories_translated_arena_test PRIVATE -O2 -Wall -Wextra -Wpedantic -Werror)
         endif()
         add_test(NAME pc_translated_arena COMMAND memories_translated_arena_test)
         add_executable(memories_saved_text_test tests/pc/saved_text_test.c
