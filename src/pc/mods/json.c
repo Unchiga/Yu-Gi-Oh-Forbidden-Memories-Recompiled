@@ -546,8 +546,20 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *const *keys,
         if (error && error_size) snprintf(error, error_size, "a list closed with }");
         return NULL;
     }
+    if (skipping) {
+        free(kept);
+        if (error && error_size) snprintf(error, error_size, "a list that does not end");
+        return NULL;
+    }
     if (!kept) kept = calloc(1, 1);
-    if (!kept) return NULL;
+    if (!kept) {
+        if (error && error_size) snprintf(error, error_size, "out of memory");
+        return NULL;
+    }
+    { /* the room was grown for reading; the manifest keeps only the text */
+        char *fit = realloc(kept, kept_used + 1);
+        if (fit) kept = fit;
+    }
     kept[kept_used] = 0;
     return parse_owned(kept, error, error_size);
 no_room:
