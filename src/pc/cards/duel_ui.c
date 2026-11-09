@@ -58,13 +58,15 @@ DisplayObjectCapture *DisplayObject_Capture = NULL;
 static int prepared, wide;
 static const UiConfig *config;
 static UiConfig edged;   /* the config with the HUD at the edges (DuelUi_Prepare) */
+static int edges;        /* whether this duel uses it */
 
 /* How far the widescreen picture reaches past the 320 of the 4:3 one, each side (426 across). */
 enum { WIDE_MARGIN = (426 - 320) / 2 };
 
+/* Only with the HUD at the edges: otherwise pieces keep the 4:3 frame's clip, as before. */
 static int margin(void)
 {
-    return Platform_Widescreen() ? WIDE_MARGIN : 0;
+    return edges && Platform_Widescreen() ? WIDE_MARGIN : 0;
 }
 
 typedef struct {
@@ -84,7 +86,8 @@ void DuelUi_Prepare(void)
 {
     int band;
     config = UiConfig_Load();
-    if (Settings_Get(SET_DUEL_HUD_EDGES) && Platform_Widescreen()) {
+    edges = Settings_Get(SET_DUEL_HUD_EDGES) && Platform_Widescreen();
+    if (edges) {
         /* The life-point panel (the right side) and the FIELD box (the left) a margin further out, the way a mod's
          * "x" would move them but for the game's slide off the side, which carries them the same way: they leave
          * the picture at its edge, as they leave the 4:3 one at its. */
@@ -194,7 +197,7 @@ static void draw_piece(const GsSPRITE *sprite, int mode, int du, int dv, int w, 
     /* The game's own sprite where it is whole inside the 4:3 frame. The widescreen renderer clips sprites to that frame
      * (the 2D screens park what they do not show just past its edge) and lets polygons run on past it, so a piece
      * that reaches over an edge, as the HUD does moved out to the edges, is drawn as a quad. */
-    if ((place->scale == 100 && x0 >= 0 && x0 + w <= 320) || mode == 3) {
+    if ((place->scale == 100 && (!margin() || (x0 >= 0 && x0 + w <= 320))) || mode == 3) {
         if (off_screen(x0, y0, x0 + w, y0 + h)) return;
         piece.x = (short)x0;
         piece.y = (short)y0;
