@@ -47,12 +47,16 @@ void GuestRuntime_free(void *pointer)
 void *GuestRuntime_realloc(void *pointer, size_t length)
 {
     void *old, *p;
+    uintptr_t key;
     if (!pointer) return GuestRuntime_malloc(length);
     if (!length) { GuestRuntime_free(pointer); return NULL; }
     old = GuestRuntime_ResolveData(pointer, 1);
+    key = (uintptr_t)old;
     p = realloc(old, length);
     if (!p) return NULL;
-    GuestRuntime_UnregisterData(old);
+    /* Only the old address is looked up, never read: by value, so GCC's
+     * -Wuse-after-free does not see a use. */
+    GuestRuntime_UnregisterData((void *)key);
     if (GuestRuntime_IsBound()) GuestRuntime_RegisterAllocation(p, length);
     return p;
 }
