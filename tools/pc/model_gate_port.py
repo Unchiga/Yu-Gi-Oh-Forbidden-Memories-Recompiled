@@ -26,6 +26,15 @@ by these rules, which are the whole difference between the two trees:
   4. G32 where tools/pc/check_x64_casts.py finds a cast the 64-bit build gets
      wrong (its `--fix`, on the copied units only; a cast in a macro is fixed
      at the macro's definition).
+  5. A copied file that calls a resident function its headers do not declare
+     includes src/native_overlays/model_gate_names.h first (declaration_pass).
+  6. A local that the retail code reads before the call writes it (STALE_LOCALS)
+     takes the storage src/pc/overlays/model_stale_locals.h declares, one per
+     slot, in place of the stack: the MIPS code reads what the slot's previous
+     call left there, which native C would take from the host's stack. The
+     storage is a game unit's (src/pc/game/zzz_model_stale_locals.c), so it is
+     in every save state as the game stack is. `model_gate.py check` fails a
+     native row whose C lacks the rule.
 
 The module's file list (slot A, slot B) goes to config/pc/model_gate_sources.txt,
 which the build compiles: the names of the upstream files do not say which
@@ -319,11 +328,57 @@ def upstream_absolute_names(upstream: Upstream) -> dict[str, int]:
 # --- writing ---------------------------------------------------------------------------
 
 def write_plan(plan: Plan, root: Path = ROOT) -> None:
-    """The files, LF line ends (the repository's; Git checks them out as it is set to)."""
-    for path, text in plan.files.items():
+    """The files, LF line ends (the repository's; Git checks them out as it is set to).
+    Rule 6 runs over every file before any is written, so a refusal leaves
+    the tree as it was."""
+    texts = {path: stale_local_text(path, text) for path, text in plan.files.items()}
+    for path, text in texts.items():
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8", newline="\n")
+
+
+# Rule 6: {unit: (the local's declaration, what takes its place)}. Shape 169's
+# trail aims its ratan2 at vertices[0].vy/.vz, which only the waiting branch
+# writes (retail images wait 65 frames first); the oracle matches the
+# interpreter with the slot's last value (notes/pc-build.md).
+STALE_LOCALS = {
+    f"{NATIVE}/model_variant/variant169_entry.c": (
+        "    SVECTOR vertices[4];\n",
+        "    SVECTOR *vertices = gModelVariant169Vertices[Model_GetActiveSlotIndex() & 1];\n"),
+}
+STALE_INCLUDE = '#include "pc/overlays/model_stale_locals.h"\n'
+
+
+def stale_local_text(path: str, text: str) -> str:
+    """Rule 6 on a copied file's text: the declaration once, replaced, and the
+    storage's header included after the file's first include."""
+    rule = STALE_LOCALS.get(path)
+    if rule is None:
+        return text
+    declaration, replacement = rule
+    if text.count(declaration) != 1:
+        raise SystemExit(f"model_gate port: rule 6: {path} does not declare `{declaration.strip()}` once")
+    text = text.replace(declaration, replacement)
+    first = text.find("#include")
+    end = text.index("\n", first) + 1 if first >= 0 else 0
+    return text[:end] + STALE_INCLUDE + text[end:]
+
+
+def stale_local_problems(listed: dict[str, list[str]], native_modules: set[str], root: Path = ROOT) -> list[str]:
+    """`model_gate.py check`: a listed native unit that rule 6 names but whose
+    text lacks it (a copy made without the rule reads the host's stack)."""
+    bad = []
+    for module in sorted(native_modules):
+        for path in listed.get(module, []):
+            rule = STALE_LOCALS.get(path)
+            if rule is None or not (root / path).is_file():   # a missing file: check_sources says so
+                continue
+            text = (root / path).read_text(encoding="utf-8").replace("\r\n", "\n")
+            if rule[1] not in text or STALE_INCLUDE not in text:
+                bad.append(f"{path}: `{rule[0].strip()}` is read before the call writes it, and the C lacks "
+                           f"rule 6's storage (model_gate_port.py STALE_LOCALS): port the shape again")
+    return bad
 
 
 def cast_pass(units: list[str], jobs: int) -> list[str]:

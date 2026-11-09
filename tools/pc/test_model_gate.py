@@ -268,6 +268,36 @@ class PortRules(unittest.TestCase):
             self.assertEqual(model_gate.module_addresses(row, "A", root),
                              {"func_8013CB18": 0x8013CB18, "D_8013D000": 0x8013D000})
 
+    def test_a_stale_local_takes_the_slot_storage(self):
+        import model_gate_port as port
+        path = "src/native_overlays/model_variant/variant169_entry.c"
+        declaration, replacement = port.STALE_LOCALS[path]
+        text = '#include "../../types.h"\n#include "variant169_entry.h"\n\ns32 f(void)\n{\n' + declaration + "}\n"
+        self.assertEqual(port.stale_local_text(path, text),
+                         '#include "../../types.h"\n' + port.STALE_INCLUDE + '#include "variant169_entry.h"\n\n'
+                         's32 f(void)\n{\n' + replacement + "}\n")
+        # Another file is copied as it is; a declaration the rule cannot find
+        # stops the port rather than copy the stack read.
+        self.assertEqual(port.stale_local_text("src/native_overlays/model_variant/variant1_entry.c", text), text)
+        with self.assertRaises(SystemExit):
+            port.stale_local_text(path, text.replace(declaration, ""))
+
+    def test_check_fails_a_native_copy_without_the_stale_local_rule(self):
+        import tempfile
+        import model_gate_port as port
+        path = "src/native_overlays/model_variant/variant169_entry.c"
+        declaration, _ = port.STALE_LOCALS[path]
+        text = '#include "../../types.h"\n\ns32 f(void)\n{\n' + declaration + "}\n"
+        listed = {"model_variant_169": [path]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / path).parent.mkdir(parents=True)
+            (root / path).write_text(text)
+            self.assertEqual(len(port.stale_local_problems(listed, {"model_variant_169"}, root)), 1)
+            self.assertEqual(port.stale_local_problems(listed, set(), root), [])   # not native: no rule needed
+            (root / path).write_text(port.stale_local_text(path, text).replace("\n", "\r\n"), newline="")
+            self.assertEqual(port.stale_local_problems(listed, {"model_variant_169"}, root), [])
+
     def test_every_native_module_lists_its_files(self):
         listed = model_gate.listed_sources()
         for row in model_gate.native_rows():

@@ -619,6 +619,9 @@ def check_sources(rows: list[Row]) -> list[str]:
             if sections.get(row.module(slot)) != want:
                 bad.append(f"config/pc/guest_addresses.txt: [{row.module(slot)}] is not what the C gives "
                            f"({len(want)} names); python tools/pc/build_game32.py writes it")
+    import model_gate_port
+    bad += model_gate_port.stale_local_problems(
+        listed_sources(), {row.module(slot) for row in rows if row["backend"] == "native" for slot in "AB"})
     return bad
 
 
