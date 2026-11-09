@@ -2443,6 +2443,7 @@ void Tables_AddFrom(const char *mod, const char *directory, const JsonValue *man
             removal_count = first_removal;
             reapply_removals();
             Mods_RefuseApplying(mod, "not enough memory for its fusions");
+            pool_directory = NULL;
             return;
         }
         if (fusion_span_count < FUSION_SPANS) {

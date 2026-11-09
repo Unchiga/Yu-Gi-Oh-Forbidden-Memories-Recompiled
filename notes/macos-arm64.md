@@ -61,7 +61,7 @@ where older states expect them. A freed span
 can be reused even when a larger temporary allocation moved the cursor above
 it; exhaustion retries from the arena base before failing. The search walks the
 regions in address order, each once, so a big allocation past tens of thousands
-of small ones costs a walk and not a pass over all of them at every step. Invalid accesses fail
+of small ones costs one walk and not a pass over all of them at every step. Invalid accesses fail
 with the operation, requested size, region count,
 live registered bytes, heap bytes and allocation cursor. These diagnostics are
 prepared before abort; the crash report copies them with the loaded Mach-O UUID

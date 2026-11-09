@@ -16,7 +16,8 @@ static void write_stream(const char *text)
 }
 
 /* Adds up what the elements hold, and how many there were. */
-static long seen_sum, seen_stop = -1;
+static long long seen_sum; /* the 5 MiB list sums past a 32-bit long */
+static long seen_stop = -1;
 static int sum_element(const JsonValue *value, long index, void *context)
 {
     long *count = context;
@@ -233,7 +234,8 @@ static void stream_tests(void)
     {
         size_t size = 5u << 20, used = 0;
         char *big = malloc(size + 64);
-        long want = 0, elements = 0;
+        long long want = 0;
+        long elements = 0;
         assert(big);
         used += (size_t)sprintf(big + used, "{\"pad\": \"");
         memset(big + used, 'x', 1500000);
