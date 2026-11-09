@@ -2,7 +2,8 @@
 #define MEMORIES_PC_OVERLAYS_MODEL_STALE_LOCALS_H
 /* Locals of a model module that the retail code reads before the call
  * writes them, so it takes what the module's previous call in that slot left
- * in the same stack slot. Native C would read the host stack's bytes instead.
+ * in the same stack slot (shape 102's: a slot no call writes, zero here).
+ * Native C would read the host stack's bytes instead.
  * model_gate.py port gives such a local this storage, one per slot
  * (tools/pc/model_gate_port.py, rule 6; notes/pc-build.md), and `check`
  * fails a native row whose C lacks it. */

@@ -31,7 +31,9 @@ by these rules, which are the whole difference between the two trees:
   6. A local that the retail code reads before the call writes it (STALE_LOCALS)
      takes the storage src/pc/overlays/model_stale_locals.h declares, one per
      slot, in place of the stack: the MIPS code reads what the slot's previous
-     call left there, which native C would take from the host's stack. The
+     call left there (or, where no call writes it, what the oracle shows acts
+     as zero), which native C would take from the host's stack. A struct local
+     becomes a pointer to its storage. The
      storage is a game unit's (src/pc/game/zzz_model_stale_locals.c), so it is
      in every save state as the game stack is. `model_gate.py check` fails a
      native row whose C lacks the rule.

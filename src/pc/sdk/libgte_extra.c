@@ -258,7 +258,8 @@ int catan(int a)
 
 /* The game's references are renamed so they cannot bind to libc's complex
  * catan (config/pc/host_symbol_renames.txt, as Psx_ccos in libgte.c); the
- * address map above still names catan for the interpreter's calls. */
+ * address map (config/pc/guest_addresses.txt) still names catan for the
+ * interpreter's calls. */
 int Psx_catan(int a) { return catan(a); }
 
 /* --- LIBGS ---------------------------------------------------------- */

@@ -15,7 +15,9 @@
  * the trail moves, and the waiting branch writes vertices[0], so the first
  * read takes this attack's value. A mod's row with `delay` 0 reads the slot's
  * previous attack's value (or zero), where retail read whatever its stack
- * held. */
+ * held. Shapes 89, 137 and 163 write `quad`'s colour in a phase before the
+ * one that reads it stale, so their zeros are not read either; shape 102's
+ * depths[109] and flags[109] are written by no call and stay zero. */
 #include "pc/overlays/model_stale_locals.h"
 
 SVECTOR gModelVariant169Vertices[2][4] = {{{0}}};
