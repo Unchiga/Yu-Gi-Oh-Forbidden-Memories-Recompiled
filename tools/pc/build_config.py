@@ -289,7 +289,6 @@ def _mtime(path: str):
     return _MTIMES[path]
 
 
-
 def newest_input(source: str) -> float:
     """The newest modification time of a unit and of every file it pulls
     in by quoted #include, transitively. A slot B wrapper includes its slot A
