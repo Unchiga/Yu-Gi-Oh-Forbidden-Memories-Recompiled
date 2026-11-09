@@ -669,7 +669,7 @@ static uint64_t files_allowed(void)
         errno = 0;
         value = strtoull(text, &end, 10);
         if (*text >= '0' && *text <= '9' && !*end && !errno && value <= MOST_MB) megabytes = value;
-        else fprintf(stderr, "memories-pc: MEMORIES_ART_CACHE_MB=%s is not a size: %d\n", text, DEFAULT_MB);
+        else fprintf(stderr, "memories-pc: MEMORIES_ART_CACHE_MB=%s is not a size; %d MB it is\n", text, DEFAULT_MB);
     }
     return (uint64_t)megabytes * 1048576u / FILE_ON_DISK;
 }
