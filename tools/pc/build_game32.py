@@ -45,7 +45,7 @@ package_android.py) with the SDK's build tools; notes/pc-build.md, "Android"."""
 import argparse, concurrent.futures, csv, filecmp, glob, hashlib, json, os, re, shutil, struct, subprocess, sys
 import build_process
 from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURCE_ADDRESSED_MODULES, TARGETS,
-                          game_sources, native_sources)
+                          game_sources, native_sources, newest_input)
 import model_gate
 import ptr32_stores
 
@@ -1242,8 +1242,10 @@ def main():
     if not options.release:
         NATIVE_CFLAGS.append("-DMEMORIES_TEST_HOOKS")
     native_newest = max(NEWEST_HEADER, flags_changed(f"{options.build}/native-flags.txt", NATIVE_CFLAGS))
-    jobs = [(s, obj(s), CFLAGS, renames_file, NEWEST_HEADER) for s in game]
-    jobs += [(s, obj(s), NATIVE_CFLAGS, None, native_newest) for s in NATIVE]
+    # A unit's object is stale when anything it includes is newer, not only
+    # a header: slot B's wrappers include slot A's C (build_config.newest_input).
+    jobs = [(s, obj(s), CFLAGS, renames_file, max(NEWEST_HEADER, newest_input(s))) for s in game]
+    jobs += [(s, obj(s), NATIVE_CFLAGS, None, max(native_newest, newest_input(s))) for s in NATIVE]
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as pool:
         list(pool.map(compile_unit, jobs))
 

@@ -1,6 +1,8 @@
 """Shared PC target metadata, game inventory, and native source selection."""
 
+import os
 from pathlib import Path
+import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -247,3 +249,62 @@ def native_sources(target, backend="sdl"):
             for path in (ROOT / "src/pc/guest").glob("translated*.S")
         )
     return sorted(sources)
+
+
+_QUOTED_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+_SRC = os.path.join(str(ROOT), "src")
+_INCLUDES: dict = {}
+_MTIMES: dict = {}
+
+
+def _includes(path: str) -> tuple:
+    """The files a file names in quoted #includes, found as the compiler
+    finds them: beside the file, then in src/ (-Isrc). Read once per build;
+    an #include under an #if counts too, which can only rebuild more."""
+    found = _INCLUDES.get(path)
+    if found is None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            text = ""
+        found = []
+        folder = os.path.dirname(path)
+        for name in _QUOTED_INCLUDE.findall(text):
+            for candidate in (os.path.join(folder, name), os.path.join(_SRC, name)):
+                candidate = os.path.normcase(os.path.normpath(candidate))
+                if _mtime(candidate) is not None:
+                    found.append(candidate)
+                    break
+        found = _INCLUDES[path] = tuple(found)
+    return found
+
+
+def _mtime(path: str):
+    if path not in _MTIMES:
+        try:
+            _MTIMES[path] = os.stat(path).st_mtime
+        except OSError:
+            _MTIMES[path] = None
+    return _MTIMES[path]
+
+
+
+def newest_input(source: str) -> float:
+    """The newest modification time of a unit and of every file it pulls
+    in by quoted #include, transitively. A slot B wrapper includes its slot A
+    C file (src/native_overlays/*_slot1): build_game32.py's object-is-newer
+    check compares the object with this, not with the unit and the headers
+    alone, or an edit of slot A's C leaves slot B's object stale.
+    (build_arm64.py starts over whenever any source's content changes.) Times are
+    read once per build, which runs after the sources are written."""
+    start = os.path.normcase(os.path.normpath(os.path.join(str(ROOT), source)))
+    seen, pending, newest = {start}, [start], 0.0
+    while pending:
+        path = pending.pop()
+        newest = max(newest, _mtime(path) or 0.0)
+        for included in _includes(path):
+            if included not in seen:
+                seen.add(included)
+                pending.append(included)
+    return newest
