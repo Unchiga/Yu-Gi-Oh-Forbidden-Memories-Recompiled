@@ -280,6 +280,16 @@ def host_address(address):
 HOST_LIBC = {"printf", "sprintf", "strcmp", "strcpy", "bzero", "qsort", "memcpy", "memset",
              "memmove", "strlen", "strcat", "strncmp", "strncpy", "memcmp"}
 
+# The stack probe a Windows compiler calls in a function whose frame passes
+# a page (shape 439's sprays, variant456_sprays.c: about 12 KB of arrays),
+# as C names (c_name): i686 `_alloca` (clang's `__alloca`; GCC's
+# `___chkstk_ms` is `__chkstk_ms`), x86-64 `___chkstk_ms`. The toolchain's
+# runtime defines it and the link takes it from there. It is not a C function
+# (the size comes in eax), so it is neither a pinned name nor a stub, nor one
+# of HOST_LIBC, which build_arm64.py renames to GuestRuntime_*. The game stack
+# it walks is committed (state.c), so each page it touches is there.
+STACK_PROBES = ({"___chkstk_ms"} if X64 else {"_alloca", "__chkstk_ms"}) if WINDOWS else set()
+
 def c_name(symbol):
     """The C name of an object-file symbol, or None for toolchain symbols."""
     if X64:
@@ -1396,7 +1406,8 @@ def main():
                 run([OBJCOPY, *[f"--weaken-symbol={name}" for name in hits], obj(source)])
     # Position-independent i386 code (Android) names the GOT, which the
     # linker defines.
-    wanted = (undefined | tentative | KEPT_FOR_MODS) - game_defined - native_defined - HOST_LIBC - {"_GLOBAL_OFFSET_TABLE_"}
+    wanted = (undefined | tentative | KEPT_FOR_MODS) - game_defined - native_defined - HOST_LIBC - STACK_PROBES - \
+        {"_GLOBAL_OFFSET_TABLE_"}
     pinned, stubs, unknown, aliases = {}, [], [], {}
     for name in sorted(wanted):
         address = addresses.get(name)
