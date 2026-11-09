@@ -1001,8 +1001,15 @@ their modules at one stack depth, so storage per slot matches it only
 because in 197 and 550 the two slots' 169 animations do not run at the same
 time. `check`
 fails a native row whose C lacks the rule, so a copy without it cannot
-pass for native. Shapes 84, 128 and 783 stay `keep`: their reads have not
-been shown to take the same function's previous call.
+pass for native. Shapes 89, 137 and 163 take the rule for a struct: they
+submit `quad` in frames that do not write its colour, so the packet carries
+the colour of the last frame that did, and `quad` becomes a pointer to
+per-slot storage. Shape 102's dome cap reads `depths[109]` and `flags[109]`,
+one past the 109 points its `RotTransPersN` writes: per-slot storage nothing
+writes stays zero, and with it record 380 matches under both poison bytes.
+These four are one battle each (records 121, 328, 380, 435), all matched by
+the oracle. Shapes 84, 128 and 783 stay `keep`: their reads have not been
+shown to take the same function's previous call.
 
 **A frame past a page calls the Windows stack probe.** Shape 439's C
 (`variant456_sprays.c`, about 12 KB of arrays) makes the Windows compilers

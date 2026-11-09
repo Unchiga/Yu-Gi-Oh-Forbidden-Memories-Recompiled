@@ -19,3 +19,8 @@
 #include "pc/overlays/model_stale_locals.h"
 
 SVECTOR gModelVariant169Vertices[2][4] = {{{0}}};
+POLY_FT4 gModelVariant89Quad[2] = {{0}};
+POLY_FT4 gModelVariant137Quad[2] = {{0}};
+POLY_FT4 gModelVariant163Quad[2] = {{0}};
+u16 gModelVariant102Depths[2][110] = {{0}};
+u16 gModelVariant102Flags[2][110] = {{0}};
