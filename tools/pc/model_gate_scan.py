@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Where a ported variant shape's C divides, takes a remainder, or indexes
-with a value a mod can change (`model_gate.py scan`; notes/pc-build.md, "The
-model modules in native C").
+with a value a mod can change (notes/pc-build.md, "The model modules in
+native C").
 
 The hash of a native row covers `span` bytes of the slot's image. The
 interpreter survives a zero divisor and an index out of range; native C does
