@@ -89,7 +89,8 @@ static void check(const char *how, s32 selection)
 int main(void)
 {
     static uint32_t code[64];
-    ModelTintColor start = {0x60, 0x60, 0x60, 0}, end = {0x10, 0, 0, 0};
+    ModelTintColor start = {.b0 = 0x60, .b1 = 0x60, .b2 = 0x60, .b3 = 0},
+                   end = {.b0 = 0x10, .b1 = 0, .b2 = 0, .b3 = 0};
     uint32_t result = 0;
     int n = 0, part;
 
