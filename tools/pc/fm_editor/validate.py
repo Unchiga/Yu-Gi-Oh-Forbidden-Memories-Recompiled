@@ -523,9 +523,23 @@ def _check_packs(project: Project, out: list):
                          packmath.PACKS_MAX))
 
 
+def _check_card_layout(project: Project, out: list):
+    """card_layout.c reads none of a mod's "card_layout" while the mod's own
+    "full_bleed" setting is off, and a mod that declares no such setting has
+    no way to turn it on: the frames show in the editor and nowhere in the
+    game."""
+    layout = project.other.get("card_layout")
+    if isinstance(layout, dict) and layout and not manifest.declares_full_bleed(project):
+        out.append(Issue("warning", "Mod info", "settings",
+                         "the card layout never applies: the game reads it only while the mod's \"full_bleed\" "
+                         "setting is on, and the mod declares none (add a bool setting \"full_bleed\", "
+                         "default 1; the Frames page adds it with a first style)"))
+
+
 def validate(project: Project) -> list:
     out = []
     _check_info(project, out)
+    _check_card_layout(project, out)
     _check_card_types(project, out)
     _check_fields(project, out)
     for cid in sorted(project.cards):

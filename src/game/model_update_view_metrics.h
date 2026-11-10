@@ -36,11 +36,29 @@ extern u16 D_8009B478;
 extern u16 D_8009B47A;
 extern u16 D_8009B47C;
 
-/* Returns &D_8009B478, the first of the three halfwords above. The return
-   type is void * because that is what the definition returns, which is how
-   three callers each spelled the result differently -- unsigned short * and
-   u8 * -- without anything complaining. */
-void *Model_GetViewMetricsBuffer(void);
+/* The three halfwords above as one record, the upstream decomp's type: the
+   model modules model_gate.py ports from it read ->yaw through it. */
+typedef struct {
+    u16 distance;
+    u16 yaw;
+    u16 pitch;
+} ModelViewMetrics;
+
+typedef char ModelViewMetrics_size_must_be_0x6[
+    sizeof(ModelViewMetrics) == 0x6 ? 1 : -1
+];
+typedef char ModelViewMetrics_yaw_offset_must_be_0x2[
+    __builtin_offsetof(ModelViewMetrics, yaw) == 0x2 ? 1 : -1
+];
+typedef char ModelViewMetrics_pitch_offset_must_be_0x4[
+    __builtin_offsetof(ModelViewMetrics, pitch) == 0x4 ? 1 : -1
+];
+
+/* Returns &D_8009B478, the first of the three halfwords above. It used to
+   return void *, which is what the definition returned, so three callers
+   each spelled the result differently -- unsigned short * and u8 * --
+   without anything complaining; they now cast. */
+ModelViewMetrics *Model_GetViewMetricsBuffer(void);
 
 void Model_UpdateViewMetrics(u8 *view);
 

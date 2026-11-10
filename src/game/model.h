@@ -366,12 +366,17 @@ typedef struct {
  * the color: func_800528AC interpolates those three and copies b3 of the
  * start color straight through as the part id it draws with. The end
  * color's b3 at +0x17 is written and never read, which is why it is a member
- * here and not padding -- func_800528AC used to call it pad_17. */
+ * here and not padding -- func_800528AC used to call it pad_17.
+ *
+ * Each byte also has the upstream decomp's name (r, g, b, blend_mode), which
+ * the model modules model_gate.py ports from it use; b0..b3 stay for the
+ * game's code and for mods. A positional initializer warns under -Wall
+ * (-Wmissing-braces); a designated one ({.b0 = ..}) does not. */
 typedef struct {
-    u8 b0;
-    u8 b1;
-    u8 b2;
-    u8 b3;
+    union { u8 b0; u8 r; };
+    union { u8 b1; u8 g; };
+    union { u8 b2; u8 b; };
+    union { u8 b3; u8 blend_mode; };
 } ModelTintColor;
 
 /* One of the MODEL_TINT_REQUEST_COUNT tint requests at D_800F2B50.

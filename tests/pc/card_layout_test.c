@@ -99,13 +99,24 @@ const char *Mods_Id(int mod) { return fake_mods[mod].id; }
 const char *Mods_Directory(int mod) { return fake_mods[mod].directory; }
 const JsonValue *Mods_Manifest(int mod) { return Json_Root(fake_mods[mod].document); }
 
+/* mods.c's Mods_Setting, as far as card_layout.c needs it (mods_test.c holds
+ * the real one to account): what the player saved (the add_mod arguments),
+ * else the "default" the manifest's own "settings" declare for the key (a key
+ * declared with none keeps the caller's fallback), else the caller's fallback. */
 int Mods_Setting(const char *id, const char *key, int fallback)
 {
     int m;
     for (m = 0; m < fake_mod_count; m++) {
+        const JsonValue *list, *spec;
         if (strcmp(fake_mods[m].id, id)) continue;
         if (fake_mods[m].setting_key && !strcmp(fake_mods[m].setting_key, key)) return fake_mods[m].setting_value;
         if (fake_mods[m].setting_key2 && !strcmp(fake_mods[m].setting_key2, key)) return fake_mods[m].setting_value2;
+        list = Json_Member(Json_Root(fake_mods[m].document), "settings");
+        for (spec = Json_At(list, 0); spec; spec = Json_Next(spec)) {
+            if (Json_Member(spec, "default") && !strcmp(Json_String(Json_Member(spec, "key"), ""), key))
+                return (int)Json_Number(Json_Member(spec, "default"), 0);
+        }
+        return fallback;
     }
     return fallback;
 }
@@ -244,18 +255,48 @@ static void setting_off(void)
 }
 
 /* A player who has never touched the setting (no key at all, not even an
- * explicit 0): off, same as setting_off's explicit case -- a mod's own
- * manifest "default" (hd_assets_pack.py's "default": 0, notes/modding.md)
- * is display-only, read nowhere near this file; this engine-level fallback
- * (full_bleed_of's own Mods_Setting(..., 0)) is what a fresh install
- * actually gets, and it is this, not the manifest, that must change if the
- * answer should ever be different. */
+ * explicit 0), in a mod whose manifest declares no "full_bleed" setting: off,
+ * same as setting_off's explicit case. With no declaration there is no
+ * "default" to read, so full_bleed_of's own Mods_Setting(..., 0) answers; a
+ * mod that declares the setting gets its declared "default" instead
+ * (declared_default, below). */
 static void setting_unset(void)
 {
     reset();
     add_mod("anime-card-frame", "/mods/anime-card-frame", FULL_MANIFEST, 1, NULL, 0);
     CHECK(!CardLayout_FullBleed());
     CHECK(CardLayout_Part(CARD_LAYOUT_FRAME).visible);
+}
+
+/* The manifest declares "full_bleed" with "default": 1 and the player has
+ * saved nothing (a fresh install): the Mods window shows it ticked, and the
+ * game draws the custom frame to match. Once the player unticks it, the
+ * saved 0 wins; a mod that declares no such setting has no switch and keeps
+ * retail's frame. (The default itself is mods.c's to apply -- mods_test.c
+ * -- this holds what card_layout.c does with the answer.) */
+static void declared_default(void)
+{
+    static const char *const on =
+        "{\"id\": \"x\", \"settings\": [{\"key\": \"full_bleed\", \"type\": \"bool\", \"default\": 1}],"
+        " \"card_layout\": {\"frame_styles\": {\"g\": {\"image\": \"g.png\", \"hand_color\": \"gold\"}},"
+        " \"default_style\": \"g\"}}";
+    reset();
+    add_mod("x", "/mods/x", on, 1, NULL, 0);
+    CardLayout_SetCard(0);
+    CHECK(CardLayout_FullBleed());
+    CHECK(!strcmp(frame_path(), "/mods/x/g.png"));
+    CHECK(!CardLayout_Part(CARD_LAYOUT_FRAME).visible);
+    reset();
+    add_mod("x", "/mods/x", on, 1, "full_bleed", 0);
+    CardLayout_SetCard(0);
+    CHECK(!CardLayout_FullBleed());
+    CHECK(CardLayout_Part(CARD_LAYOUT_FRAME).visible && !*frame_path());
+    reset();
+    add_mod("x", "/mods/x",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {\"g\": {\"image\": \"g.png\"}},"
+            " \"default_style\": \"g\"}}", 1, NULL, 0);
+    CHECK(!CardLayout_FullBleed());
+    CHECK(CardLayout_Part(CARD_LAYOUT_FRAME).visible && !*frame_path());
 }
 
 /* A manifest that only gives one element keeps retail's place for every
@@ -1127,6 +1168,7 @@ int main(void)
     full_bleed_mod();
     setting_off();
     setting_unset();
+    declared_default();
     partial_manifest_falls_back();
     frame_outside_mod_refused();
     later_mod_wins();

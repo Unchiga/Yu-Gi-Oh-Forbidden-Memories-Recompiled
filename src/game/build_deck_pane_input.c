@@ -20,6 +20,7 @@
 #ifdef MEMORIES_PC
 #include "pc/cards/cards.h"
 #include "pc/cards/tables.h"
+#include "pc/cards/build_deck_fold.h"
 #endif
 
 void BuildDeck_UpdateDeckPaneInput(BuildDeckTransitionState *state) {
@@ -65,6 +66,13 @@ void BuildDeck_UpdateDeckPaneInput(BuildDeckTransitionState *state) {
             func_80032C48(&state->lists[1]);
             func_8003201C(state);
             BuildDeck_ReturnCardToChest(state, r);
+#ifdef MEMORIES_PC
+            /* The chest's row shows the card that came back (build_deck_fold.h). */
+            if (BuildDeckFold_Active() && Cards_VariantCount(BuildDeckFold_Head(r)) > 0) {
+                BuildDeckFold_Pick(state, r);
+                func_80031E04(&state->lists[0], 8);
+            }
+#endif
             BuildDeck_RefreshCountDisplay(state);
             func_80031574(r, 0x234, 0x16, 0x162, 0xA);
             return;
@@ -84,6 +92,24 @@ void BuildDeck_UpdateChestPaneInput(BuildDeckTransitionState *state)
     if (BuildDeck_UpdateCardListInput(e) != 0) {
         return;
     }
+#ifdef MEMORIES_PC
+    /* A name too long for the row scrolls under the cursor (cards.h). */
+    if (e->first == e->first_target && Cards_RowScroll(BuildDeck_GetActiveCardID(e))) {
+        func_80031E04(e, 8);
+    }
+    /* L3 and R3 step through the cards of the row's entry that the player has (build_deck_fold.h): L1/R1 and L2/R2
+       are the list's pages. */
+    if ((gInput_wPad1Pressed & PAD_BUTTON_L3_R3_MASK) != 0 && BuildDeckFold_Active()) {
+        r = BuildDeck_GetActiveCardID(e);
+        if (r != 0 && Cards_VariantCount(BuildDeckFold_Head(r)) > 0 &&
+            BuildDeckFold_Step(state, state->chest_card_quantities, state->deck_card_quantities,
+                               BuildDeckFold_Head(r), (gInput_wPad1Pressed & PAD_BUTTON_R3) ? 1 : -1)) {
+            SD_SEPlayFull(6);
+            func_80031E04(e, 8);
+        }
+        return;
+    }
+#endif
 
     if ((gInput_wPad1Pressed & PAD_BUTTON_TRIANGLE) != 0) {
         r = BuildDeck_GetActiveCardID(e);
@@ -127,8 +153,9 @@ void BuildDeck_UpdateChestPaneInput(BuildDeckTransitionState *state)
         if (state->deck_total < DECK_SIZE &&
             state->chest_card_quantities[r] != 0 &&
 #ifdef MEMORIES_PC
-            /* Three, or a mod's "deck_copies" (tables.h). */
-            state->deck_card_quantities[r] <
+            /* Three, or a mod's "deck_copies" (tables.h), of a card and its
+               variants together (cards.h). */
+            Cards_FamilyCopies(state->deck_card_quantities, r) <
                 Tables_Value(TABLES_VALUE_DECK_COPIES, DECK_CARD_COPY_LIMIT)) {
 #else
             state->deck_card_quantities[r] < DECK_CARD_COPY_LIMIT) {

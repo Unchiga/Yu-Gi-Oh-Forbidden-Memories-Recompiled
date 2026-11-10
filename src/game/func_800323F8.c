@@ -54,6 +54,7 @@
 #include "func_800323F8.h"
 #ifdef MEMORIES_PC
 #include "pc/cards/cards.h"
+#include "pc/cards/build_deck_fold.h"
 #endif
 
 #define CARD_LIST_VIEW(list) ((CardList *)(list))
@@ -193,6 +194,28 @@ void func_800323F8(u8 *base, void *deck, s32 other, s32 flags)
         ws->chest_total = n;
         chest->sort_row_count = CARD_COUNT_LIVE;
         chest->row_count = CARD_COUNT_LIVE;
+        /* A card and its variants are one row (build_deck_fold.h): the card's, shown if the player has any card of
+           the entry; the variants' rows are not shown. The row sorts as the card, and takes the latest drop's rank
+           of the entry's cards. */
+        BuildDeckFold_Begin(ws);
+        if (BuildDeckFold_Active()) {
+            for (id = CARD_ID_FIRST; id <= CARD_COUNT_LIVE; id++) {
+                if (BuildDeckFold_Head(id) != id) {
+                    chest->entries[id - 1].flags = 0;
+                } else if (Cards_VariantCount(id) > 0) {
+                    s32 member;
+                    chest->entries[id - 1].flags = BuildDeckFold_RowFlag(ws->chest_card_quantities,
+                                                                         ws->deck_card_quantities, id, on, held);
+                    BuildDeckFold_Settle(ws, ws->chest_card_quantities, ws->deck_card_quantities, id);
+                    for (member = 0; member < Cards_VariantCount(id); member++) {
+                        s32 variant = Cards_VariantMember(id, member);
+                        if (ws->card_sort_rank[variant] > ws->card_sort_rank[id]) {
+                            ws->card_sort_rank[id] = ws->card_sort_rank[variant];
+                        }
+                    }
+                }
+            }
+        }
         func_80032C48(chest);
     }
 #else

@@ -18,7 +18,7 @@ void Model_QueueTintRequest(s32 slot, s32 selection, ModelTintColor start,
 }
 int main(void) {
     MemoriesMemory *memory=calloc(1,sizeof(*memory)); assert(memory && !GuestRuntime_Bind(memory));
-    ModelTintColor start={1,2,3,4},end={6,7,8,9};
+    ModelTintColor start={.b0=1,.b1=2,.b2=3,.b3=4},end={.b0=6,.b1=7,.b2=8,.b3=9};
     Model_QueueTintRequestForParts(1,133,start,end,17,0,15,63,-1);
     Model_QueueTintRequestForParts(1,133,start,end,17,-1);
     assert(calls==2); GuestRuntime_Reset(); free(memory);

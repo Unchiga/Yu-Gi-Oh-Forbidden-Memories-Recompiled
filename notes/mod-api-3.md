@@ -53,7 +53,11 @@ The loader accommodates 256 discovered mods. Named integer settings grow with
 the collection instead of dropping entries after 128. Overlong keys or failed
 allocation cause saving to fail rather than report a successful incomplete save.
 
-Settings use `host->setting` as before. Keys use letters, digits, `_`, `-`;
+Settings use `host->setting` as before: it answers with the fallback the code
+mod passes for a key nobody has stored. What the game reads from a manifest
+itself (a `setting` on a pack entry or a `frame_for` rule, `full_bleed`,
+`count_setting`) is the setting's declared `default` until the player changes
+it, the value the Mods window shows. Keys use letters, digits, `_`, `-`;
 `order` is reserved. `description` supplies help, and `restart: true` marks an
 option that cannot be updated live. A `key` value is a normalized pad-button
 bitmask (Select through Square), not an OS keyboard scancode; keyboard and

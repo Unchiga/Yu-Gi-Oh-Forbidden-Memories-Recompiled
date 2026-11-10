@@ -167,3 +167,21 @@ accept v0.3.0 function ModsWindow_SetImport takes a fetch callback with the prog
 accept v0.3.0 record TitleBackground holds an animation's frames
 accept v0.3.0 record TitleConfig gained fade, smooth_slide and the larger TitleBackground and TitleItem
 accept v0.3.0 record TitleItem gained font_game before action
+
+# The upstream decomp's names for the model modules it ports
+# (tools/pc/model_gate_port.py). ModelTintColor names each byte twice, in an
+# anonymous union (b0/r, b1/g, b2/b, b3/blend_mode): same size, offsets and
+# bytes, and a mod's .b0 still compiles. Model_GetViewMetricsBuffer returns
+# the same address as ModelViewMetrics * where it returned void *: no mod's
+# object changes, but a 64-bit mod's source that assigns it to another
+# pointer type without a cast now needs one (build_mod.py's
+# -Werror=incompatible-pointer-types). No mod in use calls it.
+accept v0.1.2 record ModelTintColor names each byte twice (b0/r, b1/g, b2/b, b3/blend_mode); layout unchanged
+accept v0.1.2 record ModelTintRequest holds ModelTintColor, whose bytes have two names; layout unchanged
+accept v0.1.2 function Model_GetViewMetricsBuffer returns ModelViewMetrics * (the same address) where it returned void *
+accept v0.2.0 record ModelTintColor names each byte twice (b0/r, b1/g, b2/b, b3/blend_mode); layout unchanged
+accept v0.2.0 record ModelTintRequest holds ModelTintColor, whose bytes have two names; layout unchanged
+accept v0.2.0 function Model_GetViewMetricsBuffer returns ModelViewMetrics * (the same address) where it returned void *
+accept v0.3.0 record ModelTintColor names each byte twice (b0/r, b1/g, b2/b, b3/blend_mode); layout unchanged
+accept v0.3.0 record ModelTintRequest holds ModelTintColor, whose bytes have two names; layout unchanged
+accept v0.3.0 function Model_GetViewMetricsBuffer returns ModelViewMetrics * (the same address) where it returned void *

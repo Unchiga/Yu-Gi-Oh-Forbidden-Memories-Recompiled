@@ -136,6 +136,28 @@ def main():
             [None],
         ),
         (
+            "translated-race",
+            [
+                "tests/pc/translated_race_test.c",
+                "src/pc/guest/translated_runtime.c",
+                "src/pc/guest/translated_alloc.c",
+                "src/pc/memory.c",
+            ],
+            [],
+            [None],
+        ),
+        (
+            "translated-arena",
+            [
+                "tests/pc/translated_arena_test.c",
+                "src/pc/guest/translated_runtime.c",
+                "src/pc/guest/translated_alloc.c",
+                "src/pc/memory.c",
+            ],
+            [],
+            [None],
+        ),
+        (
             "translated-runtime",
             [
                 "tests/pc/translated_runtime_test.c",

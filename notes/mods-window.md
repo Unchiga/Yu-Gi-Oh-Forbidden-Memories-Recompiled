@@ -282,8 +282,10 @@ file that is no mod gets the usual refusal ("That file is not a .zip.",
   a file that is not a `.zip`, or more mods than the game takes (256, in
   one `.zip` or with those installed). A mod at the `.zip`'s root without an `id` goes in `imported-mod`.
   The `id`, the name and whether it carries code come from its `mod.json`, as
-  the loader reads them; one over 128 MB (a card mod's is tens of MB) is
-  refused, as the game would read the whole file at every launch.
+  the loader reads them: unpacked to `<zip>.mod-json` beside the `.zip` for that
+  moment, its `fusions` skipped, so a mod with millions of them takes no more
+  memory to name than one without. One over 1536 MB (More Cards is 42 MB, a mod
+  of 25 times its fusions 1 GB) is refused.
   A file's name with no UTF-8 flag that is not UTF-8 either is read as code
   page 850, which Windows' tools write (the format says 437; 850 keeps 437's
   accented letters and adds the ones it lacks, like `ã`). A name from another

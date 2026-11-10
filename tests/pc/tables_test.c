@@ -62,6 +62,12 @@ int Cards_Reference(const JsonValue *value)
     if (Json_TypeOf(value) == JSON_NUMBER) return Cards_Valid((int)Json_Number(value, 0)) ? (int)Json_Number(value, 0) : -1;
     return Cards_Named(Json_String(value, ""));
 }
+long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *), void *context, char *error,
+                     size_t error_size)
+{
+    (void)id; (void)each; (void)context; (void)error; (void)error_size;
+    return 0;
+}
 void Mods_Note(const char *id, const char *format, ...)
 {
     va_list arguments;

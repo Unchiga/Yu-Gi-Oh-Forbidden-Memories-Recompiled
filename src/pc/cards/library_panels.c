@@ -83,7 +83,7 @@ void Cards_DrawLibraryPanels(void)
     DisplayObject *model = library->slots[0], *last = library->slots[RETAIL_SECTIONS];
     DisplayObject panel;
     int row, rows, first, column;
-    if (gCard_nCount <= CARD_COUNT || !model || !last) return;
+    if (Cards_LibraryEntryCount() <= CARD_COUNT || !model || !last) return;
     if (!sheet.header.count) build_sheet();
     /* The retail 701-722 panel would mislabel a section of 100. */
     last->field_30.h.field_32 = -0x4000;
@@ -99,7 +99,7 @@ void Cards_DrawLibraryPanels(void)
     for (row = first; row < rows && row <= first + 2; row++) {
         for (column = 0; column < CARD_GRID_SECTIONS_PER_ROW; column++) {
             int section = row * CARD_GRID_SECTIONS_PER_ROW + column;
-            if (section < RETAIL_SECTIONS || section * CARD_GRID_SECTION_CARD_COUNT >= gCard_nCount) continue;
+            if (section < RETAIL_SECTIONS || section * CARD_GRID_SECTION_CARD_COUNT >= Cards_LibraryEntryCount()) continue;
             panel.field_30.h.field_30 = (s16)(PANEL_LEFT + column * PANEL_COLUMN);
             panel.field_30.h.field_32 = (s16)(PANEL_TOP + row * PANEL_PITCH);
             DisplayObject_RenderSpriteSheet(&panel, (s32)(uintptr_t)D_800E9D90[panel.ot_index],

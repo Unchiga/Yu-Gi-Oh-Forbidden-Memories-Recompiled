@@ -11,6 +11,7 @@
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
 #include <assert.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -226,7 +227,8 @@ int main(void)
     write_text("mods/people/mod.json",
                "{ \"id\": \"people\","
                "  \"settings\": [ { \"key\": \"names\", \"type\": \"choice\", \"default\": 0,"
-               "                    \"choices\": [ \"US\", \"JP\", \"BR\" ] } ],"
+               "                    \"choices\": [ \"US\", \"JP\", \"BR\" ] },"
+               "                  { \"key\": \"limit\", \"type\": \"int\", \"max\": 1000 } ],"
                "  \"text\": [ { \"file\": \"us.txt\", \"setting\": \"names\", \"value\": 0 },"
                "            { \"file\": \"jp.txt\", \"setting\": \"names\", \"value\": 1 },"
                "            { \"file\": \"br.txt\", \"setting\": \"names\", \"value\": 2 },"
@@ -291,6 +293,37 @@ int main(void)
                strstr(path, "/plain/text.txt") && !Mods_Status(plain)[0]);
         assert(!Mods_File(plain, "text", 1, path, sizeof(path), &name));
         assert(!Mods_File(plain, "font", 0, path, sizeof(path), &name));
+        /* A setting the player has not touched reads as the "default" its
+         * manifest declares -- the value the Mods window shows -- whatever
+         * the caller's fallback, so a card_layout's "full_bleed" declared on
+         * is on at the first run. Only a key the mod does not declare (or
+         * a mod that is not there) answers with the caller's fallback. */
+        assert(Mods_Setting("wording", "names", 0) == 1 && Mods_Setting("wording", "names", 5) == 1);
+        assert(Mods_Setting("wording", "menus", 1) == 0 && Mods_Setting("wording", "menus", 0) == 0);
+        assert(Mods_Setting("people", "names", 9) == 0);
+        assert(Mods_Setting("wording", "undeclared", 7) == 7 && Mods_Setting("nosuch", "names", 5) == 5);
+        assert(Mods_Setting("plain", "names", 3) == 3);
+        /* A key declared with no "default" is not given one: the caller's
+         * fallback stands (a card entry's count_setting keeps its "count"),
+         * until a value is stored. Any stored number, the extremes of an int
+         * included, is what was stored. */
+        assert(Mods_Setting("people", "limit", 100) == 100 && Mods_Setting("people", "limit", -7) == -7);
+        Settings_SetNamed("mod.people.limit", 0);
+        assert(Mods_Setting("people", "limit", 100) == 0);
+        Settings_SetNamed("mod.people.limit", INT_MIN);
+        assert(Mods_Setting("people", "limit", 100) == INT_MIN);
+        Settings_SetNamed("mod.people.limit", INT_MAX);
+        assert(Mods_Setting("people", "limit", 100) == INT_MAX);
+        Settings_SetNamed("mod.people.limit", 250);
+        assert(Mods_Setting("people", "limit", 100) == 250);
+        assert(Mods_OptionValue(wording, 0) == 1 && Mods_OptionValue(wording, 1) == 0);
+        /* What the player chose beats the default, 0 as much as any other
+         * number; and the environment beats both. */
+        Settings_SetNamed("mod.wording.names", 0);
+        Settings_SetNamed("mod.wording.menus", 1);
+        assert(Mods_Setting("wording", "names", 1) == 0 && Mods_Setting("wording", "menus", 0) == 1);
+        assert(!setenv("MEMORIES_MOD_WORDING_NAMES", "1", 1) && Mods_Setting("wording", "names", 0) == 1);
+        assert(!unsetenv("MEMORIES_MOD_WORDING_NAMES"));
         assert(!setenv("MEMORIES_MOD_WORDING_NAMES", "0", 1) && !setenv("MEMORIES_MOD_WORDING_MENUS", "1", 1));
         assert(Mods_OptionValue(wording, 0) == 0 && Mods_OptionValue(wording, 1) == 1);
         assert(Mods_File(wording, "text", 1, path, sizeof(path), &name) && path[0]);
