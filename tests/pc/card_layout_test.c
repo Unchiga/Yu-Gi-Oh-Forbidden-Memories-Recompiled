@@ -790,6 +790,116 @@ static void digits_from_mod(void)
     CHECK(!CardLayout_Digits(path, sizeof(path), &w, &h, &step) && notes == 1);   /* outside the mod */
 }
 
+/* A style that keeps retail's frame (no "image", or "full_bleed": false) may
+ * still give an ATK/DFD caption picture: the layout answers it as it does
+ * for a full-bleed style, so func_80028B08.c draws it where retail's caption
+ * would be. Only that style: another one, and the setting off, answer none;
+ * "hide" still hides the caption. */
+static void stat_label_on_retail_frame(void)
+{
+    char path[1024];
+    int x = 0, y = 0, w = 0, h = 0;
+
+    reset();
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {"
+            "\"hp\": {\"hand_color\": \"gold\", \"dfd_label\": {\"image\": \"hp.png\", \"x\": 4, \"y\": 5,"
+            " \"width\": 20, \"height\": 9}},"
+            "\"flat\": {\"hand_color\": \"gold\", \"full_bleed\": false,"
+            " \"atk_label\": {\"image\": \"atk.png\"}, \"dfd_label\": {\"hide\": true}},"
+            "\"plain\": {\"hand_color\": \"gold\"}},"
+            "\"default_style\": \"hp\"}}",
+            1, "full_bleed", 1);
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_FullBleed());                 /* retail's frame stays */
+    CHECK(CardLayout_StatLabel(1, path, sizeof(path), &x, &y, &w, &h));
+    CHECK(!strcmp(path, "/mods/a/hp.png") && x == 4 && y == 5 && w == 20 && h == 9);
+    CHECK(!CardLayout_StatLabel(0, path, sizeof(path), &x, &y, &w, &h) && !path[0]);   /* no ATK image */
+    CHECK(CardLayout_Part(CARD_LAYOUT_DEF_LABEL).visible);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "flat");
+    CardLayout_SetCard(2);
+    CHECK(!CardLayout_FullBleed());
+    CHECK(CardLayout_StatLabel(0, path, sizeof(path), &x, &y, &w, &h));
+    CHECK(!strcmp(path, "/mods/a/atk.png") && x == 0 && y == 0 && w == 16 && h == 8);   /* the defaults */
+    CHECK(!CardLayout_StatLabel(1, path, sizeof(path), &x, &y, &w, &h) && !path[0]);
+    CHECK(!CardLayout_Part(CARD_LAYOUT_DEF_LABEL).visible);                  /* hide: no caption at all */
+    snprintf(fake_frame_style[3], sizeof(fake_frame_style[3]), "%s", "plain");
+    CardLayout_SetCard(3);
+    CHECK(!CardLayout_StatLabel(0, path, sizeof(path), &x, &y, &w, &h) && !path[0]);   /* retail's own */
+    CHECK(!CardLayout_StatLabel(1, path, sizeof(path), &x, &y, &w, &h) && !path[0]);
+    CHECK(CardLayout_Part(CARD_LAYOUT_ATK_LABEL).visible && CardLayout_Part(CARD_LAYOUT_DEF_LABEL).visible);
+
+    reset();                                        /* the mod's setting off: retail whatever the style says */
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {"
+            "\"hp\": {\"hand_color\": \"gold\", \"dfd_label\": {\"image\": \"hp.png\"}}},"
+            "\"default_style\": \"hp\"}}",
+            1, "full_bleed", 0);
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_StatLabel(1, path, sizeof(path), &x, &y, &w, &h) && !path[0]);
+}
+
+/* A style that keeps retail's frame may give a digit strip too, its own or
+ * the layout's shared one: the layout answers it with the ATK/DEF places
+ * where retail has its digits (a corner there, which func_80028B08.c
+ * centres the strip on), and the setting off answers none. A card no style
+ * claims is not Styled: func_80028B08.c keeps retail's digits for it. */
+static void digits_on_retail_frame(void)
+{
+    char path[1024];
+    int w = 0, h = 0, step = 0;
+    CardLayoutPart p;
+
+    reset();
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"digits\": {\"image\": \"shared.png\"}, \"frame_styles\": {"
+            "\"own\": {\"hand_color\": \"gold\", \"digits\": {\"image\": \"d.png\", \"width\": 8, \"height\": 11,"
+            " \"step\": 7}},"
+            "\"shared\": {\"hand_color\": \"gold\"},"
+            "\"none\": {\"hand_color\": \"gold\", \"digits\": {\"atk\": {\"x\": 90, \"y\": 150}}}},"
+            "\"default_style\": \"own\"}}",
+            1, "full_bleed", 1);
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_FullBleed());                 /* retail's frame stays */
+    CHECK(CardLayout_Digits(path, sizeof(path), &w, &h, &step));
+    CHECK(!strcmp(path, "/mods/a/d.png") && w == 8 && h == 11 && step == 7);
+    p = CardLayout_Part(CARD_LAYOUT_ATK);
+    CHECK(p.visible && p.x == 0x61 && p.y == 0x9D);
+    p = CardLayout_Part(CARD_LAYOUT_DEF);
+    CHECK(p.visible && p.x == 0x61 && p.y == 0xAB);
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "shared");
+    CardLayout_SetCard(2);
+    CHECK(CardLayout_Digits(path, sizeof(path), &w, &h, &step));
+    CHECK(!strcmp(path, "/mods/a/shared.png") && w == 10 && h == 12 && step == 10);   /* the defaults */
+    snprintf(fake_frame_style[3], sizeof(fake_frame_style[3]), "%s", "none");
+    CardLayout_SetCard(3);
+    CHECK(!CardLayout_Digits(path, sizeof(path), &w, &h, &step) && !path[0]);   /* its own hides the shared */
+    p = CardLayout_Part(CARD_LAYOUT_ATK);
+    CHECK(p.x == 90 && p.y == 150);
+    CHECK(CardLayout_Styled());
+
+    reset();                                        /* a card no style claims: no style, retail's digits */
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"digits\": {\"image\": \"shared.png\"}, \"frame_styles\": {"
+            "\"own\": {\"hand_color\": \"gold\"}}}}",
+            1, "full_bleed", 1);
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_Styled() && !CardLayout_FullBleed());
+    snprintf(fake_frame_style[2], sizeof(fake_frame_style[2]), "%s", "own");
+    CardLayout_SetCard(2);
+    CHECK(CardLayout_Styled());
+
+    reset();                                        /* the mod's setting off: retail's digits */
+    add_mod("a", "/mods/a",
+            "{\"id\": \"x\", \"card_layout\": {\"frame_styles\": {"
+            "\"own\": {\"hand_color\": \"gold\", \"digits\": {\"image\": \"d.png\"}}},"
+            "\"default_style\": \"own\"}}",
+            1, "full_bleed", 0);
+    CardLayout_SetCard(1);
+    CHECK(!CardLayout_Digits(path, sizeof(path), &w, &h, &step) && !path[0]);
+    CHECK(!CardLayout_Styled());
+}
+
 /* "color" (CardLayoutPart's own r/g/b): 0x80 each, the GPU's own
  * neutral multiply, with no mod or no "color" of an element's own; read
  * from the manifest the same whether full_bleed is on or off, like the
@@ -1083,6 +1193,8 @@ int main(void)
     styles_hand_colour_alias();
     legacy_ritual_wears_magic();
     digits_from_mod();
+    stat_label_on_retail_frame();
+    digits_on_retail_frame();
     color_tint();
     per_style_layout();
     partial_art_rect_uses_retail_defaults();

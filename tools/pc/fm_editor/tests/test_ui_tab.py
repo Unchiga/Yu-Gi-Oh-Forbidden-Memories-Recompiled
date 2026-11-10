@@ -750,6 +750,94 @@ class UiTabTest(GuiCase):
         self.assertEqual(self.app.project.info.settings, [])
         self.assertEqual(info.settings.get("1.0", "end").strip(), "[ not json")      # the modder's text stays
 
+    def test_frames_label_on_the_games_own_frame(self):
+        """A style with no frame image keeps retail's frame, and the game
+        draws retail's ATK/DFD caption there until a picture replaces it: the
+        preview keeps that caption still, then the picture starts over it."""
+        from fm_editor import ui_frames
+        page = self.page("frames")
+        layout = self.app.project.other.setdefault("card_layout", {})
+        layout["frame_styles"] = {"hp": {"hand_color": "gold"}}
+        page.style_name.set("hp")
+        style = layout["frame_styles"]["hp"]
+        page.chosen = page.list_chosen = "dfd_label"
+        self.assertTrue(page.keeps_retail_frame())
+        self.assertTrue(page.fixed_caption("dfd_label"))
+        self.assertEqual(page.rect("dfd_label"), ui_frames.RETAIL_CAPTIONS["dfd_label"])
+        page.paint()
+        self.assertNotIn("dfd_label", page.stage.draggable)         # retail's own sprite: nothing to drag
+        page.moved("dfd_label", 5, 5); page.wheel("dfd_label", 1)
+        self.assertEqual(style, {"hand_color": "gold"})              # and nothing written
+        # A picture replaces it, starting where retail's caption is.
+        page.set_asset("dfd_label", "frames/hp.png")
+        self.assertEqual(style["dfd_label"], {"image": "frames/hp.png", "x": 72, "y": 173, "width": 21, "height": 8})
+        self.assertFalse(page.fixed_caption("dfd_label"))
+        page.paint()
+        self.assertIn("dfd_label", page.stage.draggable)
+        page.moved("dfd_label", -72, -173)                           # the game's own (0, 0) is written too
+        self.assertEqual((style["dfd_label"]["x"], style["dfd_label"]["y"]), (0, 0))
+        self.assertEqual(page.rect("dfd_label"), (0, 0, 21, 8))
+        page.chosen = "dfd_label"
+        for name, value in (("x", 12), ("y", 184)):                 # the editor's old start places, typed
+            page.vars[name].set(str(value)); page.typed(name)
+        self.assertEqual((style["dfd_label"]["x"], style["dfd_label"]["y"]), (12, 184))
+        self.assertEqual(page.rect("dfd_label")[:2], (12, 184))
+        del style["dfd_label"]["x"], style["dfd_label"]["y"]         # a hand-written one: the game's places
+        self.assertEqual(page.rect("dfd_label")[:2], (0, 0))
+        page.set_asset("dfd_label", None)
+        self.assertTrue(page.fixed_caption("dfd_label"))
+        # A style with a frame image of its own: the editor's start places, as before.
+        style["image"] = "frames/f.png"
+        self.assertFalse(page.keeps_retail_frame())
+        self.assertFalse(page.fixed_caption("atk_label"))
+        style["dfd_label"] = {}
+        page.set_asset("atk_label", "frames/a.png")
+        self.assertEqual(style["atk_label"], {"image": "frames/a.png", "x": 12, "y": 171, "width": 16, "height": 8})
+        # Replacing the picture of a hand-written label with no x/y moves nothing: it is at the game's (0, 0).
+        style["dfd_label"] = {"image": "frames/old.png"}
+        page.set_asset("dfd_label", "frames/new.png")
+        self.assertEqual(style["dfd_label"], {"image": "frames/new.png"})
+        self.assertEqual(page.rect("dfd_label"), (0, 0, 16, 8))
+        style["full_bleed"] = False                                  # a frame image the style says not to use
+        self.assertTrue(page.keeps_retail_frame())
+        style["full_bleed"] = 0                                      # the game reads a number as a bool
+        self.assertTrue(page.keeps_retail_frame())
+        style["full_bleed"] = 1
+        self.assertFalse(page.keeps_retail_frame())
+        del style["image"]
+        self.assertFalse(page.keeps_retail_frame())                  # 1 without an image: full-bleed, as the game has it
+
+    def test_frames_digits_on_the_games_own_frame(self):
+        """ATK/DFD left where they are: the game's own places (0x61, 0x9D and
+        0x61, 0xAB), a box centre on a style's own frame and, on one that
+        keeps retail's frame, the corner of retail's 24 x 13 digit row, which
+        the game centres a strip on (func_80028B08.c)."""
+        from fm_editor import pngio, ui_frames
+        page = self.page("frames")
+        layout = self.app.project.other.setdefault("card_layout", {})
+        layout["frame_styles"] = {"hp": {"hand_color": "gold"}}
+        page.style_name.set("hp")
+        style = layout["frame_styles"]["hp"]
+        self.assertEqual(page.rect("atk")[:2], (97, 157))
+        self.assertEqual(page.rect("def")[:2], (97, 171))
+        page.moved("atk", 0, 12)                                     # y 169 is not the game's: it is written
+        self.assertEqual(style["digits"]["atk"], {"y": 169})
+        del style["digits"]
+        strip = pngio.Image(200, 192, bytes(200 * 192 * 4))
+        real = ui_frames.mod_image
+        with mock.patch.object(ui_frames, "mod_image",
+                               side_effect=lambda project, name: strip if name == "frames/d.png" else real(project, name)):
+            # (Retail's own digits, with no strip, are previewed as text, whose
+            # box Tk measures in the system's font: not compared here.)
+            style["digits"] = {"image": "frames/d.png", "width": 10, "height": 12}
+            page.paint()
+            # 3000 in 10-wide digits, 40 x 12, centred on (109, 163)
+            self.assertEqual(page.stage.boxes["atk"], (89, 157, 40, 12))
+            self.assertEqual(page.stage.boxes["def"], (89, 171, 40, 12))
+            style["image"] = "frames/f.png"                              # a frame of its own: x/y is the centre
+            page.paint()
+            self.assertEqual(page.stage.boxes["atk"], (77, 151, 40, 12))
+
     def test_deleting_frame_style_clears_its_assignments(self):
         """Deleting a referenced style must not leave stale fallback rules."""
         from fm_editor import ui_frames

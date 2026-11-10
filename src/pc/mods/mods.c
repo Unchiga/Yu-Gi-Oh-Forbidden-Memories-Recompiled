@@ -36,6 +36,7 @@
 #include "pc/platform/settings.h"
 #include "pc/platform/platform.h"
 #include "pc/platform/menu.h"
+#include "pc/platform/loading.h"
 #include "pc/debug/log.h"
 #include "pc/debug/symbols.h"
 #include "pc/sdk/disc.h"
@@ -3469,6 +3470,16 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
     memset(mod, 0, sizeof(*mod));
     copy_text(mod->directory, sizeof(mod->directory), directory);
     mod->origin = origin;
+    {   /* A manifest of megabytes is one blocking parse: the screen has to
+         * be up, with its label, before it starts (loading.h). */
+        struct stat info;
+        if (!stat(path, &info) && info.st_size > 1024 * 1024) {
+            const char *slash = strrchr(directory, '/');
+            char label[160];
+            snprintf(label, sizeof(label), "Reading mod %s", slash ? slash + 1 : directory);
+            Loading_Show(label, 0, 0);
+        }
+    }
     mod->manifest = Json_ParseFile(path, error, sizeof(error));
     root = Json_Root(mod->manifest);
     if (!root || Json_TypeOf(root) != JSON_OBJECT) {
@@ -3676,7 +3687,11 @@ static int scan(const char *root, const char *origin)
         Mod candidate;
         int existing;
         if (snprintf(path, sizeof(path), "%s/%s", root, names[i]) >= (int)sizeof(path)) continue;
+        /* A mod.json of megabytes has no loop inside to step from: the
+         * loading screen is pumped before it and after (loading.h). */
+        Loading_Step("Reading mods", (unsigned)i, (unsigned)count);
         if (!read_manifest(&candidate, path, origin)) continue;
+        Loading_Step("Reading mods", (unsigned)i + 1, (unsigned)count);
         existing = by_id(candidate.id);
         if (existing >= 0 && here[existing]) {
             /* Two folders of one directory with one id: the first, in the
@@ -4412,6 +4427,7 @@ void Mods_Load(void)
             if (!Paths_User(path, sizeof(path), "mods")) scan(path, "installed");
         }
         for (i = 0; i < mod_count; i++) {
+            Loading_Step("Checking mods", (unsigned)i, (unsigned)mod_count);
             if (!Mods_CheckManifest(i, error, sizeof(error))) { mods[i].broken = 1; note(&mods[i], "%s", error); }
         }
         say("%d mods found", mod_count);
@@ -4444,8 +4460,10 @@ void Mods_Load(void)
         for (i = 0; i < count; i++) {
             int current = order[i];
             if (!enabled[current] || mods[current].broken) continue;
+            Loading_Step("Preparing mods", (unsigned)i, (unsigned)count);
             if (!apply_overrides(&mods[current], current)) mods[current].failed = 1;
             else mods[current].data_prepared = 1;
+            Loading_Step("Preparing mods", (unsigned)i + 1, (unsigned)count);
         }
         preparing_data = 0;
         for (;;) {
@@ -4489,6 +4507,7 @@ void Mods_Load(void)
             note(&mods[current], "waits for a restart: %s, which it requires, is applied at the next launch", mods[j].name);
             continue;
         }
+        Loading_Step("Starting mods", (unsigned)i, (unsigned)count);
         for (j = 0; j < mod_count; j++) active[j] = mods[j].active;
         active[current] = 1;
         if (!Mods_Compatible(current, active, error, sizeof(error))) {

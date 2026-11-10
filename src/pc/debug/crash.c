@@ -8,12 +8,12 @@
 #include "pc/platform/platform.h"
 #include "pc/sdk/display.h"
 #include "pc/platform/paths.h"
+#ifdef MEMORIES_TRANSLATED
+#include "pc/guest/translated_runtime.h"
+#include "pc/guest/translated_state_backend.h"
+#endif
 #ifdef __APPLE__
 #include "pc/platform/darwin_image.h"
-#ifdef MEMORIES_TRANSLATED
-#include "pc/guest/translated_state_backend.h"
-#include "pc/guest/translated_runtime.h"
-#endif
 #endif
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -251,12 +251,8 @@ static void report_fatal(const char *what, unsigned long number, uintptr_t fault
 #ifdef MEMORIES_TRANSLATED
     extern const char Memories_BuildIdentity[];
     line("build: %s\n", (uintptr_t)Memories_BuildIdentity, 0, 0);
-    const char *detail = GuestRuntime_FatalDetail();
-    if (*detail) {
-        output("translated runtime: ", 20);
-        output(detail, strnlen(detail, 512));
-        output("\n", 1);
-    }
+    GuestRuntime_WriteFatalDetail(2);
+    if (report_fd >= 0) GuestRuntime_WriteFatalDetail(report_fd);
 #endif
     context();
     if (report_fd >= 0) close(report_fd);

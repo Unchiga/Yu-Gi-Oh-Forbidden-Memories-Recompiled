@@ -575,6 +575,10 @@ def main() -> int:
     parser.add_argument("--reverse-reference", action="store_true",
                         help="the reference runs the battles in the opposite order, in other games (a battle "
                              "whose module reads stack it never wrote then differs: notes/pc-build.md)")
+    parser.add_argument("--poison", help="the subject fills its stack with this byte (\"0xA5\") before each native "
+                                         "module call (MEMORIES_MODEL_STACK_POISON, a build with test hooks): C that "
+                                         "reads a local it never wrote then takes the byte, and differs from the "
+                                         "interpreter for one byte or another (run it with 0x00 and 0xFF)")
     parser.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1), help="games at once")
     parser.add_argument("--shard", type=int, default=12, help="battles per game (default 12)")
     parser.add_argument("--chunk", type=int, default=16, help="VBlanks a step (default 16)")
@@ -605,7 +609,15 @@ def main() -> int:
         out = Path(tempfile.mkdtemp(prefix="model-oracle-", dir=OUTPUT))
     subject_exe = arguments.executable
     reference_exe = arguments.reference_executable or subject_exe
-    sides = {"subject": Side("subject", subject_exe, side_env(arguments.mode), out / "subject", disc.path,
+    subject_env = side_env(arguments.mode)
+    if arguments.poison is not None:
+        try:
+            if not 0 <= int(arguments.poison, 0) <= 0xFF:
+                raise ValueError
+        except ValueError:
+            parser.error(f"--poison: {arguments.poison}? (a byte, 0x00 to 0xFF)")
+        subject_env["MEMORIES_MODEL_STACK_POISON"] = arguments.poison
+    sides = {"subject": Side("subject", subject_exe, subject_env, out / "subject", disc.path,
                              arguments.chunk, arguments.cap),
              "reference": Side("reference", reference_exe, side_env(arguments.reference_mode), out / "reference",
                                disc.path, arguments.chunk, arguments.cap)}

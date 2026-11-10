@@ -284,6 +284,16 @@ int main(void)
         SaveMenu_Draw(&canvas, &x, &y, &w, &h);
         assert(w == 600 && x == (1280 - 600) / 2);
         wide_h = h;
+        /* The mouse: a row it moves onto is the cursor (once), a click is Cross, and nothing off the rows
+         * does anything. */
+        {
+            int heard, row_y = y + 38 + 22 * 3 + 5;
+            assert(SaveMenu_Pointer(x + 100, row_y, 1, 0, &heard) == 0 && heard == SAVE_MENU_SOUND_MOVE);
+            assert(SaveMenu_Pointer(x + 100, row_y, 1, 0, &heard) == 0 && heard == SAVE_MENU_SOUND_NONE);
+            assert(SaveMenu_Pointer(x + 100, row_y, 0, 1, &heard) == SAVE_MENU_PAD_CONFIRM && heard == SAVE_MENU_SOUND_NONE);
+            assert(SaveMenu_Pointer(x - 5, row_y, 1, 1, &heard) == 0 && heard == SAVE_MENU_SOUND_NONE);
+            assert(SaveMenu_Pointer(x + 100, y + 2, 1, 1, &heard) == 0);   /* the title, not a row */
+        }
         span_left = 370;
         span_right = 910;
         SaveMenu_Draw(&canvas, &x, &y, &w, &h);

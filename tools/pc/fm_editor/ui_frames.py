@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from . import art, card_icons, card_text, manifest, packs, pngio, ttf, ui_assets
+from . import art, card_icons, card_text, compat, manifest, packs, pngio, ttf, ui_assets
 from .ui_tab import (FRAME_IMAGE_DIR, GAME_H, GAME_W, ElementList, StageView, as_int, ensure, import_image,
                      mod_image, section, set_member, sized)
 from .widgets import CardField, px
@@ -42,8 +42,11 @@ PARTS = (
     # The digit strip has one glyph size shared by the ATK and DEF values.
     # Listing it on each value is deliberate: either one can be selected,
     # moved and sized without making the user hunt for the strip asset.
-    ("atk", "ATK value", ("digits", "atk"), (97, 169, 10, 12), True, True),
-    ("def", "DEF value", ("digits", "def"), (97, 184, 10, 12), True, True),
+    # Their places left out are the game's (card_layout.c: 0x61, 0x9D and
+    # 0x61, 0xAB): a full-bleed style's box centre, and on a style that keeps
+    # retail's frame the corner of retail's own digit row.
+    ("atk", "ATK value", ("digits", "atk"), (97, 157, 10, 12), True, True),
+    ("def", "DEF value", ("digits", "def"), (97, 171, 10, 12), True, True),
     ("atk_label", "ATK label", ("atk_label",), (12, 171, 16, 8), True, True),
     ("dfd_label", "DFD label", ("dfd_label",), (12, 184, 16, 8), True, True),
     # Retail's caption sprite has transparent leading pixels: its visible
@@ -74,6 +77,20 @@ MOVABLE = {"title", "art", "stars", "attribute", "spell_icon", "atk", "def", "at
            "magic_label", "trap_label", "ritual_label", "equip_label", "hand_art", "hand_atk", "hand_def",
            "hand_atk_label", "hand_dfd_label"}
 CAPTION_KEYS = ("magic_label", "trap_label", "ritual_label", "equip_label")
+# The monster card's ATK and DFD captions.  With a picture they are drawn by
+# the game at the style's x/y (a style's own frame, or retail's: the picture
+# replaces retail's caption); without one retail's own caption sprite stays,
+# where the game has it and never moves it, so the preview keeps it still.
+LABEL_KEYS = ("atk_label", "dfd_label")
+# Where retail's caption is, in card pixels from the card's top-left, measured
+# on the game's frames and its texture dump: the sprites are 24 x 12 cells at
+# (71, 157) and (71, 168); the lettering in them is 21 x 7 at (72, 159) and
+# 20 x 6 at (72, 174).  A picture given to a style that keeps retail's frame
+# starts in a 21 x 8 box over the lettering it replaces.
+RETAIL_CAPTIONS = {"atk_label": (72, 158, 21, 8), "dfd_label": (72, 173, 21, 8)}
+# What the game uses for a label picture's omitted places (card_layout.c
+# CardLayout_StatLabel): not the editor's own start places below.
+LABEL_GAME_DEFAULTS = (0, 0, 16, 8)
 CAPTION_TEXT = {
     "magic_label": "Normal Magic Card",
     "trap_label": "Trap Card",
@@ -462,13 +479,19 @@ class FramesPage(ttk.Frame):
         if key in DIRECT_ASSETS: set_member(self.style(True), path[0], image)
         elif key in IMAGE_PARTS:
             part = self.part(key, True)
+            first = not part.get("image")
             set_member(part, "image", image)
             # The game's replacement-caption API defaults omitted coordinates
             # to zero, unlike the transparent retail sprite.  Materialize the
             # editor's retail-aligned defaults when a PNG is first assigned so
-            # saved preview and in-game placement agree.
-            if image and key in CAPTION_KEYS:
-                x, y, w, h = SPECS[key][3]
+            # saved preview and in-game placement agree.  An ATK/DFD picture
+            # on a style that keeps retail's frame starts over retail's own
+            # caption, the one it replaces.
+            # An ATK/DFD label is given its places only with its first picture:
+            # replacing one on a hand-written label with no x/y must not move it
+            # from the game's (0, 0).
+            if image and (key in CAPTION_KEYS or (key in LABEL_KEYS and first)):
+                x, y, w, h = RETAIL_CAPTIONS[key] if key in LABEL_KEYS and self.keeps_retail_frame() else SPECS[key][3]
                 part.setdefault("x", x); part.setdefault("y", y)
                 part.setdefault("width", w); part.setdefault("height", h)
 
@@ -518,9 +541,28 @@ class FramesPage(ttk.Frame):
             x = as_int(part.get("x"), defaults[0]); y = as_int(part.get("y"), defaults[1])
             w = as_int(digits.get("width"), defaults[2]); h = as_int(digits.get("height"), defaults[3])
             return x, y, max(1, w), max(1, h)
+        if key in LABEL_KEYS:
+            if self.fixed_caption(key):
+                return RETAIL_CAPTIONS[key]
+            if self.asset(key):
+                defaults = LABEL_GAME_DEFAULTS
         x = as_int(part.get("x"), defaults[0]); y = as_int(part.get("y"), defaults[1])
         w = as_int(part.get("width"), defaults[2]); h = as_int(part.get("height"), defaults[3])
         return x, y, max(1, w), max(1, h)
+
+    def keeps_retail_frame(self):
+        """Whether the chosen style leaves retail's own card frame on screen
+        (no frame image, or "full_bleed": false), as the game decides it.  A
+        layout from before "frame_styles" is full-bleed (card_layout.c
+        resolve_style)."""
+        if not isinstance(self.layout().get("frame_styles"), dict):
+            return False
+        return compat.keeps_retail_frame(self.style())
+
+    def fixed_caption(self, key):
+        """Retail's own ATK/DFD caption: a sprite of the game's, with no
+        picture of the style's to replace it, that no style moves."""
+        return key in LABEL_KEYS and not self.asset(key) and self.keeps_retail_frame()
 
     def size_part(self, key, create=False):
         """The manifest object which owns Width/Height for ``key``."""
@@ -665,12 +707,29 @@ class FramesPage(ttk.Frame):
                 # The runtime stores a stat position as its centre and the
                 # digit-strip dimensions as one glyph.  Expand the preview
                 # to its four visible glyphs before putting that centre at
-                # the requested x/y.
+                # the requested x/y.  On a style that keeps retail's frame
+                # x/y is the corner of the 24 x 13 row retail's digits fill,
+                # and the game centres a strip on that row (func_80028B08.c);
+                # with no strip, retail's own 6 x 13 digits fill it.
                 step = as_int(self.part("digits").get("step"), digit_w)
+                if self.keeps_retail_frame():
+                    if not digits_image:
+                        digit_w = step = 6; h = digit_h = 13
+                    x += 12; y += 6
                 w = (len(text) - 1) * step + digit_w
                 x -= w // 2
                 y -= h // 2
             stage.axes[key] = "xy"
+            if self.fixed_caption(key):
+                # Retail's own caption, which the game draws where it has it
+                # and no style moves: shown there, not draggable.  An image
+                # chosen for it takes its place (and is draggable).
+                if part.get("hide") is True:
+                    stage.rectangle(key, x, y, w, h, outline="#999", dash=(3, 3)); continue
+                picture = text_picture(font, text, w, h, color)
+                if picture: stage.picture(key, picture, x, y, drag=False, box=(x, y, w, h), high_quality=True)
+                else: stage.text(key, x, y + h // 2, text, color, max(6, h - 2), anchor="w", drag=False)
+                continue
             if part.get("hide") is True:
                 stage.rectangle(key, x, y, w, h, outline="#999", dash=(3, 3), drag=True); continue
             if key in ("art", "atk_label", "dfd_label", *CAPTION_KEYS) and self.asset(key):
@@ -742,7 +801,7 @@ class FramesPage(ttk.Frame):
         self.fill()
 
     def moved(self, key, dx, dy):
-        if key not in MOVABLE: return
+        if key not in MOVABLE or self.fixed_caption(key): return
         part = self.part(key, True)
         x, y, _, _ = self.rect(key)
         if key.startswith("hand_"):
@@ -750,15 +809,19 @@ class FramesPage(ttk.Frame):
             y = max(-HAND_COORD_LIMIT, min(HAND_COORD_LIMIT, y + dy))
         else:
             x, y = x + dx, y + dy
-        set_member(part, "x", x, SPECS[key][3][0]); set_member(part, "y", y, SPECS[key][3][1])
+        # A label's omitted places are the game's (0, 0), not the editor's
+        # start places: write it always, or a move back there would be lost.
+        keep = key in LABEL_KEYS
+        set_member(part, "x", x, None if keep else SPECS[key][3][0])
+        set_member(part, "y", y, None if keep else SPECS[key][3][1])
         self.done()
 
     def dragging(self, key, dx, dy):
-        if key == self.chosen and key in MOVABLE:
+        if key == self.chosen and key in MOVABLE and not self.fixed_caption(key):
             x, y, _, _ = self.rect(key); self.vars["x"].set(str(x + dx)); self.vars["y"].set(str(y + dy))
 
     def wheel(self, key, step):
-        if key not in SPECS or not SPECS[key][5]: return
+        if key not in SPECS or not SPECS[key][5] or self.fixed_caption(key): return
         part = self.size_part(key, True)
         _, _, w, h = self.rect(key); default = SPECS[key][3]
         width_max = HAND_SIZE_LIMIT if key.startswith("hand_") else 140
@@ -774,10 +837,19 @@ class FramesPage(ttk.Frame):
         self.heading.configure(text=label)
         hand_note = (" Five-digit values use five cells; keep X + 5 × Width within the 52px hand card."
                      if key in ("hand_atk", "hand_def") else "")
-        self.what.configure(text="Drag on the preview or use the fields. Wheel resizes elements that have a size." + shared + hand_note)
+        if self.fixed_caption(key):
+            what = ("This style keeps the game's own frame, so the game draws its own caption here and no style "
+                    "moves it. Choose an image to replace it: it starts in the same place, and then drags like "
+                    "the other elements.")
+        else:
+            what = "Drag on the preview or use the fields. Wheel resizes elements that have a size." + shared + hand_note
+            if key in LABEL_KEYS:
+                what += " On a style that keeps the game's own frame, the image replaces the game's own caption."
+        self.what.configure(text=what)
         for name, value in (("x", x), ("y", y), ("width", w), ("height", h)): self.vars[name].set(str(value))
         for name in ("x", "y", "width", "height"):
             visible = (name in ("x", "y") and key in MOVABLE) or (name in ("width", "height") and spec[5])
+            if self.fixed_caption(key): visible = False
             for widget in self.rows[name]:
                 (widget.grid if visible else widget.grid_remove)()
         self.hidden.set(self.part(key).get("hide") is True)
@@ -800,6 +872,7 @@ class FramesPage(ttk.Frame):
         part = self.size_part(key, True) if name in ("width", "height") else \
             (self.style(True) if key in ("frame", "back") else self.part(key, True))
         default = {"x": spec[3][0], "y": spec[3][1], "width": spec[3][2], "height": spec[3][3]}[name]
+        if key in LABEL_KEYS and name in ("x", "y"): default = None   # the game's own is 0: write it always
         if key.startswith("hand_"):
             minimum = -HAND_COORD_LIMIT if name in ("x", "y") else 1
             limit = HAND_COORD_LIMIT if name in ("x", "y") else HAND_SIZE_LIMIT
