@@ -16,6 +16,7 @@
 #define Model_QueueCameraOrbitFromPreset func_8005F5C8
 #define Model_QueueCameraShake func_8005F7B0
 #define Model_RequestCameraMoveToSlots func_80059F18
+#define Model_SeekSlotAnimation func_800597C8
 #define Model_SetCameraOrbitFromPreset func_8005F27C
 #define Model_SetSlotAmbient func_800595C8
 #define Model_SetSlotPlaybackDirection func_80059700
