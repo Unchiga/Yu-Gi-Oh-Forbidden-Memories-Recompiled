@@ -749,7 +749,9 @@ them (the model's tables and textures) still runs the C.
 **A span may end inside a word.** The bytes right after a module's last
 table can differ per record, so the word that holds a table's last bytes may
 not be common to the images. The last entry ends at its stride (the C
-element's sizeof), so `model_gate_scan.py` stops the span at that byte and
+element's sizeof), so `model_gate_scan.py` stops the span at that byte (or
+past it, where a read takes more bytes than the member it starts at: the
+scan keeps each table read's width) and
 rounds it up to a whole word only when the images agree over the word;
 `check --disc` compares the images byte by byte (`Shape.common(slot, 1)`);
 and `model_modules.c` hashes `span` bytes and keeps the verdict's words

@@ -113,7 +113,7 @@ def layouts(unit: str) -> dict[str, tuple[int, dict[str, tuple[int, str]]]]:
 class Tag(tuple):
     """("const",) ("command",) ("work",) ("workptr", offset) ("slot", offset)
     ("tableptr", offset, stride) ("slotword", offset) ("tablefield", offset,
-    stride, field offset) ("other",) ("unknownptr",)."""
+    stride, field offset, bytes read) ("other",) ("unknownptr",)."""
 
 
 def tag(*parts):
@@ -212,7 +212,7 @@ class Module:
         if kind == "ImplicitCastExpr":
             cast = node.get("castKind")
             if cast == "LValueToRValue":
-                return self.read(self.lv(inner[0]))
+                return self.read(self.lv(inner[0]), self.width(inner[0]))
             if cast == "ArrayToPointerDecay":
                 return self.address(self.lv(inner[0]))
             if cast == "FunctionToPointerDecay":
@@ -221,18 +221,18 @@ class Module:
         if kind in ("ParenExpr", "CStyleCastExpr"):
             return self.rv(inner[0])
         if kind == "DeclRefExpr":
-            return self.read(self.lv(node))
+            return self.read(self.lv(node), self.width(node))
         if kind == "UnaryOperator":
             op = node.get("opcode")
             if op == "&":
                 return self.address(self.lv(inner[0]))
             if op == "*":
-                return self.read(self.lv(node))
+                return self.read(self.lv(node), self.width(node))
             if op in ("++", "--"):
-                return self.read(self.lv(inner[0]))
+                return self.read(self.lv(inner[0]), self.width(inner[0]))
             return self.rv(inner[0])
         if kind in ("MemberExpr", "ArraySubscriptExpr"):
-            return self.read(self.lv(node))
+            return self.read(self.lv(node), self.width(node))
         if kind == "BinaryOperator":
             op = node.get("opcode")
             if op in ("+", "-") and "*" in node.get("type", {}).get("qualType", ""):
@@ -259,7 +259,7 @@ class Module:
             op = node.get("opcode")
             if op in ("/=", "%="):
                 self.site(node, op[0], inner[1])
-            values = self.read(self.lv(inner[0])) | self.rv(inner[1])
+            values = self.read(self.lv(inner[0]), self.width(inner[0])) | self.rv(inner[1])
             self.store(self.lv(inner[0]), self.arith(values))
             return self.arith(values)
         if kind == "ConditionalOperator":
@@ -404,7 +404,14 @@ class Module:
                 out.add(p)
         return out
 
-    def read(self, locations: set) -> set:
+    def width(self, node) -> int | None:
+        """The bytes an lvalue's read takes: its type's size, None when unknown."""
+        if not node:
+            return None
+        t = node.get("type", {})
+        return self.size_of(t.get("desugaredQualType") or t.get("qualType", ""))
+
+    def read(self, locations: set, width: int | None = None) -> set:
         out = set()
         for location in locations:
             kind = location[0]
@@ -415,7 +422,7 @@ class Module:
             elif kind == "slotloc":
                 out.add(tag("slotword", location[1]))
             elif kind == "tableloc":
-                out.add(tag("tablefield", location[1], location[2], location[3]))
+                out.add(tag("tablefield", location[1], location[2], location[3], width or 4))
             elif kind == "slotdynloc":
                 out.add(tag("slotdynword", location[1]))
             elif kind == "work":
@@ -733,12 +740,12 @@ def propose(row: model_gate.Row, common: int, commands: dict | None, compile_err
             if count is None:
                 reasons.append("no retail commands for the table's count (the oracle's traces)")
             else:
-                reads = [int(v.split()[3], 16) for e in out["b"] for v in e["text"].split(", ")
-                         if v.startswith("tablefield")]
-                # The last entry ends at its stride, the C element's sizeof, so
-                # a member read inside it needs no more; one at or past the
-                # stride (a cast) is taken as a word.
-                end = table + (count - 1) * stride + max([stride] + [r + 4 for r in reads if r >= stride])
+                reads = [(int(v.split()[3], 16), int(v.split()[4], 16)) for e in out["b"]
+                         for v in e["text"].split(", ") if v.startswith("tablefield")]
+                # The last entry ends at its stride (the C element's sizeof),
+                # or past it where a read (a cast) takes more bytes than the
+                # member it starts at; a read of unknown width is a word.
+                end = table + (count - 1) * stride + max([stride] + [r + w for r, w in reads])
                 if end > model_gate.IMAGE_SIZE:
                     reasons.append(f"retail commands up to {count - 1} pick entries past the image "
                                    f"(table 0x{table:X}, 0x{stride:X} bytes): the C reduces the command "

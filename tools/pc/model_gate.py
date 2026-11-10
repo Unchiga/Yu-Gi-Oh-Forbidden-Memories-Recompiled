@@ -384,7 +384,7 @@ def hashed(shape: Shape, slot: str, span: int) -> str:
     digests = {hashlib.sha256(image[:span]).hexdigest() for image in shape.images[slot].values()}
     if len(digests) != 1:
         raise SystemExit(f"shape {shape.shape} slot {slot}: its images differ within the first 0x{span:X} bytes "
-                         f"(they agree to 0x{shape.common(slot):X}): the span is too long, or the shape is two")
+                         f"(they agree to 0x{shape.common(slot, 1):X}): the span is too long, or the shape is two")
     return digests.pop()
 
 
