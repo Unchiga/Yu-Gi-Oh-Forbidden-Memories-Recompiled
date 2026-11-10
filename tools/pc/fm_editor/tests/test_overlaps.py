@@ -190,8 +190,18 @@ class SameAsTheGame(unittest.TestCase):
         self.assertEqual(overlaps.parse('{"a": 1, "a": 2,}').pairs, [("a", 1), ("a", 2)])
         self.assertEqual(overlaps.parse('{"a": 1, "a": 2}')["a"], 1)
         self.assertEqual(overlaps.parse('\v[1e3, 2.50e1, -0]\f'), [1000, 25, 0])
-        for refused in ('[,]', '{"a":,}', '[1,,]', '2.5000000000000001e1', '1e-1', '2147483648', 'NaN', '[01]'):
+        for refused in ('[,]', '{"a":,}', '[1,,]', '2.5000000000000001e1', '1e-1', '2147483648', 'NaN', '[01.5]',
+                        '[0x]', '[0x1G]', '[0x1.5]', '[0x80000000]', '[- 0x1]', '[1 / 2]', '[1] /', '[1] /* never ends',
+                        '[1, /* */ 2 /*', '[1 // no end of the list'):
             self.assertIsNone(overlaps.parse(refused), refused)
+        # Hexadecimal after 0x, leading zeros as decimal, and comments, as
+        # json.c reads a hand-written mod.json; not inside a string.
+        self.assertEqual(overlaps.parse('[010, 08, 00, -007, 010e1, 0x10, -0x10, 0X1f, 0x7FFFFFFF, -0x80000000]'),
+                         [10, 8, 0, -7, 100, 16, -16, 31, 2 ** 31 - 1, -2 ** 31])
+        value = overlaps.parse('/* head */ { // a "z": [\n "a": /* x */ 1, // b,\n "b" /* c */ : [1, /* 2, */ 3 // ]\n'
+                               ' ], "c": "// not /* this */", /**/ "d": 0x1F, /***/ } // end')
+        self.assertEqual(value.pairs, [("a", 1), ("b", [1, 3]), ("c", "// not /* this */"), ("d", 31)])
+        self.assertEqual(overlaps.parse('[1, 2 // a trailing comma after this\n , ]'), [1, 2])
         # A \u escape is its character (json.c writes it as UTF-8), a
         # surrogate pair one, a lone surrogate U+FFFD; a NUL ends the string.
         self.assertEqual(overlaps.parse(f'"{b}u00c3{b}u00a9 {b}u4e2d a{b}u0000b"'), "\u00c3\u00a9 \u4e2d a")

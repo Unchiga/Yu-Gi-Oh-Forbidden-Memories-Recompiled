@@ -193,6 +193,43 @@ static void stream_tests(void)
     write_stream("{\"fusions\": [1], \"b\" 2}");
     assert(!Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error)) && error[0]);
     assert(!Json_ParseFileDeferring("no-such-file.json", stream_key, 1, &list, error, sizeof(error)) && error[0]);
+    /* Comments: around the list, and in it, where their quotes, brackets and
+     * commas are not the list's; a list of comments alone holds nothing. */
+    write_stream("{ // \"fusions\": [9],\n \"fusions\" /* \"fusions\" [ */ : // c\n [ /* ] */ 1, // 2,\n"
+                 " {\"n\": 3 /* , */}, 4 // ]\n , /* x */ ], \"b\": [5] /* } */}");
+    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
+    assert(document && list.found && list.filled && Json_Count(Json_Member(Json_Root(document), "b")) == 1);
+    seen_sum = count = 0;
+    assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == 3);
+    assert(seen_sum == 8 && !error[0]);
+    Json_Free(document);
+    write_stream("{\"fusions\": [ /* none */ // nor this\n ]}");
+    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
+    assert(document && list.found && !list.filled);
+    assert(!Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)));
+    Json_Free(document);
+    write_stream("{\"fusions\": [1, / 2]}");
+    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
+    seen_sum = count = 0;
+    assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+    assert(seen_sum == 3 && strstr(error, "starts no comment"));
+    Json_Free(document);
+    write_stream("{\"fusions\": [1, /]}");
+    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
+    seen_sum = count = 0;
+    assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+    assert(seen_sum == 1 && strstr(error, "starts no comment"));
+    Json_Free(document);
+    write_stream("{\"fusions\": [1, 2 / 3]}");
+    document = Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error));
+    seen_sum = count = 0;
+    assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+    assert(seen_sum == 1 && strstr(error, "entry 1:"));
+    Json_Free(document);
+    write_stream("{\"fusions\": [1 /* never ends]}");
+    assert(!Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error)) && error[0]);
+    write_stream("{\"fusions\": [1], \"b\": 2 /* never ends}");
+    assert(!Json_ParseFileDeferring(stream_path, stream_key, 1, &list, error, sizeof(error)) && strstr(error, "comment"));
     /* Across the chunks the file is read in, on both sides of the list. */
     {
         size_t size = 5u << 20, used = 0;
@@ -256,6 +293,39 @@ static void unicode_escapes(void)
     Json_Free(document);
 }
 
+/* Comments, as a hand-written mod.json has them: "//" to the end of the
+ * line, slash-star to star-slash, wherever a space may go; not in a string. */
+static void comments(void)
+{
+    char error[128];
+    const JsonValue *root;
+    JsonDocument *document = Json_Parse(
+        "\xEF\xBB\xBF/* head */ { // a \"z\": [\n"
+        "  \"a\": /* x */ 1, // b, \"z\": [\n"
+        "  \"b\" /* c */ : [1, /* 2, */ 3 // ]\n"
+        "  ], \"c\": \"// not a comment /* nor this */\", /**/ \"d\": 0x1F /***/\n"
+        "} // end", error, sizeof(error));
+    assert(document);
+    root = Json_Root(document);
+    assert(Json_Count(root) == 4 && Json_Number(Json_Member(root, "a"), 0) == 1);
+    assert(Json_Count(Json_Member(root, "b")) == 2 && Json_Number(Json_At(Json_Member(root, "b"), 1), 0) == 3);
+    assert(!strcmp(Json_String(Json_Member(root, "c"), ""), "// not a comment /* nor this */"));
+    assert(Json_Number(Json_Member(root, "d"), 0) == 31);
+    Json_Free(document);
+    document = Json_Parse("[1 // the end, no newline", error, sizeof(error));
+    assert(!document && error[0]);   /* the list does not end */
+    document = Json_Parse("[1] // the end, no newline", error, sizeof(error));
+    assert(document && Json_Count(Json_Root(document)) == 1);
+    Json_Free(document);
+    /* One that never ends, or a '/' that starts none, is a mistake. */
+    assert(!Json_Parse("{ /* never ends", error, sizeof(error)) && strstr(error, "comment"));
+    assert(!Json_Parse("{} /* never ends", error, sizeof(error)) && strstr(error, "comment"));
+    assert(!Json_Parse("[1, /* */ /* never */ 2 /*", error, sizeof(error)) && strstr(error, "comment"));
+    assert(!Json_Parse("{ \"a\": 1 / 2 }", error, sizeof(error)) && error[0]);
+    assert(!Json_Parse("[1] /", error, sizeof(error)) && error[0]);
+    assert(!Json_Parse("[1] #", error, sizeof(error)) && error[0]);
+}
+
 int main(void)
 {
     char error[128];
@@ -299,15 +369,20 @@ int main(void)
     assert(!Json_Parse("", error, sizeof(error)) && error[0]);
     assert(!Json_Parse("{ \"a\": \"\\q\" }", error, sizeof(error)) && error[0]);
     assert(!Json_ParseFile("/does/not/exist.json", error, sizeof(error)) && error[0]);
-    /* Numbers are JSON's, in base 10, and whole. */
+    /* Numbers are JSON's, and whole; hexadecimal after 0x, and leading zeros
+     * read as decimal, as a hand-written mod.json may have them. */
     {
         static const struct { const char *text; long value; } good[] = {
             {"[0]", 0}, {"[-0]", 0}, {"[10]", 10}, {"[-42]", -42}, {"[1e3]", 1000}, {"[2.50e1]", 25},
             {"[7.0]", 7}, {"[1000E-3]", 1}, {"[1E+2]", 100}, {"[2147483647]", 2147483647L},
+            {"[010]", 10}, {"[08]", 8}, {"[0007]", 7}, {"[00]", 0}, {"[010e1]", 100},
+            {"[0x10]", 16}, {"[-0x10]", -16}, {"[0X1f]", 31}, {"[0xABCDEF]", 0xABCDEF}, {"[0x0]", 0},
+            {"[0x7FFFFFFF]", 0x7FFFFFFFL}, {"[-0x80000000]", -0x7FFFFFFFL - 1},
         };
         static const char *bad[] = {
-            "[010]", "[08]", "[1-2]", "[1.5]", "[1e-3]", "[1.]", "[.5]", "[-]", "[1e]", "[+1]",
-            "[0x10]", "[99999999999999999999]", "[1e400]",
+            "[1-2]", "[1.5]", "[1e-3]", "[1.]", "[.5]", "[-]", "[1e]", "[+1]",
+            "[99999999999999999999]", "[1e400]", "[0x]", "[0x1G]", "[0x1.5]", "[0x1e3.]", "[0xx1]",
+            "[0x10000000000000000]", "[- 0x1]",
         };
         char text[64];
         unsigned i;
@@ -319,12 +394,19 @@ int main(void)
         for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
             assert(!Json_Parse(bad[i], error, sizeof(error)) && error[0]);
         }
-        /* A long's own ends, whatever its size on this system. */
+        /* A long's own ends, whatever its size on this system, in either base. */
         snprintf(text, sizeof(text), "[%ld, %ld]", LONG_MAX, LONG_MIN);
         document = Json_Parse(text, error, sizeof(error));
         assert(document && Json_Number(Json_At(Json_Root(document), 0), 0) == LONG_MAX &&
                Json_Number(Json_At(Json_Root(document), 1), 0) == LONG_MIN);
         Json_Free(document);
+        snprintf(text, sizeof(text), "[0x%lx, -0x%lx]", LONG_MAX, (unsigned long)LONG_MAX + 1);
+        document = Json_Parse(text, error, sizeof(error));
+        assert(document && Json_Number(Json_At(Json_Root(document), 0), 0) == LONG_MAX &&
+               Json_Number(Json_At(Json_Root(document), 1), 0) == LONG_MIN);
+        Json_Free(document);
+        snprintf(text, sizeof(text), "[0x%lx0]", LONG_MAX);
+        assert(!Json_Parse(text, error, sizeof(error)) && strstr(error, "range"));
         /* Strings that hold a number: hexadecimal with its 0x, else decimal. */
         document = Json_Parse("[\"0x5D800\", \"010\", \" -3 \", \"08\", \"1.5\"]", error, sizeof(error));
         assert(document);
@@ -355,6 +437,7 @@ int main(void)
     document = Json_Parse("{ \"a\": [1, 2,], }", error, sizeof(error));
     assert(document && Json_Count(Json_Member(Json_Root(document), "a")) == 2);
     Json_Free(document);
+    comments();
     Json_Free(NULL);
     stream_tests();
     return 0;

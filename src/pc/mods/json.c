@@ -65,9 +65,62 @@ static JsonValue *make(Parser *parser)
     }
 }
 
-static void skip_space(Parser *parser)
+/* Spaces, and comments, as a mod.json written by hand may have them: "//" to
+ * the end of its line, and a slash-star one to its star-slash. 1 when a
+ * comment never ends (the error is set, and the text is passed over to its
+ * end, where every caller stops). */
+static int skip_space(Parser *parser)
 {
-    while (isspace((unsigned char)*parser->at)) parser->at++;
+    for (;;) {
+        while (isspace((unsigned char)*parser->at)) parser->at++;
+        if (parser->at[0] != '/') return 0;
+        if (parser->at[1] == '/') {
+            parser->at += 2;
+            while (*parser->at && *parser->at != '\n') parser->at++;
+        } else if (parser->at[1] == '*') {
+            char *end = strstr(parser->at + 2, "*/");
+            if (!end) {
+                fail(parser, "a comment that does not end");
+                parser->at += strlen(parser->at);
+                return 1;
+            }
+            parser->at = end + 2;
+        } else {
+            return 0;
+        }
+    }
+}
+
+/* The same comments for the scanners below, which see a byte at a time
+ * across reads: 1 when `c` is in a comment, or is a '/' that may start one
+ * (held until the next byte says); 0 when it is the document's own, with
+ * *lone set when a '/' held before it started no comment (the parser that
+ * reads the text then calls it an unexpected character). */
+enum { COMMENT_NONE, COMMENT_SLASH, COMMENT_LINE, COMMENT_BLOCK, COMMENT_BLOCK_STAR };
+static int comment_byte(int *state, unsigned char c, int *lone)
+{
+    *lone = 0;
+    switch (*state) {
+    case COMMENT_SLASH:
+        if (c == '/') { *state = COMMENT_LINE; return 1; }
+        if (c == '*') { *state = COMMENT_BLOCK; return 1; }
+        *state = COMMENT_NONE;
+        *lone = 1;
+        break;
+    case COMMENT_LINE:
+        if (c == '\n') *state = COMMENT_NONE;
+        return 1;
+    case COMMENT_BLOCK:
+        if (c == '*') *state = COMMENT_BLOCK_STAR;
+        return 1;
+    case COMMENT_BLOCK_STAR:
+        *state = c == '/' ? COMMENT_NONE : c == '*' ? COMMENT_BLOCK_STAR : COMMENT_BLOCK;
+        return 1;
+    default:
+        break;
+    }
+    if (c == '/') { *state = COMMENT_SLASH; return 1; }
+    return 0;
 }
 
 /* Four hex digits: 0, and their value in *code; 1 when they are not. */
@@ -175,8 +228,10 @@ static JsonValue *parse_container(Parser *parser, JsonValue *value, char close)
     }
 }
 
-/* A number as JSON writes one, in base 10: "010" and "08" are not numbers,
- * and neither is "1-2". A fraction or an exponent is fine while the value
+/* A number as JSON writes one, in base 10, and as a hand-written mod.json
+ * may: hexadecimal after "0x" ("0x1F" is 31, as Json_Number reads one in a
+ * string), and leading zeros read as decimal ("010" is 10, never octal).
+ * "1-2" is not a number. A fraction or an exponent is fine while the value
  * is still whole ("1e3" is 1000, "2.50e1" is 25); anything else, and
  * anything past a long, is an error rather than a quietly different value. */
 static int parse_number(Parser *parser, long *out)
@@ -187,7 +242,22 @@ static int parse_number(Parser *parser, long *out)
     unsigned long magnitude = 0, limit;
     if (*at == '-') { negative = 1; at++; }
     if (!isdigit((unsigned char)*at)) { fail(parser, "bad number"); return 0; }
-    if (at[0] == '0' && isdigit((unsigned char)at[1])) { fail(parser, "a number may not start with 0"); return 0; }
+    limit = negative ? (unsigned long)LONG_MAX + 1 : (unsigned long)LONG_MAX;
+    if (at[0] == '0' && (at[1] == 'x' || at[1] == 'X')) {
+        at += 2;
+        if (!isxdigit((unsigned char)*at)) { fail(parser, "bad number"); return 0; }
+        for (; isxdigit((unsigned char)*at); at++) {
+            unsigned long digit = (unsigned long)(isdigit((unsigned char)*at) ? *at - '0'
+                                                  : tolower((unsigned char)*at) - 'a' + 10);
+            if (magnitude > (limit - digit) / 16) { fail(parser, "number out of range"); return 0; }
+            magnitude = magnitude * 16 + digit;
+        }
+        if (*at == '.' || isalnum((unsigned char)*at)) { fail(parser, "bad number"); return 0; }
+        if (negative) *out = magnitude > (unsigned long)LONG_MAX ? LONG_MIN : -(long)magnitude;
+        else *out = (long)magnitude;
+        parser->at = (char *)at;
+        return 1;
+    }
     digits = at;
     while (isdigit((unsigned char)*at)) at++;
     whole_count = (int)(at - digits);
@@ -212,7 +282,6 @@ static int parse_number(Parser *parser, long *out)
     /* The digits, whole part then fraction, are the value times a power of
      * ten; the first `keep` of them are its whole part, and the rest must
      * be zeroes. */
-    limit = negative ? (unsigned long)LONG_MAX + 1 : (unsigned long)LONG_MAX;
     total = whole_count + fraction_count;
     keep = (long)whole_count + exponent;
     for (i = 0; i < total; i++) {
@@ -288,8 +357,7 @@ JsonDocument *Json_Parse(const char *text, char *error, size_t error_size)
     parser.depth = 0;
     document->root = parse_value(&parser);
     if (document->root) {
-        skip_space(&parser);
-        if (*parser.at) { fail(&parser, "trailing text"); document->root = NULL; }
+        if (skip_space(&parser) || *parser.at) { fail(&parser, "trailing text"); document->root = NULL; }
     }
     if (!document->root) { Json_Free(document); return NULL; }
     return document;
@@ -316,8 +384,7 @@ static JsonDocument *parse_owned(char *text, char *error, size_t error_size, int
     parser.depth = 0;
     document->root = parse_value(&parser);
     if (document->root) {
-        skip_space(&parser);
-        if (*parser.at) { fail(&parser, "trailing text"); document->root = NULL; }
+        if (skip_space(&parser) || *parser.at) { fail(&parser, "trailing text"); document->root = NULL; }
     }
     if (!document->root) {
         if (no_memory && parser.no_memory) *no_memory = 1;
@@ -452,7 +519,7 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *const *keys,
     char *kept = NULL, name[64];
     size_t kept_used = 0, kept_room = 0, length, name_used = 0;
     long at = 0;
-    int depth = 0, in_string = 0, escape = 0, named = 0, unmatched = 0;
+    int depth = 0, in_string = 0, escape = 0, named = 0, unmatched = 0, comment = COMMENT_NONE;
     int armed = 0, skipping = 0; /* 1 + the index in `keys` */
     unsigned hash = 2166136261u;
     memset(deferred, 0, (size_t)count * sizeof(*deferred));
@@ -474,10 +541,13 @@ JsonDocument *Json_ParseFileDeferring(const char *path, const char *const *keys,
         }
         for (size_t i = 0; i < length; i++, at++) {
             unsigned char c = chunk[i];
-            if (skipping) {
-                hash = (hash ^ c) * 16777619u;
-                if (!isspace(c) && c != ']') deferred[skipping - 1].filled = 1;
-            }
+            int lone = 0;
+            if (skipping) hash = (hash ^ c) * 16777619u;
+            /* A comment is passed over (the text kept keeps it, for the
+             * parser): its quotes and brackets are not the document's. */
+            if (!in_string && comment_byte(&comment, c, &lone)) continue;
+            if (skipping && (lone || (!isspace(c) && c != ']'))) deferred[skipping - 1].filled = 1;
+            if (lone) armed = 0;
             if (in_string) {
                 if (escape) escape = 0;
                 else if (c == '\\') { escape = 1; name_used = sizeof(name); } /* the parser's to read: not the key */
@@ -604,8 +674,7 @@ static const JsonValue *parse_element(JsonDocument *document, char *text, char *
             *no_memory = parser.no_memory;
             return NULL;
         }
-        skip_space(&parser);
-        if (*parser.at) { fail(&parser, "trailing text"); return NULL; }
+        if (skip_space(&parser) || *parser.at) { fail(&parser, "trailing text"); return NULL; }
         return value;
     }
 }
@@ -640,7 +709,7 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
     size_t used = 0, room = 0;
     long left, index = 0;
     int depth = 0, in_string = 0, escape = 0, inside = 0, good = 1, mistakes = 0;
-    int no_memory = 0;
+    int no_memory = 0, comment = COMMENT_NONE;
     int after = 0;     /* an element has ended and its comma has not come */
     int too_long = 0;  /* this element is being passed over */
     JsonDocument document;
@@ -666,8 +735,14 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
         left -= (long)length;
         for (size_t i = 0; good && i < length; i++) {
             unsigned char c = chunk[i];
-            int ends = 0;
+            int ends = 0, lone = 0;
+            /* A comment between entries is passed over; one inside an entry
+             * stays in its text, for the parser, its quotes and brackets and
+             * commas not the list's. */
+            int noted = !in_string && comment_byte(&comment, c, &lone);
             if (!inside) {
+                if (noted) continue;
+                if (lone) list_mistake(&mistakes, index, "a '/' that starts no comment", error, error_size);
                 if (isspace(c)) continue;
                 if (c == ',') {
                     if (!after) list_mistake(&mistakes, index, "a comma with no entry before it", error, error_size);
@@ -700,6 +775,9 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
                 else if (c == '"') { in_string = 0; ends = !depth; }
                 if (!ends) continue;
                 after = 1;
+            } else if (noted) {
+                if (!too_long) element[used++] = (char)c;
+                continue;
             } else if (!depth && c == ',') {
                 ends = 1; /* a number or a word, whole, and its comma */
             } else {
@@ -717,6 +795,10 @@ long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each
             }
         }
     }
+    /* A '/' held at the list's end, between entries: no byte came to say it
+     * starts no comment (one inside an entry is in its text, for the parser). */
+    if (good && !inside && comment == COMMENT_SLASH)
+        list_mistake(&mistakes, index, "a '/' that starts no comment", error, error_size);
     if (good && inside && too_long) list_mistake(&mistakes, index++, "over a megabyte", error, error_size);
     else if (good && inside && used)
         read_element(&document, element, used, each, &index, context, error, error_size, &mistakes, &no_memory);

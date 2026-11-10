@@ -222,6 +222,10 @@ class JsonObject(dict):
 
 
 HEX_DIGITS = "0123456789abcdefABCDEF"
+# A number as json.c parse_number starts one: hexadecimal after 0x, or the
+# decimal digits (any leading zeros), then a fraction and exponent left as
+# they are for _whole.  What follows it is Python's to refuse.
+JSON_NUMBER_TOKEN = re.compile(r"(-?)(?:0[xX]([0-9A-Fa-f]+)|([0-9]+)((?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?))")
 
 
 def _as_json(text: str) -> str:
@@ -229,10 +233,27 @@ def _as_json(text: str) -> str:
     written as JSON Python reads the same way: a \\u escape is the character
     (a surrogate pair one past U+FFFF) as Python reads it too, but a lone
     surrogate is U+FFFD; a comma may close a list or an object; \\v and \\f
-    are spaces between values (C's isspace)."""
+    are spaces between values (C's isspace); a comment ("//" to the end of
+    the line, or /* to */) is a space, and one that never ends is left for
+    Python to refuse, as json.c refuses it; a number in hexadecimal ("0x1F")
+    or with leading zeros ("010", decimal) is written in decimal."""
     out, i, n, last = [], 0, len(text), ""   # last: the last character outside strings and spaces
     while i < n:
         c = text[i]
+        if c == "/" and text[i + 1:i + 2] in ("/", "*"):
+            end = text.find("\n", i) if text[i + 1] == "/" else text.find("*/", i + 2)
+            if end < 0 and text[i + 1] == "*":
+                out.append(text[i:])
+                break
+            i = n if end < 0 else end + (1 if text[i + 1] == "/" else 2)
+            out.append(" ")
+            continue
+        number = JSON_NUMBER_TOKEN.match(text, i) if c == "-" or c.isdigit() else None
+        if number:
+            sign, hexadecimal, whole, rest = number.groups()
+            out.append(sign + (str(int(hexadecimal, 16)) if hexadecimal else (whole.lstrip("0") or "0") + rest))
+            i, last = number.end(), "0"
+            continue
         if c == '"':
             part, j = ['"'], i + 1
             while j < n and text[j] != '"':

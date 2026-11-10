@@ -144,10 +144,17 @@ that are not `true` or `false` are warned about too. A warning never stops
 the mod loading; the manifest keeps its warnings for the whole session,
 however often the mod is applied.
 
-Numbers are JSON's, in base 10, and must be whole (`1e3` is fine, `1.5` is
-an error, and so is `010`); arrays and objects nest at most 64 deep. A
-number written as a string (`"at": "0x5D800"`) may be hexadecimal with its
-`0x`, and is otherwise decimal.
+Numbers must be whole (`1e3` is fine, `1.5` is an error); arrays and
+objects nest at most 64 deep. A number may be hexadecimal with its `0x`
+(`0x270F` is 9999), and leading zeros are decimal (`010` is 10, never
+octal); the same goes for a number written as a string (`"at": "0x5D800"`).
+A hand-written `mod.json` may also have comments, `// to the end of the
+line` or `/* across lines */`, wherever a space may go, and a comma before
+a closing `]` or `}`. None of that is plain JSON: the game and the FM
+Editor read it (the editor's Save writes the file back as plain JSON,
+without the comments), but other JSON tools may not. Before the release
+after v0.3.0 the game refused a `mod.json` with comments, `0x` numbers or
+leading zeros, and left the mod out.
 
 Two folders in one mods directory with the same `id` do not replace each
 other: the first by name is kept and says which one was left out. Across

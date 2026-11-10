@@ -25,7 +25,7 @@ from pathlib import Path
 from .gamedata import (FUSION_GROUPS, RITUAL_ORIGINS, RITUAL_REQUIREMENT_KEYS, RITUAL_TRIBUTE_MAX, fusion_group_named, ATTRIBUTE_NAMES, CARD_COUNT, DECK_SIZE, DUELIST_NAMES, FRAME_COLOR_NAMES, FRAME_NAMES, POOLS, STAR_NAMES,
                        EQUIP_BONUS_MAX, STARTER_WEIGHT_LIMIT, TYPE_NAMES, TYPE_MAGIC, TYPE_LIMIT, GameData, is_monster_type)
 from .model import AddedCard, ModInfo, Project, StarterDeck, duelist_named, same_letters, KEY_RE
-from . import art, board_art, campaign_map, compat, fixed_decks, guardian_stars, packs as packmath, pools as poolmath, roster
+from . import art, board_art, campaign_map, compat, fixed_decks, guardian_stars, overlaps, packs as packmath, pools as poolmath, roster
 
 INFO_KEYS = ("id", "name", "version", "author", "description")
 TABLE_KEYS = ("settings", "cards", "fusions", "equips", "rituals", "drops", "decks", "starter", "packs", "pack_shop",
@@ -1518,16 +1518,36 @@ def _object(pairs):
     return marked
 
 
-def read_json(path: Path):
+HAND_WRITTEN = ("has comments, a number in hexadecimal or with leading zeros, or a trailing comma: the game "
+                "reads it since the release after v0.3.0 (an older one leaves the mod out), other JSON tools may "
+                "not, and Save writes it back as plain JSON, without the comments")
+
+
+def read_json(path: Path, messages: list = None):
+    """The file's JSON; or, as the game reads it (json.c), with comments, a
+    number in hexadecimal or with leading zeros, or a trailing comma: those
+    are not JSON to Python, and Save writes the file back as plain JSON.
+    `messages` (when given) is told when the file needed that."""
     text = Path(path).read_text(encoding="utf-8-sig")
-    return json.loads(text, object_pairs_hook=_object)
+    try:
+        return json.loads(text, object_pairs_hook=_object)
+    except json.JSONDecodeError as plain:
+        try:
+            value = json.loads(overlaps._as_json(text), object_pairs_hook=_object)
+        except ValueError:      # JSONDecodeError, or a 0x number of thousands of digits
+            raise plain from None
+        if messages is not None:
+            messages.append(f"{Path(path).name} {HAND_WRITTEN}")
+        return value
 
 
 def open_mod(retail: GameData, folder) -> tuple:
     """(project, messages): retail with the mod folder's mod.json on top."""
     folder = Path(folder)
     project = Project(retail)
-    messages = apply(project, read_json(folder / "mod.json"), default_id=folder.name, folder=folder)
+    noted = []
+    messages = apply(project, read_json(folder / "mod.json", noted), default_id=folder.name, folder=folder)
+    messages[:0] = noted
     read_text_cards(project, folder, messages)
     project.source_dir = folder
     art.read_mod(project, folder, messages)
