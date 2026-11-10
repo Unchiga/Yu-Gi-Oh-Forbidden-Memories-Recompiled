@@ -680,15 +680,25 @@ engine's insert command (`duel_effect_command.c`, op 0x40).
 <a id="hd-pictures"></a>**HD pictures.** A texture pack finds its images by where their
 bytes came from on the disc, and a mod card's picture comes from no place on
 the disc, so the port registers the PNG itself: for an `art` or `thumbnail`
-bigger than the console's picture, `Cards_Build` hands the record's made
-bytes (the picture, 51 words by 96 rows at 8 bits, and its 256-entry CLUT;
-the thumbnail, 20 by 32, and its 64 entries) and the PNG's crop (the same
-middle `resample` takes, `CardArt_Crop`) to `TexturePack_AddMade`. Each
-distinct block of bytes gets a place of its own from `TEXTURE_MADE_BASE`
-(0xC0000000, past any CD) up, and the pack's recall index knows it by its
-bytes: the upload of a patched record has no disc provenance (the patch
-reported it written), so `TextureDump_Loaded` asks `recall`, which checks
-the whole block, and the words are tagged with the made place. From there
+bigger than the console's picture, the first time the game reads the card
+(`own_art` in `cards.c`; the record exists only then, `card_art_cache.c`) the
+record's made bytes (the picture, 51 words by 96 rows at 8 bits, and its
+256-entry CLUT; the thumbnail, 20 by 32, and its 64 entries) and the PNG's
+crop (the same middle `resample` takes, `CardArt_Crop`) go to
+`TexturePack_AddMade`. Each distinct block of bytes gets a place of its own
+from `TEXTURE_MADE_BASE` (0xC0000000, past any CD) up, and the pack's recall
+index knows it by its bytes from that moment: the upload of a patched record,
+which follows in the same frame, has no disc provenance (the patch reported
+it written), so `TextureDump_Loaded` asks `recall`, which checks the whole
+block, and the words are tagged with the made place. The entry joins the
+pack's where it is, so the first sight of a card does not sort the pack again
+or read the disc, and the renderers keep the pictures they hold; the one entry
+that has to sort is a block already known, under a new palette, with newer
+blocks after it. `Cards_Build` installs the
+pack's hooks when any PNG is bigger than the console's, so uploads are tagged
+from the start, as they were when the blocks were all made there. After a
+state is loaded, a card already in VRAM whose block has not been made in this
+run stays at the console's size until it is read again. From there
 it is a pack entry like any other: painted into the shadow, resampled at
 1x, sampled at its own resolution above it by both renderers, found again
 after a state load (`rediscover` compares against the made bytes). A made

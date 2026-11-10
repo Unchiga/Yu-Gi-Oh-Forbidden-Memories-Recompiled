@@ -192,11 +192,16 @@ static void service(void)
     sigprocmask(SIG_SETMASK, &previous, NULL);
 }
 
+static volatile int in_tick;
+
+int Platform_InInterrupt(void) { return in_tick; }
+
 static void on_tick(uintptr_t eip, void *context)
 {
     uint64_t real_now = now_us();
     while (CrashTest_TickHang) {
     }
+    in_tick++;
     Profile_Sample(eip);
     {
         /* MEMORIES_TRACE=frames: where the game is when it has run 30 ms
@@ -219,6 +224,7 @@ static void on_tick(uintptr_t eip, void *context)
     (void)context;
 #endif
     advance(real_now, eip);
+    in_tick--;
 }
 
 #ifndef _WIN32

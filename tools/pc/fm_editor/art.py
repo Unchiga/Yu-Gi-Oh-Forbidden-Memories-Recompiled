@@ -18,7 +18,7 @@ A mod replaces them two ways, and the editor uses one per card:
 * a card the mod adds (a copy) has the disc offsets of its base, so a pack
   cannot tell them apart: its picture and thumbnail are the entry's "art"
   and "thumbnail" PNGs (cards.c), made into 102x96 and 40x32 at 255 and 63
-  colors when the game starts; one bigger than that is also drawn at its
+  colors when the card is first seen; one bigger than that is also drawn at its
   own resolution at Internal 2x and 4x, as a pack's is.
 * the name plate of any card: the entry's "title" PNG (a retail card gets a
   "replace" entry for it).

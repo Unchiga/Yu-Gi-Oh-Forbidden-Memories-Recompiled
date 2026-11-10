@@ -15,8 +15,8 @@
  * token a saved one meets, while src/pc statics go on pointing at them, so a state
  * loads only over the blocks of the same kinds of allocation. 1: parsed manifests
  * and the overlap report left the token arena for the host heap, and every token
- * after them moved. 2: so did the fusion rules. */
-#define REGIONS_FORMAT 2u
+ * after them moved. 2: so did the fusion rules. 3: and the cards' art records. */
+#define REGIONS_FORMAT 3u
 typedef struct SavedRegion {
     uint64_t host, length, identity;
     uint32_t guest, flags;

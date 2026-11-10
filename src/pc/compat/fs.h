@@ -32,6 +32,9 @@ long Memories_Readlink(const char *path, char *out, size_t size);
 char *Memories_Getenv(const char *name);
 int Memories_Setenv(const char *name, const char *value, int overwrite);
 int Memories_Unsetenv(const char *name);
+/* A file's size and the times it was last written and last changed in any way, in
+ * 100 ns; stat gives whole seconds and no change time. 0, or -1 when it cannot be read. */
+int Memories_FileTimes(const char *path, long long *size, long long *written, long long *changed);
 int Memories_Mkstemp(char *pattern);
 char *Memories_Mkdtemp(char *pattern);
 /* UTF-8 argv from the original Unicode command line, owned for process life. */

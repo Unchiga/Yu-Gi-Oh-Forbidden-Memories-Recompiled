@@ -11,6 +11,7 @@
 #include "pc/platform/settings.h"
 #include "pc/platform/paths.h"
 #include "pc/mods/mods.h"
+#include "pc/cards/card_art_cache.h"
 #include "pc/mods/exports.h"
 #include "pc/platform/game_files.h"
 #include "pc/platform/update_check.h"
@@ -261,6 +262,11 @@ int main(int argc, char **argv)
     Text_Build();   /* the mods' translations and fonts, which the cards' names may use */
     Cards_Build();
     Mods_Applied();
+    {
+        char folder[1024];
+        if (Paths_User(folder, sizeof(folder), "cache/card-art")) folder[0] = 0;
+        ArtCache_Start(folder, Memories_StateBuildId(), Platform_InInterrupt);
+    }
     Loading_Step("Sorting cards", 0, 0);
     Text_SortCards();
     Loading_Step("Starting the game", 0, 0);

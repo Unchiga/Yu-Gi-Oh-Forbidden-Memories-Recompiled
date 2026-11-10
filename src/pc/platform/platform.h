@@ -255,6 +255,10 @@ void Platform_StepFrame(void);
  * the time it waited counts for nothing when it goes on. */
 void Platform_ControlAttach(int attached);
 void Platform_ControlHold(int held);
+/* 1 in the clock's interrupt (MEMORIES_CLOCK=interrupt, MEMORIES_PROFILE), where the
+ * game's interrupt code cuts into anything: no lock, no malloc, no file. Never with the
+ * default clock, whose interrupt work runs where the game calls in. */
+int Platform_InInterrupt(void);
 /* Waiting for a client before one is attached (the watchdog still on):
  * a heartbeat for the freeze watches. */
 void Platform_ControlIdle(void);

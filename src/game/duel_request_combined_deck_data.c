@@ -29,6 +29,9 @@ void Duel_RequestCombinedDeckData(void)
         (u32)&((u16 *)0)[COMBINED_DECK_SIZE]
     );
 #ifdef MEMORIES_PC
+    /* The decks are known: what the camera's turn leaves time to make is not made
+       in one go by Duel_PopulateCombinedDeckData (Cards_PatchThumbnail). */
+    Cards_ArtAhead(source, COMBINED_DECK_SIZE);
     /* The disc has one image sector per retail card: a card past the disc's
        is read as its base, and Duel_PopulateCombinedDeckData finds it there. */
     for (i = 0; i < COMBINED_DECK_SIZE; i++) {

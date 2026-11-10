@@ -58,6 +58,11 @@ HOST_HEAP_UNITS = {
     "src/pc/mods/json.c",
     "src/pc/mods/overlap.c",
     "src/pc/cards/fusion_table.c",
+    # Everything the thread of card_art_cache.c reaches: it runs while the game saves
+    # and loads states, so no block of its may be a region. art.c decodes, resamples
+    # and quantizes there; libpng and zlib are native libraries, not translated.
+    "src/pc/cards/art.c",
+    "src/pc/cards/card_art_cache.c",
 }
 
 

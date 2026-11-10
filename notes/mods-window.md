@@ -509,3 +509,34 @@ second time, it goes on without the mod. Turning the mod on again in the window 
 its line, so the next start tries it; so does a change to one of those three. A refused
 mod is off, not failed: it stops no other change from being applied. An out-of-memory
 kill by the system leaves no line: the next start tries again.
+
+## A card's art
+
+A card a mod adds has its picture made from its PNGs when the game first reads it
+(`src/pc/cards/card_art_cache.c`), not while the game starts. A thread makes them ahead
+of the game, a duel's decks first as soon as they are known, then on from the last card
+seen, and keeps them in `cache/card-art` in the user folder; the mods' folders are never
+written to. A file is named by the PNGs' paths, sizes and times (the time of the last
+change too, which a tool that keeps a file's dates cannot keep; FAT and exFAT have no
+such time) and the build. It holds a length and a hash: one that does not check out counts
+as not there and is replaced.
+What an earlier build left goes as the thread starts.
+
+`MEMORIES_ART_CACHE_MB` sets how much the folder may hold, 512 by default, counted as
+files of 16 KB each, what a file takes on a disk of 4 KB blocks (larger clusters take
+more); anything but a whole number up to 1048576 is ignored and 0 keeps nothing. Once it
+is full of the run's cards the thread stops, so no start decodes what it would throw away,
+and a card the game reads takes the place of the oldest file, which can be one of the
+deck in use if the size is set lower than the decks need.
+If a write fails (a full or read-only folder) the thread stops for that run and records
+are made as the game reads them. A file that is not a PNG gets its note at the start,
+one that fails later when it is read, in every run: such a record is never kept. A
+card whose PNG `stat` cannot read is not kept either: its name would say nothing of
+the file.
+
+The thread and everything it reaches is on the host heap (`HOST_HEAP_UNITS`,
+`tools/pc/build_arm64.py`), so states can be saved and loaded while it works; builds with
+the test hooks abort if it reaches the guest heap (`translated_alloc.c`). With
+`MEMORIES_CLOCK=interrupt` or `MEMORIES_PROFILE` the disc delivers inside the clock's
+interrupt, where nothing here may lock, allocate or read a file: `Cards_PrepareArt` makes
+the record before the disc read is asked for, and the delivery takes it from memory.
