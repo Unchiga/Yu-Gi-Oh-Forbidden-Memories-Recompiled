@@ -787,6 +787,11 @@ that the game leaves out).
   on.
 
 * **Frames**: creates and edits a `card_layout.frame_styles` style visually.
+  The game reads a mod's card layout only while the mod's `full_bleed`
+  setting is on, so the layout's first style declares that setting (a bool,
+  on by default; Mod info shows it): the frame drawn here is the frame the game
+  draws, until the player unticks it in the Mods window. Mod info warns about a
+  card layout in a mod that declares no `full_bleed`.
   Choose a style, then an asset slot (front/back, hand, field, Library icon,
   digits, stat captions or type captions) or a card-view element. The front
   preview is a game-scale card viewer: drag title, art, stars, attribute,
