@@ -77,6 +77,10 @@ typedef enum {
 } CardLayoutHandElement;
 
 CardLayoutPlacement CardLayout_HandGet(int card_id, CardLayoutHandElement element);
+/* CardLayout_HandGet through a pointer, for a code mod: a function that returns a structure by value cannot be
+ * called across the mod ABI (the i386 and Windows ABIs return it differently: notes/portable-mods-plan.md). `out`
+ * takes five ints: visible, x, y, width, height. */
+void CardLayout_HandPlace(int card_id, int element, int *out);
 int CardLayout_HandStyled(int card_id);
 CardLayoutPlacement CardLayout_Get(CardLayoutElement element);
 /* Older layouts put ``stars`` beside the shared card_layout keys and use
@@ -125,6 +129,23 @@ int CardLayout_FramePaths(char (*paths)[1024], int max);
  * strip too, centred on the box retail's digits fill (func_80028B08.c). */
 int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step);
 
+/* Whether the active style keeps the game's own frame ("game_frame") and does not give its name (CardLayout_GameTitle)
+ * or its ATK (dfd 0) or DFD (dfd 1) word (CardLayout_GameLabel): the game's own is then drawn where it puts it. */
+int CardLayout_GameTitle(void);
+int CardLayout_GameLabel(int dfd);
+
+/* Whether the active style draws the card's picture under the name, the stars, the element and ATK/DEF
+ * ("parts_over_art": true in its frame style; the picture stays over the frame): a full art card's, which
+ * runs past its window. Off, as it was always, the picture is over those (a layout that relies on it covers
+ * the game's own captions with it). */
+int CardLayout_PartsOverArt(void);
+
+/* The active style's own picture for a level star (its "stars" part's "image", with "width", "height" and "step"
+ * in card units: 9, 9 and the width left out): the stars are drawn from it, a row going left from the first as
+ * the game's own go, in the part's "color". 0, with `path` empty, when the style gives none (or full-bleed is
+ * off): the game's own star is drawn then. */
+int CardLayout_StarImage(char *path, size_t size, int *w, int *h, int *step);
+
 /* An optional, active-style-only static ATK or DFD label. `dfd` is non-zero
  * for the defense label. The PNG's own texture is drawn at x/y and w/h in
  * card units; 0 means that style does not supply that label. It does not
@@ -166,6 +187,7 @@ typedef struct {
     char field_back_image[1024];
     char back_image[1024];
     char library_icon[1024];
+    int mod;   /* the mod whose layout declared the style (its pictures, parts and "full_bleed"), -1 for none */
 } CardLayoutFrameStyle;
 
 /* The style the layout gives `card_id`, into `style` (its `image` empty); 1,

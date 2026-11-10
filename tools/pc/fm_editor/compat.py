@@ -19,7 +19,7 @@ from pathlib import Path
 from .gamedata import FRAME_COLOR_NAMES, TYPE_MAGIC
 from .model import type_named
 
-HOST_API = 26
+HOST_API = 27
 
 # The release each mod API first shipped in, for the hints. An API past the
 # last listed is newer than every release.
@@ -256,6 +256,20 @@ def features(manifest: dict, project=None) -> list:
     for entry in _entries(manifest.get("cards")):
         if "variant_permille" in entry or "variant_label" in entry:
             add(26, "a card that is a variant of another (\"variant_permille\")")
+    # --- API 27 ---------------------------------------------------------------
+    for entry in _entries(manifest.get("cards")):
+        if "art_transparent" in entry:
+            add(27, "a card's see-through picture (\"art_transparent\")")
+    layout = manifest.get("card_layout")
+    styles = layout.get("frame_styles") if isinstance(layout, dict) else None
+    for style in (styles.values() if isinstance(styles, dict) else ()):
+        if not isinstance(style, dict):
+            continue
+        for key in ("game_frame", "parts_over_art"):
+            if key in style:
+                add(27, "a frame style's \"%s\"" % key)
+        if isinstance(style.get("stars"), dict) and "image" in style["stars"]:
+            add(27, "a frame style's level stars from a picture (\"stars\" \"image\")")
     return out
 
 

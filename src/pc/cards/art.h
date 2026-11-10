@@ -29,6 +29,11 @@
 
 /* 1 on success; `why` says what went wrong otherwise. */
 int CardArt_FromImage(const char *path, unsigned char *record, char *why, size_t why_size);
+
+/* The same, but a part of the picture that is mostly transparent stays see-through (index 0, as the field
+ * art's): what is behind the picture shows there. A card's "art_transparent". */
+int CardArt_FromImageSeeThrough(const char *path, unsigned char *record, char *why, size_t why_size);
+int CardArt_ThumbnailFromImageSeeThrough(const char *path, unsigned char *record, char *why, size_t why_size);
 int CardArt_ThumbnailFromImage(const char *path, unsigned char *record, char *why, size_t why_size);
 /* Like CardArt_FromImage, but keeps the PNG's own transparency as a
  * silhouette instead of flattening it to black: for "field_art"
@@ -40,6 +45,10 @@ int CardArt_FieldArtFromImage(const char *path, unsigned char *record, char *why
  * that shape), and the PNG's size: for the full-resolution picture a
  * texture pack draws above the console's resolution (cards.c). 0 when the
  * file is not a PNG. */
+/* 1 when the PNG has a pixel that is mostly transparent: a card's picture is then made with see-through
+ * parts (CardArt_FromImage), and its larger copy is registered to keep them (cards.c). */
+int CardArt_HasHoles(const char *path);
+
 int CardArt_Crop(const char *path, int w, int h, int *x, int *y, int *cw, int *ch, int *width, int *height);
 /* The title plate alone, CARD_TITLE_BYTES, what a record holds at
  * CARD_TITLE_PIXELS. */

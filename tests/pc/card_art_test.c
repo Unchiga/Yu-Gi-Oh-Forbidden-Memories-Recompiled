@@ -193,6 +193,34 @@ int main(int argc, char **argv)
                   pictures[which].name, kind, (unsigned long long)got[kind], (unsigned long long)held[which][kind]);
         remove(path);
     }
+    {
+        /* "art_transparent": the wide picture's see-through parts stay see-through (index 0, a clear color). */
+        unsigned char see[CARD_ART_RECORD];
+        char path[1024], why[256];
+        int which = 5, i, clear = 0;
+        snprintf(path, sizeof(path), "%s/%s.png", folder, pictures[which].name);
+        CHECK(write_picture(path, which), "%s: could not be written", path);
+        memset(see, 0, sizeof(see));
+        CHECK(CardArt_FromImageSeeThrough(path, see, why, sizeof(why)), "%s: %s", pictures[which].name, why);
+        CHECK(CardArt_HasHoles(path), "the wide picture has see-through parts");
+        for (i = 0; i < CARD_ART_WIDTH * CARD_ART_HEIGHT; i++) clear += see[CARD_ART_PIXELS + i] == 0;
+        CHECK(clear > 0 && see[CARD_ART_CLUT] == 0 && see[CARD_ART_CLUT + 1] == 0, "its see-through texels stay clear");
+        {
+            /* the small picture too (what the hand shows), from the same picture */
+            int thumb_clear = 0;
+            memset(see, 0, sizeof(see));
+            CHECK(CardArt_ThumbnailFromImageSeeThrough(path, see, why, sizeof(why)), "%s: %s", pictures[which].name, why);
+            for (i = 0; i < CARD_THUMB_WIDTH * CARD_THUMB_HEIGHT; i++) thumb_clear += see[CARD_THUMB_PIXELS + i] == 0;
+            CHECK(thumb_clear > 0 && see[CARD_THUMB_CLUT] == 0 && see[CARD_THUMB_CLUT + 1] == 0,
+                  "its small picture keeps the clear texels too");
+            memset(see, 0, sizeof(see));
+            CHECK(CardArt_ThumbnailFromImage(path, see, why, sizeof(why)), "%s: %s", pictures[which].name, why);
+            thumb_clear = 0;
+            for (i = 0; i < CARD_THUMB_WIDTH * CARD_THUMB_HEIGHT; i++) thumb_clear += see[CARD_THUMB_PIXELS + i] == 0;
+            CHECK(thumb_clear == 0, "the small picture is over black unless asked otherwise");
+        }
+        remove(path);
+    }
     if (failures) return 1;
     puts("Card art: every record is the one held");
     return 0;

@@ -86,6 +86,21 @@ int CardArt_FromImage(const char *path, unsigned char *record, char *why, size_t
     (void)path; (void)record; (void)why; (void)why_size;
     return 0;
 }
+int CardArt_FromImageSeeThrough(const char *path, unsigned char *record, char *why, size_t why_size)
+{
+    (void)path; (void)record; (void)why; (void)why_size;
+    return 0;
+}
+int CardArt_ThumbnailFromImageSeeThrough(const char *path, unsigned char *record, char *why, size_t why_size)
+{
+    (void)path; (void)record; (void)why; (void)why_size;
+    return 0;
+}
+int CardArt_HasHoles(const char *path)
+{
+    (void)path;
+    return 0;
+}
 int CardArt_ThumbnailFromImage(const char *path, unsigned char *record, char *why, size_t why_size)
 {
     (void)path; (void)record; (void)why; (void)why_size;
