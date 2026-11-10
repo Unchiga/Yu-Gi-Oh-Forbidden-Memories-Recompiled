@@ -68,9 +68,10 @@ native row's span is written from the disc by `update`, never by hand.
     python tools/pc/model_gate.py write                  # rewrite src/pc/overlays/model_gate_table.inc
     python tools/pc/model_gate.py port 418 433 --disc game/rpg-yfm.bin   # copy shapes' C from upstream
 
-To port a shape: copy the decomp's C (variant<shape>_*.c; the slot B wrappers
-go to src/native_overlays/model_variant_slot1), set the row's backend to `native`
-and its span to the decomp's data start, run `update --disc` and then
+To port a shape: `port` copies the decomp's C by rule (model_gate_port.py; the
+slot B wrappers go to src/native_overlays/model_variant_slot1) and sets the
+row's data start and sources; model_gate_scan.py proposes its backend, span and
+command_table. Then run `update --disc` and
 `python tools/pc/build_game32.py` to write the address sections
 (config/pc/guest_addresses.txt). `check --disc` reports how far the images
 agree beyond the span.

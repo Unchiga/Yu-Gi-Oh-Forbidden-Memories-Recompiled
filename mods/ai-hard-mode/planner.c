@@ -45,13 +45,18 @@ int Hm_KeepValue(HmCard c)
  * and are taken as 1800 ATK; so is a monster the opponent may still play
  * (`unknown`). Enemies in `dead` are gone by then. */
 #define HM_UNSEEN 1800
+/* Enemy `e`'s battle edge on own `c` (HmBoard.hit): only a field monster has one. */
+static int threat_edge(const HmBoard *b, int e, HmCard c, int defense)
+{
+    return c.zone >= 1 && c.zone <= 5 ? b->hit[e][c.zone - 1][defense != 0] : 0;
+}
 static int threat(const HmBoard *b, HmCard c, int defense, unsigned dead, int unknown)
 {
     int loss = 0, i, diff;
     if (b->enemy_pinned) return 0;
     for (i = 0; i < 5; i++) if (b->enemy[i].id && !(dead & (1u << i))) {
         HmCard e = b->enemy[i];
-        int power = e.id < 0 ? HM_UNSEEN : e.attack + Hm_StarBonus(e.star, c.star);
+        int power = e.id < 0 ? HM_UNSEEN : e.attack + Hm_StarBonus(e.star, c.star) + threat_edge(b, i, c, defense);
         diff = power - (defense ? c.defense : c.attack);
         if (diff > 0) loss = max(loss, (defense ? 0 : diff) + value(c) / 2);
     }
@@ -60,6 +65,12 @@ static int threat(const HmBoard *b, HmCard c, int defense, unsigned dead, int un
     return loss;
 }
 static int safety(const HmBoard *b, HmCard c, int defense) { return threat(b, c, defense, 0, 0); }
+
+/* Own `c`'s battle edge attacking enemy `e` in its position (HmBoard.edge). */
+static int attack_edge(const HmBoard *b, HmCard c, int e)
+{
+    return c.zone >= 1 && c.zone <= 5 ? b->edge[c.zone - 1][e][(b->enemy[e].flags & HM_DEFENSE) != 0] : 0;
+}
 
 int Hm_ChooseStar(const HmBoard *b, HmCard c, int pinned)
 {
@@ -74,7 +85,7 @@ int Hm_ChooseStar(const HmBoard *b, HmCard c, int pinned)
         if (!pinned) for (i = 0; i < 5; i++) if (b->enemy[i].id > 0) {
             HmCard e = b->enemy[i];
             int diff = c.attack + Hm_StarBonus(current.star, e.star) -
-                ((e.flags & HM_DEFENSE) ? e.defense : e.attack);
+                ((e.flags & HM_DEFENSE) ? e.defense : e.attack) + attack_edge(b, c, i);
             if (diff > 0) score = max(score, 2000 + diff + value(e) / 2);
         }
         if (score > best) { best = score; answer = choice; }
@@ -102,16 +113,19 @@ static int exposed(const HmBoard *b, HmCard a, unsigned dead)
  * opponent still has, or may play. */
 static int emptied(const HmBoard *b, int attacker, unsigned dead, unsigned target)
 {
-    int i, hit = HM_UNSEEN, top = 0;
+    int i, most = HM_UNSEEN, top, breaks = 0, beats = 0;
     HmCard a = b->own[attacker];
     if (b->enemy_pinned) return 0;
     for (i = 0; i < 5; i++) if (i != attacker && monster(b->own[i])) return 0;
-    for (i = 0; i < 5; i++) if (b->enemy[i].id && !(dead & (1u << i)))
-        top = max(top, b->enemy[i].id < 0 ? HM_UNSEEN : b->enemy[i].attack + Hm_StarBonus(b->enemy[i].star, a.star));
-    if (top > a.defense && top >= a.attack) return 0;
+    for (i = 0; i < 5; i++) if (b->enemy[i].id && !(dead & (1u << i))) {
+        top = b->enemy[i].id < 0 ? HM_UNSEEN : b->enemy[i].attack + Hm_StarBonus(b->enemy[i].star, a.star);
+        breaks |= top + threat_edge(b, i, a, 1) > a.defense;
+        beats |= top + threat_edge(b, i, a, 0) >= a.attack;
+    }
+    if (breaks && beats) return 0;
     dead |= target;
-    for (i = 0; i < 5; i++) if (b->enemy[i].id > 0 && !(dead & (1u << i))) hit = max(hit, b->enemy[i].attack);
-    return hit;
+    for (i = 0; i < 5; i++) if (b->enemy[i].id > 0 && !(dead & (1u << i))) most = max(most, b->enemy[i].attack);
+    return most;
 }
 
 static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack *out)
@@ -139,7 +153,7 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
                 move.gain = 100 + s->o->blind_risk * 3;
             } else {
                 diff = a.attack + Hm_StarBonus(a.star, e.star) -
-                    ((e.flags & HM_DEFENSE) ? e.defense : e.attack);
+                    ((e.flags & HM_DEFENSE) ? e.defense : e.attack) + attack_edge(s->b, a, j);
                 if (diff < 0 || (diff == 0 && ((e.flags & HM_DEFENSE) || !s->o->trades))) continue;
                 move.damage = (e.flags & HM_DEFENSE) ? 0 : diff;
                 move.removed = value(e) + 400;
@@ -430,7 +444,7 @@ static void consider_monster(HandSearch *s, HmCard card, int count, int field)
     for (i = 0; i < 5; i++) if (s->b->enemy[i].id > 0 && !s->b->pinned) {
         HmCard e = s->b->enemy[i];
         int diff = card.attack + Hm_StarBonus(card.star, e.star) -
-            ((e.flags & HM_DEFENSE) ? e.defense : e.attack);
+            ((e.flags & HM_DEFENSE) ? e.defense : e.attack) + attack_edge(s->b, card, i);
         if (diff > 0) hit = max(hit, value(e) / 2 + ((e.flags & HM_DEFENSE) ? 0 : diff));
         if (!(e.flags & HM_DEFENSE) && diff >= s->b->enemy_lp) hit = HM_WIN;
     }

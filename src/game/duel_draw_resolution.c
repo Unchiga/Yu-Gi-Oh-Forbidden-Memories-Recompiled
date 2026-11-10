@@ -80,6 +80,16 @@ void DuelScene_UpdateDrawResolution(void) {
     }
 
     if ((gDuel_wSceneStateFlags & 0x4000) == 0) {
+#ifdef MEMORIES_PC
+        /* The turn began with a full hand, so there is nothing to draw.
+           Retail cannot get here (a turn ends only after a hand card is
+           played), but a mod that draws during its own turn can. Without
+           this the count below wraps and the draws run past the hand. */
+        if (*(s8 *)&D_8009B1EC == 0) {
+            gDuel_wSceneStateFlags |= 0x4000;
+            return;
+        }
+#endif
         t = D_8009B1ED - 1;
         D_8009B1ED = t;
         if ((s8)t > 0) {

@@ -19,7 +19,7 @@ from pathlib import Path
 from .gamedata import FRAME_COLOR_NAMES, TYPE_MAGIC
 from .model import type_named
 
-HOST_API = 24
+HOST_API = 25
 
 # The release each mod API first shipped in, for the hints. An API past the
 # last listed is newer than every release.
@@ -248,6 +248,10 @@ def features(manifest: dict, project=None) -> list:
     menu = manifest.get("menu")
     if isinstance(menu, dict) and "slide" in menu:
         add(23, "the menu's slide (\"slide\")")
+    # --- API 24 is the code mods' pointer and wheel ------------------------
+    # --- API 25 ---------------------------------------------------------------
+    for what in _retail_frame_captions(manifest.get("card_layout")):
+        add(25, what)
     return out
 
 
@@ -276,6 +280,43 @@ def _frame_features(layout) -> list:
     if isinstance(digits, dict) and ("atk" in digits or "def" in digits):
         found.append("the digits' own \"atk\" and \"def\" places")
     found += [f"a card part's \"{key}\"" for key in _PART_KEYS_18 if _has_key(layout, key)]
+    return list(dict.fromkeys(found))
+
+
+def keeps_retail_frame(style) -> bool:
+    """Whether a frame style leaves retail's own card frame on screen: it has
+    no "image" of its own, or says "full_bleed": false (card_layout.c
+    resolve_style: a style with a picture is full-bleed unless it says not).
+    The game reads the flag with Json_Bool, so a number counts too (0 is
+    false, any other is true); another kind of value says nothing."""
+    if not isinstance(style, dict):
+        return False
+    flag = style.get("full_bleed")
+    if isinstance(flag, (bool, int, float)):
+        return not bool(flag)
+    image = style.get("image")
+    return not (isinstance(image, str) and image)
+
+
+def _retail_frame_captions(layout) -> list:
+    """The ATK/DFD caption pictures a style that keeps retail's frame brings
+    (mod API 25). A game of API 24 or older draws a caption picture only on a
+    full-bleed frame: on retail's it leaves retail's own "ATK"/"DFD" and
+    ignores the picture, a half-working mod. The same for a "digits" strip,
+    the style's own or the layout's (card_layout.c layout_part: the style's
+    "digits" when it has one, else the layout's)."""
+    styles = layout.get("frame_styles") if isinstance(layout, dict) else None
+    found = []
+    for style in (styles.values() if isinstance(styles, dict) else ()):
+        if not keeps_retail_frame(style):
+            continue
+        for key in ("atk_label", "dfd_label"):
+            label = style.get(key)
+            if isinstance(label, dict) and isinstance(label.get("image"), str) and label["image"]:
+                found.append(f"a frame style that keeps retail's frame with a \"{key}\" picture")
+        digits = style["digits"] if "digits" in style else layout.get("digits")
+        if isinstance(digits, dict) and isinstance(digits.get("image"), str) and digits["image"]:
+            found.append("a frame style that keeps retail's frame with a \"digits\" strip")
     return list(dict.fromkeys(found))
 
 

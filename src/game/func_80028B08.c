@@ -201,10 +201,10 @@ static int CardLayout_DrawFrame(s32 x, s32 y, s32 w, s32 h, s32 ot, s32 mode, u3
     return 1;
 }
 
-/* A full-bleed mod's own digits (card_layout.h's CardLayout_Digits): the
- * visible digits of `buf` (least significant first, a value past 9 is a
- * blank), at the mod's size, centred on (cx, cy) in the card's own units:
- * one to four digits always centred on the box.
+/* A mod's own digits (card_layout.h's CardLayout_Digits), on a full-bleed
+ * frame or on retail's: the visible digits of `buf` (least significant
+ * first, a value past 9 is a blank), at the mod's size, centred on (cx, cy)
+ * in the card's own units: one to four digits always centred on the box.
  * 0, nothing drawn, when the strip is not there. */
 /* buf1/buf2 (func_80028B08's own locals) are each u8[5]: Text_EncodeDecimalDigits
  * never gives this more than five digits, so five resolved cells is always enough. */
@@ -255,15 +255,18 @@ static int CardLayout_DrawDigits(s32 base_x, s32 base_y, s32 cx, s32 cy, const u
 }
 
 /* A frame style's static ATK/DFD caption. It is separate from the digit
- * strip so a style can use any art and move either caption independently. */
-static void CardLayout_DrawStatLabel(s32 base_x, s32 base_y, s32 dfd, s32 ot, s32 mode, u32 rgb, Func80028B08Extra *EXT)
+ * strip so a style can use any art and move either caption independently.
+ * 1 when the style's image was drawn; 0 when it has none (or it did not
+ * load), so the caller draws retail's own caption, as for a type label. */
+static int CardLayout_DrawStatLabel(s32 base_x, s32 base_y, s32 dfd, s32 ot, s32 mode, u32 rgb, Func80028B08Extra *EXT)
 {
     char path[1024];
     s32 x, y, w, h, tpage, u, v, clut, cell_w, cell_h;
 
     if (!CardLayout_StatLabel(dfd, path, sizeof(path), &x, &y, &w, &h) ||
-        !CardLayoutArt_StatLabelCell(dfd, &tpage, &u, &v, &clut, &cell_w, &cell_h)) return;
+        !CardLayoutArt_StatLabelCell(dfd, &tpage, &u, &v, &clut, &cell_w, &cell_h)) return 0;
     CardLayout_DrawCell(base_x + x, base_y + y, w, h, tpage, u, v, clut, cell_w, cell_h, ot, mode, rgb, EXT);
+    return 1;
 }
 
 /* The "[Trap Card]"-style caption's own replacement image (card_layout.h's
@@ -505,8 +508,14 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
          * relocated, side-by-side boxes may not, so it is left out
          * entirely while one is active -- the boxes read by position
          * alone, no label text, as the reference layout this feature
-         * followed did. */
-        if (!CardLayout_FullBleed() && atk_label_layout.visible)
+         * followed did.
+         * A style that keeps retail's frame may give its own "atk_label"
+         * picture: it is drawn here, in the caption's place in the draw
+         * order, and retail's sprite (a separate one on the font page, not
+         * part of the plate) is not submitted under it. */
+        if (!CardLayout_FullBleed() && atk_label_layout.visible &&
+            !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
+                                      0, arg1, arg, win->field_0C, EXT))
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;
@@ -516,7 +525,9 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             PRM->cxcy.h.cy = 0xF9;
         }
 #ifdef MEMORIES_PC
-        if (!CardLayout_FullBleed() && def_label_layout.visible)
+        if (!CardLayout_FullBleed() && def_label_layout.visible &&
+            !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
+                                      1, arg1, arg, win->field_0C, EXT))
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;
@@ -565,10 +576,17 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             /* The retail digit code below sets the texture row (uv.b.hi) the
              * level stars are drawn from, too: set it whichever digits draw. */
             PRM->uv.b.hi = (PRM->uv.b.hi & 0x80) + 0x10;
-            /* A full-bleed mod's own digits, centred on each box. The stat the
+            /* A mod's own digits, centred on each box. The stat the
              * attack screen dims (rec->field_3C's 0x80 ATK, 0x40 DEF: the
              * retail digits' grey palette row) is drawn from the strip's
-             * greyed digits. */
+             * greyed digits. On a style that keeps retail's frame the box is
+             * the one retail's digits fill (atk_left/atk_top are its corner,
+             * the glyphs 0x0D high); on a full-bleed frame that centre is
+             * atk_layout.x/y itself, as computed above. Retail's digits are
+             * drawn only where the strip was not. A card no style claims
+             * keeps retail's digits: a layout's shared strip is for its
+             * styles' cards (and a game before mod API 25 drew it only on a
+             * full-bleed frame, which such a card never has). */
             if (CardLayout_FullBleed() && atk_label_layout.visible) {
                 CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
                                          0, arg1, arg, win->field_0C, EXT);
@@ -579,13 +597,14 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             }
             {
             s32 atk_custom = 0, def_custom = 0;
-            if (CardLayout_FullBleed() && atk_layout.visible)
+            s32 row_width = (digits - 1) * step + 6;
+            if (CardLayout_Styled() && atk_layout.visible)
                 atk_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
-                                                    atk_layout.x, atk_layout.y, buf1, digits,
+                                                    atk_left + row_width / 2, atk_top + 0x0D / 2, buf1, digits,
                                                     (rec->field_3C & 0x80) != 0, arg1, arg, win->field_0C, EXT);
-            if (CardLayout_FullBleed() && def_layout.visible)
+            if (CardLayout_Styled() && def_layout.visible)
                 def_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
-                                                    def_layout.x, def_layout.y, buf2, digits,
+                                                    def_left + row_width / 2, def_top + 0x0D / 2, buf2, digits,
                                                     (rec->field_3C & 0x40) != 0, arg1, arg, win->field_0C, EXT);
 
             /* A fallback style's own "color" (card_layout.h's CardLayoutPart):
