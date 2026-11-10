@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define FUNCTION_LIMIT 8192
 /* External native data uses explicit guest-visible spans, never truncation. */
@@ -51,7 +52,16 @@ static void invalidate_region_pages(void)
 static void *(*function_resolver)(u32);
 static char fatal_detail[512];
 
-const char *GuestRuntime_FatalDetail(void) { return fatal_detail; }
+void GuestRuntime_WriteFatalDetail(int fd)
+{
+    static const char before[] = "translated runtime: ", after[] = "\n";
+    const char *end = memchr(fatal_detail, 0, sizeof(fatal_detail));
+    size_t length = end ? (size_t)(end - fatal_detail) : sizeof(fatal_detail);
+    if (!length) return;
+    (void)!write(fd, before, sizeof(before) - 1);
+    (void)!write(fd, fatal_detail, length);
+    (void)!write(fd, after, sizeof(after) - 1);
+}
 
 /* PS1 C often carries addresses through signed s32 locals. A subsequent
  * integer-to-pointer cast sign-extends on ARM64; preserve its guest bits.

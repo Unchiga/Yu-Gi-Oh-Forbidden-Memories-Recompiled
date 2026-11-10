@@ -4,7 +4,9 @@
 /* Game > Deck slots (F6): keep up to ten decks beside a save and switch to
  * one in a step (deck_slots.h has the rules and the file). The screen is
  * drawn in the port's overlay, like the save slot menu, and read with the
- * pad or the keys mapped to it; while it is open the game gets no buttons.
+ * pad or the keys mapped to it, or the mouse (hover a slot, left click for Cross,
+ * right click for Circle, the wheel for Up and Down); while it is open the game
+ * gets no buttons.
  * It opens with a game loaded, on the main menu (the one with Campaign), the
  * campaign map, a card shop's menu or Free Duel's opponent select, where
  * nothing holds a copy of the deck; the setting `deck_slots` (Game menu)

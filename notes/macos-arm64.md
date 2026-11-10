@@ -64,8 +64,8 @@ regions in address order, each once, so a big allocation past tens of thousands
 of small ones costs one walk and not a pass over all of them at every step. Invalid accesses fail
 with the operation, requested size, region count,
 live registered bytes, heap bytes and allocation cursor. These diagnostics are
-prepared before abort; the crash report copies them with the loaded Mach-O UUID
-and build identity.
+prepared before abort, and the runtime writes them into the crash report itself,
+beside the loaded Mach-O UUID and build identity.
 
 External guest accesses cache a region index per 4 KiB page and validate the
 complete requested span on every hit. Small allocations may share a page;

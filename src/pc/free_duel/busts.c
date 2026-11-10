@@ -45,6 +45,7 @@
 #include "pc/mods/mods.h"
 #include "pc/mods/json.h"
 #include "pc/platform/paths.h"
+#include "pc/platform/loading.h"
 #include "pc/tower/tower.h"
 #include "pc/debug/log.h"
 #include <ctype.h>
@@ -848,6 +849,7 @@ void Busts_Make(void)
     clock_t start = clock();
     for (duelist = 1; duelist < count; duelist++) {
         bust = Duelists_Bust(duelist);
+        Loading_Step("Duelist portraits", (unsigned)duelist, (unsigned)count);
         if (bust >= 0 && bust < bust_count && !busts[bust].made) {
             make(&busts[bust]);
             made++;
