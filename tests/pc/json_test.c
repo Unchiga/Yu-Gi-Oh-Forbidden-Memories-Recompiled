@@ -158,7 +158,7 @@ static void stream_tests(void)
         assert(document && two[0].found && two[1].found && two[0].filled && two[1].filled);
         assert(Json_Number(Json_Member(Json_Root(document), "x"), 0) == 1);
         assert(!Json_Count(Json_Member(Json_Root(document), "cards")));
-        whole = Json_ParseDeferred(stream_path, &two[1], error, sizeof(error));
+        whole = Json_ParseDeferred(stream_path, &two[1], error, sizeof(error), NULL);
         assert(whole && Json_Count(Json_Root(whole)) == 2);
         assert(Json_Number(Json_At(Json_Root(whole), 1), 0) == 6);
         Json_Free(whole);

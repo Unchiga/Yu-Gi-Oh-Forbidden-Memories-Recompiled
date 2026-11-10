@@ -79,6 +79,8 @@ are compared.
 | `MEMORIES_MOD_<ID>=0/1` | settle one mod for this run; the id uppercased, everything that is not a letter or a digit an underscore (`MEMORIES_MOD_3D_MONSTERS=1`) |
 | `MEMORIES_MOD_<ID>_<KEY>=n` | one of a code mod's settings for this run, over what the settings file says (`MEMORIES_MOD_3D_MONSTERS_SCALE=5000`) |
 | `MEMORIES_TRACE=mods` | log what the mod system finds, loads and overrides |
+| `MEMORIES_MOD_BUDGET_MB` | the memory mods may take in all, in place of what the game works out; only a whole number above 0 counts ([Mods too big for the machine](mods-window.md#mods-too-big-for-the-machine)) |
+| `MEMORIES_FUSION_ROWS_MAX` | fusion rules past this many fail as if memory ran out, to test the refusal; only a whole number above 0 counts |
 
 ## The manifest
 

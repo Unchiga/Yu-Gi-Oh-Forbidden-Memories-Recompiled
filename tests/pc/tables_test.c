@@ -68,6 +68,8 @@ long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *
     (void)id; (void)each; (void)context; (void)error; (void)error_size;
     return 0;
 }
+static int refusals;
+void Mods_RefuseApplying(const char *id, const char *why) { (void)id; (void)why; refusals++; }
 void Mods_Note(const char *id, const char *format, ...)
 {
     va_list arguments;
@@ -133,6 +135,50 @@ static unsigned total(const unsigned short *weights)
     int id;
     for (id = 1; id <= gCard_nCount; id++) sum += weights[id];
     return sum;
+}
+
+/* Memory runs out while a mod's fusions are read, then a mod goes after they all were:
+ * nothing of it stays, its {"remove": "all"} least of all, and the others are as they
+ * were. */
+static void refused_fusions(void)
+{
+    char error[128];
+    int result = -1;
+    JsonDocument *a = Json_Parse("{\"fusions\":[{\"with\":[1,2],\"result\":3}]}", error, sizeof(error));
+    JsonDocument *b = Json_Parse("{\"fusions\":[{\"remove\":\"all\"},{\"remove\":5},{\"with\":[3,4],\"result\":6},"
+                                 "{\"with\":[4,5],\"result\":7},{\"with\":[5,6],\"result\":8}]}", error, sizeof(error));
+    JsonDocument *c = Json_Parse("{\"fusions\":[{\"with\":[7,8],\"result\":9}]}", error, sizeof(error));
+    assert(a && b && c);
+    Tables_Clear();
+    refusals = 0;
+    Tables_AddFrom("a", NULL, Json_Root(a));
+    FusionTable_LimitRows(3);
+    Tables_AddFrom("b", NULL, Json_Root(b));
+    FusionTable_LimitRows(-1);
+    assert(refusals == 1 && FusionTable_Count() == 1);
+    assert(Tables_FilterFusion(50) == 50 && Tables_FilterFusion(5) == 5);
+    Tables_AddFrom("c", NULL, Json_Root(c));
+    assert(refusals == 1);
+    assert(Tables_Fusion(1, 2, &result) && result == 3);
+    assert(!Tables_Fusion(3, 4, &result));
+    assert(Tables_Fusion(7, 8, &result) && result == 9);
+    /* The same mod read whole, and dropped after: as if it had never been. */
+    Tables_Clear();
+    Tables_AddFrom("a", NULL, Json_Root(a));
+    Tables_AddFrom("b", NULL, Json_Root(b));
+    Tables_AddFrom("c", NULL, Json_Root(c));
+    assert(Tables_FilterFusion(50) == 0 && Tables_FilterFusion(5) == 0);
+    assert(fusion_span_count == 3);
+    drop_fusion_span(1);
+    assert(fusion_span_count == 2 && FusionTable_Count() == 2);
+    assert(Tables_FilterFusion(50) == 50 && Tables_FilterFusion(5) == 5);
+    assert(Tables_Fusion(1, 2, &result) && result == 3);
+    assert(!Tables_Fusion(3, 4, &result));
+    assert(Tables_Fusion(7, 8, &result) && result == 9);
+    Tables_Clear();
+    Json_Free(a);
+    Json_Free(b);
+    Json_Free(c);
 }
 
 int main(void)
@@ -799,5 +845,6 @@ int main(void)
     }
     while (document_count) Json_Free(documents[--document_count]);
     puts("tables: ok");
+    refused_fusions();
     return 0;
 }

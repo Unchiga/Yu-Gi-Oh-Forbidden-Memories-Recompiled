@@ -316,9 +316,28 @@ static int target(const char *mod, const char *where, const JsonValue *value, Eq
 
 /* --- fusions --------------------------------------------------------- */
 
-static void add_fusion(int a, int b, int result)
+static int fusions_refused;
+/* What each mod's "fusions" did, until the table is sealed, for one that has to go:
+ * its rows in the order added, and its removals in removal_log (a card, or -1 for
+ * {"remove": "all"}), which only take effect once its list has been read whole. */
+#define FUSION_SPANS 256
+static struct { const char *mod; int first, rows, first_removal, removals; } fusion_spans[FUSION_SPANS];
+static int fusion_span_count;
+static int *removal_log;
+static int removal_count, removal_room;
+static void add_fusion(const char *mod, int a, int b, int result)
 {
-    FusionTable_Add(a, b, result, ++order_counter);
+    (void)mod;
+    if (!FusionTable_Add(a, b, result, ++order_counter)) fusions_refused = 1;
+}
+
+static void read_rows_limit(void)
+{
+    const char *named = getenv("MEMORIES_FUSION_ROWS_MAX");
+    char *end;
+    long rows = named && *named ? strtol(named, &end, 10) : 0;
+    /* A value that makes no sense limits nothing. */
+    if (rows > 0 && !*end) FusionTable_LimitRows(rows);
 }
 
 static int removes_all(const JsonValue *removed)
@@ -328,6 +347,53 @@ static int removes_all(const JsonValue *removed)
 }
 
 static void read_fusion(const char *mod, const JsonValue *rule, long i);
+
+static void log_removal(int id)
+{
+    int *log = grow(&removal_log, &removal_room, removal_count, sizeof(*removal_log));
+    if (log) log[0] = id, removal_count++;
+    else fusions_refused = 1;
+}
+
+/* The removals of one mod's list: 0 when there was no memory for them. */
+static int apply_removals(int first, int count)
+{
+    for (int i = first; i < first + count; i++) {
+        int id = removal_log[i];
+        if (id < 0) {
+            removed_all = 1;
+            continue;
+        }
+        if (id >= removed_room) {
+            int room = gCard_nCount + 1 > id + 1 ? gCard_nCount + 1 : id + 1;
+            unsigned char *bigger = realloc(removed_results, (size_t)room);
+            if (!bigger) return 0;
+            memset(bigger + removed_room, 0, (size_t)(room - removed_room));
+            removed_results = bigger;
+            removed_room = room;
+        }
+        removed_results[id] = 1;
+    }
+    return 1;
+}
+
+/* Back to what the mods still in fusion_spans removed. */
+static void reapply_removals(void)
+{
+    if (removed_results) memset(removed_results, 0, (size_t)removed_room);
+    removed_all = 0;
+    for (int i = 0; i < fusion_span_count; i++) apply_removals(fusion_spans[i].first_removal, fusion_spans[i].removals);
+}
+
+/* All that span `index`'s mod did to the fusions. */
+static void drop_fusion_span(int index)
+{
+    FusionTable_Remove(fusion_spans[index].first, fusion_spans[index].rows);
+    for (int i = index + 1; i < fusion_span_count; i++) fusion_spans[i].first -= fusion_spans[index].rows;
+    fusion_span_count--;
+    memmove(&fusion_spans[index], &fusion_spans[index + 1], (size_t)(fusion_span_count - index) * sizeof(*fusion_spans));
+    reapply_removals();
+}
 
 static void read_fusions(const char *mod, const JsonValue *list)
 {
@@ -343,7 +409,7 @@ static void read_fusions(const char *mod, const JsonValue *list)
      * bulk fusions) take minutes to read. One Json_Count is one walk, kept
      * for the loading screen's bar. */
     total = (unsigned)Json_Count(list);
-    for (i = 0, rule = Json_At(list, 0); rule; i++, rule = Json_Next(rule)) {
+    for (i = 0, rule = Json_At(list, 0); rule && !fusions_refused; i++, rule = Json_Next(rule)) {
         Loading_Step("Fusions", (unsigned)i, total);
         read_fusion(mod, rule, i);
     }
@@ -364,21 +430,8 @@ static void read_fusion(const char *mod, const JsonValue *rule, long i)
          * { "remove": "all" }: none makes anything (a card of that
          * name first, as a type name for an equip's target). */
         int id;
-        if (removes_all(removed)) {
-            removed_all = 1;
-            return;
-        }
-        id = card(mod, where, removed);
-        if (!id) return;
-        if (id >= removed_room) {
-            int room = gCard_nCount + 1 > id + 1 ? gCard_nCount + 1 : id + 1;
-            unsigned char *bigger = realloc(removed_results, (size_t)room);
-            if (!bigger) return;
-            memset(bigger + removed_room, 0, (size_t)(room - removed_room));
-            removed_results = bigger;
-            removed_room = room;
-        }
-        removed_results[id] = 1;
+        id = removes_all(removed) ? -1 : card(mod, where, removed);
+        if (id) log_removal(id);
         return;
     }
     if (Json_Count(with) != 2) {
@@ -396,7 +449,7 @@ static void read_fusion(const char *mod, const JsonValue *rule, long i)
         made = card(mod, where, result);
         if (!made) return;
     }
-    add_fusion(a, b, made);
+    add_fusion(mod, a, b, made);
 }
 
 static int read_streamed_fusion(const JsonValue *rule, long index, void *mod)
@@ -404,7 +457,7 @@ static int read_streamed_fusion(const JsonValue *rule, long index, void *mod)
     /* No total: the file is read an entry at a time, never counted. */
     Loading_Step("Fusions", (unsigned)index, 0);
     read_fusion(mod, rule, index);
-    return 1;
+    return !fusions_refused;
 }
 
 int Tables_Fusion(int a, int b, int *result)
@@ -2386,11 +2439,33 @@ void Tables_AddFrom(const char *mod, const char *directory, const JsonValue *man
     forget_pools();
     pool_directory = directory;
     Loading_Step("Fusions and equips", 0, 0);
-    read_fusions(mod, Json_Member(manifest, "fusions"));
     {
         char why[128];
-        if (Mods_EachFusion(mod, read_streamed_fusion, (void *)mod, why, sizeof(why)) < 0)
-            Mods_Note(mod, "\"fusions\": %s", why);
+        int first = FusionTable_Count(), first_removal = removal_count;
+        fusions_refused = 0;
+        read_fusions(mod, Json_Member(manifest, "fusions"));
+        if (!fusions_refused) {
+            long read = Mods_EachFusion(mod, read_streamed_fusion, (void *)mod, why, sizeof(why));
+            if (read == JSON_NO_MEMORY) fusions_refused = 1;
+            else if (read < 0) Mods_Note(mod, "\"fusions\": %s", why);
+        }
+        if (!fusions_refused && !apply_removals(first_removal, removal_count - first_removal)) fusions_refused = 1;
+        /* Memory ran out: nothing of this mod's, and on with the next. */
+        if (fusions_refused) {
+            FusionTable_Remove(first, FusionTable_Count() - first);
+            removal_count = first_removal;
+            reapply_removals();
+            Mods_RefuseApplying(mod, "not enough memory for its fusions");
+            pool_directory = NULL;
+            return;
+        }
+        if (fusion_span_count < FUSION_SPANS) {
+            fusion_spans[fusion_span_count].mod = mod;
+            fusion_spans[fusion_span_count].first = first;
+            fusion_spans[fusion_span_count].rows = FusionTable_Count() - first;
+            fusion_spans[fusion_span_count].first_removal = first_removal;
+            fusion_spans[fusion_span_count++].removals = removal_count - first_removal;
+        }
     }
     read_equips(mod, Json_Member(manifest, "equips"));
     read_equip_default(mod, Json_Member(manifest, "equip_bonus_default"));
@@ -2451,6 +2526,7 @@ void Tables_Clear(void)
     memset(trap_from, 0, sizeof(trap_from));
     if (removed_results) memset(removed_results, 0, (size_t)removed_room);
     removed_all = 0;
+    removal_count = fusion_span_count = 0;
     if (edited) memset(edited, 0, (size_t)edited_room * TABLES_POOL_COUNT);
     if (rank_given) memset(rank_given, 0, (size_t)rank_room * TABLES_RANK_RULE_COUNT);
     forget_pools();
@@ -2458,6 +2534,7 @@ void Tables_Clear(void)
 
 void Tables_Build(void)
 {
+    read_rows_limit();
     static int built;
     int i;
     if (built) return;
@@ -2493,5 +2570,26 @@ void Tables_Build(void)
             if (value_given[i]) LOG(LOG_MODS, "tables: value %s %ld", value_keys[i].key, value_set[i]);
     }
     /* Before any duel asks: sorting millions of rules takes seconds. */
-    FusionTable_Seal();
+    if (!FusionTable_Seal()) {
+        /* No room to sort them: the mod with the most of them goes, with what needed
+         * it, and the memory that wants. If even so there is none, no rules beat a
+         * table that is walked at every fusion. */
+        int most = 0;
+        for (int i = 1; i < fusion_span_count; i++)
+            if (fusion_spans[i].rows > fusion_spans[most].rows) most = i;
+        if (fusion_span_count) {
+            Mods_RefuseApplying(fusion_spans[most].mod, "not enough memory for its fusions");
+            drop_fusion_span(most);
+            for (int i = fusion_span_count - 1; i >= 0; i--)
+                for (int m = 0; m < Mods_LoadedCount(); m++)
+                    if (!strcmp(Mods_Id(Mods_Loaded(m)), fusion_spans[i].mod) && !Mods_Active(Mods_Loaded(m))) {
+                        drop_fusion_span(i);
+                        break;
+                    }
+        }
+        if (!FusionTable_Seal()) FusionTable_Clear();
+    }
+    free(removal_log);
+    removal_log = NULL;
+    removal_count = removal_room = fusion_span_count = 0;
 }

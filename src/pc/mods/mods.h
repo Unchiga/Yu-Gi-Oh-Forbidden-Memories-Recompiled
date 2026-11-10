@@ -257,11 +257,19 @@ const struct JsonValue *Mods_Manifest(int mod);
 long Mods_EachFusion(const char *id, int (*each)(const struct JsonValue *, long, void *), void *context, char *error,
                      size_t error_size);
 unsigned Mods_FusionsHash(int mod); /* 0 with none */
+/* A mod that memory ran out for as it was applied: listed for the next start, which
+ * this makes happen, once (mod_budget.h). The player sees `why` on it in the Mods
+ * window. If there can be no restart it comes back with the mod off, and the game goes
+ * on without it. Mods_SetRestart says how, Mods_Applied that the start got through. */
+void Mods_RefuseApplying(const char *id, const char *why);
+void Mods_SetRestart(int (*restart)(void), unsigned build);
+void Mods_Applied(void);
+int Mods_Refused(int mod); /* off for this run for lack of memory; its status says why */
 /* "cards", also not in the manifest: read for Mods_VisitCards and kept until
  * Mods_CardsRelease, as Cards_Build ends; or a document of them for the caller, which
  * Json_Frees it. */
 unsigned Mods_CardsHash(int mod); /* 0 with none */
-struct JsonDocument *Mods_CardsDocument(int mod);
+struct JsonDocument *Mods_CardsDocument(int mod, int *no_memory); /* NULL, and *no_memory if that is why */
 void Mods_CardsRelease(void);
 long Mods_FusionsSize(int mod); /* bytes in the file, 0 for none */
 const char *Mods_Metadata(int mod, const char *key);

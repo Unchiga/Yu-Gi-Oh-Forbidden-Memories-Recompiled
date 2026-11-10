@@ -128,8 +128,10 @@ typedef struct {
     JsonDocument *manifest;
     JsonDeferred fusions; /* "fusions", read from the file as it is used */
     const JsonValue *data;       /* the "data" array, applied when enabled */
+    long long file_size, file_time; /* of mod.json: what a refusal names */
     JsonDeferred cards;          /* "cards", read from the file for Cards_Build and gone */
     JsonDocument *cards_read;    /* while Cards_Build reads them */
+    int refused;                 /* mod_budget.h: off for this run, and says why */
     const JsonValue *models;     /* the "models" array: battle models the mod adds */
     char textures[PATH_MAX_];    /* a texture pack directory inside the mod, or empty */
     const JsonValue *assets;     /* named image replacements from mod.json, or NULL */
@@ -178,6 +180,7 @@ static int region_count;
  * battle slot that loads it (Mods_ModelWindow) or for a native extra
  * (host_disc_read, at Mods_ModelSector). */
 #include "saved_text.inc"
+#include "mod_budget.h"
 typedef struct {
     int mod;
     char *name;
@@ -3510,6 +3513,13 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         }
     }
     {
+        struct stat info;
+        if (!stat(path, &info)) {
+            mod->file_size = (long long)info.st_size;
+            mod->file_time = (long long)info.st_mtime;
+        }
+    }
+    {
         static const char *const lists[] = {"fusions", "cards"};
         JsonDeferred deferred[2];
         mod->manifest = Json_ParseFileDeferring(path, lists, 2, deferred, error, sizeof(error));
@@ -3626,7 +3636,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         note(mod, "\"cards\" is not an array");
     } else if (mod->cards.found) {
         /* Refused here, as a mistake anywhere else in the file is. */
-        JsonDocument *cards = Json_ParseDeferred(path, &mod->cards, error, sizeof(error));
+        JsonDocument *cards = Json_ParseDeferred(path, &mod->cards, error, sizeof(error), NULL);
         if (!cards) {
             mod->broken = 1;
             note(mod, "mod.json %s", error);
@@ -4452,6 +4462,119 @@ int Mods_Forget(int index)
 }
 int Mods_Removed(int index) { return at(index) && mods[index].removed; }
 
+/* --- mods that do not fit (mod_budget.h) ---------------------------------- *
+ *
+ * A refused mod is off for the run and says why, but it is not a failed one: its
+ * setting stays on for the day the refusal lapses, it stops no other change from being
+ * applied, and turning it on again in the window is asking to try again. */
+
+static int (*restart_game)(void);
+static unsigned running_build;
+
+void Mods_SetRestart(int (*restart)(void), unsigned build)
+{
+    restart_game = restart;
+    running_build = build;
+}
+
+static int refused_file(char *path, size_t size)
+{
+    return !Paths_User(path, size, "refused-mods.txt");
+}
+
+static void refuse(Mod *mod, const char *why)
+{
+    mod->refused = 1;
+    mod->restart = 1;   /* whatever turns it on again goes through a start */
+    note(mod, "%s", why);
+}
+
+/* What an earlier start could not apply. */
+static void refuse_listed(void)
+{
+    char path[PATH_MAX_], why[512];
+    if (!refused_file(path, sizeof(path))) return;
+    for (int i = 0; i < mod_count; i++)
+        if (ModBudget_Refused(path, mods[i].id, mods[i].file_size, mods[i].file_time, running_build, why, sizeof(why)))
+            refuse(&mods[i], why);
+}
+
+/* In load order, so that what loads first gets in. */
+static void keep_to_budget(int *enabled, const int *order, int count)
+{
+    long long left = ModBudget_Bytes();
+    char error[160], why[160];
+    for (int i = 0; i < count; i++) {
+        Mod *mod = &mods[order[i]];
+        long long need = ModBudget_Need(mod->file_size);
+        if (!enabled[order[i]] || mod->broken) continue;
+        /* It may need one just refused: nothing is set aside for what will not load. */
+        if (!Mods_Compatible(order[i], enabled, error, sizeof(error))) continue;
+        if (need > left) {
+            enabled[order[i]] = 0;
+            mod->enabled = 0;
+            snprintf(why, sizeof(why), "too big for this device's memory: it needs about %lld MB and %lld MB are left for mods",
+                     need >> 20, left >> 20);
+            refuse(mod, why);
+            continue;
+        }
+        left -= need;
+    }
+}
+
+/* A mod that needs a refused one is off with it for the run, its setting left alone:
+ * ticked, it would stop every other change from being applied. Only for that reason:
+ * a mod that lacks anything else stays as it was. */
+static void off_with_refused(void)
+{
+    int wanted[MODS_MAX], with_refused[MODS_MAX], changed = 1;
+    char error[160];
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < mod_count; i++) {
+            wanted[i] = mods[i].enabled;
+            with_refused[i] = mods[i].enabled || mods[i].refused;
+        }
+        for (int i = 0; i < mod_count; i++) {
+            if (!wanted[i] || Mods_Compatible(i, wanted, error, sizeof(error)) ||
+                !Mods_Compatible(i, with_refused, error, sizeof(error)))
+                continue;
+            Mods_Compatible(i, wanted, error, sizeof(error));
+            if (mods[i].active) activate(i, 0);
+            mods[i].enabled = 0;
+            mods[i].refused = 1;
+            note(&mods[i], "%s", error);
+            changed = 1;
+        }
+    }
+}
+
+void Mods_RefuseApplying(const char *id, const char *why)
+{
+    int index = by_id(id);
+    char path[PATH_MAX_], text[512];
+    if (index < 0) return;
+    say("%s: refused: %s", id, why);
+    snprintf(text, sizeof(text), "%s: turn it on to try again", why);
+    if (refused_file(path, sizeof(path)) &&
+        ModBudget_Refuse(path, id, mods[index].file_size, mods[index].file_time, running_build, text) &&
+        restart_game && !ModBudget_Restarted(path) && ModBudget_SetRestarted(path, 1) && ModBudget_Restarted(path))
+        restart_game();
+    /* No restart: no room to say so, or this is the start after one. On without it. */
+    activate(index, 0);
+    mods[index].enabled = 0;
+    refuse(&mods[index], text);
+    off_with_refused();
+}
+
+void Mods_Applied(void)
+{
+    char path[PATH_MAX_];
+    if (refused_file(path, sizeof(path))) ModBudget_SetRestarted(path, 0);
+}
+
+int Mods_Refused(int index) { return at(index) && mods[index].refused; }
+
 void Mods_Load(void)
 {
     const char *all = getenv("MEMORIES_MODS");
@@ -4473,6 +4596,7 @@ void Mods_Load(void)
             Loading_Step("Checking mods", (unsigned)i, (unsigned)mod_count);
             if (!Mods_CheckManifest(i, error, sizeof(error))) { mods[i].broken = 1; note(&mods[i], "%s", error); }
         }
+        refuse_listed();
         say("%d mods found", mod_count);
     }
     for (i = 0; i < mod_count; i++) {
@@ -4485,6 +4609,7 @@ void Mods_Load(void)
         if (setting_key(key, sizeof(key), mods[i].id, NULL)) want = Settings_GetNamed(key, want);
         want = environment_choice(mods[i].id, want) != 0;
         if (all && (!strcmp(all, "0") || !strcmp(all, "off"))) want = 0;
+        if (mods[i].refused) want = 0;
         mods[i].enabled = want;
         enabled[i] = want;
     }
@@ -4497,6 +4622,11 @@ void Mods_Load(void)
         int placed[MODS_MAX] = {0};
         for (count = 0; order[count] >= 0; count++) placed[order[count]] = 1;
         for (i = 0; i < mod_count; i++) if (enabled[i] && !placed[i]) { note(&mods[i], "%s", error); enabled[i] = 0; }
+    }
+    if (first) {
+        keep_to_budget(enabled, order, count);
+        off_with_refused();
+        for (i = 0; i < mod_count; i++) if (mods[i].refused) enabled[i] = 0;
     }
     if (first) {
         preparing_data = 1;
@@ -4622,6 +4752,12 @@ void Mods_SetEnabled(int mod, int enabled)
     /* Unchanged, nothing is written: the choice stored stays, even when an
      * environment variable overrides it for this run. */
     if (mods[mod].enabled == enabled) return;
+    if (enabled && mods[mod].refused) {
+        /* The player's way out: the next start tries it. */
+        char path[PATH_MAX_];
+        if (refused_file(path, sizeof(path))) ModBudget_Forget(path, mods[mod].id);
+        mods[mod].refused = 0;
+    }
     if (setting_key(key, sizeof(key), mods[mod].id, NULL)) Settings_SetNamed(key, enabled);
     mods[mod].enabled = enabled;
     /* A mod that could not go in place (a replacement file missing, say) is
@@ -4646,45 +4782,31 @@ void Mods_SetEnabled(int mod, int enabled)
     activate(mod, enabled);
 }
 
-/* An active mod that needed one gone broken goes too, with the reason. */
-static void off_with_broken(void)
-{
-    int wanted[MODS_MAX], changed = 1;
-    char error[160];
-    while (changed) {
-        changed = 0;
-        for (int i = 0; i < mod_count; i++) wanted[i] = mods[i].enabled && !mods[i].broken;
-        for (int i = 0; i < mod_count; i++) {
-            if (!mods[i].active || Mods_Compatible(i, wanted, error, sizeof(error))) continue;
-            activate(i, 0);
-            mods[i].broken = 1;
-            note(&mods[i], "%s", error);
-            changed = 1;
-        }
-    }
-}
-
 void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const struct JsonValue *cards, void *context),
                      void *context)
 {
-    int i;
+    int i, no_memory = 0;
     /* In load order, as every other table reads the mods (Mods_Loaded):
      * where two replace one card the later one wins, and the copies take
      * their ids in that order. Cards_Build runs once, after the first load. */
     for (i = 0; i < loaded_count; i++) {
         Mod *mod = &mods[loaded[i]];
         if (!mod->active || !mod->cards.filled) continue;
-        mod->cards_read = Mods_CardsDocument(loaded[i]);
+        mod->cards_read = Mods_CardsDocument(loaded[i], &no_memory);
         if (mod->cards_read) {
             visit(mod->id, mod->directory, Json_Root(mod->cards_read), context);
+            continue;
+        }
+        if (no_memory) {
+            Mods_RefuseApplying(mod->id, "not enough memory for its cards");
             continue;
         }
         /* The file changed or went since the scan. Never active without its cards:
          * the tables that name them are read after this. */
         activate(loaded[i], 0);
-        mod->broken = 1;
-        note(mod, "cards: cannot read them from its mod.json");
-        off_with_broken();
+        mod->enabled = 0;
+        refuse(mod, "cards: cannot read them from its mod.json");
+        off_with_refused();
     }
 }
 void Mods_CardsRelease(void)
@@ -4694,13 +4816,14 @@ void Mods_CardsRelease(void)
         mods[i].cards_read = NULL;
     }
 }
-JsonDocument *Mods_CardsDocument(int index)
+JsonDocument *Mods_CardsDocument(int index, int *no_memory)
 {
     char path[PATH_MAX_], error[128];
+    if (no_memory) *no_memory = 0;
     if (!at(index) || !mods[index].cards.found ||
         snprintf(path, sizeof(path), "%s/mod.json", mods[index].directory) >= (int)sizeof(path))
         return NULL;
-    return Json_ParseDeferred(path, &mods[index].cards, error, sizeof(error));
+    return Json_ParseDeferred(path, &mods[index].cards, error, sizeof(error), no_memory);
 }
 
 void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,

@@ -16,8 +16,21 @@ static unsigned short *lows;     /* the lower card of each row, until sealed */
 static unsigned *starts;         /* where each lower card's rows begin */
 static int top;                  /* the highest lower card in `starts` */
 static int count, room, sealed = 1;
+static long rows_max = -1;
+static int seal_failed;          /* until something changes, one try is enough */
+#define SCAN_MAX 65536           /* rows Find goes down, a duel's fusions being asked for by the hundred */
 
 int FusionTable_Count(void) { return count; }
+void FusionTable_LimitRows(long rows) { rows_max = rows; }
+
+void FusionTable_Remove(int first, int rows_out)
+{
+    if (sealed || first < 0 || rows_out <= 0 || first + rows_out > count) return;
+    memmove(rows + first, rows + first + rows_out, (size_t)(count - first - rows_out) * sizeof(*rows));
+    memmove(lows + first, lows + first + rows_out, (size_t)(count - first - rows_out) * sizeof(*lows));
+    count -= rows_out;
+    seal_failed = 0;
+}
 
 void FusionTable_Clear(void)
 {
@@ -29,10 +42,12 @@ void FusionTable_Clear(void)
     starts = NULL;
     count = room = top = 0;
     sealed = 1;
+    seal_failed = 0;
 }
 
 int FusionTable_Add(int a, int b, int result, unsigned order)
 {
+    if (rows_max >= 0 && count >= rows_max) return 0;
     if (count == room) {
         int wanted = room ? room + room / 2 : 1024;
         Row *bigger;
@@ -46,6 +61,7 @@ int FusionTable_Add(int a, int b, int result, unsigned order)
         lows = more;
         room = wanted;
     }
+    seal_failed = 0;
     if (sealed && count) {
         /* Added to after sealing: `lows` again, from the buckets. */
         for (int card = 0; card <= top; card++)
@@ -66,13 +82,14 @@ static int by_high(const void *left, const void *right)
     return a->order > b->order ? -1 : a->order < b->order; /* the latest first */
 }
 
-void FusionTable_Seal(void)
+int FusionTable_Seal(void)
 {
     Row *sorted;
     unsigned *place;
     unsigned *bucket_starts;
     int highest = 0;
-    if (sealed) return;
+    if (sealed) return 1;
+    if (seal_failed) return 0;
     for (int i = 0; i < count; i++)
         if (lows[i] > highest) highest = lows[i];
     sorted = malloc((size_t)count * sizeof(*sorted));
@@ -82,8 +99,8 @@ void FusionTable_Seal(void)
         free(sorted);
         free(place);
         free(bucket_starts);
-        /* No bucket can be made; Find goes down the rows as they are. */
-        return;
+        seal_failed = 1;
+        return 0;
     }
     for (int i = 0; i < count; i++) place[lows[i] + 1]++;
     for (int card = 0; card <= highest; card++) place[card + 1] += place[card];
@@ -101,14 +118,15 @@ void FusionTable_Seal(void)
     room = count;
     top = highest;
     sealed = 1;
+    return 1;
 }
 
 int FusionTable_Find(int a, int b, int *result, unsigned *order)
 {
     int lower = a < b ? a : b, higher = a < b ? b : a;
     unsigned low, high;
-    if (!sealed) FusionTable_Seal();
-    if (!sealed) {
+    if (!sealed && !FusionTable_Seal()) {
+        if (count > SCAN_MAX) return 0;
         const Row *best = NULL;
         for (int i = 0; i < count; i++)
             if (lows[i] == lower && rows[i].high == higher && (!best || rows[i].order > best->order)) best = &rows[i];

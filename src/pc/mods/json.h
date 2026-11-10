@@ -35,13 +35,17 @@ typedef struct JsonDeferred {
  * brackets and strings; a mistake inside comes out when it is read. */
 JsonDocument *Json_ParseFileDeferring(const char *path, const char *const *keys, int count, JsonDeferred *deferred,
                                       char *error, size_t error_size);
-/* A list left out as a document of its own, whole. */
-JsonDocument *Json_ParseDeferred(const char *path, const JsonDeferred *deferred, char *error, size_t error_size);
+/* A list left out as a document of its own, whole. *no_memory, if asked, says that
+ * memory is why there is none. */
+JsonDocument *Json_ParseDeferred(const char *path, const JsonDeferred *deferred, char *error, size_t error_size,
+                                 int *no_memory);
 /* Each element of that list in turn, parsed alone and gone when `each` returns;
  * `each` returns 0 to stop. An element that does not parse, or is over a megabyte,
  * is left out and the rest are read, and so is a comma too many or too few. The
  * number of elements seen, or -1 when there was such a mistake or the file could not
- * be read in full (`error` has the first). */
+ * be read in full (`error` has the first), or JSON_NO_MEMORY when memory ran out: the
+ * elements after that were not read. */
+#define JSON_NO_MEMORY (-2L)
 long Json_EachElement(const char *path, const JsonDeferred *deferred, int (*each)(const JsonValue *, long, void *),
                       void *context, char *error, size_t error_size);
 void Json_Free(JsonDocument *document);

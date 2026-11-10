@@ -247,6 +247,7 @@ int main(int argc, char **argv)
     if (Memories_ModulesInit() != 0) {
         return 1;
     }
+    Mods_SetRestart(Platform_RestartGame, Memories_StateBuildId());
     /* Platform_Open begins the loading screen once its window is open, before
      * it reads the mods (loading.h). */
     Loading_SetQuit(quit_while_loading);
@@ -259,6 +260,7 @@ int main(int argc, char **argv)
     Loading_Step("Text and fonts", 0, 0);
     Text_Build();   /* the mods' translations and fonts, which the cards' names may use */
     Cards_Build();
+    Mods_Applied();
     Loading_Step("Sorting cards", 0, 0);
     Text_SortCards();
     Loading_Step("Starting the game", 0, 0);
