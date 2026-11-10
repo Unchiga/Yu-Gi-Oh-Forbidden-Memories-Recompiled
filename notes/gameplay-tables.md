@@ -647,6 +647,14 @@ two `"fusions"` lists reads the first and warns of the second, so the
 groups go in one list, each entry with its setting. The FM Editor shows
 the disc's table and keeps these entries as they are written.
 
+The game does not hold `fusions` in memory as text. At the scan the list is
+skipped, its brackets and strings looked at and its bytes hashed
+(`Json_ParseFileDeferring`), and its entries are read one at a time from
+`mod.json` when the tables are built (`Mods_EachFusion`). So a mistake inside an
+entry is a note on the mod in the Mods window, naming the entry, with the rest of
+the list read; before, it refused the whole `mod.json`. A list that never ends
+still refuses it.
+
 ## Where two mods disagree
 
 Mods apply in load order (priority, then `after` and `requires`, then the

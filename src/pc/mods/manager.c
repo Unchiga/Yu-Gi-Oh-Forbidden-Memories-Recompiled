@@ -440,6 +440,9 @@ unsigned Mods_Signature(void)
         char number[40];
         hash = hash_text(hash, Mods_Id(i));
         hash = hash_json(hash, Mods_Manifest(i));
+        /* Only a mod with fusions: the signature of one without stays what it was,
+         * and with it the save states made under it. */
+        if (Mods_FusionsHash(i)) hash = (hash ^ Mods_FusionsHash(i)) * 16777619u;
         hash = (hash ^ Mods_CodeHash(i)) * 16777619u;
         for (int j = 0; j < Mods_OptionCount(i); j++) {
             snprintf(number, sizeof(number), "%d", Mods_RuntimeOption(i, j));
@@ -566,6 +569,17 @@ static void log_overlaps(const ModsOverlaps *found)
     }
 }
 
+static long source_fusions(int mod, int (*each)(const JsonValue *, long, void *), void *each_context, void *context)
+{
+    char ignored[128];
+    (void)context;
+    return Mods_EachFusion(Mods_Id(overlap_mod[mod]), each, each_context, ignored, sizeof(ignored));
+}
+static long source_fusion_bytes(int mod, void *context)
+{
+    (void)context;
+    return Mods_FusionsSize(overlap_mod[mod]);
+}
 const ModsOverlaps *Mods_Overlaps(const int *enabled, const int *ranks, const int *const *values)
 {
     ModsOverlapMod list[MODS_MAX];
@@ -597,6 +611,8 @@ const ModsOverlaps *Mods_Overlaps(const int *enabled, const int *ranks, const in
     if (overlap_card_name) source.card_name = source_card_name;
     if (overlap_duelist) source.duelist = source_duelist;
     source.setting = source_setting;
+    source.fusions = source_fusions;
+    source.fusion_bytes = source_fusion_bytes;
     source.hook = source_hook;
     source.event = source_event;
     overlaps = Mods_OverlapCompute(list, n, &source);

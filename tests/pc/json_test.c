@@ -4,7 +4,205 @@
 #include <assert.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+static const char *stream_path = "json_stream_test.tmp";
+static void write_stream(const char *text)
+{
+    FILE *file = fopen(stream_path, "wb");
+    assert(file && fputs(text, file) >= 0 && !fclose(file));
+}
+
+/* Adds up what the elements hold, and how many there were. */
+static long long seen_sum; /* the 5 MiB list sums past a 32-bit long */
+static long seen_stop = -1;
+static int sum_element(const JsonValue *value, long index, void *context)
+{
+    long *count = context;
+    seen_sum += Json_TypeOf(value) == JSON_OBJECT ? Json_Number(Json_Member(value, "n"), 0) : Json_Number(value, 0);
+    (*count)++;
+    return index != seen_stop;
+}
+
+/* A list left out of the document and read from the file, one element at a time. */
+static void stream_tests(void)
+{
+    char error[128];
+    JsonDeferred list, other;
+    JsonDocument *document;
+    long count = 0;
+    /* What is around the list stays, strings that look like it are not it, and an
+     * empty list stands in for it. */
+    write_stream("\xEF\xBB\xBF{\"a\": \"fusions\", \"note\": \"\\\"fusions\\\": [\", \"inner\": {\"fusions\": [1]},\n"
+                 "  \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 , {\"n\": 3},\n 4,], \"b\": [5]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && list.found);
+    assert(!strcmp(Json_String(Json_Member(Json_Root(document), "a"), ""), "fusions"));
+    assert(Json_Count(Json_Member(Json_Member(Json_Root(document), "inner"), "fusions")) == 1);
+    assert(Json_TypeOf(Json_Member(Json_Root(document), "fusions")) == JSON_ARRAY);
+    assert(Json_Count(Json_Member(Json_Root(document), "fusions")) == 0);
+    assert(Json_Count(Json_Member(Json_Root(document), "b")) == 1);
+    assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == 4);
+    assert(count == 4 && seen_sum == 10 && !error[0]);
+    Json_Free(document);
+    /* The hash is of the list alone. */
+    write_stream("{\"z\": 1, \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 , {\"n\": 3},\n 4,]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &other, error, sizeof(error));
+    assert(document && other.hash == list.hash);
+    Json_Free(document);
+    write_stream("{\"z\": 1, \"fusions\" : [ {\"n\": 1, \"s\": \"]}\\\"[\"}, 2 , {\"n\": 3},\n 5,]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &other, error, sizeof(error));
+    assert(document && other.hash != list.hash);
+    Json_Free(document);
+    /* `each` can stop it. */
+    seen_sum = count = 0;
+    seen_stop = 1;
+    write_stream("{\"fusions\": [1, 2, 3]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == 2);
+    assert(count == 2 && seen_sum == 3);
+    seen_stop = -1;
+    Json_Free(document);
+    /* An entry that does not parse is that entry's mistake: the rest are read. */
+    seen_sum = count = 0;
+    write_stream("{\"fusions\": [{\"n\": 1}, {\"n\" 2}, {\"n\": 4}]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document);
+    assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+    assert(count == 2 && seen_sum == 5 && strstr(error, "entry 1:"));
+    Json_Free(document);
+    /* What the parser would not have taken in a list is a mistake, and the rest read. */
+    {
+        static const struct { const char *text; long sum; const char *why; } lists[] = {
+            {"{\"fusions\": [{\"n\": 1} {\"n\": 2}]}", 3, "no comma"},
+            {"{\"fusions\": [1,,2]}", 3, "a comma with no entry"},
+            {"{\"fusions\": [,1]}", 1, "a comma with no entry"},
+            {"{\"fusions\": [1 2,3]}", 3, "trailing text"},
+            {"{\"fusions\": [\"a\" 4]}", 4, "no comma"},
+            {"{\"fusions\": [{\"n\": 1}x, 2]}", 3, "no comma"},
+        };
+        for (size_t i = 0; i < sizeof(lists) / sizeof(lists[0]); i++) {
+            write_stream(lists[i].text);
+            document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+            assert(document);
+            seen_sum = count = 0;
+            assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+            assert(seen_sum == lists[i].sum && strstr(error, lists[i].why));
+            Json_Free(document);
+        }
+        /* A trailing comma stays allowed; form feed and vertical tab are spaces. */
+        write_stream("{\"fusions\": [1\f,\v2,]}");
+        document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+        seen_sum = count = 0;
+        assert(document && Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == 2);
+        assert(seen_sum == 3 && !error[0]);
+        Json_Free(document);
+        write_stream("{\"fusions\": [\f]}");
+        document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+        assert(document && list.found && !list.filled);
+        assert(!Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)));
+        Json_Free(document);
+    }
+    /* A list closed with the wrong bracket refuses the file, as the parser did. */
+    write_stream("{\"fusions\": [1}}");
+    assert(!Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error)) && error[0]);
+    /* The first of a key is the one that counts, list or not; an escaped one is not it. */
+    write_stream("{\"fusions\": 5, \"fusions\": [1, 2]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && !list.found && Json_Count(Json_At(Json_Root(document), 1)) == 2);
+    Json_Free(document);
+    write_stream("{\"fu\\tsions\": [1, 2], \"fusions\\n\": [3]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && !list.found && Json_Count(Json_At(Json_Root(document), 0)) == 2);
+    Json_Free(document);
+    /* One entry over the limit is its mistake alone, whichever kind it is. */
+    {
+        size_t size = 3u << 20;
+        char *big = malloc(size);
+        size_t used = 0;
+        assert(big);
+        used += (size_t)sprintf(big + used, "{\"fusions\": [1, {\"s\": \"");
+        memset(big + used, 'x', 1500000);
+        used += 1500000;
+        used += (size_t)sprintf(big + used, "\"}, 2, ");
+        big[used++] = '"';
+        memset(big + used, 'y', 1200000);
+        used += 1200000;
+        strcpy(big + used, "\", 4]}");
+        write_stream(big);
+        free(big);
+        document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+        assert(document);
+        seen_sum = count = 0;
+        assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1);
+        assert(seen_sum == 7 && count == 3 && strstr(error, "entry 1:") && strstr(error, "megabyte"));
+        Json_Free(document);
+    }
+    /* A file shorter than it was at the scan says so. */
+    write_stream("{\"fusions\": [1, 2, 3, 4, 5, 6, 7, 8]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document);
+    write_stream("{\"fusions\": [1, 2");
+    seen_sum = count = 0;
+    assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == -1 && error[0]);
+    Json_Free(document);
+    write_stream("{\"fusions\": [{\"n\": 1}]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    Json_Free(document);
+    /* Whether anything is in it. */
+    assert(list.filled);
+    write_stream("{\"fusions\": [ \n ]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && list.found && !list.filled);
+    Json_Free(document);
+    /* Not a list: stays in the document, as does a second one. */
+    write_stream("{\"fusions\": 7, \"x\": 1}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && !list.found && Json_Number(Json_Member(Json_Root(document), "fusions"), 0) == 7);
+    Json_Free(document);
+    write_stream("{\"fusions\": [1], \"fusions\": [2, 3]}");
+    document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+    assert(document && list.found && Json_Count(Json_At(Json_Root(document), 1)) == 2);
+    Json_Free(document);
+    /* A list that does not end, and a mistake outside the list, refuse the file. */
+    write_stream("{\"fusions\": [1, 2");
+    assert(!Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error)) && error[0]);
+    write_stream("{\"fusions\": [1], \"b\" 2}");
+    assert(!Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error)) && error[0]);
+    assert(!Json_ParseFileDeferring("no-such-file.json", "fusions", &list, error, sizeof(error)) && error[0]);
+    /* Across the chunks the file is read in, on both sides of the list. */
+    {
+        size_t size = 5u << 20, used = 0;
+        char *big = malloc(size + 64);
+        long long want = 0;
+        long elements = 0;
+        assert(big);
+        used += (size_t)sprintf(big + used, "{\"pad\": \"");
+        memset(big + used, 'x', 1500000);
+        used += 1500000;
+        used += (size_t)sprintf(big + used, "\", \"fusions\": [");
+        while (used < size - (1u << 20)) {
+            used += (size_t)sprintf(big + used, "{\"n\":%ld},", elements);
+            want += elements++;
+        }
+        used += (size_t)sprintf(big + used, "], \"tail\": \"");
+        memset(big + used, 'y', 1000000);
+        used += 1000000;
+        strcpy(big + used, "\"}");
+        write_stream(big);
+        document = Json_ParseFileDeferring(stream_path, "fusions", &list, error, sizeof(error));
+        assert(document && list.found);
+        assert(strlen(Json_String(Json_Member(Json_Root(document), "pad"), "")) == 1500000);
+        assert(strlen(Json_String(Json_Member(Json_Root(document), "tail"), "")) == 1000000);
+        seen_sum = count = 0;
+        assert(Json_EachElement(stream_path, &list, sum_element, &count, error, sizeof(error)) == elements);
+        assert(count == elements && seen_sum == want);
+        Json_Free(document);
+        free(big);
+    }
+    remove(stream_path);
+}
 
 static const char *manifest =
     "{\n"
@@ -136,5 +334,6 @@ int main(void)
     assert(document && Json_Count(Json_Member(Json_Root(document), "a")) == 2);
     Json_Free(document);
     Json_Free(NULL);
+    stream_tests();
     return 0;
 }

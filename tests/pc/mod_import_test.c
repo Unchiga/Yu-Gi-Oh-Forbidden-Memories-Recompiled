@@ -311,18 +311,28 @@ int main(void)
         free(big);
         free(code);
     }
-    /* A mod.json that says it unpacks to more than the importer reads (128 MB)
+    /* An installed mod is named without reading its fusions: a mistake among them
+     * does not lose its id, as parsing the whole file would. */
+    reset();
+    {
+        char id[64], path[2048];
+        make("mods/folder");
+        file_write("mods/folder/mod.json", "{\"id\": \"named\", \"fusions\": [{\"with\" 1}]}");
+        snprintf(path, sizeof(path), "%s/folder", mods);
+        CHECK(Mods_ImportFolderId(path, id, sizeof(id)) && !strcmp(id, "named"));
+    }
+    /* A mod.json that says it unpacks to more than the importer reads (1536 MB)
      * is refused, before a byte of it is allocated: the loader would read the
      * whole file at every launch. A deflated one that says more than deflate
      * can make of its packed bytes is a damaged .zip. */
     reset();
     {
-        ZipItem stored[] = {{"mod.json", "{\"id\": \"huge\"}", 0, 0, 0, 0, 0, 200L << 20}};
-        ZipItem packed[] = {{"mod.json", "{\"id\": \"huge\"}", 1, 0, 0, 0, 0, 200L << 20}};
+        ZipItem stored[] = {{"mod.json", "{\"id\": \"huge\"}", 0, 0, 0, 0, 0, 1600L << 20}};
+        ZipItem packed[] = {{"mod.json", "{\"id\": \"huge\"}", 1, 0, 0, 0, 0, 1600L << 20}};
         ModsImport *imp;
         write_zip(zip, stored, 1);
         imp = Mods_ImportOpen(zip, why, sizeof(why));
-        CHECK(!imp && strstr(why, "mod.json in the .zip is too large (more than 128 MB)") && strstr(why, "Nothing was imported"));
+        CHECK(!imp && strstr(why, "mod.json in the .zip is too large (more than 1536 MB)") && strstr(why, "Nothing was imported"));
         if (imp)
             Mods_ImportClose(imp);
         write_zip(zip, packed, 1);
