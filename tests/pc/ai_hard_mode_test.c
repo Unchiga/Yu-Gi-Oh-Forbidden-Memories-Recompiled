@@ -9,7 +9,7 @@
 static int probes;
 static HmCard card(int id)
 {
-    HmCard c = {id, id, 0, 1000, 800, 1, 2, 0, 0};
+    HmCard c = {id, id, 0, 1000, 800, 1, 2, 0, 0, 0};
     if (id == 100) c.attack = c.defense = 3000;
     if (id == 101) c.attack = c.defense = 3500;
     return c;
@@ -45,7 +45,7 @@ static HmCard monster(int id, int atk, int def)
 }
 static HmCard magic(int id, int type)
 {
-    HmCard c = {id,id,type,0,0,0,0,0,0}; return c;
+    HmCard c = {id,id,type,0,0,0,0,0,0,0}; return c;
 }
 
 static void tactical_cases(void)
@@ -116,7 +116,7 @@ static void tactical_cases(void)
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 56);
 
     b = empty(); o = opts(); b.own[0] = monster(1,3000,2500);
-    b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN,0}; o.blind_risk = 0;
+    b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN,0,0}; o.blind_risk = 0;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
     o.blind_risk = 100;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 56 && d.score < HM_WIN);
@@ -130,7 +130,7 @@ static void spell_cases(void)
     assert(d.selection[9] == 6 && d.selection[10] == 6 && d.score >= HM_WIN);
     b.enemy_back[0] = magic(687,21);
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.result == 3);
-    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0};
+    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0,0};
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 6);
 
     b = empty(); b.back[0] = magic(342,20);
@@ -138,7 +138,7 @@ static void spell_cases(void)
     b.lp = 1000;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 6);
     b = empty(); b.back[0] = magic(672,20);
-    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0};
+    b.enemy_back[0] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0,0};
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 6);
 
     b = empty(); b.back[0] = magic(336,20); b.own[0] = monster(1,3000,2500);
@@ -215,17 +215,17 @@ static void hand_cases(void)
     /* A replacement Magic with an ai_effect acts like that analogue; without
      * one it is safely set rather than guessed as its obsolete retail card.
      * A trap analogue is still a reactive face-down card, never a spell. */
-    b.hand[0] = (HmCard){500,347,20,0,0,0,0,0,0};
+    b.hand[0] = (HmCard){500,347,20,0,0,0,0,0,0,0};
     d = Hm_PlanHand(&b,&o,&rules); assert(d.selection[0] == 11 && !d.selection[8]);
     b.hand[0].effect = 0;
     d = Hm_PlanHand(&b,&o,&rules); assert(d.selection[0] == 11 && d.selection[8]);
-    b.hand[0] = (HmCard){501,681,21,0,0,0,0,0,0};
+    b.hand[0] = (HmCard){501,681,21,0,0,0,0,0,0,0};
     d = Hm_PlanHand(&b,&o,&rules);
     assert(d.selection[0] == 11 && d.selection[6] == 6 && d.selection[8]);
     /* Retail trap analogues currently have no utility score. Keep this
      * deliberately cross-type fixture as a future-proof guard: even if a
      * Trap is assigned positive utility, it must still be set, never cast. */
-    b.hand[0] = (HmCard){502,347,21,0,0,0,0,0,0};
+    b.hand[0] = (HmCard){502,347,21,0,0,0,0,0,0,0};
     d = Hm_PlanHand(&b,&o,&rules); assert(d.selection[0] == 11 && d.selection[8]);
     b = empty(); b.hand_count = 1; b.hand[0] = magic(657,23);
     b.own[0] = monster(10,1800,1000); b.own[0].star = 2;
@@ -285,9 +285,44 @@ static void bounded_fixtures(void)
     }
 }
 
+/* The "combat" boosts each monster puts on the one it battles (the board's
+ * edge and hit, which the game foresees): an attack they turn into a loss
+ * is not made, and a monster they let the enemy beat goes to defense. */
+static void combat_cases(void)
+{
+    HmBoard b = empty(); HmOptions o = opts(); HmDecision d;
+    b.own[0] = monster(2, 1500, 500); b.own[0].zone = 1;
+    b.enemy[0] = monster(20, 1000, 1000);
+    d = Hm_PlanField(&b,&o,&rules,0);
+    assert(d.result == 2 && d.selection[9] == 1 && d.selection[10] == 56);
+    /* The enemy takes 800 ATK off what it battles, attacking or attacked. */
+    b.edge[0][0][0] = b.edge[0][0][1] = -800;
+    b.hit[0][0][0] = b.hit[0][0][1] = 800;
+    d = Hm_PlanField(&b,&o,&rules,0);
+    assert(d.result == 2 && d.selection[9] == 1 && !d.selection[10] && d.selection[11] == 1);
+    /* Its own boost on the enemy in defense: a stronger wall is still beaten. */
+    b = empty(); b.own[0] = monster(2, 1500, 500); b.own[0].zone = 1;
+    b.enemy[0] = monster(20, 1000, 1800); b.enemy[0].flags = HM_DEFENSE;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] != 56);
+    b.edge[0][0][1] = 400;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 56);
+    /* An equip on a field monster: the attack it would win counts its edge. */
+    {
+        HmDecision free_hit, cut_hit;
+        o.spells = 0;
+        b = empty(); b.own[0] = monster(2, 1500, 500); b.own[0].zone = 1;
+        b.enemy[0] = monster(20, 2000, 1000);
+        b.hand[0] = magic(657, 23); b.hand_count = 1;
+        free_hit = Hm_PlanHand(&b,&o,&rules);
+        b.edge[0][0][0] = -1000;
+        cut_hit = Hm_PlanHand(&b,&o,&rules);
+        assert(free_hit.result == 1 && cut_hit.result == 1 && cut_hit.score < free_hit.score);
+    }
+}
+
 int main(void)
 {
-    tactical_cases(); spell_cases(); hand_cases(); retail_cases(); bounded_fixtures();
-    puts("AI hard mode: tactical, spell, fusion and 500 bounded fixtures passed");
+    tactical_cases(); spell_cases(); hand_cases(); retail_cases(); combat_cases(); bounded_fixtures();
+    puts("AI hard mode: tactical, spell, fusion, combat and 500 bounded fixtures passed");
     return 0;
 }
