@@ -813,6 +813,10 @@ that the game leaves out).
   own caption where the game has it, which no style moves; an image replaces
   it, starts in that place and then drags. That needs API 25 (a game of API 24
   would leave the game's caption), and Save raises `min_api` to it.
+  A digit strip works there too: the game draws it in place of its own digits,
+  centred on the row they fill, and on such a style the ATK/DEF value's X/Y is
+  that row's top-left corner (the game's own 97, 157 and 97, 171 when left
+  out), where on a frame of the style's own it is the centre. Same API 25.
 
 Colors are the game's: a tint multiplies, so it can only darken what is
 there. The pictures are the console's size here; the game draws a PNG of

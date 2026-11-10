@@ -21,8 +21,9 @@
  * ("models", read from the mod's own files) and a card's "model" naming
  * one. API 23 adds the mouse, overlay pictures and clip (modapi.h). API 25
  * marks a frame style's atk_label/dfd_label picture on a style that keeps
- * retail's frame (no "image", or "full_bleed": false): a game of API 24 or
- * older draws it only on a full-bleed frame and leaves retail's caption. */
+ * retail's frame (no "image", or "full_bleed": false), and a "digits" strip
+ * on one: a game of API 24 or older draws either only on a full-bleed frame
+ * and leaves retail's caption and digits. */
 /* API 3: before hooks may alter arguments/result, or set handled to replace
  * the operation (including cancellation). Highest priority runs first;
  * equal priorities follow registration/load order. After hooks observe the

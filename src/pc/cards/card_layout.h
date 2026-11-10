@@ -97,6 +97,10 @@ int CardLayout_FullBleed(void);
 /* Whether an applied layout is currently enabled.  Unlike FramePaths(), this
  * remains true for a palette/icon-only layout with no large frame image. */
 int CardLayout_Active(void);
+/* Whether the current card (CardLayout_SetCard) wears one of the layout's
+ * styles (or a layout from before "frame_styles"), its full_bleed setting on.
+ * False for a card no style claims, which keeps retail's frame and digits. */
+int CardLayout_Styled(void);
 /* The frame texture's path on disk (the layout mod's own "frame" image,
  * already joined with its directory and validated the way a "title" mod's
  * image is -- card_layout_art.c just opens it), or "" when no mod applies
@@ -110,13 +114,15 @@ const char *CardLayout_FramePath(void);
  * CardLayoutArt_Prewarm. */
 int CardLayout_FramePaths(char (*paths)[1024], int max);
 
-/* The full-bleed layout's own ATK/DFD digits (the active `frame_styles` entry's
+/* The layout's own ATK/DFD digits (the active `frame_styles` entry's
  * "digits", falling back to card_layout's "digits": {"image", "width",
  * "height", "step"}): `path` is the image (joined with the mod's directory,
  * card_layout_art.h's digit strip), `w`x`h` one digit's draw size in the
  * card's own units, `step` the distance between two digits' left edges.
- * 0, with `path` empty, when the layout gives none (or full-bleed is off):
- * the retail digits are drawn then. */
+ * 0, with `path` empty, when the layout gives none (or the mod's full_bleed
+ * setting is off): the retail digits are drawn then. It does not depend on
+ * the style having a frame image: a style that keeps retail's frame gets its
+ * strip too, centred on the box retail's digits fill (func_80028B08.c). */
 int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step);
 
 /* An optional, active-style-only static ATK or DFD label. `dfd` is non-zero
