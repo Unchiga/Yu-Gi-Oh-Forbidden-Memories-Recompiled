@@ -83,6 +83,17 @@ if(BUILD_TESTING)
             target_compile_options(memories_trap_effects_test PRIVATE -mno-ms-bitfields)
         endif()
         add_test(NAME pc_trap_effects COMMAND memories_trap_effects_test)
+        add_executable(memories_monster_effects_ai_test tests/pc/monster_effects_ai_test.c)
+        target_include_directories(memories_monster_effects_ai_test PRIVATE src)
+        target_compile_definitions(memories_monster_effects_ai_test PRIVATE MEMORIES_PC)
+        # func_80027DF8.c's deck view is an asm label, which -std=c11 has no word for.
+        set_target_properties(memories_monster_effects_ai_test PROPERTIES C_EXTENSIONS ON)
+        target_compile_options(memories_monster_effects_ai_test PRIVATE -m32 -ffunction-sections -fdata-sections)
+        target_link_options(memories_monster_effects_ai_test PRIVATE -m32 -Wl,--gc-sections)
+        if(WIN32)
+            target_compile_options(memories_monster_effects_ai_test PRIVATE -mno-ms-bitfields)
+        endif()
+        add_test(NAME pc_monster_effects_ai COMMAND memories_monster_effects_ai_test)
         # Not "dispatch": Windows takes an unmanifested exe whose name has
         # "patch" in it for an installer and asks to elevate it.
         add_executable(memories_card_effects_start_test tests/pc/card_effects_start_test.c)

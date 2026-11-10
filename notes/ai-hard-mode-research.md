@@ -229,8 +229,9 @@ Attack selection begins at `0AD0`, unless Swords pins the AI:
 5. If the enemy field is empty, attack directly with the strongest remaining
    attacker.
 
-`FindKiller` uses current snapshot stats and the +/-500 guardian matchup.
-It requires a positive difference, so an equal-power trade is not a normal
+`FindKiller` uses current snapshot stats and the +/-500 guardian matchup
+(in the port also what the two monsters' `combat` boosts do in that battle:
+[Monster effects](more-cards.md#monster-effects)). It requires a positive difference, so an equal-power trade is not a normal
 winning-target choice. This is a greedy sequence of attacks, not an optimal
 assignment of all attackers and not a multi-turn search.
 
