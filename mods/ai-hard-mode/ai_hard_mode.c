@@ -23,6 +23,7 @@
 #include "game/display_object_core.h"
 #include "pc/cards/cards.h"
 #include "pc/cards/tables.h"
+#include "pc/cards/monster_effects_duel.h"
 #include "pc/mods/modapi.h"
 #include <string.h>
 
@@ -160,7 +161,7 @@ static HmCard snapshot(int index, int effective, int secret)
 static HmBoard board(const HmOptions *o)
 {
     HmBoard b = {0};
-    int i, side = D_8009B1D5;
+    int i, j, side = D_8009B1D5;
     b.hand_count = window(); b.terrain = gDuel_bTerrain;
     b.spellbinding = (int)Tables_Value(TABLES_VALUE_SPELLBINDING, 500);
     b.shadow_spell = (int)Tables_Value(TABLES_VALUE_SHADOW_SPELL, 1000);
@@ -174,9 +175,19 @@ static HmBoard board(const HmOptions *o)
     b.enemy_pinned = D_800E9FF0[side ^ 1].swords_turns_remaining > 1;
     for (i = 0; i < 5; i++) {
         b.own[i] = snapshot(1 + i, o->effective, 0);
+        if (b.own[i].id) b.own[i].zone = i + 1;
         b.enemy[i] = snapshot(56 + i, o->effective, 1);
         b.back[i] = snapshot(6 + i, o->effective, 0);
         b.enemy_back[i] = snapshot(61 + i, o->effective, 1);
+    }
+    /* The "combat" boosts each monster puts on the one it battles, as the
+       game foresees them; not for a hidden enemy, nor on printed stats. */
+    if (o->effective) for (i = 0; i < 5; i++) for (j = 0; j < 5; j++) if (b.own[i].id > 0 && b.enemy[j].id > 0) {
+        int d;
+        for (d = 0; d < 2; d++) {
+            b.edge[i][j][d] = MonsterEffects_AiBattleEdge(1 + i, 56 + j, d);
+            b.hit[j][i][d] = MonsterEffects_AiBattleEdge(56 + j, 1 + i, d);
+        }
     }
     for (i = 0; i < b.hand_count; i++) b.hand[i] = card_info(gDuel_aActiveCards[11+i].card_id);
     return b;

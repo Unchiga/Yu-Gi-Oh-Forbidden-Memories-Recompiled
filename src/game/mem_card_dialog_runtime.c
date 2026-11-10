@@ -23,6 +23,7 @@
 #include "input.h"
 #include "sound.h"
 #include "pc/saves/save_menu.h"
+#include "pc/platform/overlay_pointer.h"
 #include "pc/saves/save_cards.h"
 #include "pc/saves/save_slots.h"
 #include "pc/free_duel/duelists.h"
@@ -360,11 +361,21 @@ static int MemCardDialog_CheckSlot(unsigned char *state)
 
 static int MemCardDialog_PollSlots(void)
 {
-    int sound;
-    int outcome = SaveMenu_Poll(
-        gInput_wPad1Pressed | (gInput_wPad1Repeat & PAD_DIRECTION_MASK),
-        D_8009B3F9, &sound, MemCardDialog_CheckSlot);
+    int sound, mouse_sound = SAVE_MENU_SOUND_NONE;
+    unsigned pressed = gInput_wPad1Pressed | (gInput_wPad1Repeat & PAD_DIRECTION_MASK);
+    int outcome;
+    {
+        /* The mouse: the row or button it is over, and a left click as Cross. */
+        int x, y, moved, clicked;
+        if (OverlayPointer_Read(&x, &y, &moved, &clicked)) {
+            pressed |= SaveMenu_Pointer(x, y, moved, clicked, &mouse_sound);
+        }
+    }
+    outcome = SaveMenu_Poll(pressed, D_8009B3F9, &sound, MemCardDialog_CheckSlot);
 
+    if (mouse_sound != SAVE_MENU_SOUND_NONE && sound == SAVE_MENU_SOUND_NONE) {
+        sound = mouse_sound;
+    }
     if (sound != SAVE_MENU_SOUND_NONE) {
         SD_SEPlayFull(sound);
     }
