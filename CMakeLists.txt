@@ -83,6 +83,17 @@ if(BUILD_TESTING)
             target_compile_options(memories_trap_effects_test PRIVATE -mno-ms-bitfields)
         endif()
         add_test(NAME pc_trap_effects COMMAND memories_trap_effects_test)
+        add_executable(memories_monster_effects_ai_test tests/pc/monster_effects_ai_test.c)
+        target_include_directories(memories_monster_effects_ai_test PRIVATE src)
+        target_compile_definitions(memories_monster_effects_ai_test PRIVATE MEMORIES_PC)
+        # func_80027DF8.c's deck view is an asm label, which -std=c11 has no word for.
+        set_target_properties(memories_monster_effects_ai_test PROPERTIES C_EXTENSIONS ON)
+        target_compile_options(memories_monster_effects_ai_test PRIVATE -m32 -ffunction-sections -fdata-sections)
+        target_link_options(memories_monster_effects_ai_test PRIVATE -m32 -Wl,--gc-sections)
+        if(WIN32)
+            target_compile_options(memories_monster_effects_ai_test PRIVATE -mno-ms-bitfields)
+        endif()
+        add_test(NAME pc_monster_effects_ai COMMAND memories_monster_effects_ai_test)
         # Not "dispatch": Windows takes an unmanifested exe whose name has
         # "patch" in it for an installer and asks to elevate it.
         add_executable(memories_card_effects_start_test tests/pc/card_effects_start_test.c)
@@ -94,6 +105,24 @@ if(BUILD_TESTING)
             target_compile_options(memories_card_effects_start_test PRIVATE -mno-ms-bitfields)
         endif()
         add_test(NAME pc_card_effects_start COMMAND memories_card_effects_start_test)
+        # A turn that starts with a full hand draws nothing: the real
+        # DuelScene_UpdateDrawResolution, its externals stubbed.
+        add_executable(memories_draw_full_hand_test tests/pc/draw_full_hand_test.c)
+        target_include_directories(memories_draw_full_hand_test PRIVATE src)
+        target_compile_definitions(memories_draw_full_hand_test PRIVATE MEMORIES_PC)
+        # The unit defines DUEL_CARD_STAGING_DECK_VIEW, and duel_card_staging.h
+        # then labels the deck view with `asm`, a GNU keyword.
+        set_target_properties(memories_draw_full_hand_test PROPERTIES C_EXTENSIONS ON)
+        target_compile_options(memories_draw_full_hand_test PRIVATE -m32 -ffunction-sections -fdata-sections)
+        target_link_options(memories_draw_full_hand_test PRIVATE -m32 -Wl,--gc-sections)
+        if(WIN32)
+            target_compile_options(memories_draw_full_hand_test PRIVATE -mno-ms-bitfields)
+        endif()
+        if(MEMORIES_SANITIZERS)
+            target_compile_options(memories_draw_full_hand_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+            target_link_options(memories_draw_full_hand_test PRIVATE -fsanitize=address,undefined)
+        endif()
+        add_test(NAME pc_draw_full_hand COMMAND memories_draw_full_hand_test)
     endif()
     add_executable(memories_deck_draft_test tests/pc/deck_draft_test.c)
     target_include_directories(memories_deck_draft_test PRIVATE src)
@@ -199,7 +228,7 @@ if(BUILD_TESTING)
         target_link_options(memories_fusion_rules_test PRIVATE -fsanitize=address,undefined)
     endif()
     add_test(NAME pc_fusion_rules COMMAND memories_fusion_rules_test)
-    add_executable(memories_duelists_test tests/pc/duelists_test.c src/pc/free_duel/duelists.c src/pc/mods/json.c)
+    add_executable(memories_duelists_test tests/pc/duelists_test.c src/pc/platform/loading.c src/pc/free_duel/duelists.c src/pc/mods/json.c)
     target_include_directories(memories_duelists_test PRIVATE src)
     target_compile_definitions(memories_duelists_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -365,6 +394,12 @@ if(BUILD_TESTING)
         target_compile_options(memories_quit_prompt_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_quit_prompt COMMAND memories_quit_prompt_test)
+    add_executable(memories_loading_test tests/pc/loading_test.c src/pc/platform/loading.c)
+    target_include_directories(memories_loading_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_loading_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_loading COMMAND memories_loading_test)
     add_executable(memories_host_actions_test tests/pc/host_actions_test.c src/pc/platform/host_actions.c
         src/pc/platform/controls.c src/pc/platform/quit_prompt.c)
     target_include_directories(memories_host_actions_test PRIVATE src)
@@ -465,7 +500,7 @@ if(BUILD_TESTING)
         add_test(NAME pc_mips_stack COMMAND memories_mips_stack_test)
     endif()
     # mod_libc.c lends mods the indirect-branch thunks (src/pc/guest/branch_thunks.c).
-    add_executable(memories_mods_test tests/pc/mods_test.c src/pc/mods/mods.c src/pc/mods/mod_budget.c src/pc/mods/events.c src/pc/mods/hooks.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/mod_libc.c
+    add_executable(memories_mods_test tests/pc/mods_test.c src/pc/platform/loading.c src/pc/mods/mods.c src/pc/mods/mod_budget.c src/pc/mods/events.c src/pc/mods/hooks.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/mod_libc.c
         src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c src/pc/mod_packets.c
         src/pc/platform/paths.c src/pc/platform/settings.c)
     target_include_directories(memories_mods_test PRIVATE src)
@@ -479,7 +514,7 @@ if(BUILD_TESTING)
         target_compile_options(memories_mods_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mods COMMAND memories_mods_test)
-    set(MOD_TEST_SOURCES src/pc/mods/mods.c src/pc/mods/mod_budget.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/events.c src/pc/mods/hooks.c
+    set(MOD_TEST_SOURCES src/pc/platform/loading.c src/pc/mods/mods.c src/pc/mods/mod_budget.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/events.c src/pc/mods/hooks.c
         src/pc/mods/mod_libc.c src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c src/pc/mod_packets.c
         src/pc/platform/paths.c src/pc/platform/settings.c)
     add_executable(memories_mods_signature_test tests/pc/mods_signature_test.c ${MOD_TEST_SOURCES})
@@ -568,7 +603,7 @@ if(BUILD_TESTING)
     target_include_directories(memories_password_data_test PRIVATE src)
     target_compile_definitions(memories_password_data_test PRIVATE MEMORIES_PC)
     add_test(NAME pc_password_data COMMAND memories_password_data_test)
-    add_executable(memories_tables_test tests/pc/tables_test.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_tables_test tests/pc/tables_test.c src/pc/platform/loading.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_tables_test PRIVATE src)
     target_compile_definitions(memories_tables_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -603,7 +638,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_attributes COMMAND memories_attributes_test)
     # A card's "stars" through cards.c's own add_entry, on a stand-in for the
     # disc's tables (notes/modding.md, "No star").
-    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/cards/fusion_table.c src/pc/cards/card_art_cache.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
+    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/platform/loading.c src/pc/cards/fusion_table.c src/pc/cards/card_art_cache.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
                    src/pc/mods/json.c src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_stars_test PRIVATE src)
     target_link_libraries(memories_cards_stars_test PRIVATE Threads::Threads)
@@ -670,7 +705,7 @@ if(BUILD_TESTING)
         target_compile_options(memories_type_icons_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_type_icons COMMAND memories_type_icons_test)
-    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c src/pc/platform/loading.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_free_duel_progress_test PRIVATE src)
     target_compile_definitions(memories_free_duel_progress_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -687,7 +722,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_font_art COMMAND memories_font_art_test)
     set_tests_properties(pc_font_art PROPERTIES SKIP_RETURN_CODE 77)
-    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/cards/tables.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/platform/loading.c src/pc/cards/tables.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_card_drops_test PRIVATE src)
     target_compile_definitions(memories_card_drops_test PRIVATE MEMORIES_PC)
     # The game's headers (drops.c's save and reward layouts) are 32-bit.
@@ -732,7 +767,7 @@ if(BUILD_TESTING)
     # A duelist's bust (src/pc/free_duel/busts.c): "bust" as read, and the
     # records it is made into read back as the game reads a character's
     # parts bank, on the test's own pictures.
-    add_executable(memories_busts_test tests/pc/busts_test.c src/pc/mods/json.c)
+    add_executable(memories_busts_test tests/pc/busts_test.c src/pc/platform/loading.c src/pc/mods/json.c)
     target_include_directories(memories_busts_test PRIVATE src)
     target_compile_definitions(memories_busts_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -1042,6 +1077,14 @@ if(BUILD_TESTING)
             set_tests_properties(pc_translated_signal PROPERTIES TIMEOUT 60)
         endif()
     endif()
+    # What Cards_Named finds through its tables (src/pc/cards/name_index.inc),
+    # against going down the names.
+    add_executable(memories_name_index_test tests/pc/name_index_test.c)
+    target_include_directories(memories_name_index_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_name_index_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_name_index COMMAND memories_name_index_test)
     # Card title plates (src/pc/cards/art.c), set from a name in the serif
     # face as a translated card's is: where FreeType is at hand (beside
     # libpng, as in the Windows dependencies), and skipped (77) on a system
@@ -1082,7 +1125,7 @@ if(BUILD_TESTING)
         add_test(NAME pc_card_art COMMAND memories_card_art_test "${CMAKE_CURRENT_BINARY_DIR}/card-art-test")
         # What a duelist's bust costs the start (busts.c Busts_Make with the
         # real art.c): the biggest bust and a typical one, drawn at runtime.
-        add_executable(memories_busts_make_test tests/pc/busts_make_test.c src/pc/cards/art.c src/pc/mods/json.c)
+        add_executable(memories_busts_make_test tests/pc/busts_make_test.c src/pc/platform/loading.c src/pc/cards/art.c src/pc/mods/json.c)
         target_include_directories(memories_busts_make_test PRIVATE src ${MEMORIES_FREETYPE_INCLUDE})
         target_compile_definitions(memories_busts_make_test PRIVATE MEMORIES_PC)
         target_link_libraries(memories_busts_make_test PRIVATE ${MEMORIES_FREETYPE_LIBRARY} ${memories_plate_fonts}

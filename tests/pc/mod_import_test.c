@@ -449,7 +449,8 @@ int main(void)
             {{"alpha/./x.txt", "x", 0, 0, 0, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
             {{"alpha//x.txt", "x", 0, 0, 0, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
             {{"alpha/\x01x.txt", "x", 0, 0, 0, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
-            {{"alpha/\xff.txt", "x", 0, 0, 0, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
+            {{"alpha/\xff.txt", "x", 0, 0, 0x800, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
+            {{"alpha/caf\xC3\xA9.txt", "x", 0, 0, 0, 0, 0, 0}, {"alpha/caf\x82.txt", "y", 0, 0, 0, 0, 0, 0}},
             {{"alpha/link", "../../evil", 0, 0120777, 0, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
             {{"alpha/fifo", "", 0, 0010644, 0, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
             {{"alpha/x.txt", "x", 0, 0, 1, 0, 0, 0}, {"alpha/mod.json", "{}", 0, 0, 0, 0, 0, 0}},
@@ -472,6 +473,33 @@ int main(void)
             CHECK(!exists("evil.txt") && !exists("mods/evil.txt"));
         }
         CHECK(!strcmp(listing(""), "in.zip mods"));
+    }
+    /* A name with no UTF-8 flag that is not UTF-8 is code page 850, as Windows'
+     * tools write it; UTF-8 with no flag stays UTF-8 (Info-ZIP's). */
+    {
+        static const ZipItem legacy[] = {
+            {"alpha/mod.json", MANIFEST_A, 0, 0, 0, 0, 0, 0},
+            {"alpha/read me - me l\x88 carai.txt", "x", 0, 0, 0, 0, 0, 0},
+            {"alpha/cora\x87\xC6o/\xE4.txt", "x", 0, 0, 0, 0, 0, 0},
+            {"alpha/caf\xC3\xA9.txt", "x", 0, 0, 0, 0, 0, 0},
+            {"alpha/\xffx.txt", "x", 0, 0, 0, 0, 0, 0},
+        };
+        char too_long[520];
+        ZipItem wide[2] = {{"alpha/mod.json", MANIFEST_A, 0, 0, 0, 0, 0, 0}, {too_long, "x", 0, 0, 0, 0, 0, 0}};
+        reset();
+        CHECK(import(legacy, 5, &count, why, sizeof(why)));
+        CHECK(count == 1);
+        CHECK(exists("mods/alpha/read me - me l\xC3\xAA carai.txt"));
+        CHECK(exists("mods/alpha/cora\xC3\xA7\xC3\xA3o/\xC3\xB5.txt"));
+        CHECK(exists("mods/alpha/caf\xC3\xA9.txt"));
+        CHECK(exists("mods/alpha/\xC2\xA0x.txt"));
+        /* One that grows past a name's limit is refused, as a long one is. */
+        memset(too_long, 'a', sizeof(too_long) - 2);
+        too_long[0] = '\x88';
+        too_long[sizeof(too_long) - 2] = 0;
+        reset();
+        write_zip(zip, wide, 2);
+        CHECK(Mods_ImportOpen(zip, why, sizeof(why)) == NULL);
     }
     /* Damage found while unpacking: a wrong CRC, a size the data does not
      * keep to. Nothing is left in the mods folder. */

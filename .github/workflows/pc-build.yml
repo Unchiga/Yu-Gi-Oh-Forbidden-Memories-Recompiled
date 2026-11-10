@@ -33,6 +33,8 @@ jobs:
       - run: python tools/pc/test_vt_check.py
       - name: Model gate table, header and address sections
         run: python tools/pc/test_model_gate.py
+      - name: Builds rebuild what includes a changed file
+        run: python tools/pc/test_build_config.py
   # The Windows game is built with llvm-mingw for i686 (play.bat,
   # tools/pc/fetch_tools.py), so the tests are too: the same pinned release,
   # with zlib and libpng from tools/pc/build_win32_deps.py. The runner's cmake
