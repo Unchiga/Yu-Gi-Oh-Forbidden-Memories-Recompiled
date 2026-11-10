@@ -569,14 +569,14 @@ if(BUILD_TESTING)
     # that need the game and renderer. ELF linkers resolve symbols after GC;
     # the PE linker reports them before it, so this test is ELF-only.
     if(NOT WIN32 AND NOT MSVC)
-        add_executable(memories_cards_identity_test tests/pc/cards_identity_test.c src/pc/platform/paths.c
+        add_executable(memories_cards_identity_test tests/pc/cards_identity_test.c src/pc/cards/fusion_table.c src/pc/platform/paths.c
                        src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
         target_include_directories(memories_cards_identity_test PRIVATE src)
         target_compile_definitions(memories_cards_identity_test PRIVATE MEMORIES_PC)
         target_compile_options(memories_cards_identity_test PRIVATE -ffunction-sections -fdata-sections)
         target_link_options(memories_cards_identity_test PRIVATE -Wl,--gc-sections)
         add_test(NAME pc_cards_identity COMMAND memories_cards_identity_test)
-        add_executable(memories_card_notes_test tests/pc/card_notes_test.c src/pc/cards/card_notes.c
+        add_executable(memories_card_notes_test tests/pc/card_notes_test.c src/pc/cards/fusion_table.c src/pc/cards/card_notes.c
                        src/pc/mods/json.c src/pc/platform/paths.c)
         target_include_directories(memories_card_notes_test PRIVATE src)
         target_compile_definitions(memories_card_notes_test PRIVATE MEMORIES_PC)
@@ -623,7 +623,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_attributes COMMAND memories_attributes_test)
     # A card's "stars" through cards.c's own add_entry, on a stand-in for the
     # disc's tables (notes/modding.md, "No star").
-    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/platform/loading.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
+    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/platform/loading.c src/pc/cards/fusion_table.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
                    src/pc/mods/json.c src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_stars_test PRIVATE src)
     target_compile_definitions(memories_cards_stars_test PRIVATE MEMORIES_PC)
@@ -633,11 +633,20 @@ if(BUILD_TESTING)
     if(NOT MSVC)
         target_compile_options(memories_cards_stars_test PRIVATE -Wall -Wextra)
     endif()
+    # Under the sanitizers a value kept into a freed "cards" document is an error.
+    if(MEMORIES_SANITIZERS)
+        target_compile_options(memories_cards_stars_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(memories_cards_stars_test PRIVATE -fsanitize=address,undefined)
+    endif()
     add_test(NAME pc_cards_stars COMMAND memories_cards_stars_test)
+    if(MEMORIES_SANITIZERS)
+        # What it builds lives until exit, as in the game: use after free, not leaks.
+        set_tests_properties(pc_cards_stars PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+    endif()
     # Two mods' "cards" in the load order the settings give, through the real
     # mod loader and cards.c's Cards_Build: once as the folders sort, once
     # with the second moved first (notes/more-cards.md).
-    add_executable(memories_cards_order_test tests/pc/cards_order_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_cards_order_test tests/pc/cards_order_test.c src/pc/cards/fusion_table.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_order_test PRIVATE src)
     target_compile_definitions(memories_cards_order_test PRIVATE MEMORIES_PC)
@@ -647,11 +656,12 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_cards_order_found COMMAND memories_cards_order_test found)
     add_test(NAME pc_cards_order_moved COMMAND memories_cards_order_test b-first)
+    add_test(NAME pc_cards_order_gone COMMAND memories_cards_order_test gone)
     # Custom monster types (API 15, cards.c's "card_types"):
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods
     # redefining one id, and a name the game has no letters for.
-    add_executable(memories_card_types_test tests/pc/card_types_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_card_types_test tests/pc/card_types_test.c src/pc/cards/fusion_table.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_card_types_test PRIVATE src)
     target_compile_definitions(memories_card_types_test PRIVATE MEMORIES_PC)

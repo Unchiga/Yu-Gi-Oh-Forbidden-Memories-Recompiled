@@ -29,12 +29,14 @@ typedef struct JsonDeferred {
     int named;  /* the key was met, as a list or not: a second one is an ordinary member */
 } JsonDeferred;
 
-/* Reads a file a chunk at a time and parses all of it but the top-level member
- * `key`, when that is a list: an empty list stands in its place in the document,
- * and *deferred says where it is. Nothing of it is looked into but its brackets
- * and strings; a mistake inside comes out when it is read. */
-JsonDocument *Json_ParseFileDeferring(const char *path, const char *key, JsonDeferred *deferred, char *error,
-                                      size_t error_size);
+/* Reads a file a chunk at a time and parses all of it but the top-level members
+ * `keys`, each when it is a list: an empty list stands in its place in the document,
+ * and deferred[i] says where keys[i] is. Nothing of it is looked into but its
+ * brackets and strings; a mistake inside comes out when it is read. */
+JsonDocument *Json_ParseFileDeferring(const char *path, const char *const *keys, int count, JsonDeferred *deferred,
+                                      char *error, size_t error_size);
+/* A list left out as a document of its own, whole. */
+JsonDocument *Json_ParseDeferred(const char *path, const JsonDeferred *deferred, char *error, size_t error_size);
 /* Each element of that list in turn, parsed alone and gone when `each` returns;
  * `each` returns 0 to stop. An element that does not parse, or is over a megabyte,
  * is left out and the rest are read, and so is a comma too many or too few. The

@@ -100,7 +100,9 @@ void Mods_SetEnabled(int mod, int enabled);
 
 /* The "cards" array of every applied mod, with the directory its images are
  * named from, in load order (Mods_Loaded, below), for src/pc/cards (json.h
- * reads them). A data mod needs no code for them. */
+ * reads them). A data mod needs no code for them. Read from each mod.json for
+ * Cards_Build, which frees them as it ends (Mods_CardsRelease): a value is gone by
+ * then, and this is not to be called again. */
 struct JsonValue;
 void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const struct JsonValue *cards, void *context),
                      void *context);
@@ -246,13 +248,21 @@ const unsigned char *Mods_ModelPages(int slot, int *count);
 int *Mods_ModelPendings(unsigned *size);
 void Mods_ModelParsed(int slot);
 
-/* Manager metadata and configuration. Borrowed strings live until exit. */
+/* Manager metadata and configuration. Borrowed strings live until exit. "fusions" and
+ * "cards" are empty lists in it: they stay in the mod.json (Mods_EachFusion,
+ * Mods_CardsDocument). */
 const struct JsonValue *Mods_Manifest(int mod);
 /* A mod's "fusions", which is not in its manifest: each entry in turn from the
  * file, gone when `each` returns (json.h). The count, -1 on a mistake. */
 long Mods_EachFusion(const char *id, int (*each)(const struct JsonValue *, long, void *), void *context, char *error,
                      size_t error_size);
 unsigned Mods_FusionsHash(int mod); /* 0 with none */
+/* "cards", also not in the manifest: read for Mods_VisitCards and kept until
+ * Mods_CardsRelease, as Cards_Build ends; or a document of them for the caller, which
+ * Json_Frees it. */
+unsigned Mods_CardsHash(int mod); /* 0 with none */
+struct JsonDocument *Mods_CardsDocument(int mod);
+void Mods_CardsRelease(void);
 long Mods_FusionsSize(int mod); /* bytes in the file, 0 for none */
 const char *Mods_Metadata(int mod, const char *key);
 const char *Mods_Directory(int mod);

@@ -126,10 +126,55 @@ static long stream_fusions(int mod, int (*each)(const JsonValue *, long, void *)
     for (const JsonValue *rule = Json_At(stream_lists[mod], 0); rule; rule = Json_Next(rule)) each(rule, i++, each_context);
     return i;
 }
+static JsonDocument *held_cards(int mod, void *context)
+{
+    static const char *const lists[2] = {
+        "[{\"replace\": 1, \"attack\": 1}, {\"replace\": 2, \"attack\": 1}]",
+        "[{\"replace\": 1, \"attack\": 2}]"};
+    char error[128];
+    (void)context;
+    return Json_Parse(lists[mod], error, sizeof(error));
+}
 static long stream_bytes(int mod, void *context)
 {
     (void)context;
     return (long)Json_Count(stream_lists[mod]);
+}
+
+/* The same with "cards": the report keeps what it read. */
+static void read_cards_again(void)
+{
+    static const char *const in_manifest[2] = {
+        "{\"cards\": [{\"replace\": 1, \"attack\": 1}, {\"replace\": 2, \"attack\": 1}]}",
+        "{\"cards\": [{\"replace\": 1, \"attack\": 2}]}"};
+    JsonDocument *with[2], *empty[2];
+    ModsOverlapMod held[2], read[2];
+    ModsOverlapSource source = {0};
+    ModsOverlaps *a, *b;
+    char error[128], x[512], y[512];
+    memset(held, 0, sizeof(held));
+    memset(read, 0, sizeof(read));
+    for (int i = 0; i < 2; i++) {
+        with[i] = Json_Parse(in_manifest[i], error, sizeof(error));
+        empty[i] = Json_Parse("{\"cards\": []}", error, sizeof(error));
+        assert(with[i] && empty[i]);
+        held[i].id = read[i].id = held[i].name = read[i].name = i ? "b" : "a";
+        held[i].manifest = Json_Root(with[i]);
+        read[i].manifest = Json_Root(empty[i]);
+    }
+    a = Mods_OverlapCompute(held, 2, &source);
+    source.cards = held_cards;
+    b = Mods_OverlapCompute(read, 2, &source);
+    assert(a && b && Mods_OverlapCount(a) == 1 && Mods_OverlapCount(b) == 1);
+    Mods_OverlapText(a, 0, x, sizeof(x));
+    Mods_OverlapText(b, 0, y, sizeof(y));
+    assert(!strcmp(x, y));
+    Mods_OverlapFree(a);
+    Mods_OverlapFree(b);
+    for (int i = 0; i < 2; i++) {
+        Json_Free(with[i]);
+        Json_Free(empty[i]);
+    }
 }
 
 /* The same mods give the same lines with their fusions in the manifests and
@@ -589,6 +634,7 @@ int main(void)
     free(expected);
     Json_Free(setup);
     streamed_fusions();
+    read_cards_again();
     printf("mods_overlap: %d lines as expected\n", n);
     return 0;
 }

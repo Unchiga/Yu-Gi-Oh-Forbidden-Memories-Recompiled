@@ -130,3 +130,48 @@ int FusionTable_Find(int a, int b, int *result, unsigned *order)
     *order = rows[low].order;
     return 1;
 }
+
+typedef struct {
+    unsigned short card, with;
+    int result;
+} OwnRow;
+static OwnRow *own_rows;
+static int own_count, own_room;
+
+void FusionTable_ClearOwn(void)
+{
+    free(own_rows);
+    own_rows = NULL;
+    own_count = own_room = 0;
+}
+
+int FusionTable_AddOwn(int card, int with, int result)
+{
+    if (own_count == own_room) {
+        int wanted = own_room ? own_room * 2 : 64;
+        OwnRow *bigger = realloc(own_rows, (size_t)wanted * sizeof(*bigger));
+        if (!bigger) return 0;
+        own_rows = bigger;
+        own_room = wanted;
+    }
+    own_rows[own_count].card = (unsigned short)card;
+    own_rows[own_count].with = (unsigned short)with;
+    own_rows[own_count++].result = result;
+    return 1;
+}
+
+int FusionTable_FindOwn(int card, int with, int *result)
+{
+    int low = 0, high = own_count;
+    while (low < high) {
+        int middle = low + (high - low) / 2;
+        if (own_rows[middle].card < card) low = middle + 1;
+        else high = middle;
+    }
+    for (; low < own_count && own_rows[low].card == card; low++)
+        if (own_rows[low].with == with) {
+            *result = own_rows[low].result;
+            return 1;
+        }
+    return 0;
+}
