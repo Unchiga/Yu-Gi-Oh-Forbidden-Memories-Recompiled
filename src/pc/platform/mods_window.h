@@ -100,6 +100,18 @@ void ModsWindow_RefreshAccess(void);
 /* Once per pump while the panel shows: an import's next step. 1 when the
  * window must be drawn again. */
 int ModsWindow_Tick(void);
+/* The Modpack tab's file dialogs (desktops): `pick` opens the system's
+ * dialog for `kind` (0 a modpack .zip to open, 1 a poster .png to open, 2
+ * where to save an exported .zip) and returns at once (0, or -1 with why);
+ * `picked`, asked once per ModsWindow_Tick, is 0 while it is open, 1 with
+ * the file's path, -1 when none was chosen, -2 on a failure (why). */
+void ModsWindow_SetModpackPicker(int (*pick)(int kind, char *why, size_t why_size),
+                                 int (*picked)(char *path, size_t size, char *why, size_t why_size));
+/* Suggested export path, held in a static buffer until the next call. */
+const char *ModsWindow_ExportSuggestion(void);
+/* UTF-8 clipboard callbacks: 1 on success, 0 on failure/insufficient room.
+ * The caller retains buffer ownership. */
+void ModsWindow_SetClipboard(int (*read)(char *text, size_t capacity), int (*write)(const char *text));
 int ModsWindow_Grabs(int x, int y);
 void ModsWindow_Drag(int x, int y, int dy);
 #endif

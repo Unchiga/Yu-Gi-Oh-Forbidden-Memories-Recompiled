@@ -274,6 +274,42 @@ const char *Mods_Directory(int mod);
 /* Where players put new mods (MEMORIES_MODS_DIR, else the user mods
  * folder), created if missing; 0 on success. */
 int Mods_InstallDirectory(char *out, size_t size);
+/* Modpacks (the Mods window's Modpack tab): each is a folder of mods in the
+ * user directory's modpacks/, made from a .zip. The one chosen (the first
+ * line of modpacks/selected.txt) is read at the start instead of every other
+ * mods folder, its mods all on; with none chosen, or when its folder is gone,
+ * the normal mods are. MEMORIES_MODS_DIR set wins over both.
+ * Mods_ModpackDirectory: the modpacks folder, made if missing (0). Selected:
+ * 1 and the name when one is chosen. Select: chooses one (NULL or "" for
+ * none), for the next launch (0, or -1). Launched: the one this launch read,
+ * "" none. NameValid: a plain folder name (no separator, no leading dot). */
+int Mods_ModpackDirectory(char *out, size_t size);
+int Mods_ModpackSelected(char *name, size_t size);
+int Mods_ModpackSelect(const char *name);
+const char *Mods_ModpackLaunched(void);
+/* Why the chosen modpack was not read this launch (gone, or changed since it
+ * was exported: modpack.json's "files" are checked by SHA-256), "" if it was.
+ * Locked: its author locked its settings (modpack.json "locked"): they are
+ * applied at every launch, and the window does not change them. Without
+ * "locked" they are applied at its first launch only. */
+const char *Mods_ModpackProblem(void);
+int Mods_ModpackLocked(void);
+/* Activate modpack: reads every file of the modpack `name` once, checking
+ * each against modpack.json's SHA-256, and records the ones that passed
+ * (modpacks/<name>/.verified) so the next start does not read them again;
+ * the reading also leaves them in the system's file cache for that start.
+ * Blocking: a thread of the caller's runs it. *done grows by the bytes read
+ * and *total is set to all of them (atomically, either may be NULL); a
+ * nonzero *cancel stops it. 1 when the pack is whole, else 0 and why
+ * ("Cancelled." when stopped). A folder with no modpack.json is 1 at once. */
+int Mods_ModpackPrepare(const char *name, long long *done, long long *total, const int *cancel, char *why,
+                        size_t why_size);
+/* A file's SHA-256 in lowercase hex: 1, or 0 when it cannot be read.
+ * Progress: *done grows by the bytes read (atomically), a nonzero *cancel
+ * stops it (0); either may be NULL. */
+int Mods_Sha256File(const char *path, char hex[65]);
+int Mods_Sha256FileProgress(const char *path, char hex[65], long long *done, const int *cancel);
+int Mods_ModpackNameValid(const char *name);
 /* The mods folder the player chose, one more folder the game reads (origin
  * "folder"), between the release's mods and the user directory's: the first
  * line of mods-folder.txt in the user directory, else

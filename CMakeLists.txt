@@ -918,6 +918,14 @@ if(BUILD_TESTING)
         target_compile_options(memories_mods_window_no_code_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mods_window_no_code COMMAND memories_mods_window_no_code_test)
+    # The Modpack form's text fields (src/pc/platform/text_edit.h): UTF-8
+    # cursor moves, paste, selection and wrapped hit testing.
+    add_executable(memories_text_edit_test tests/pc/text_edit_test.c)
+    target_include_directories(memories_text_edit_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_text_edit_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_text_edit COMMAND memories_text_edit_test)
     # Audio replacement: WAV/Ogg decoding, resampling, the "audio" manifest
     # object and the mixer side. stb_vorbis is upstream's file, built as is.
     add_executable(memories_audio_replace_test tests/pc/audio_replace_test.c src/pc/audio/replace.c

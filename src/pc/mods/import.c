@@ -1157,3 +1157,220 @@ outside:
     snprintf(why, why_size, "That folder is not one of the mods in the mods folder.");
     return -1;
 }
+
+/* --- Modpacks (import.h): one file out of the .zip, a .zip written, SHA-256 */
+
+int Mods_ImportExtract(ModsImport *import, const char *name, const char *path, char *why, size_t why_size)
+{
+    const Entry *e = import ? find(import, name) : NULL;
+    FILE *out;
+    int ok;
+    if (!e || e->folder)
+        return 0;
+    if (!(out = fopen(path, "wb"))) {
+        snprintf(why, why_size, "Could not write %s: %s.", path, strerror(errno));
+        return -1;
+    }
+    ok = unpack(import, e, out, NULL, why, why_size);
+    if (fclose(out))
+        ok = 0;
+    if (!ok)
+        remove(path);
+    return ok ? 1 : -1;
+}
+
+typedef struct {
+    char *name;
+    unsigned long crc, packed, size, offset;
+} ZipOutEntry;
+struct ModsZipOut {
+    FILE *file;
+    char *path;
+    ZipOutEntry *entries;
+    int count, room, failed;
+    long long *done;   /* Mods_ZipProgress */
+    const int *cancel;
+};
+static void put_le16(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
+static void put_le32(unsigned char *p, unsigned long v) { put_le16(p, (unsigned)(v & 0xffff)); put_le16(p + 2, (unsigned)(v >> 16)); }
+ModsZipOut *Mods_ZipCreate(const char *path, char *why, size_t why_size)
+{
+    ModsZipOut *zip = calloc(1, sizeof(*zip));
+    if (!zip || !(zip->path = malloc(strlen(path) + 1))) {
+        free(zip);
+        snprintf(why, why_size, "Out of memory.");
+        return NULL;
+    }
+    strcpy(zip->path, path);
+    if (!(zip->file = fopen(path, "wb"))) {
+        snprintf(why, why_size, "Could not write %s: %s.", path, strerror(errno));
+        free(zip->path);
+        free(zip);
+        return NULL;
+    }
+    return zip;
+}
+/* One entry, deflated, from a file (`source`) or from memory (`data`). */
+void Mods_ZipAbandon(ModsZipOut *zip) { zip->failed = 1; }
+void Mods_ZipProgress(ModsZipOut *zip, long long *done, const int *cancel)
+{
+    zip->done = done;
+    zip->cancel = cancel;
+}
+static int zip_add(ModsZipOut *zip, const char *name, const char *source, const void *data, size_t size, char *why,
+                   size_t why_size)
+{
+    unsigned char header[30], *in = NULL, *out = NULL;
+    FILE *from = NULL;
+    z_stream stream;
+    long at;
+    size_t n = strlen(name);
+    unsigned long crc = crc32(0L, Z_NULL, 0), total = 0, packed = 0;
+    int flush, ok = 0;
+    ZipOutEntry *e;
+    if (zip->failed || n > 0xffff || zip->count >= MODS_IMPORT_ENTRIES)
+        return 0;
+    if (zip->count == zip->room) {
+        ZipOutEntry *grown = realloc(zip->entries, (size_t)(zip->room = zip->room ? zip->room * 2 : 64) * sizeof(*grown));
+        if (!grown) { snprintf(why, why_size, "Out of memory."); return zip->failed = 1, 0; }
+        zip->entries = grown;
+    }
+    if (source && !(from = fopen(source, "rb"))) {
+        snprintf(why, why_size, "Could not read %s: %s.", source, strerror(errno));
+        return zip->failed = 1, 0;
+    }
+    if ((at = ftell(zip->file)) < 0 || !(in = malloc(CHUNK)) || !(out = malloc(CHUNK))) {
+        snprintf(why, why_size, "Could not write the .zip.");
+        goto done;
+    }
+    memset(header, 0, sizeof(header));
+    put_le32(header, 0x04034b50u);
+    put_le16(header + 4, 20);
+    put_le16(header + 6, 0x800); /* names in UTF-8 */
+    put_le16(header + 8, 8);
+    put_le16(header + 12, 0x21); /* 1980-01-01 */
+    put_le16(header + 26, (unsigned)n);
+    if (fwrite(header, 1, 30, zip->file) != 30 || fwrite(name, 1, n, zip->file) != n) {
+        snprintf(why, why_size, "Could not write the .zip.");
+        goto done;
+    }
+    memset(&stream, 0, sizeof(stream));
+    if (deflateInit2(&stream, 6, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+        snprintf(why, why_size, "Could not start packing the .zip.");
+        goto done;
+    }
+    do {
+        size_t got;
+        if (from) {
+            got = fread(in, 1, CHUNK, from);
+            if (ferror(from)) { snprintf(why, why_size, "Could not read %s.", source); deflateEnd(&stream); goto done; }
+            flush = feof(from) ? Z_FINISH : Z_NO_FLUSH;
+            stream.next_in = in;
+        } else {
+            got = size - total < CHUNK ? size - total : CHUNK;
+            stream.next_in = (unsigned char *)data + total;
+            flush = total + got >= size ? Z_FINISH : Z_NO_FLUSH;
+        }
+        if (zip->cancel && __atomic_load_n(zip->cancel, __ATOMIC_RELAXED)) {
+            snprintf(why, why_size, "Export stopped.");
+            deflateEnd(&stream);
+            goto done;
+        }
+        if (zip->done) __atomic_add_fetch(zip->done, (long long)got, __ATOMIC_RELAXED);
+        crc = crc32(crc, stream.next_in, (uInt)got);
+        total += (unsigned long)got;
+        stream.avail_in = (uInt)got;
+        do {
+            size_t have;
+            stream.next_out = out;
+            stream.avail_out = CHUNK;
+            deflate(&stream, flush);
+            have = CHUNK - stream.avail_out;
+            if (fwrite(out, 1, have, zip->file) != have) {
+                snprintf(why, why_size, "Could not write the .zip.");
+                deflateEnd(&stream);
+                goto done;
+            }
+            packed += (unsigned long)have;
+        } while (stream.avail_out == 0);
+    } while (flush != Z_FINISH);
+    deflateEnd(&stream);
+    if (total > 0xfffffffful || packed > 0xfffffffful) { snprintf(why, why_size, "%s is too large.", name); goto done; }
+    put_le32(header + 14, crc);
+    put_le32(header + 18, packed);
+    put_le32(header + 22, total);
+    if (fseek(zip->file, at, SEEK_SET) || fwrite(header, 1, 30, zip->file) != 30 || fseek(zip->file, 0, SEEK_END)) {
+        snprintf(why, why_size, "Could not write the .zip.");
+        goto done;
+    }
+    e = &zip->entries[zip->count];
+    if (!(e->name = malloc(n + 1))) { snprintf(why, why_size, "Out of memory."); goto done; }
+    memcpy(e->name, name, n + 1);
+    e->crc = crc;
+    e->packed = packed;
+    e->size = total;
+    e->offset = (unsigned long)at;
+    zip->count++;
+    ok = 1;
+done:
+    if (from) fclose(from);
+    free(in);
+    free(out);
+    if (!ok) zip->failed = 1;
+    return ok;
+}
+int Mods_ZipAddFile(ModsZipOut *zip, const char *name, const char *source, char *why, size_t why_size)
+{
+    return zip_add(zip, name, source, NULL, 0, why, why_size);
+}
+int Mods_ZipAddData(ModsZipOut *zip, const char *name, const void *data, size_t size, char *why, size_t why_size)
+{
+    return zip_add(zip, name, NULL, data ? data : "", size, why, why_size);
+}
+int Mods_ZipFinish(ModsZipOut *zip, char *why, size_t why_size)
+{
+    unsigned char record[46], end[22];
+    long start;
+    unsigned long length = 0;
+    int ok = !zip->failed;
+    if (ok && (start = ftell(zip->file)) >= 0) {
+        for (int i = 0; ok && i < zip->count; i++) {
+            const ZipOutEntry *e = &zip->entries[i];
+            size_t n = strlen(e->name);
+            memset(record, 0, sizeof(record));
+            put_le32(record, 0x02014b50u);
+            put_le16(record + 4, 20);
+            put_le16(record + 6, 20);
+            put_le16(record + 8, 0x800);
+            put_le16(record + 10, 8);
+            put_le16(record + 14, 0x21);
+            put_le32(record + 16, e->crc);
+            put_le32(record + 20, e->packed);
+            put_le32(record + 24, e->size);
+            put_le16(record + 28, (unsigned)n);
+            put_le32(record + 42, e->offset);
+            ok = fwrite(record, 1, 46, zip->file) == 46 && fwrite(e->name, 1, n, zip->file) == n;
+            length += 46 + (unsigned long)n;
+        }
+        memset(end, 0, sizeof(end));
+        put_le32(end, 0x06054b50u);
+        put_le16(end + 8, (unsigned)zip->count);
+        put_le16(end + 10, (unsigned)zip->count);
+        put_le32(end + 12, length);
+        put_le32(end + 16, (unsigned long)start);
+        ok = ok && fwrite(end, 1, 22, zip->file) == 22;
+    } else
+        ok = 0;
+    if (fclose(zip->file))
+        ok = 0;
+    if (!ok) {
+        if (!zip->failed) snprintf(why, why_size, "Could not write the .zip.");
+        remove(zip->path);
+    }
+    for (int i = 0; i < zip->count; i++)
+        free(zip->entries[i].name);
+    free(zip->entries);
+    free(zip->path);
+    free(zip);
+    return ok;
+}

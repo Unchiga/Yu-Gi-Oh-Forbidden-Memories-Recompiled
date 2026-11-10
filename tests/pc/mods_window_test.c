@@ -1673,7 +1673,7 @@ int main(int argc, char **argv)
     ModsWindow_Init();
     ModsWindow_Size(&w, &h);
     assert(w == 920 && h == 640);
-    click(32, 160);
+    click(32, 196);
     assert(!Mods_Enabled(0)); /* staged */
     click(800, 610);
     assert(!restarts && !Mods_Enabled(0)); /* restart warning */
@@ -1709,7 +1709,7 @@ int main(int argc, char **argv)
         wheel.type = MENU_EVENT_WHEEL;
         wheel.x = 600;
         wheel.y = 450;
-        click(100, 142 + many * 58 + 20);
+        click(100, 178 + many * 58 + 20);
         click(620, 238);
         wheel.wheel = -1;
         for (int i = 0; i < 20; i++)
@@ -1730,11 +1730,11 @@ int main(int argc, char **argv)
     ModsWindow_Init();
     click(50, 80);
     input(MENU_EVENT_TEXT, 0, 0, MENU_KEY_OTHER, "mod79");
-    click(32, 160);
+    click(32, 196);
     click(800, 610);
     assert(Mods_Enabled(find("mod79"))); /* search actually filters */
     ModsWindow_Init();
-    click(32, 160);
+    click(32, 196);
     assert(!input(MENU_EVENT_KEY_DOWN, 0, 0, MENU_KEY_ESCAPE, NULL));
     assert(input(MENU_EVENT_KEY_DOWN, 0, 0, MENU_KEY_ENTER, NULL)); /* explicit discard */
     assert(Mods_Enabled(0));
@@ -1742,7 +1742,7 @@ int main(int argc, char **argv)
     click(50, 80); /* a focused search field does not hold the window open */
     assert(ModsWindow_RequestClose());
     ModsWindow_Init();
-    click(32, 160);
+    click(32, 196);
     assert(!ModsWindow_RequestClose()); /* unsaved changes: asks first */
     assert(ModsWindow_RequestClose());  /* the second close discards */
     {
@@ -1759,8 +1759,8 @@ int main(int argc, char **argv)
          * press. The load order staged in the window decides who wins. */
         int more;
         ModsWindow_Init();
-        click(32, 142 + 2 * 58 + 20); /* mod02 and mod03, staged */
-        click(32, 142 + 3 * 58 + 20);
+        click(32, 178 + 2 * 58 + 20); /* mod02 and mod03, staged */
+        click(32, 178 + 3 * 58 + 20);
         click(800, 238); /* Compatibility */
         draw(920, 640);
         assert(strstr(drawn, "/  6 overlaps")); /* with the warnings when the line has room */
@@ -1772,11 +1772,11 @@ int main(int argc, char **argv)
         click(600, 142 + 124 + more);
         draw(920, 640);
         assert(strstr(drawn, "#105 + #205") && strstr(drawn, "Show fewer"));
-        click(100, 142 + 2 * 58 + 20); /* mod02 selected, and loaded after mod03 */
+        click(100, 178 + 2 * 58 + 20); /* mod02 selected, and loaded after mod03 */
         click(856 + 14, 186 + 13);
         draw(920, 640);
         assert(strstr(drawn, "(mod03, mod02): mod02 wins (later in load order)"));
-        click(32, 142 + 3 * 58 + 20); /* one of them off: nothing in common */
+        click(32, 178 + 3 * 58 + 20); /* one of them off: nothing in common */
         draw(920, 640);
         assert(!strstr(drawn, "overlap") && strstr(drawn, "Enable this mod"));
         {
@@ -1822,10 +1822,10 @@ int main(int argc, char **argv)
     {
         /* The Details tab calls a mod with only "libraries" a code mod, as
          * the loader does; one with neither key a content mod. */
-        click(100, 142 + find("mod05") * 58 + 20);
+        click(100, 178 + find("mod05") * 58 + 20);
         draw(920, 640);
         assert(strstr(drawn, "Native code mod") && !strstr(drawn, "Content mod"));
-        click(100, 142 + find("mod04") * 58 + 20);
+        click(100, 178 + find("mod04") * 58 + 20);
         draw(920, 640);
         assert(strstr(drawn, "Content mod") && !strstr(drawn, "Native code mod"));
     }

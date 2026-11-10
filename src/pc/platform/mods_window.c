@@ -11,6 +11,7 @@
  * A drag scrolls what it starts on (ModsWindow_Drag); a slider or a
  * scrollbar is held at once instead (ModsWindow_Grabs). */
 #include "mods_window.h"
+#include "text_edit.h"
 #include "../../types.h"
 #include "pc/compat/fs.h"
 #include "pc/mods/hd_pack.h"
@@ -24,6 +25,10 @@
 #include "settings.h"
 #include "update.h"
 #include <ctype.h>
+#include <png.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,6 +59,26 @@ static int width, height, unit, selected, scroll, detail_scroll, tab, filter, fo
  * too small for the list beside the details, so `page` shows one of them
  * (0 the list, 1 the details). drag_rest: a drag's pixels short of a row. */
 static int touch, compact, page, drag_rest;
+/* The Modpack tab (below, before ModsWindow_Draw). */
+#define PACKS_MAX 64
+/* Export's form (pack_form), its fields (pack_focus 1 name, 2 version, 3 author, 4 description) */
+static int pack_form, pack_focus, pack_lock;
+static int export_scroll, export_sel;
+static int pack_detail_scroll, pack_detail_max, description_scroll, description_max;
+static int pack_form_scroll, pack_form_h; /* the Export form scrolled, and its whole height */
+static int pack_preview_h;                 /* its Preview's height at the last draw */
+static TextEdit description_edit = {0, 0, -1};
+static int description_drag;
+static int (*clipboard_read)(char *, size_t), (*clipboard_write)(const char *);
+void ModsWindow_SetClipboard(int (*read)(char *, size_t), int (*write)(const char *))
+{
+    clipboard_read = read;
+    clipboard_write = write;
+}
+static char pack_query[96];
+static int pack_filter; /* 0 all, 1 selected, 2 unselected; focus 5 is search */
+static int packs, pack_sel, pack_scroll, pack_count, pack_mods[PACKS_MAX], pack_ask; /* pack_ask: 2 Restart */
+static int pack_restart(void);
 static int wanted[MODS_MAX], ranks[MODS_MAX], *values[MODS_MAX], counts[MODS_MAX];
 static int slider_drag = -1, bar_drag, bar_grab; /* bar_drag: 1 the list's scrollbar, 2 the details' */
 /* Import mod... (ModsWindow_SetImport): the platform's picker, the step an
@@ -260,8 +285,8 @@ static void layout(Layout *l)
     int p = 20 * unit, gap = 16 * unit, left = width * 36 / 100, footer = height - 72 * unit - status_extra() * LINE,
         top = 142 * unit, right, view_top;
     l->search = rect(p, 64 * unit, left - p, 32 * unit);
-    l->filter = rect(p, 104 * unit, left - p, 28 * unit);
-    l->list = rect(p, top, left - p, footer - top - 12 * unit);
+    l->filter = rect(p, 140 * unit, left - p, 28 * unit); /* below the Modpack button (104) */
+    l->list = rect(p, top + 36 * unit, left - p, footer - top - 48 * unit);
     l->list_bar = rect(l->list.x + l->list.w - BAR - 3 * unit, l->list.y + 4 * unit, BAR, l->list.h - 8 * unit);
     l->detail = rect(left + gap, top, width - left - gap - p, footer - top - 12 * unit);
     l->profile = rect(left + gap, 64 * unit, max(80 * unit, width - left - gap - p - 160 * unit), 32 * unit);
@@ -284,6 +309,8 @@ static void layout(Layout *l)
     l->bar = rect(l->view.x + l->view.w - BAR, l->view.y, BAR, l->view.h);
     l->apply = rect(width - p - 150 * unit, height - 48 * unit, 150 * unit, 30 * unit);
     l->close = rect(width - p - 252 * unit, height - 48 * unit, 94 * unit, 30 * unit);
+    if (packs) /* no footer Restart there: Close keeps the right margin */
+        l->close.x = width - p - l->close.w;
     l->folder = rect(width - p - 418 * unit, height - 48 * unit, 158 * unit, 30 * unit);
     l->modsdir = folder_pick ? rect(l->folder.x - 8 * unit - 130 * unit, height - 48 * unit, 130 * unit, 30 * unit)
                              : none();
@@ -394,6 +421,11 @@ void ModsWindow_Init(void)
         if (!Mods_Removed(i))
             selected = i; /* the first one the list shows */
     scroll = detail_scroll = tab = filter = focus = pending = 0;
+    packs = pack_sel = pack_scroll = pack_ask = pack_form = pack_focus = 0;
+    description_drag = 0;
+    TextEdit_Move(&description_edit, 0, 0);
+    pack_query[0] = 0;
+    pack_filter = 0;
     remove_target = -1;
     query[0] = status[0] = 0;
     for (int i = 0; i < MODS_MAX; i++) {
@@ -413,6 +445,10 @@ void ModsWindow_Init(void)
         else if (!Mods_Folder(path, sizeof(path)) && *Mods_FolderProblem())
             put(status, sizeof(status), "%s", Mods_FolderProblem());
     }
+    if (Mods_ModpackProblem()[0])
+        put(status, sizeof(status), "%s", Mods_ModpackProblem());
+    else if (Mods_ModpackLocked())
+        put(status, sizeof(status), "Modpack %s: its author locked its settings.", Mods_ModpackLaunched());
     if (import_waiting && import_step != 3) { /* a Replace question the last showing left open */
         Mods_ImportClose(import_waiting);
         import_waiting = NULL;
@@ -949,6 +985,1772 @@ static void draw_touch(MenuCanvas *c, const Layout *l)
     button(c, l->close, pending ? "Cancel" : "Close", 0);
     button(c, l->apply, apply_label(), changed() || pending || folder_restart());
 }
+/* --- Modpack tab (desktop): profiles of mods made from a .zip ---------- *
+ * Each modpack is a folder of mods in the user directory's modpacks/ (the
+ * .zip's mods, unpacked by Mods_ImportInstall), with the modpack.json and
+ * poster.png an export wrote. The one chosen is read at the next launch
+ * instead of the normal mods folders (Mods_ModpackSelect); with none chosen
+ * the game starts with the normal mods. Export writes such a .zip from the
+ * mods chosen in a separate export list, their settings and load order. */
+static char pack_names[PACKS_MAX][128], pack_chosen[128];
+static int pack_confirm; /* a row's ( ) clicked once: 1 + its row, asking before it is activated */
+/* pick(kind): 0 a modpack .zip to open, 1 a poster .png, 2 where to save an export */
+static int (*pack_pick)(int, char *, size_t), (*pack_picked)(char *, size_t, char *, size_t);
+static int pack_picking, pack_kind;
+static char pack_name[64], pack_version[32], pack_author[64], pack_description[8192], pack_poster[1024];
+/* The shown modpack's modpack.json and poster (for pack_info_of) */
+static JsonDocument *pack_info;
+static int pack_info_of = -1;
+static uint32_t *poster_pixels;
+static int poster_w, poster_h;
+void ModsWindow_SetModpackPicker(int (*pick)(int kind, char *why, size_t why_size),
+                                 int (*picked)(char *path, size_t size, char *why, size_t why_size))
+{
+    pack_pick = pick;
+    pack_picked = picked;
+}
+static int pack_folder(int i, char *out, size_t size)
+{
+    char dir[1024];
+    if (Mods_ModpackDirectory(dir, sizeof(dir))) return -1;
+    return (size_t)snprintf(out, size, "%s/%s", dir, pack_names[i]) >= size ? -1 : 0;
+}
+static int pack_count_mods(const char *folder)
+{
+    char path[1200], id[64];
+    int n = 0;
+    DIR *d = opendir(folder);
+    struct dirent *e;
+    if (!d) return 0;
+    while ((e = readdir(d)))
+        if (e->d_name[0] != '.' && (size_t)snprintf(path, sizeof(path), "%s/%s", folder, e->d_name) < sizeof(path) &&
+            Mods_ImportFolderId(path, id, sizeof(id)))
+            n++;
+    closedir(d);
+    return n;
+}
+static void pack_forget_info(void)
+{
+    if (pack_info) Json_Free(pack_info);
+    pack_info = NULL;
+    free(poster_pixels);
+    poster_pixels = NULL;
+    poster_w = poster_h = 0;
+    pack_info_of = -1;
+}
+/* A PNG's pixels (0xRRGGBB), and its size; NULL when it cannot be read. */
+static uint32_t *png_pixels(const char *path, int *w, int *h)
+{
+    png_image image;
+    unsigned char *rgb;
+    uint32_t *out;
+    FILE *file = fopen(path, "rb");
+    memset(&image, 0, sizeof(image));
+    image.version = PNG_IMAGE_VERSION;
+    if (!file) return NULL;
+    if (!png_image_begin_read_from_stdio(&image, file) || image.width > 8192 || image.height > 8192) {
+        png_image_free(&image);
+        fclose(file);
+        return NULL;
+    }
+    image.format = PNG_FORMAT_RGB;
+    rgb = malloc(PNG_IMAGE_SIZE(image));
+    out = malloc((size_t)image.width * image.height * 4);
+    if (!rgb || !out || !png_image_finish_read(&image, NULL, rgb, 0, NULL)) {
+        free(rgb);
+        free(out);
+        png_image_free(&image);
+        fclose(file);
+        return NULL;
+    }
+    fclose(file);
+    for (size_t i = 0; i < (size_t)image.width * image.height; i++)
+        out[i] = (uint32_t)rgb[i * 3] << 16 | (uint32_t)rgb[i * 3 + 1] << 8 | rgb[i * 3 + 2];
+    free(rgb);
+    *w = (int)image.width;
+    *h = (int)image.height;
+    return out;
+}
+/* The selected modpack's modpack.json and poster, read once per selection. */
+static void pack_load_info(void)
+{
+    char folder[1200], path[1300], error[160];
+    if (pack_info_of == pack_sel) return;
+    pack_detail_scroll = pack_detail_max = 0;
+    pack_forget_info();
+    pack_info_of = pack_sel;
+    if (!pack_sel || pack_folder(pack_sel - 1, folder, sizeof(folder))) return;
+    snprintf(path, sizeof(path), "%s/modpack.json", folder);
+    pack_info = Json_ParseFile(path, error, sizeof(error));
+    snprintf(path, sizeof(path), "%s/poster.png", folder);
+    poster_pixels = png_pixels(path, &poster_w, &poster_h);
+}
+static void packs_scan(void)
+{
+    char dir[1024], path[1200];
+    DIR *d;
+    struct dirent *e;
+    pack_count = 0;
+    pack_forget_info();
+    Mods_ModpackSelected(pack_chosen, sizeof(pack_chosen));
+    if (Mods_ModpackDirectory(dir, sizeof(dir)) || !(d = opendir(dir))) return;
+    while ((e = readdir(d)) && pack_count < PACKS_MAX) {
+        struct stat info;
+        if (!Mods_ModpackNameValid(e->d_name) || strlen(e->d_name) >= sizeof(pack_names[0])) continue;
+        if ((size_t)snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) >= sizeof(path)) continue;
+        if (stat(path, &info) || !S_ISDIR(info.st_mode)) continue;
+        memcpy(pack_names[pack_count], e->d_name, strlen(e->d_name) + 1);
+        pack_mods[pack_count] = pack_count_mods(path);
+        pack_count++;
+    }
+    closedir(d);
+    for (int i = 1; i < pack_count; i++) /* sorted, as the mods are */
+        for (int j = i; j > 0 && strcmp(pack_names[j - 1], pack_names[j]) > 0; j--) {
+            char name[128];
+            int n = pack_mods[j];
+            memcpy(name, pack_names[j], sizeof(name));
+            memcpy(pack_names[j], pack_names[j - 1], sizeof(name));
+            memcpy(pack_names[j - 1], name, sizeof(name));
+            pack_mods[j] = pack_mods[j - 1];
+            pack_mods[j - 1] = n;
+        }
+    if (pack_sel > pack_count) pack_sel = 0;
+}
+/* The modpack the next launch reads differs from this launch's. */
+static int pack_restart(void) { return strcmp(pack_chosen, Mods_ModpackLaunched()) != 0; }
+/* A name for a folder: its characters a folder can take, no dot or space at its ends. */
+static void folder_name(char *name, size_t size, const char *from)
+{
+    size_t n = strlen(from);
+    if (n >= size) n = size - 1;
+    if (n > 100) n = 100;
+    memcpy(name, from, n);
+    name[n] = 0;
+    for (char *c = name; *c; c++)
+        if ((unsigned char)*c < 32 || strchr("/\\:*?\"<>|", *c)) *c = '_';
+    while (name[0] == '.' || name[0] == ' ') memmove(name, name + 1, strlen(name));
+    while ((n = strlen(name)) && (name[n - 1] == '.' || name[n - 1] == ' ')) name[n - 1] = 0;
+    if (!name[0]) snprintf(name, size, "Modpack");
+}
+/* --- Import of a modpack .zip, off the window's thread ----------------- *
+ * The .zip read, its mods unpacked into a new folder of modpacks/ and its
+ * modpack.json and poster put beside them, on a thread of its own: the bar
+ * in the footer shows the bytes unpacked of all (Mods_ImportWatch), and Stop
+ * ends it (the new folder removed). import_poll ends it on the window's
+ * thread, where the list is read again. */
+static struct {
+    pthread_t thread;
+    int running;                  /* from pack_import until import_poll joins it */
+    int finished, ok, cancel;     /* atomic */
+    unsigned done;                /* atomic: bytes unpacked (Mods_ImportWatch) */
+    unsigned long long total;     /* atomic: all of them */
+    int shown, count;             /* the permille last drawn; the mods in it */
+    char zip[1100], name[128], why[400];
+} import_job;
+static void *pack_import_step(void *unused)
+{
+    char dir[1024], dest[1200], path[1300], why[400] = "";
+    const char *base = import_job.zip, *s;
+    ModsImport *import = NULL;
+    int ok = 0, made = 0;
+    size_t n;
+    (void)unused;
+    for (s = import_job.zip; *s; s++)
+        if (*s == '/' || *s == '\\') base = s + 1;
+    {
+        char plain[128];
+        n = strlen(base);
+        if (n > 4 && (!strcmp(base + n - 4, ".zip") || !strcmp(base + n - 4, ".ZIP"))) n -= 4;
+        if (n >= sizeof(plain)) n = sizeof(plain) - 1;
+        memcpy(plain, base, n);
+        plain[n] = 0;
+        folder_name(import_job.name, sizeof(import_job.name), plain);
+    }
+    if (Mods_ModpackDirectory(dir, sizeof(dir))) {
+        snprintf(why, sizeof(why), "Could not make the modpacks folder.");
+        goto done;
+    }
+    if (!(import = Mods_ImportOpen(import_job.zip, why, sizeof(why)))) goto done;
+    if (!(import_job.count = Mods_ImportCount(import))) {
+        snprintf(why, sizeof(why), "That .zip has no mod (no folder with a mod.json).");
+        goto done;
+    }
+    __atomic_store_n(&import_job.total, Mods_ImportBytes(import), __ATOMIC_RELAXED);
+    {   /* the modpack's own name, when an export wrote one */
+        char temporary[1100], error[160];
+        JsonDocument *info;
+        snprintf(temporary, sizeof(temporary), "%s/.incoming-modpack.json", dir);
+        if (Mods_ImportExtract(import, "modpack.json", temporary, why, sizeof(why)) == 1 &&
+            (info = Json_ParseFile(temporary, error, sizeof(error)))) {
+            const char *named = Json_String(Json_Member(Json_Root(info), "name"), "");
+            if (*named) folder_name(import_job.name, sizeof(import_job.name), named);
+            Json_Free(info);
+        }
+        remove(temporary);
+        why[0] = 0;
+    }
+    {   /* a name not taken: "Name", "Name 2"... */
+        char base_name[128];
+        struct stat info;
+        snprintf(base_name, sizeof(base_name), "%s", import_job.name);
+        for (int k = 2;; k++) {
+            snprintf(dest, sizeof(dest), "%s/%s", dir, import_job.name);
+            if (stat(dest, &info)) break;
+            snprintf(import_job.name, sizeof(import_job.name), "%.100s %d", base_name, k);
+        }
+    }
+    if (Paths_MakeDirs(dest)) {
+        snprintf(why, sizeof(why), "Could not make %.300s.", dest);
+        goto done;
+    }
+    made = 1;
+    for (int i = 0; i < import_job.count; i++) Mods_ImportMod(import, i)->replace[0] = 0;
+    Mods_ImportWatch(import, &import_job.done, &import_job.cancel);
+    if (!Mods_ImportInstall(import, dest, why, sizeof(why))) goto done;
+    snprintf(path, sizeof(path), "%s/modpack.json", dest);
+    if (Mods_ImportExtract(import, "modpack.json", path, why, sizeof(why)) < 0) goto done;
+    snprintf(path, sizeof(path), "%s/poster.png", dest);
+    if (Mods_ImportExtract(import, "poster.png", path, why, sizeof(why)) < 0) goto done;
+    ok = 1;
+done:
+    if (import) Mods_ImportClose(import);
+    if (!ok && made) Mods_ImportRemoveTree(dest);
+    if (!ok && __atomic_load_n(&import_job.cancel, __ATOMIC_RELAXED)) snprintf(why, sizeof(why), "Import stopped.");
+    snprintf(import_job.why, sizeof(import_job.why), "%s", why);
+    __atomic_store_n(&import_job.ok, ok, __ATOMIC_RELAXED);
+    __atomic_store_n(&import_job.finished, 1, __ATOMIC_RELEASE);
+    return NULL;
+}
+static void pack_import(const char *zip)
+{
+    if (import_job.running) return;
+    snprintf(import_job.zip, sizeof(import_job.zip), "%s", zip);
+    import_job.name[0] = import_job.why[0] = 0;
+    import_job.done = 0;
+    import_job.total = 0;
+    import_job.count = import_job.finished = import_job.ok = import_job.cancel = 0;
+    import_job.shown = -1;
+    if (pthread_create(&import_job.thread, NULL, pack_import_step, NULL)) {
+        put(status, sizeof(status), "Could not start the import.");
+        return;
+    }
+    import_job.running = 1;
+    put(status, sizeof(status), "Importing %s", zip);
+}
+/* Each tick: 1 when the bar moved or the import ended (a redraw). */
+static int import_poll(void)
+{
+    if (!import_job.running) return 0;
+    if (!__atomic_load_n(&import_job.finished, __ATOMIC_ACQUIRE)) {
+        unsigned long long total = __atomic_load_n(&import_job.total, __ATOMIC_RELAXED);
+        unsigned done = __atomic_load_n(&import_job.done, __ATOMIC_RELAXED);
+        int permille = total ? (int)((unsigned long long)done * 1000 / total) : 0;
+        if (permille == import_job.shown) return 0;
+        import_job.shown = permille;
+        return 1;
+    }
+    pthread_join(import_job.thread, NULL);
+    import_job.running = 0;
+    if (!import_job.ok) {
+        put(status, sizeof(status), "%s", import_job.why);
+        return 1;
+    }
+    packs_scan();
+    for (int i = 0; i < pack_count; i++)
+        if (!strcmp(pack_names[i], import_job.name)) pack_sel = i + 1;
+    put(status, sizeof(status), "Modpack \"%s\" imported: %d mod(s). Click Activate modpack to use it.",
+        import_job.name, import_job.count);
+    return 1;
+}
+/* The footer's bar while the import runs, in `r`. */
+static void import_bar(MenuCanvas *c, Rect r)
+{
+    char line[200];
+    unsigned long long total = __atomic_load_n(&import_job.total, __ATOMIC_RELAXED);
+    unsigned done = __atomic_load_n(&import_job.done, __ATOMIC_RELAXED);
+    int percent = total ? (int)min(100ULL, (unsigned long long)done * 100 / total) : 0, pw = width_text("100%") + 12 * unit;
+    fill(c, r, BG);
+    fill(c, rect(r.x, r.y, (int)((long long)r.w * percent / 100), r.h), 0x2f6f4fu);
+    put(line, sizeof(line), "%d%%", percent);
+    text(c, r.x + r.w - pw, r.y + r.h / 2, pw, line, TEXT);
+    put(line, sizeof(line), "Importing %s...", import_job.name[0] ? import_job.name : "the modpack");
+    text(c, r.x + 10 * unit, r.y + r.h / 2, r.w - pw - 16 * unit, line, TEXT);
+}
+
+/* --- Export ----------------------------------------------------------- */
+/* A fresh inventory of the normal mods folders, independent of the running
+ * modpack and of the library's enabled/disabled checkboxes. */
+typedef struct {
+    char directory[1200], id[64];
+    JsonDocument *manifest;
+    int selected, loaded;
+} ExportMod;
+static ExportMod export_mods[MODS_MAX];
+static int export_count;
+static void export_scan_folder(const char *directory)
+{
+    DIR *d = opendir(directory);
+    struct dirent *e;
+    if (!d) return;
+    while ((e = readdir(d))) {
+        char path[1200], file[1300], id[64], error[160];
+        JsonDocument *doc;
+        int i;
+        if (e->d_name[0] == '.' ||
+            (size_t)snprintf(path, sizeof(path), "%s/%s", directory, e->d_name) >= sizeof(path) ||
+            !Mods_ImportFolderId(path, id, sizeof(id))) continue;
+        snprintf(file, sizeof(file), "%s/mod.json", path);
+        if (!(doc = Json_ParseFile(file, error, sizeof(error)))) continue;
+        for (i = 0; i < export_count && strcmp(export_mods[i].id, id); i++);
+        if (i == MODS_MAX) {
+            Json_Free(doc);
+            put(status, sizeof(status), "Only the first %d mods can be listed for export.", MODS_MAX);
+            continue;
+        }
+        if (i == export_count) export_count++;
+        else Json_Free(export_mods[i].manifest);
+        ExportMod *m = &export_mods[i];
+        memset(m, 0, sizeof(*m));
+        snprintf(m->directory, sizeof(m->directory), "%s", path);
+        snprintf(m->id, sizeof(m->id), "%s", id);
+        m->manifest = doc;
+        m->loaded = -1;
+        for (int j = 0; j < Mods_Count(); j++)
+            if (!Mods_Removed(j) && !strcmp(Mods_Directory(j), path)) { m->loaded = j; break; }
+    }
+    closedir(d);
+}
+static const char *export_name(int i)
+{
+    return Json_String(Json_Member(Json_Root(export_mods[i].manifest), "name"), export_mods[i].id);
+}
+static void export_scan(void)
+{
+    char path[1024];
+    const char *named = getenv("MEMORIES_MODS_DIR");
+    for (int i = 0; i < export_count; i++) Json_Free(export_mods[i].manifest);
+    memset(export_mods, 0, sizeof(export_mods));
+    export_count = export_scroll = export_sel = 0;
+    if (named && *named) export_scan_folder(named);
+    else {
+        if (!Paths_Program(path, sizeof(path), "mods")) export_scan_folder(path);
+        if (!Mods_Folder(path, sizeof(path))) export_scan_folder(path);
+        if (!Paths_User(path, sizeof(path), "mods")) export_scan_folder(path);
+    }
+    for (int i = 1; i < export_count; i++)
+        for (int j = i; j > 0 && strcmp(export_name(j - 1), export_name(j)) > 0; j--) {
+            ExportMod swap = export_mods[j];
+            export_mods[j] = export_mods[j - 1];
+            export_mods[j - 1] = swap;
+        }
+}
+static int export_selected(void)
+{
+    int n = 0;
+    for (int i = 0; i < export_count; i++) n += export_mods[i].selected;
+    return n;
+}
+static int pack_shown(int row)
+{
+    int total = pack_form ? export_count : pack_count + 1;
+    for (int i = 0; i < total; i++) {
+        const char *name = pack_form ? export_name(i) : i ? pack_names[i - 1] : "No modpack (normal mods)";
+        int chosen = pack_form ? export_mods[i].selected : i ? !strcmp(pack_chosen, name) : !pack_chosen[0];
+        int match = contains(name, pack_query);
+        if (pack_form)
+            match |= contains(export_mods[i].id, pack_query) ||
+                     contains(Json_String(Json_Member(Json_Root(export_mods[i].manifest), "author"), ""), pack_query);
+        if (!match || (pack_filter == 1 && !chosen) || (pack_filter == 2 && chosen)) continue;
+        if (row-- == 0) return i;
+    }
+    return -1;
+}
+static int pack_visible_count(void)
+{
+    int n = 0;
+    while (pack_shown(n) >= 0) n++;
+    return n;
+}
+typedef struct {
+    char *text;
+    size_t length, room;
+    int failed;
+} Text;
+static void add(Text *t, const char *s, size_t n)
+{
+    if (t->failed) return;
+    if (t->length + n + 1 > t->room) {
+        size_t room = t->room ? t->room : 4096;
+        char *grown;
+        while (t->length + n + 1 > room) room *= 2;
+        if (!(grown = realloc(t->text, room))) { t->failed = 1; return; }
+        t->text = grown;
+        t->room = room;
+    }
+    memcpy(t->text + t->length, s, n);
+    t->length += n;
+    t->text[t->length] = 0;
+}
+static void add_text(Text *t, const char *s) { add(t, s, strlen(s)); }
+static void add_string(Text *t, const char *s) /* a JSON string */
+{
+    char escape[8];
+    add(t, "\"", 1);
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\') { escape[0] = '\\'; escape[1] = (char)c; add(t, escape, 2); }
+        else if (c < 32) { snprintf(escape, sizeof(escape), "\\u%04x", c); add(t, escape, 6); }
+        else add(t, s, 1);
+    }
+    add(t, "\"", 1);
+}
+static void add_number(Text *t, long v)
+{
+    char number[32];
+    snprintf(number, sizeof(number), "%ld", v);
+    add_text(t, number);
+}
+/* Every file under `directory` into the .zip as `prefix`/..., its SHA-256 in `files`. */
+/* --- Export's .zip, written off the window's thread -------------------- *
+ * pack_export reads what only the window's thread may (the mods' order and
+ * settings) into modpack.json's head; a thread of its own then hashes every
+ * file and packs it, the bar in the footer showing how far (each file
+ * counts twice: read for its SHA-256, then packed), and Stop ends it (the
+ * .zip removed). export_poll ends the job on the window's thread. */
+static struct {
+    pthread_t thread;
+    int running;                     /* from pack_export until export_poll joins it */
+    int finished, ok, cancel;        /* atomic */
+    long long done, total;           /* atomic, bytes (twice each file's) */
+    int shown, count;                /* the permille last drawn; the mods packed */
+    char path[1100], poster[1024], name[64], why[400];
+    Text json;                       /* the head; the thread adds the files and the end */
+    ModsZipOut *zip;
+    int mods;
+    struct { char directory[1200], folder[16]; } *mod;
+} export_job;
+static int export_skipped(const char *name)
+{
+    return !strcmp(name, ".") || !strcmp(name, "..") || !strcmp(name, ".settings-applied") || !strncmp(name, ".import", 7);
+}
+/* The bytes of the files export_tree would pack. */
+static long long export_size(const char *directory)
+{
+    DIR *d = opendir(directory);
+    struct dirent *e;
+    long long sum = 0;
+    if (!d) return 0;
+    while ((e = readdir(d))) {
+        char path[1200];
+        struct stat info;
+        if (export_skipped(e->d_name) || (size_t)snprintf(path, sizeof(path), "%s/%s", directory, e->d_name) >= sizeof(path) ||
+            stat(path, &info))
+            continue;
+        sum += S_ISDIR(info.st_mode) ? export_size(path) : (long long)info.st_size;
+    }
+    closedir(d);
+    return sum;
+}
+static int export_tree(ModsZipOut *zip, Text *files, const char *directory, const char *prefix, char *why, size_t size)
+{
+    DIR *d = opendir(directory);
+    struct dirent *e;
+    int ok = 1;
+    if (!d) { snprintf(why, size, "Could not read %s.", directory); return 0; }
+    while (ok && (e = readdir(d))) {
+        char path[1200], name[1200], hex[65];
+        struct stat info;
+        if (export_skipped(e->d_name))
+            continue;
+        if (__atomic_load_n(&export_job.cancel, __ATOMIC_RELAXED)) {
+            snprintf(why, size, "Export stopped.");
+            ok = 0;
+        } else if ((size_t)snprintf(path, sizeof(path), "%s/%s", directory, e->d_name) >= sizeof(path) ||
+            (size_t)snprintf(name, sizeof(name), "%s/%s", prefix, e->d_name) >= sizeof(name) || stat(path, &info)) {
+            snprintf(why, size, "Could not read %s.", path);
+            ok = 0;
+        } else if (S_ISDIR(info.st_mode)) {
+            ok = export_tree(zip, files, path, name, why, size);
+        } else if (!Mods_Sha256FileProgress(path, hex, &export_job.done, &export_job.cancel)) {
+            if (__atomic_load_n(&export_job.cancel, __ATOMIC_RELAXED)) snprintf(why, size, "Export stopped.");
+            else snprintf(why, size, "Could not read %s.", path);
+            ok = 0;
+        } else {
+            if ((ok = Mods_ZipAddFile(zip, name, path, why, size))) {
+                if (files->length) add_text(files, ",\n    ");
+                add_string(files, name);
+                add_text(files, ": ");
+                add_string(files, hex);
+            }
+        }
+    }
+    closedir(d);
+    return ok;
+}
+static void *export_step(void *unused)
+{
+    Text files = {0};
+    long long total = 0;
+    int ok = 1;
+    struct stat info;
+    (void)unused;
+    for (int i = 0; i < export_job.mods; i++) total += 2 * export_size(export_job.mod[i].directory);
+    if (export_job.poster[0] && !stat(export_job.poster, &info)) total += (long long)info.st_size;
+    __atomic_store_n(&export_job.total, total, __ATOMIC_RELAXED);
+    Mods_ZipProgress(export_job.zip, &export_job.done, &export_job.cancel);
+    for (int i = 0; ok && i < export_job.mods; i++)
+        ok = export_tree(export_job.zip, &files, export_job.mod[i].directory, export_job.mod[i].folder, export_job.why, sizeof(export_job.why));
+    add_text(&export_job.json, "\n  ],\n  \"files\": {\n    ");
+    if (files.text) add_text(&export_job.json, files.text);
+    add_text(&export_job.json, "\n  }\n}\n");
+    if (ok && (export_job.json.failed || files.failed)) { snprintf(export_job.why, sizeof(export_job.why), "Out of memory."); ok = 0; }
+    if (ok && export_job.poster[0]) ok = Mods_ZipAddFile(export_job.zip, "poster.png", export_job.poster, export_job.why, sizeof(export_job.why));
+    if (ok) ok = Mods_ZipAddData(export_job.zip, "modpack.json", export_job.json.text, export_job.json.length, export_job.why, sizeof(export_job.why));
+    if (!ok) Mods_ZipAbandon(export_job.zip); /* Finish removes it */
+    ok = Mods_ZipFinish(export_job.zip, export_job.why, sizeof(export_job.why)) && ok; /* keeps an abandoned one's why */
+    export_job.zip = NULL;
+    free(files.text);
+    __atomic_store_n(&export_job.done, total, __ATOMIC_RELAXED);
+    __atomic_store_n(&export_job.ok, ok, __ATOMIC_RELAXED);
+    __atomic_store_n(&export_job.finished, 1, __ATOMIC_RELEASE);
+    return NULL;
+}
+static void pack_export(const char *chosen)
+{
+    char why[400] = "";
+    Text json = {0};
+    int count = 0;
+    size_t n = strlen(chosen);
+    if (export_job.running) return;
+    snprintf(export_job.path, sizeof(export_job.path), "%s%s", chosen, n > 4 && !strcmp(chosen + n - 4, ".zip") ? "" : ".zip");
+    for (int i = 0; i < export_count; i++) count += export_mods[i].selected;
+    if (!count) {
+        put(status, sizeof(status), "Tick at least one mod in the list to export it.");
+        return;
+    }
+    free(export_job.mod);
+    if (!(export_job.mod = calloc((size_t)count, sizeof(*export_job.mod)))) {
+        put(status, sizeof(status), "Out of memory.");
+        return;
+    }
+    if (!(export_job.zip = Mods_ZipCreate(export_job.path, why, sizeof(why)))) {
+        put(status, sizeof(status), "%s", why);
+        return;
+    }
+    add_text(&json, "{\n  \"name\": ");
+    add_string(&json, pack_name);
+    add_text(&json, ",\n  \"version\": ");
+    add_string(&json, pack_version);
+    add_text(&json, ",\n  \"author\": ");
+    add_string(&json, pack_author);
+    add_text(&json, ",\n  \"description\": ");
+    add_string(&json, pack_description);
+    add_text(&json, ",\n  \"locked\": ");
+    add_text(&json, pack_lock ? "true" : "false");
+    if (pack_poster[0]) add_text(&json, ",\n  \"poster\": \"poster.png\"");
+    add_text(&json, ",\n  \"mods\": [");
+    export_job.mods = 0;
+    for (int i = 0; i < export_count; i++) {
+        ExportMod *m = &export_mods[i];
+        const JsonValue *root = Json_Root(m->manifest), *options = Json_Member(root, "settings");
+        if (!m->selected) continue;
+        /* Unique archive directories even when two source roots use the same basename. */
+        snprintf(export_job.mod[export_job.mods].folder, sizeof(export_job.mod[0].folder), "mod-%03d", i + 1);
+        snprintf(export_job.mod[export_job.mods].directory, sizeof(export_job.mod[0].directory), "%s", m->directory);
+        add_text(&json, export_job.mods ? ",\n    {" : "\n    {");
+        add_text(&json, "\"id\": ");
+        add_string(&json, m->id);
+        add_text(&json, ", \"name\": ");
+        add_string(&json, export_name(i));
+        add_text(&json, ", \"author\": ");
+        add_string(&json, Json_String(Json_Member(root, "author"), ""));
+        add_text(&json, ", \"folder\": ");
+        add_string(&json, export_job.mod[export_job.mods].folder);
+        add_text(&json, ", \"order\": ");
+        add_number(&json, m->loaded >= 0 ? ranks[m->loaded] : Json_Number(Json_Member(root, "priority"), 0));
+        add_text(&json, ", \"settings\": {");
+        for (int j = 0; j < Json_Count(options); j++) {
+            const JsonValue *option = Json_At(options, j);
+            const char *key = str(option, "key", "");
+            int value = Mods_Setting(m->id, key, Json_Number(Json_Member(option, "default"), 0));
+            if (m->loaded >= 0)
+                for (int v = 0; v < counts[m->loaded]; v++)
+                    if (!strcmp(str(Mods_Option(m->loaded, v), "key", ""), key)) value = values[m->loaded][v];
+            if (j) add_text(&json, ", ");
+            add_string(&json, key);
+            add_text(&json, ": ");
+            add_number(&json, value);
+        }
+        add_text(&json, "}}");
+        export_job.mods++;
+    }
+    export_job.json = json;
+    export_job.count = count;
+    snprintf(export_job.poster, sizeof(export_job.poster), "%s", pack_poster);
+    snprintf(export_job.name, sizeof(export_job.name), "%s", pack_name);
+    export_job.why[0] = 0;
+    export_job.done = export_job.total = 0;
+    export_job.finished = export_job.ok = export_job.cancel = 0;
+    export_job.shown = -1;
+    if (pthread_create(&export_job.thread, NULL, export_step, NULL)) {
+        char ignored[8];
+        Mods_ZipAbandon(export_job.zip);
+        Mods_ZipFinish(export_job.zip, ignored, sizeof(ignored));
+        export_job.zip = NULL;
+        free(export_job.json.text);
+        export_job.json.text = NULL;
+        put(status, sizeof(status), "Could not start the export.");
+        return;
+    }
+    export_job.running = 1;
+    put(status, sizeof(status), "Exporting %s to %s", pack_name, export_job.path);
+}
+/* Each tick: 1 when the bar moved or the export ended (a redraw). */
+static int export_poll(void)
+{
+    if (!export_job.running) return 0;
+    if (!__atomic_load_n(&export_job.finished, __ATOMIC_ACQUIRE)) {
+        long long done = __atomic_load_n(&export_job.done, __ATOMIC_RELAXED), total = __atomic_load_n(&export_job.total, __ATOMIC_RELAXED);
+        int permille = total > 0 ? (int)(done * 1000 / total) : 0;
+        if (permille == export_job.shown) return 0;
+        export_job.shown = permille;
+        return 1;
+    }
+    pthread_join(export_job.thread, NULL);
+    export_job.running = 0;
+    free(export_job.json.text);
+    memset(&export_job.json, 0, sizeof(export_job.json));
+    if (export_job.ok) {
+        pack_form = 0;
+        put(status, sizeof(status), "Exported %d mod(s) to %s", export_job.count, export_job.path);
+    } else
+        put(status, sizeof(status), "%s", export_job.why);
+    return 1;
+}
+/* The footer's bar while the export runs, in `r`. */
+static void export_bar(MenuCanvas *c, Rect r)
+{
+    char line[160];
+    long long done = __atomic_load_n(&export_job.done, __ATOMIC_RELAXED), total = __atomic_load_n(&export_job.total, __ATOMIC_RELAXED);
+    int percent = total > 0 ? (int)min(100, done * 100 / total) : 0, pw = width_text("100%") + 12 * unit;
+    fill(c, r, BG);
+    fill(c, rect(r.x, r.y, (int)((long long)r.w * min(percent, 100) / 100), r.h), 0x2f6f4fu);
+    put(line, sizeof(line), "%d%%", percent);
+    text(c, r.x + r.w - pw, r.y + r.h / 2, pw, line, TEXT);
+    put(line, sizeof(line), "Exporting %s...", export_job.name);
+    text(c, r.x + 10 * unit, r.y + r.h / 2, r.w - pw - 16 * unit, line, TEXT);
+}
+static void pack_set_poster(const char *path)
+{
+    int w, h;
+    uint32_t *pixels = png_pixels(path, &w, &h);
+    free(pixels);
+    if (!pixels) { put(status, sizeof(status), "The poster must be a .png image."); return; }
+    snprintf(pack_poster, sizeof(pack_poster), "%s", path);
+    status[0] = 0;
+}
+static int pack_poll(void)
+{
+    char path[1024], why[300];
+    int result;
+    if (!pack_picking || !pack_picked) return 0;
+    result = pack_picked(path, sizeof(path), why, sizeof(why));
+    if (!result) return 0;
+    pack_picking = 0;
+    if (result == 1) {
+        if (pack_kind == 0) pack_import(path);
+        else if (pack_kind == 1) pack_set_poster(path);
+        else pack_export(path);
+    } else if (result == -2)
+        put(status, sizeof(status), "%s", why);
+    else
+        status[0] = 0;
+    return 1;
+}
+/* The file an export suggests: <modpacks folder>/<name>_<version>.zip */
+static char export_suggestion[1300];
+const char *ModsWindow_ExportSuggestion(void)
+{
+    char dir[1024], name[200], both[200];
+    snprintf(both, sizeof(both), "%.90s_%.40s", pack_name, pack_version);
+    folder_name(name, sizeof(name), both);
+    if (Mods_ModpackDirectory(dir, sizeof(dir))) snprintf(export_suggestion, sizeof(export_suggestion), "%s.zip", name);
+    else snprintf(export_suggestion, sizeof(export_suggestion), "%s/%s.zip", dir, name);
+#ifdef _WIN32
+    for (char *c = export_suggestion; *c; c++) if (*c == '/') *c = '\\';
+#endif
+    return export_suggestion;
+}
+static void pack_ask_file(int kind)
+{
+    char why[300] = "";
+    if (pack_picking) return;
+    if (!pack_pick) {
+        put(status, sizeof(status), "This build has no file picker.");
+        return;
+    }
+    pack_kind = kind;
+    if (pack_pick(kind, why, sizeof(why))) put(status, sizeof(status), "%s", why);
+    else pack_picking = 1;
+}
+
+/* --- The tab's layout, drawing and presses ---------------------------- */
+typedef struct {
+    Rect tab, list, detail, import, folder, export_;
+    Rect activate, bar;                         /* the detail's foot: Activate modpack, its progress */
+    Rect fields[4], poster, lock, save, cancel; /* Export's form */
+} PackLayout;
+static void pack_layout(const Layout *l, PackLayout *k)
+{
+    int b = 34 * unit, g = 10 * unit, x, y, w, w2;
+    memset(k, 0, sizeof(*k));
+    k->tab = rect(l->search.x, 104 * unit, l->search.w, 28 * unit); /* under the search, over the filter */
+    if (!packs) return;
+    k->list = l->list;
+    k->detail = rect(l->detail.x, 64 * unit, l->detail.w, l->detail.y + l->detail.h - 64 * unit);
+    x = k->detail.x + 16 * unit;
+    w = min(260 * unit, (k->detail.w - 32 * unit - g) / 2);
+    w2 = w;
+    if (pack_form) {
+        /* the fields, the description at least 132 high, the poster, the
+         * lock and the hint line; the buttons are the footer's */
+        int rest = 52 * unit + 3 * (b + g) + g + b + g + b + 40 * unit + LINE;
+        int form_h = max(k->detail.h, rest + 132 * unit); /* the form; the preview follows it */
+        pack_form_h = form_h + pack_preview_h;
+        pack_form_scroll = max(0, min(pack_form_scroll, pack_form_h - k->detail.h));
+        y = k->detail.y + 52 * unit - pack_form_scroll;
+        for (int i = 0; i < 3; i++, y += b + g)
+            k->fields[i] = rect(x + 90 * unit, y, k->detail.w - 122 * unit, b);
+        int description_h = form_h - rest;
+        k->fields[3] = rect(x + 90 * unit, y, k->detail.w - 122 * unit, description_h);
+        y += description_h + g;
+        k->poster = rect(x + 90 * unit, y, w, b);
+        y += b + g;
+        k->lock = rect(x, y, k->detail.w - 32 * unit, b);
+        (void)w2;
+        k->cancel = rect(l->close.x - 8 * unit - l->close.w, l->close.y, l->close.w, l->close.h);
+        w = max(120 * unit, width_text("Choosing where...") + 24 * unit);
+        k->save = rect(k->cancel.x - 8 * unit - w, l->close.y, w, l->close.h);
+        return;
+    }
+    w = max(width_text("Restart to activate"), width_text("Activate modpack")) + 28 * unit;
+    k->activate = rect(k->detail.x + k->detail.w - 16 * unit - w, k->detail.y + k->detail.h - 36 * unit, w, 28 * unit);
+    k->bar = rect(k->detail.x + 16 * unit, k->activate.y, k->activate.x - k->detail.x - 26 * unit, 28 * unit);
+    /* The Modpacks actions share the footer with Close. */
+    g = 8 * unit;
+    w = max(130 * unit, max(width_text("Import..."), max(width_text("Export..."), width_text("Open folder"))) + 24 * unit);
+    w = min(w, (l->close.x - 20 * unit - 3 * g) / 3);
+    x = l->close.x - 3 * (w + g);
+    y = l->close.y;
+    k->import = rect(x, y, w, l->close.h);
+    k->export_ = rect(x + w + g, y, w, l->close.h);
+    k->folder = rect(x + 2 * (w + g), y, w, l->close.h);
+}
+static int pack_rows(const PackLayout *k) { return max(1, k->list.h / (44 * unit)); }
+/* --- The description, formatted as Discord formats a message ----------- *
+ * Lines: "# ", "## ", "### " headings, "-# " small print, "> " a quote and
+ * ">>> " the rest quoted, "- " or "* " a list item (two spaces before it a
+ * level deeper), "1. " a numbered one, and ``` fences round a code block.
+ * Inline: **bold**, *italic* or _italic_, __underline__, ~~strikethrough~~
+ * (nested as in ***bold italic***), `code`, ||spoiler||, [text](link) and
+ * plain links; "\" before a mark shows the mark. A mark with no partner
+ * later shows as typed. The editor keeps the markup visible; empty lines are
+ * kept. Without a canvas it only measures. */
+enum { MD_BOLD = 1, MD_ITALIC = 2, MD_UNDERLINE = 4, MD_STRIKE = 8, MD_CODE = 16, MD_SPOILER = 32, MD_LINK = 64 };
+#define MD_QUOTE_BAR 0x4e5058u
+#define MD_CODE_BG 0x1a1d22u
+#define MD_SPOILER_BG 0x15171bu
+/* The same mark later in the text: its partner. */
+static int md_partner(const char *after, const char *mark)
+{
+    return strstr(after, mark) != NULL;
+}
+/* A lone _ marks only at a word's edge (snake_case stays as typed). */
+static int md_edge(const char *s, const char *start, int opening)
+{
+    unsigned char before = s > start ? (unsigned char)s[-1] : ' ', after = (unsigned char)s[1];
+    return opening ? (isspace(before) || ispunct(before)) && after && !isspace(after)
+                   : !isspace(before) && (!after || isspace(after) || ispunct(after));
+}
+/* The width of the word starting at `s` (to a space or the line's end), its
+ * marks left out: a word that does not fit goes whole to the next line. */
+static int md_word(const char *s, const char *end, int scale)
+{
+    char glyph[8];
+    int w = 0;
+    while (s < end && !isspace((unsigned char)*s)) {
+        int n = 0;
+        if (strchr("*_~`|\\", *s)) { s++; continue; }
+        do { glyph[n++] = *s++; } while (n < 4 && s < end && ((unsigned char)*s & 0xc0) == 0x80);
+        glyph[n] = 0;
+        w += Menu_TextWidthScaled(glyph, unit * scale);
+    }
+    return w;
+}
+/* One glyph with its marks, at `at` on the line whose top is `top`, `lh` high. */
+static void md_glyph(MenuCanvas *c, int at, int top, int lh, int scale, const char *g, int advance, unsigned color,
+                     int flags)
+{
+    int mid = top + lh / 2, s = unit * scale;
+    if (!c || top + lh <= 0 || top >= c->height) return;
+    if (flags & MD_CODE) fill(c, rect(at, top + 2 * unit, advance, lh - 4 * unit), 0x363b46u); /* lighter than the panel */
+    if (flags & MD_SPOILER) {
+        fill(c, rect(at, top + 2 * unit, advance, lh - 4 * unit), MD_SPOILER_BG);
+        color = 0x3a3e46u; /* hidden, as Discord's is until clicked */
+    }
+    if (flags & MD_ITALIC) {
+        /* No italic face: the glyph drawn upright on a copy of what is
+         * under it, then put back slanted, its top leaning right. */
+        int w = advance + lh / 4 + 2 * unit, h = lh;
+        uint32_t *before = malloc((size_t)w * h * 4), *after = malloc((size_t)w * h * 4);
+        if (before && after) {
+            MenuCanvas b = {0};
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++) {
+                    int px = at + x, py = top + y;
+                    before[y * w + x] = px >= 0 && px < c->width && py >= 0 && py < c->height ? c->pixels[py * c->stride + px] : 0;
+                }
+            memcpy(after, before, (size_t)w * h * 4);
+            b.pixels = after, b.stride = b.width = w, b.height = h;
+            Menu_DrawTextScaled(&b, 0, h / 2, g, color, s);
+            if (flags & MD_BOLD) Menu_DrawTextScaled(&b, unit, h / 2, g, color, s);
+            for (int y = 0; y < h; y++) {
+                int lean = (h - y) / 5, py = top + y;
+                if (py < 0 || py >= c->height) continue;
+                for (int x = 0; x < w; x++) {
+                    int px = at + x + lean;
+                    if (after[y * w + x] != before[y * w + x] && px >= 0 && px < c->width)
+                        c->pixels[py * c->stride + px] = after[y * w + x];
+                }
+            }
+        }
+        free(before);
+        free(after);
+    } else {
+        Menu_DrawTextScaled(c, at, mid, g, color, s);
+        if (flags & MD_BOLD) Menu_DrawTextScaled(c, at + unit, mid, g, color, s);
+    }
+    if (flags & (MD_UNDERLINE | MD_LINK)) fill(c, rect(at, top + lh - 4 * unit, advance, unit), color);
+    if (flags & MD_STRIKE) fill(c, rect(at, mid, advance, unit), color);
+}
+static int pack_description_draw(MenuCanvas *c, int x, int y, int w, const char *s, int formatted)
+{
+    const char *whole = s;
+    int flags = 0, quote_rest = 0, code_block = 0;
+    const char *link_text_end = NULL, *link_end = NULL, *url_end = NULL;
+    if (!formatted) { /* as typed */
+        int at = x;
+        while (*s) {
+            char glyph[8];
+            int n = 0, advance;
+            if (*s == '\r') { s++; continue; }
+            if (*s == '\n') { y += LINE; at = x; s++; continue; }
+            do { glyph[n++] = *s++; } while (n < 4 && ((unsigned char)*s & 0xc0) == 0x80);
+            glyph[n] = 0;
+            advance = width_text(glyph);
+            if (at > x && at + advance > x + w) { y += LINE; at = x; }
+            if (c && y + LINE > 0 && y < c->height) text(c, at, y + LINE / 2, advance + unit, glyph, TEXT);
+            at += advance;
+        }
+        return y + LINE;
+    }
+    while (*s) {
+        /* --- one line of the text: what it is, from its start --- */
+        const char *end = strchr(s, '\n');
+        int scale = 1, bold_line = 0, quote = quote_rest, indent = 0, lh, at, left, line_flags;
+        unsigned color = TEXT;
+        char marker[16] = "";
+        if (!end) end = s + strlen(s);
+        if (end - s >= 3 && !strncmp(s, "```", 3)) { /* a fence: not shown */
+            code_block = !code_block;
+            s = *end ? end + 1 : end;
+            continue;
+        }
+        if (code_block) {
+            /* the block's line as typed, on its dark ground */
+            lh = LINE;
+            at = x + 8 * unit;
+            if (c) fill(c, rect(x, y, w, lh), MD_CODE_BG);
+            for (const char *p = s; p < end;) {
+                char glyph[8];
+                int n = 0, advance;
+                if (*p == '\r') { p++; continue; }
+                do { glyph[n++] = *p++; } while (n < 4 && p < end && ((unsigned char)*p & 0xc0) == 0x80);
+                glyph[n] = 0;
+                advance = width_text(glyph);
+                if (at > x + 8 * unit && at + advance > x + w - 8 * unit) {
+                    y += lh;
+                    at = x + 8 * unit;
+                    if (c) fill(c, rect(x, y, w, lh), MD_CODE_BG);
+                }
+                md_glyph(c, at, y, lh, 1, glyph, advance, 0xd7dbe2u, 0);
+                at += advance;
+            }
+            y += lh;
+            s = *end ? end + 1 : end;
+            continue;
+        }
+        if (!strncmp(s, ">>> ", 4)) { quote = quote_rest = 1; s += 4; }
+        else if (!strncmp(s, "> ", 2)) { quote = 1; s += 2; }
+        if (!strncmp(s, "### ", 4)) { bold_line = 1; color = 0xd5d9e0u; s += 4; }
+        else if (!strncmp(s, "## ", 3)) { bold_line = 1; s += 3; }
+        else if (!strncmp(s, "# ", 2)) { scale = 2; bold_line = 1; s += 2; }
+        else if (!strncmp(s, "-# ", 3)) { color = DIM; s += 3; }
+        else {
+            const char *p = s;
+            int spaces = 0;
+            while (*p == ' ') { spaces++; p++; }
+            if ((p[0] == '-' || p[0] == '*') && p[1] == ' ') {
+                indent = 1 + spaces / 2;
+                snprintf(marker, sizeof(marker), "%s", "\x01"); /* a bullet */
+                s = p + 2;
+            } else if (isdigit((unsigned char)p[0])) {
+                const char *q = p;
+                while (isdigit((unsigned char)*q) && q - p < 9) q++;
+                if (q[0] == '.' && q[1] == ' ') {
+                    indent = 1 + spaces / 2;
+                    snprintf(marker, sizeof(marker), "%.*s.", (int)(q - p), p);
+                    s = q + 2;
+                }
+            }
+        }
+        lh = LINE * scale + (bold_line && scale == 1 ? 4 * unit : 0);
+        left = x + (quote ? 14 * unit : 0) + indent * 18 * unit;
+        at = left;
+        if (c && quote) fill(c, rect(x, y, 4 * unit, lh), MD_QUOTE_BAR);
+        if (c && *marker) {
+            if (marker[0] == '\x01') {
+                int d = 5 * unit;
+                if (indent > 1) { /* a deeper level: a hollow square */
+                    fill(c, rect(left - 11 * unit, y + lh / 2 - d / 2, d, d), color);
+                    fill(c, rect(left - 11 * unit + unit, y + lh / 2 - d / 2 + unit, d - 2 * unit, d - 2 * unit), PANEL);
+                } else
+                    fill(c, rect(left - 11 * unit, y + lh / 2 - d / 2, d, d), color);
+            } else
+                text(c, left - 4 * unit - width_text(marker), y + lh / 2, width_text(marker) + unit, marker, DIM);
+        }
+        line_flags = bold_line ? MD_BOLD : 0;
+        /* --- its characters --- */
+        while (s < end) {
+            char glyph[8];
+            int n = 0, advance, f;
+            unsigned col = color;
+            if (*s == '\r') { s++; continue; }
+            if (link_end && s == link_text_end) { s = url_end + 1; link_end = link_text_end = url_end = NULL; flags &= ~MD_LINK; continue; }
+            if (*s == '\\' && s + 1 < end && strchr("*_~`|>#-[\\", s[1])) {
+                s++; /* the mark shown as typed */
+            } else if (flags & MD_CODE) {
+                if (*s == '`') { flags &= ~MD_CODE; s++; continue; }
+            } else if (*s == '`' && md_partner(s + 1, "`")) { flags |= MD_CODE; s++; continue; }
+            else if (!strncmp(s, "||", 2) && ((flags & MD_SPOILER) || md_partner(s + 2, "||"))) {
+                flags ^= MD_SPOILER; s += 2; continue;
+            } else if (!strncmp(s, "~~", 2) && ((flags & MD_STRIKE) || md_partner(s + 2, "~~"))) {
+                flags ^= MD_STRIKE; s += 2; continue;
+            } else if (!strncmp(s, "**", 2) && ((flags & MD_BOLD) || md_partner(s + 2, "**"))) {
+                flags ^= MD_BOLD; s += 2; continue;
+            } else if (!strncmp(s, "__", 2) && ((flags & MD_UNDERLINE) || md_partner(s + 2, "__"))) {
+                flags ^= MD_UNDERLINE; s += 2; continue;
+            } else if (*s == '*' && ((flags & MD_ITALIC) ? 1 : s[1] != ' ' && md_partner(s + 1, "*"))) {
+                flags ^= MD_ITALIC; s++; continue;
+            } else if (*s == '_' && md_edge(s, whole, !(flags & MD_ITALIC)) && ((flags & MD_ITALIC) || md_partner(s + 1, "_"))) {
+                flags ^= MD_ITALIC; s++; continue;
+            } else if (*s == '[' && !link_end) {
+                const char *close = strstr(s, "](");
+                const char *paren = close ? strchr(close + 2, ')') : NULL;
+                if (close && paren && close < end && paren < end && close > s + 1 &&
+                    (!strncmp(close + 2, "http://", 7) || !strncmp(close + 2, "https://", 8))) {
+                    link_text_end = close;
+                    link_end = close;
+                    url_end = paren;
+                    flags |= MD_LINK;
+                    s++;
+                    continue;
+                }
+            }
+            f = flags | line_flags;
+            if (!(f & MD_CODE) && (s == whole || isspace((unsigned char)s[-1])) &&
+                (!strncmp(s, "https://", 8) || !strncmp(s, "http://", 7))) {
+                /* a plain link: blue to the next space */
+                while (s < end && !isspace((unsigned char)*s)) {
+                    char g2[8];
+                    int m = 0, a2;
+                    do { g2[m++] = *s++; } while (m < 4 && s < end && ((unsigned char)*s & 0xc0) == 0x80);
+                    g2[m] = 0;
+                    a2 = Menu_TextWidthScaled(g2, unit * scale);
+                    if (at > left && at + a2 > x + w) {
+                        y += lh; at = left;
+                        if (c && quote) fill(c, rect(x, y, 4 * unit, lh), MD_QUOTE_BAR);
+                    }
+                    md_glyph(c, at, y, lh, scale, g2, a2, BLUE, f | MD_LINK);
+                    at += a2;
+                }
+                continue;
+            }
+            if (at > left && !isspace((unsigned char)*s) && isspace((unsigned char)s[-1])) {
+                int word = md_word(s, end, scale);
+                if (word <= w - (left - x) && at + word > x + w) { /* the word moves down whole */
+                    y += lh;
+                    at = left;
+                    if (c && quote) fill(c, rect(x, y, 4 * unit, lh), MD_QUOTE_BAR);
+                }
+            }
+            do { glyph[n++] = *s++; } while (n < 4 && s < end && ((unsigned char)*s & 0xc0) == 0x80);
+            glyph[n] = 0;
+            advance = Menu_TextWidthScaled(glyph, unit * scale) + ((f & MD_BOLD) ? unit : 0);
+            if (at == left && glyph[0] == ' ' && !glyph[1] && s - 1 > whole && s[-2] != '\n')
+                continue; /* the space a line broke at */
+            if (at > left && at + advance > x + w) {
+                y += lh;
+                at = left;
+                if (c && quote) fill(c, rect(x, y, 4 * unit, lh), MD_QUOTE_BAR);
+            }
+            if (f & MD_LINK) col = BLUE;
+            if (f & MD_CODE) col = 0xd7dbe2u;
+            md_glyph(c, at, y, lh, scale, glyph, advance, col, f);
+            at += advance;
+        }
+        y += lh;
+        if (!*end) break;
+        s = end + 1;
+        if (!*s) { /* a last empty line still takes its room, as typed */
+            y += LINE;
+            break;
+        }
+    }
+    return *whole ? y : y + LINE; /* nothing typed: one empty line */
+}
+static void description_reveal(const PackLayout *k)
+{
+    int x, y, h = k->fields[3].h - 12 * unit;
+    TextEdit_Position(pack_description, description_edit.cursor, k->fields[3].w - 20 * unit,
+                      LINE, width_text, &x, &y);
+    if (y < description_scroll) description_scroll = y;
+    if (y + LINE > description_scroll + h) description_scroll = y + LINE - h;
+}
+static int description_insert(const char *s)
+{
+    if (!TextEdit_Insert(&description_edit, pack_description, sizeof(pack_description), s)) {
+        put(status, sizeof(status), "Description is too long (maximum 8191 UTF-8 bytes). Nothing was pasted.");
+        return 0;
+    }
+    status[0] = 0;
+    return 1;
+}
+static void description_paint(MenuCanvas *c, int offset, int w)
+{
+    int x = 0, y = offset;
+    size_t lo = min(description_edit.cursor, description_edit.anchor);
+    size_t hi = max(description_edit.cursor, description_edit.anchor);
+    for (size_t i = 0;;) {
+        size_t next = TextEdit_Next(pack_description, i), n = next - i;
+        char glyph[8];
+        if (n > 4) n = 4;
+        memcpy(glyph, pack_description + i, n); glyph[n] = 0;
+        int advance = pack_description[i] == '\n' ? 0 : width_text(glyph);
+        if (x && x + advance > w) { x = 0; y += LINE; }
+        if (pack_focus == 4 && i >= lo && i < hi)
+            fill(c, rect(x, y, max(advance, 5 * unit), LINE), ACCENT);
+        if (pack_focus == 4 && i == description_edit.cursor)
+            fill(c, rect(x, y, max(1, unit), LINE), TEXT);
+        if (!pack_description[i]) break;
+        if (pack_description[i] == '\n') { x = 0; y += LINE; }
+        else {
+            text(c, x, y + LINE / 2, advance + unit, glyph, TEXT);
+            x += advance;
+        }
+        i = next;
+    }
+}
+static int description_key(const MenuEvent *e)
+{
+    Layout l;
+    PackLayout k;
+    int shift = (e->modifiers & MENU_MOD_SHIFT) != 0, ctrl = (e->modifiers & MENU_MOD_CTRL) != 0;
+    size_t n = strlen(pack_description), at = description_edit.cursor;
+    if (e->type != MENU_EVENT_KEY_DOWN && e->type != MENU_EVENT_TEXT) return 0;
+    layout(&l); pack_layout(&l, &k);
+    if (e->type == MENU_EVENT_TEXT) {
+        if (!ctrl) description_insert(e->text);
+    } else if (ctrl && e->key == MENU_KEY_A) {
+        description_edit.anchor = 0; description_edit.cursor = n;
+    } else if (ctrl && (e->key == MENU_KEY_C || e->key == MENU_KEY_X)) {
+        size_t lo = min(at, description_edit.anchor), hi = max(at, description_edit.anchor);
+        if (hi > lo) {
+            char copy[sizeof(pack_description)];
+            memcpy(copy, pack_description + lo, hi - lo); copy[hi - lo] = 0;
+            if (!clipboard_write || !clipboard_write(copy))
+                put(status, sizeof(status), "Could not copy the selected text.");
+            else if (e->key == MENU_KEY_X) description_insert("");
+        }
+    } else if (ctrl && e->key == MENU_KEY_V) {
+        char paste[sizeof(pack_description)];
+        if (!clipboard_read || !clipboard_read(paste, sizeof(paste)))
+            put(status, sizeof(status), "Could not paste: clipboard unavailable or text exceeds 8191 UTF-8 bytes.");
+        else description_insert(paste);
+    } else if (e->key == MENU_KEY_LEFT || e->key == MENU_KEY_RIGHT) {
+        int right = e->key == MENU_KEY_RIGHT;
+        if (!shift && at != description_edit.anchor)
+            at = right ? max(at, description_edit.anchor) : min(at, description_edit.anchor);
+        else if (ctrl) {
+            if (right) {
+                while (at < n && !isspace((unsigned char)pack_description[at])) at = TextEdit_Next(pack_description, at);
+                while (at < n && isspace((unsigned char)pack_description[at])) at++;
+            } else {
+                while (at && isspace((unsigned char)pack_description[at - 1])) at--;
+                while (at && !isspace((unsigned char)pack_description[at - 1])) at = TextEdit_Previous(pack_description, at);
+            }
+        } else at = right ? TextEdit_Next(pack_description, at) : TextEdit_Previous(pack_description, at);
+        TextEdit_Move(&description_edit, at, shift);
+    } else if (e->key == MENU_KEY_HOME || e->key == MENU_KEY_END) {
+        if (ctrl) at = e->key == MENU_KEY_HOME ? 0 : n;
+        else if (e->key == MENU_KEY_HOME) { while (at && pack_description[at - 1] != '\n') at--; }
+        else { while (pack_description[at] && pack_description[at] != '\n') at++; }
+        TextEdit_Move(&description_edit, at, shift);
+    } else if (e->key == MENU_KEY_UP || e->key == MENU_KEY_DOWN ||
+               e->key == MENU_KEY_PAGE_UP || e->key == MENU_KEY_PAGE_DOWN) {
+        int x, y, w = k.fields[3].w - 20 * unit;
+        int step = (e->key == MENU_KEY_PAGE_UP || e->key == MENU_KEY_PAGE_DOWN) ? max(LINE, k.fields[3].h - LINE) : LINE;
+        TextEdit_Position(pack_description, at, w, LINE, width_text, &x, &y);
+        if (description_edit.preferred_x >= 0) x = description_edit.preferred_x;
+        if (e->key == MENU_KEY_UP || e->key == MENU_KEY_PAGE_UP) step = -step;
+        TextEdit_Move(&description_edit, TextEdit_Hit(pack_description, w, LINE, width_text, x, y + step), shift);
+        description_edit.preferred_x = x;
+    } else if (e->key == MENU_KEY_BACKSPACE || e->key == MENU_KEY_DELETE) {
+        if (at == description_edit.anchor)
+            description_edit.anchor = e->key == MENU_KEY_BACKSPACE ? TextEdit_Previous(pack_description, at)
+                                                                  : TextEdit_Next(pack_description, at);
+        description_insert("");
+    } else if (e->key == MENU_KEY_ENTER && e->button != ' ') description_insert("\n");
+    else if (e->key == MENU_KEY_TAB || e->key == MENU_KEY_ESCAPE) pack_focus = 0;
+    /* Printable keys, including Space, arrive once through TEXT_INPUT. */
+    description_reveal(&k);
+    return 1;
+}
+/* The poster, scaled into `r` (nearest pixel), letterboxed. */
+/* What the detail shows of a modpack, and the Export form's preview of the
+ * one being made: drawn the same way by pack_view_draw. */
+typedef struct {
+    const char *name, *version, *author, *description;
+    int locked;
+    const uint32_t *poster;
+    int poster_w, poster_h;
+    int mods;                                                    /* how many cards */
+    void (*mod)(int i, const char **name, const char **author); /* the i-th card's */
+} PackView;
+static void poster_paint(MenuCanvas *c, Rect r, const uint32_t *pixels, int pw, int ph)
+{
+    int w = r.w, h = r.w * ph / max(1, pw);
+    if (h > r.h) { h = r.h; w = r.h * pw / max(1, ph); }
+    for (int y = 0; y < h; y++) {
+        int py = r.y + y, sy = y * ph / h;
+        if (py < 0 || py >= c->height) continue;
+        for (int x = 0; x < w; x++) {
+            int px = r.x + (r.w - w) / 2 + x;
+            if (px >= 0 && px < c->width)
+                c->pixels[py * c->stride + px] = 0xff000000u | pixels[(size_t)sy * pw + x * pw / w];
+        }
+    }
+}
+/* Poster, name, version and author, description, the lock and a card per mod
+ * from `y`; the y under them. */
+static int pack_view_draw(MenuCanvas *c, int x, int y, int w, const PackView *v)
+{
+    char line[512];
+    if (v->poster) {
+        /* Twice the previous 320x180 box, constrained only by the panel width. */
+        int bw = min(w, 640 * unit), bh = min(360 * unit, bw * v->poster_h / max(1, v->poster_w));
+        Rect r = rect(x, y, bw, bh);
+        poster_paint(c, r, v->poster, v->poster_w, v->poster_h);
+        y += r.h + 8 * unit;
+    }
+    text(c, x, y + 10 * unit, w, v->name, TEXT);
+    y += 24 * unit;
+    if (*v->version || *v->author) {
+        put(line, sizeof(line), "%s%s%s%s", *v->version ? "Version " : "", v->version,
+            *v->version && *v->author ? "  /  " : "", v->author);
+        text(c, x, y + 8 * unit, w, line, DIM);
+        y += 22 * unit;
+    }
+    if (*v->description) {
+        y = pack_description_draw(c, x, y, w, v->description, 1);
+        y += 4 * unit;
+    }
+    if (v->locked) {
+        text(c, x, y + 8 * unit, w, "Settings locked by its author", WARN);
+        y += 22 * unit;
+    }
+    if (v->mods) {
+        /* A card per mod: its name on the left, its author in a chip on
+         * the right. */
+        int card = 24 * unit, gap = 4 * unit;
+        put(line, sizeof(line), "Mods (%d)", v->mods);
+        text(c, x, y + 10 * unit, w, line, DIM);
+        y += 22 * unit;
+        for (int i = 0; i < v->mods; i++) {
+            const char *name = "?", *who = "";
+            v->mod(i, &name, &who);
+            int chip_w = *who ? min(width_text(who) + 16 * unit, w / 2) : 0;
+            Rect row = rect(x, y, w, card), chip = rect(x + w - chip_w - 4 * unit, y + 3 * unit, chip_w, card - 6 * unit);
+            fill(c, row, i % 2 ? 0x262b33u : 0x2a303au);
+            fill(c, rect(x, y, 3 * unit, card), ACCENT); /* a stripe on the card's left */
+            text(c, x + 12 * unit, y + card / 2, w - chip_w - 24 * unit, name, TEXT);
+            if (chip_w) {
+                fill(c, chip, 0x1f3354u);
+                centred(c, chip, who, BLUE);
+            }
+            y += card + gap;
+        }
+    }
+    return y;
+}
+/* The shown modpack's i-th mod, from its modpack.json. */
+static void detail_mod(int i, const char **name, const char **author)
+{
+    const JsonValue *m = Json_At(Json_Member(Json_Root(pack_info), "mods"), i);
+    *name = Json_String(Json_Member(m, "name"), "?");
+    *author = Json_String(Json_Member(m, "author"), "");
+}
+/* The Export form's preview: the i-th ticked mod. */
+static void export_preview_mod(int i, const char **name, const char **author)
+{
+    for (int j = 0; j < export_count; j++)
+        if (export_mods[j].selected && !i--) {
+            *name = export_name(j);
+            *author = Json_String(Json_Member(Json_Root(export_mods[j].manifest), "author"), "");
+            return;
+        }
+}
+/* The poster chosen for the export, read once per path for the preview. */
+static uint32_t *preview_pixels;
+static int preview_w, preview_h;
+static char preview_of[1024];
+static void preview_poster(void)
+{
+    if (!strcmp(preview_of, pack_poster)) return;
+    free(preview_pixels);
+    preview_pixels = pack_poster[0] ? png_pixels(pack_poster, &preview_w, &preview_h) : NULL;
+    snprintf(preview_of, sizeof(preview_of), "%s", pack_poster);
+}
+/* A scroll bar at the right of `r` for content scrolled by `at` of `max` more
+ * than shows (none when it all shows). */
+static void pack_scrollbar(MenuCanvas *c, Rect r, int at, int max_)
+{
+    if (max_ <= 0) return;
+    int h = max(20 * unit, r.h * r.h / (r.h + max_));
+    Rect track = rect(r.x + r.w - BAR - 2 * unit, r.y, BAR, r.h);
+    fill(c, track, BG);
+    fill(c, rect(track.x, track.y + (track.h - h) * min(at, max_) / max_, BAR, h), DIM);
+}
+static void draw_form(MenuCanvas *c, const PackLayout *k)
+{
+    static const char *labels[4] = {"Name *", "Version *", "Author *", "Description"};
+    char *values_[4] = {pack_name, pack_version, pack_author, pack_description};
+    char line[sizeof(pack_description) + 2];
+    int x = k->detail.x + 16 * unit;
+    put(line, sizeof(line), "%d of %d mods selected. Tick the mods to include in this export.", export_selected(), export_count);
+    text(c, x, k->detail.y + 24 * unit - pack_form_scroll, k->detail.w - 32 * unit, line, DIM);
+    for (int i = 0; i < 4; i++) {
+        Rect f = k->fields[i];
+        const char *shown_ = line;
+        text(c, x, f.y + f.h / 2, 86 * unit, labels[i], TEXT);
+        fill(c, f, pack_focus == i + 1 ? 0x2b3a52u : BG);
+        snprintf(line, sizeof(line), "%s%s", values_[i], pack_focus == i + 1 ? "_" : "");
+        if (i == 3) {
+            MenuCanvas field = *c;
+            int top = max(0, f.y + 6 * unit), bottom = min(c->height, f.y + f.h - 6 * unit);
+            if (bottom <= top) continue;
+            field.pixels += top * c->stride + f.x + 10 * unit;
+            field.width = f.w - 20 * unit;
+            field.height = bottom - top;
+            description_max = max(0, pack_description_draw(NULL, 0, 0, field.width, pack_description, 0) - (f.h - 12 * unit));
+            description_scroll = min(description_scroll, description_max);
+            description_paint(&field, f.y + 6 * unit - top - description_scroll, field.width);
+            continue;
+        }
+        while (*shown_ && width_text(shown_) > f.w - 20 * unit) /* a long one shows its end, where the typing is */
+            do shown_++; while (((unsigned char)*shown_ & 0xC0) == 0x80);
+        text(c, f.x + 10 * unit, f.y + f.h / 2, f.w - 20 * unit, shown_, TEXT);
+    }
+    text(c, x, k->poster.y + k->poster.h / 2, 86 * unit, "Poster", TEXT);
+    button(c, k->poster, pack_picking && pack_kind == 1 ? "Choosing..." : "Choose .png (optional)...", 0);
+    {
+        const char *base = pack_poster, *s;
+        for (s = pack_poster; *s; s++)
+            if (*s == '/' || *s == '\\') base = s + 1;
+        text(c, k->poster.x + k->poster.w + 10 * unit, k->poster.y + k->poster.h / 2,
+             k->detail.x + k->detail.w - 16 * unit - (k->poster.x + k->poster.w + 10 * unit),
+             pack_poster[0] ? base : "none", pack_poster[0] ? GREEN : DIM);
+    }
+    text(c, x, k->lock.y + k->lock.h / 2, 30 * unit, pack_lock ? "[x]" : "[ ]", pack_lock ? GREEN : DIM);
+    text(c, x + 34 * unit, k->lock.y + k->lock.h / 2, k->lock.w - 34 * unit,
+         "Lock the settings (players cannot change them)", TEXT);
+    text(c, x, k->lock.y + k->lock.h + 16 * unit, k->detail.w - 32 * unit,
+         "Enter: new line | Win + .: emoji | Discord formatting:", DIM);
+    text(c, x, k->lock.y + k->lock.h + 16 * unit + LINE, k->detail.w - 32 * unit,
+         "**bold** *italic* __underline__ ~~strike~~ `code` ||spoiler|| # heading > quote - list", DIM);
+    {   /* Preview: the modpack as the one who imports it will see it */
+        PackView v = {0};
+        int top = k->lock.y + k->lock.h + 40 * unit + LINE, y, w = k->detail.w - 32 * unit - BAR;
+        preview_poster();
+        v.name = pack_name[0] ? pack_name : "Modpack name";
+        v.version = pack_version;
+        v.author = pack_author;
+        v.description = pack_description;
+        v.locked = pack_lock;
+        v.poster = preview_pixels, v.poster_w = preview_w, v.poster_h = preview_h;
+        v.mods = export_selected();
+        v.mod = export_preview_mod;
+        text(c, x, top + 10 * unit, w, "Preview", TEXT);
+        fill(c, rect(x, top + 24 * unit, w, 1 * unit), EDGE);
+        y = pack_view_draw(c, x + 12 * unit, top + 36 * unit, w - 24 * unit, &v);
+        /* its height from the form's end, for the next layout's scrolling */
+        pack_preview_h = y + 16 * unit - top;
+    }
+}
+static void draw_activate(MenuCanvas *c, const PackLayout *k, int x);
+static void draw_packs(MenuCanvas *c, const Layout *l)
+{
+    PackLayout k;
+    int pitch = 44 * unit, y, x, w;
+    char line[600];
+    pack_layout(l, &k);
+    fill(c, l->search, pack_focus == 5 ? 0x2b3a52u : PANEL);
+    snprintf(line, sizeof(line), "%s%s", pack_query, pack_focus == 5 ? "_" : "");
+    text(c, l->search.x + 10 * unit, l->search.y + l->search.h / 2, l->search.w - 20 * unit,
+         line[0] ? line : pack_form ? "Search mods, IDs or authors..." : "Search modpacks...", line[0] ? TEXT : DIM);
+    button(c, l->filter, pack_filter == 1 ? "Selected" : pack_filter == 2 ? "Not selected" :
+           pack_form ? "All mods" : "All modpacks", 0);
+    fill(c, k.list, PANEL);
+    if (pack_form) {
+        export_scroll = min(export_scroll, max(0, pack_visible_count() - pack_rows(&k)));
+        for (int r = 0; r < pack_rows(&k); r++) {
+            int i = pack_shown(export_scroll + r);
+            Rect row = rect(k.list.x, k.list.y + r * pitch, k.list.w, pitch - 2 * unit);
+            if (i < 0) break;
+            if (i == export_sel) fill(c, row, 0x293e60u);
+            text(c, row.x + 12 * unit, row.y + 14 * unit, 24 * unit,
+                 export_mods[i].selected ? "[x]" : "[ ]", export_mods[i].selected ? GREEN : DIM);
+            text(c, row.x + 44 * unit, row.y + 14 * unit, row.w - 56 * unit, export_name(i), TEXT);
+            text(c, row.x + 44 * unit, row.y + 32 * unit, row.w - 56 * unit, export_mods[i].id, DIM);
+        }
+        if (!pack_visible_count())
+            wrap(c, k.list.x + 12 * unit, k.list.y + 16 * unit, k.list.w - 24 * unit,
+                 export_count ? "No matching mods." : "No mods found in the mods folders.", DIM);
+        pack_scrollbar(c, k.list, export_scroll * pitch, max(0, pack_visible_count() - pack_rows(&k)) * pitch);
+        fill(c, k.detail, PANEL);
+        MenuCanvas form = *c;
+        form.pixels += k.detail.y * c->stride + k.detail.x;
+        form.width = k.detail.w;
+        form.height = k.detail.h;
+        Rect whole = k.detail;
+        Rect *fields[] = {&k.fields[0], &k.fields[1], &k.fields[2], &k.fields[3], &k.poster, &k.lock};
+        for (int i = 0; i < 6; i++) { fields[i]->x -= k.detail.x; fields[i]->y -= k.detail.y; }
+        k.detail.x = k.detail.y = 0;
+        draw_form(&form, &k);
+        pack_scrollbar(c, whole, pack_form_scroll, pack_form_h - whole.h);
+        /* the form's buttons, in the footer beside Close */
+        button(c, k.save, export_job.running ? "Exporting..." : pack_picking && pack_kind == 2 ? "Choosing where..." : "Export...",
+               !export_job.running);
+        button(c, k.cancel, export_job.running ? "Stop" : "Cancel", 0);
+        return;
+    }
+    pack_scroll = min(pack_scroll, max(0, pack_visible_count() - pack_rows(&k)));
+    if (!pack_visible_count())
+        text(c, k.list.x + 12 * unit, k.list.y + 22 * unit, k.list.w - 24 * unit, "No matching modpacks.", DIM);
+    for (int r = 0; r < pack_rows(&k); r++) {
+        int i = pack_shown(pack_scroll + r); /* 0: no modpack; i: pack_names[i - 1] */
+        Rect row = rect(k.list.x, k.list.y + r * pitch, k.list.w, pitch - 2 * unit);
+        if (i < 0) break;
+        const char *name = i ? pack_names[i - 1] : "No modpack (normal mods)";
+        int chosen = i ? !strcmp(pack_chosen, name) : !pack_chosen[0];
+        int running = i ? !strcmp(Mods_ModpackLaunched(), name) : !Mods_ModpackLaunched()[0];
+        if (i == pack_sel) fill(c, row, 0x293e60u);
+        text(c, row.x + 12 * unit, row.y + 14 * unit, 24 * unit, chosen ? "(o)" : pack_confirm == i + 1 ? "(?)" : "( )",
+             chosen ? GREEN : pack_confirm == i + 1 ? WARN : DIM);
+        text(c, row.x + 44 * unit, row.y + 14 * unit, row.w - 56 * unit, name, TEXT);
+        if (i) snprintf(line, sizeof(line), "%d mod(s)%s", pack_mods[i - 1], running ? " / running now" : "");
+        else snprintf(line, sizeof(line), "%s", running ? "running now" : "the mods folder's mods");
+        text(c, row.x + 44 * unit, row.y + 32 * unit, row.w - 56 * unit, line, running ? GREEN : DIM);
+    }
+    fill(c, k.detail, PANEL);
+    pack_load_info();
+    MenuCanvas *outer = c, viewport = *c;
+    Rect detail_bounds = k.detail;
+    viewport.pixels += k.detail.y * c->stride + k.detail.x;
+    viewport.width = k.detail.w - BAR - 4 * unit;
+    viewport.height = k.detail.h - 40 * unit;
+    c = &viewport;
+    k.detail = rect(0, 0, viewport.width, viewport.height);
+    x = k.detail.x + 16 * unit;
+    w = k.detail.w - 32 * unit;
+    y = 12 * unit - pack_detail_scroll;
+    {
+        const JsonValue *root = pack_info ? Json_Root(pack_info) : NULL;
+        PackView v = {0};
+        v.name = pack_sel ? Json_String(Json_Member(root, "name"), pack_names[pack_sel - 1]) : "No modpack (normal mods)";
+        v.version = Json_String(Json_Member(root, "version"), "");
+        v.author = Json_String(Json_Member(root, "author"), "");
+        v.description = Json_String(Json_Member(root, "description"), "");
+        v.locked = pack_sel && Json_Bool(Json_Member(root, "locked"), 0);
+        v.poster = poster_pixels, v.poster_w = poster_w, v.poster_h = poster_h;
+        v.mods = root ? Json_Count(Json_Member(root, "mods")) : 0;
+        v.mod = detail_mod;
+        y = pack_view_draw(c, x, y, w, &v);
+        if (v.mods) {
+        } else if (pack_sel) {
+            put(line, sizeof(line), "%d mod(s), all on when the game starts with this modpack.", pack_mods[pack_sel - 1]);
+            y = wrap(c, x, y, w, line, DIM);
+        } else
+            y = wrap(c, x, y, w, "The game starts with the mods of the mods folder, as without modpacks.", DIM);
+    }
+    pack_detail_max = max(0, y + pack_detail_scroll + 12 * unit - viewport.height);
+    pack_detail_scroll = min(pack_detail_scroll, pack_detail_max);
+    c = outer;
+    k.detail = detail_bounds;
+    x = k.detail.x + 16 * unit;
+    if (pack_detail_max) {
+        int h = max(20 * unit, viewport.height * viewport.height / (viewport.height + pack_detail_max));
+        Rect track = rect(k.detail.x + k.detail.w - BAR - 2 * unit, k.detail.y, BAR, viewport.height);
+        fill(c, track, BG);
+        fill(c, rect(track.x, track.y + (track.h - h) * pack_detail_scroll / pack_detail_max, BAR, h), DIM);
+    }
+    draw_activate(c, &k, x);
+    button(c, k.import, import_job.running ? "Stop" : pack_picking && pack_kind == 0 ? "Choosing..." : "Import...", 0);
+    button(c, k.export_, "Export...", 0);
+    button(c, k.folder, "Open folder", 0);
+}
+static void pack_choose(void)
+{
+    const char *name = pack_sel ? pack_names[pack_sel - 1] : "";
+    if (Mods_ModpackSelect(name)) {
+        put(status, sizeof(status), "Could not save the choice of modpack.");
+        return;
+    }
+    snprintf(pack_chosen, sizeof(pack_chosen), "%s", name);
+    put(status, sizeof(status), pack_restart() ? "Chosen. Restart to start the game with it." : "Chosen: it is the one running now.");
+}
+/* --- Activate modpack: its files read once before the restart ---------- *
+ * A thread of its own reads every file of the pack (Mods_ModpackPrepare):
+ * the SHA-256 check the start would make is made now, with a bar, and its
+ * record lets the start skip it; the reading leaves the files in the
+ * system's cache, so the restart loads them sooner. The pack is chosen
+ * only when it passed; then the foot offers Restart to activate. */
+static struct {
+    pthread_t thread;
+    int running;                 /* from prep_start until prep_poll joins it */
+    int finished, ok, cancel;    /* atomic */
+    long long done, total;       /* atomic, bytes */
+    int shown;                   /* the permille last drawn */
+    char name[128], why[300];
+} prep;
+static void *prep_step(void *unused)
+{
+    int ok;
+    (void)unused;
+    ok = Mods_ModpackPrepare(prep.name, &prep.done, &prep.total, &prep.cancel, prep.why, sizeof(prep.why));
+    __atomic_store_n(&prep.ok, ok, __ATOMIC_RELAXED);
+    __atomic_store_n(&prep.finished, 1, __ATOMIC_RELEASE);
+    return NULL;
+}
+/* The selected row's pack, read before it is chosen (no modpack: chosen at once). */
+static void prep_start(void)
+{
+    if (prep.running) return;
+    pack_ask = 0;
+    if (!pack_sel) {
+        pack_choose();
+        return;
+    }
+    snprintf(prep.name, sizeof(prep.name), "%s", pack_names[pack_sel - 1]);
+    prep.why[0] = 0;
+    prep.done = prep.total = 0;
+    prep.cancel = prep.finished = prep.ok = 0;
+    prep.shown = -1;
+    if (pthread_create(&prep.thread, NULL, prep_step, NULL)) {
+        put(status, sizeof(status), "Could not start loading the modpack.");
+        return;
+    }
+    prep.running = 1;
+    put(status, sizeof(status), "Loading %s: reading and checking its files before the restart.", prep.name);
+}
+/* Each tick: 1 when the bar moved or the reading ended (a redraw). */
+static int prep_poll(void)
+{
+    long long done, total;
+    int permille;
+    if (!prep.running) return 0;
+    if (!__atomic_load_n(&prep.finished, __ATOMIC_ACQUIRE)) {
+        done = __atomic_load_n(&prep.done, __ATOMIC_RELAXED);
+        total = __atomic_load_n(&prep.total, __ATOMIC_RELAXED);
+        permille = total > 0 ? (int)(done * 1000 / total) : 0;
+        if (permille == prep.shown) return 0;
+        prep.shown = permille;
+        return 1;
+    }
+    pthread_join(prep.thread, NULL);
+    prep.running = 0;
+    if (!prep.ok)
+        put(status, sizeof(status), "%s was not activated: %s", prep.name, prep.why);
+    else if (Mods_ModpackSelect(prep.name))
+        put(status, sizeof(status), "Could not save the choice of modpack.");
+    else {
+        snprintf(pack_chosen, sizeof(pack_chosen), "%s", prep.name);
+        put(status, sizeof(status), pack_restart() ? "%s is loaded. Restart to activate it." : "%s is the one running now.",
+            prep.name);
+    }
+    return 1;
+}
+/* What the foot's button is: 0 none, 1 Activate, 2 Restart to activate, 3 Cancel. */
+static int activate_kind(void)
+{
+    const char *row = pack_sel ? pack_names[pack_sel - 1] : "";
+    if (prep.running) return 3;
+    if (strcmp(row, pack_chosen)) return 1;
+    return pack_restart() ? 2 : 0;
+}
+static void draw_activate(MenuCanvas *c, const PackLayout *k, int x)
+{
+    char line[512];
+    int kind = activate_kind();
+    if (kind == 3) {
+        long long done = __atomic_load_n(&prep.done, __ATOMIC_RELAXED);
+        long long total = __atomic_load_n(&prep.total, __ATOMIC_RELAXED);
+        int percent = total > 0 ? (int)(done * 100 / total) : 0;
+        Rect bar = k->bar;
+        fill(c, bar, BG);
+        fill(c, rect(bar.x, bar.y, (int)((long long)bar.w * min(percent, 100) / 100), bar.h), 0x2f6f4fu);
+        put(line, sizeof(line), "%d%%", percent);
+        int pw = width_text("100%") + 12 * unit; /* the share keeps its place at the bar's right */
+        text(c, bar.x + bar.w - pw, bar.y + bar.h / 2, pw, line, TEXT);
+        put(line, sizeof(line), "Loading %s...", prep.name);
+        text(c, bar.x + 10 * unit, bar.y + bar.h / 2, bar.w - pw - 16 * unit, line, TEXT);
+        button(c, k->activate, "Cancel", 0);
+        return;
+    }
+    put(line, sizeof(line), "Next launch: %s", pack_chosen[0] ? pack_chosen : "no modpack (normal mods)");
+    text(c, x, k->detail.y + k->detail.h - 22 * unit, kind ? k->activate.x - x - 10 * unit : k->detail.w - 32 * unit, line,
+         pack_restart() ? WARN : GREEN);
+    if (kind == 1) button(c, k->activate, pack_sel ? "Activate modpack" : "Use normal mods", 1);
+    if (kind == 2) button(c, k->activate, pack_ask == 2 ? "Restart now" : "Restart to activate", 1);
+}
+/* Restart (the footer's, or Restart to activate): asked once, then done. */
+static void pack_restart_press(void)
+{
+    if (!pack_restart()) {
+        put(status, sizeof(status), "Nothing to restart for: the chosen modpack is running.");
+        return;
+    }
+    if (pack_ask != 2) {
+        pack_ask = 2;
+        put(status, sizeof(status), "Restart the game now? Unsaved game progress will be lost. Click Restart again.");
+        return;
+    }
+    pack_ask = 0;
+    if (Platform_RestartGame() < 0) put(status, sizeof(status), "Restart failed; relaunch the game.");
+}
+/* Typing into Export's fields: 1 when the event was one. */
+static int pack_type(const MenuEvent *e)
+{
+    char *target = pack_focus == 5 ? pack_query : pack_focus == 1 ? pack_name : pack_focus == 2 ? pack_version : pack_focus == 3 ? pack_author : pack_description;
+    size_t cap = pack_focus == 5 ? sizeof(pack_query) : pack_focus == 1 ? sizeof(pack_name) : pack_focus == 2 ? sizeof(pack_version)
+               : pack_focus == 3 ? sizeof(pack_author) : sizeof(pack_description);
+    size_t n = strlen(target);
+    static int space_typed; /* the Space bar's key, whose text " " may follow */
+    if ((!pack_form && pack_focus != 5) || !pack_focus) return 0;
+    if (pack_focus == 4) return description_key(e);
+    if (pack_focus == 5 && (e->type == MENU_EVENT_KEY_DOWN || e->type == MENU_EVENT_TEXT)) {
+        pack_scroll = export_scroll = 0;
+        if (e->type == MENU_EVENT_KEY_DOWN && (e->key == MENU_KEY_TAB || e->key == MENU_KEY_ESCAPE ||
+            (e->key == MENU_KEY_ENTER && e->button != ' '))) {
+            pack_focus = 0;
+            return 1;
+        }
+    }
+    if (e->type == MENU_EVENT_TEXT && space_typed && !strcmp(e->text, " ")) {
+        space_typed = 0; /* typed already, at its key */
+        return 1;
+    }
+    if (e->type == MENU_EVENT_KEY_DOWN || e->type == MENU_EVENT_TEXT)
+        space_typed = 0;
+    if (e->type == MENU_EVENT_KEY_DOWN && e->key == MENU_KEY_ENTER && e->button != ' ') {
+        if (pack_focus == 4) {
+            if (n + 1 < cap) strcat(target, "\n");
+        } else pack_focus = pack_focus % 4 + 1;
+        return 1;
+    }
+    if (e->type == MENU_EVENT_KEY_DOWN && e->key == MENU_KEY_ENTER) {
+        /* The Space bar, which the platforms give as Enter (menu.h): a space,
+         * at once, whether or not its text comes after. */
+        if (n + 1 < cap) strcat(target, " ");
+        space_typed = 1;
+        return 1;
+    }
+    if (e->type == MENU_EVENT_KEY_DOWN) {
+        if (e->key == MENU_KEY_BACKSPACE && n) target[Menu_TextBack(target, n)] = 0;
+        else if (e->key == MENU_KEY_TAB) pack_focus = pack_focus % 4 + 1;
+        else if (e->key == MENU_KEY_ESCAPE) pack_focus = 0;
+        else if (e->text[0] && n + strlen(e->text) < cap) strcat(target, e->text);
+        return 1;
+    }
+    if (e->type == MENU_EVENT_TEXT) {
+        if (n + strlen(e->text) < cap) strcat(target, e->text);
+        return 1;
+    }
+    return 0;
+}
+/* A press on the Modpack tab's widgets: 1 when it was one of them. */
+static int pack_press(const Layout *l, int x, int y)
+{
+    PackLayout k;
+    pack_layout(l, &k);
+    if (inside(k.tab, x, y)) {
+        packs = !packs;
+        pack_ask = pack_form = pack_focus = 0;
+        pack_query[0] = 0;
+        pack_filter = 0;
+        status[0] = 0;
+        if (packs) packs_scan();
+        return 1;
+    }
+    if (!packs) return 0;
+    if (!pack_form && pack_detail_max && inside(k.detail, x, y) &&
+        x >= k.detail.x + k.detail.w - BAR - 4 * unit) {
+        int h = k.detail.h - 40 * unit;
+        pack_detail_scroll = min(pack_detail_max, max(0, (y - k.detail.y) * pack_detail_max / max(1, h)));
+        return 1;
+    }
+    /* a press on a scroll bar jumps there, as the detail's does */
+    if (pack_form && pack_form_h > k.detail.h && inside(k.detail, x, y) && x >= k.detail.x + k.detail.w - BAR - 4 * unit) {
+        pack_form_scroll = (y - k.detail.y) * (pack_form_h - k.detail.h) / max(1, k.detail.h);
+        return 1;
+    }
+    if (pack_form && inside(k.list, x, y) && x >= k.list.x + k.list.w - BAR - 4 * unit &&
+        pack_visible_count() > pack_rows(&k)) {
+        export_scroll = (y - k.list.y) * (pack_visible_count() - pack_rows(&k)) / max(1, k.list.h);
+        return 1;
+    }
+    if (inside(l->search, x, y)) { pack_focus = 5; return 1; }
+    if (inside(l->filter, x, y)) {
+        pack_filter = (pack_filter + 1) % 3;
+        pack_scroll = export_scroll = pack_focus = 0;
+        return 1;
+    }
+    if (inside(k.list, x, y)) {
+        pack_focus = 0;
+        if (pack_form) {
+            int i = pack_shown(export_scroll + (y - k.list.y) / (44 * unit));
+            if (i >= 0) {
+                export_sel = i;
+                export_mods[i].selected = !export_mods[i].selected;
+                pack_focus = 0;
+                status[0] = 0;
+            }
+            return 1;
+        }
+        int i = pack_shown(pack_scroll + (y - k.list.y) / (44 * unit));
+        if (i >= 0) {
+            const char *name = i ? pack_names[i - 1] : "";
+            pack_sel = i;
+            if (x >= k.list.x + 40 * unit || prep.running || !strcmp(name, pack_chosen))
+                pack_confirm = 0;
+            else if (pack_confirm == i + 1) {
+                pack_confirm = 0;
+                prep_start();
+            } else {
+                /* ( ) is small and near the names: a stray click asks first */
+                pack_confirm = i + 1;
+                if (i)
+                    put(status, sizeof(status), "Activate the modpack \"%s\"? Click its ( ) again, or Activate modpack, to confirm.",
+                        name);
+                else
+                    put(status, sizeof(status), "Use the normal mods (no modpack)? Click its ( ) again, or Use normal mods, to confirm.");
+            }
+        }
+        pack_ask = 0;
+        return 1;
+    }
+    if (pack_form && export_job.running && inside(k.cancel, x, y)) {
+        __atomic_store_n(&export_job.cancel, 1, __ATOMIC_RELAXED);
+        put(status, sizeof(status), "Stopping the export...");
+        return 1;
+    }
+    if (pack_form && export_job.running && inside(k.save, x, y)) return 1; /* one export at a time */
+    if (pack_form && inside(k.cancel, x, y)) { pack_form = 0; status[0] = 0; return 1; }
+    if (pack_form && inside(k.save, x, y)) {
+        pack_focus = 0;
+        if (!export_selected()) {
+            put(status, sizeof(status), "Select at least one mod in the list before exporting.");
+        } else if (!pack_name[0] || !pack_version[0] || !pack_author[0]) {
+            put(status, sizeof(status), "Name, Version and Author are required.");
+            pack_focus = !pack_name[0] ? 1 : !pack_version[0] ? 2 : 3;
+        } else
+            pack_ask_file(2);
+        return 1;
+    }
+    if (pack_form) {
+        if (!inside(k.detail, x, y)) return 0;
+        pack_focus = 0;
+        for (int i = 0; i < 4; i++)
+            if (inside(k.fields[i], x, y)) pack_focus = i + 1;
+        if (inside(k.poster, x, y)) pack_ask_file(1);
+        else if (inside(k.lock, x, y)) pack_lock = !pack_lock;
+        return inside(k.detail, x, y);
+    }
+    if (inside(k.import, x, y)) {
+        pack_ask = pack_confirm = 0;
+        if (import_job.running) {
+            __atomic_store_n(&import_job.cancel, 1, __ATOMIC_RELAXED);
+            put(status, sizeof(status), "Stopping the import...");
+        } else
+            pack_ask_file(0);
+        return 1;
+    }
+    if (inside(k.export_, x, y)) {
+        pack_ask = pack_confirm = 0;
+        pack_form = 1;
+        pack_form_scroll = description_scroll = 0;
+        pack_focus = 0;
+        pack_query[0] = 0;
+        pack_filter = 0;
+        status[0] = 0;
+        export_scan();
+        return 1;
+    }
+    if (inside(k.folder, x, y)) {
+        char dir[1024];
+        if (Mods_ModpackDirectory(dir, sizeof(dir)) || Platform_OpenFolder(dir))
+            put(status, sizeof(status), "Could not open the modpacks folder.");
+        return 1;
+    }
+    if (inside(k.activate, x, y) && activate_kind()) {
+        int kind = activate_kind();
+        pack_confirm = 0;
+        if (kind == 3) {
+            __atomic_store_n(&prep.cancel, 1, __ATOMIC_RELAXED);
+            put(status, sizeof(status), "Stopping...");
+        } else if (kind == 1)
+            prep_start();
+        else
+            pack_restart_press();
+        return 1;
+    }
+
+    return inside(k.list, x, y) || inside(k.detail, x, y);
+}
+/* With a modpack whose author locked its settings: the presses and keys that
+ * would change a mod. 1 when the event is one (it is then refused). */
+static int pack_locked_out(const Layout *l, const MenuEvent *e)
+{
+    if (!Mods_ModpackLocked() || packs) return 0;
+    if (e->type == MENU_EVENT_KEY_DOWN && !focus &&
+        (e->key == MENU_KEY_LEFT || e->key == MENU_KEY_RIGHT || e->key == MENU_KEY_ENTER))
+        return 1;
+    if (e->type != MENU_EVENT_BUTTON_DOWN || e->button != 1) return 0;
+    return inside(l->toggle, e->x, e->y) || inside(l->order[0], e->x, e->y) || inside(l->order[1], e->x, e->y) ||
+           inside(l->defaults, e->x, e->y) || inside(l->load, e->x, e->y) ||
+           (tab == 1 && inside(l->view, e->x, e->y)) ||
+           (inside(l->list, e->x, e->y) && e->x < l->list.x + 40 * unit);
+}
 void ModsWindow_Draw(MenuCanvas *c)
 {
     Layout l;
@@ -960,34 +2762,62 @@ void ModsWindow_Draw(MenuCanvas *c)
         draw_touch(c, &l);
         return;
     }
-    text(c, 20 * unit, 29 * unit, width - 40 * unit, "Mod library", TEXT);
-    counts_line(line, sizeof(line), width / 2 - 20 * unit);
-    text(c, width / 2, 29 * unit, width / 2 - 20 * unit, line, DIM);
-    draw_fields(c, &l);
-    text(c, l.profile.x, 118 * unit, width - l.profile.x - 20 * unit, "Named profile  /  Save uses applied settings",
-         DIM);
-    draw_list(c, &l);
-    draw_details(c, &l);
+    text(c, 20 * unit, 29 * unit, width - 40 * unit, packs ? "Modpacks" : "Mod library", TEXT);
+    {
+        PackLayout k;
+        pack_layout(&l, &k);
+        button(c, k.tab, packs ? "Mods" : "Modpack", packs);
+        if (packs) {
+            draw_packs(c, &l);
+        } else {
+            counts_line(line, sizeof(line), width / 2 - 20 * unit);
+            text(c, width / 2, 29 * unit, width / 2 - 20 * unit, line, DIM);
+            draw_fields(c, &l);
+            text(c, l.profile.x, 118 * unit, width - l.profile.x - 20 * unit,
+                 "Named profile  /  Save uses applied settings", DIM);
+            draw_list(c, &l);
+            draw_details(c, &l);
+        }
+    }
     extra = status_extra() * LINE;
     fill(c, rect(0, height - 72 * unit - extra, width, 1), EDGE);
     if (extra) /* the last line where a one-line status goes */
         wrap(c, 20 * unit, height - 59 * unit - extra - LINE / 2, width - 40 * unit, status, pending ? WARN : DIM);
     else
         text(c, 20 * unit, height - 59 * unit, width - 40 * unit,
-             *status ? status : "Changes are staged. Apply once when you are ready.", pending ? WARN : DIM);
+             *status ? status : packs ? (pack_form ? "Select the mods to include, then fill in the export details."
+                                                  : "Select a modpack, then Activate modpack to use it.")
+                                     : "Changes are staged. Apply once when you are ready.", pending ? WARN : DIM);
     {   /* the keys, as fully as the room beside the buttons lets */
         int room = (l.modsdir.w ? l.modsdir.x : l.folder.x) - 28 * unit;
         const char *hint = "Arrow keys: select / toggle   Tab: search   Mouse wheel: scroll";
+        if (packs) {
+            PackLayout k;
+            pack_layout(&l, &k);
+            room = max(0, (pack_form ? k.save.x : k.import.x) - 28 * unit);
+        }
+        if (packs) hint = pack_form ? "Arrows: select   Space: tick   Wheel: scroll" : "Wheel: scroll";
         if (width_text(hint) > room)
             hint = "Arrows: select   Tab: search   Wheel: scroll";
         if (width_text(hint) > room)
             hint = "Tab: search   Wheel: scroll";
-        text(c, 20 * unit, height - 32 * unit, room, hint, DIM);
+        if (packs && pack_form && export_job.running)
+            export_bar(c, rect(20 * unit, l.close.y, max(0, room + 16 * unit), l.close.h));
+        else if (packs && !pack_form && import_job.running)
+            import_bar(c, rect(20 * unit, l.close.y, max(0, room + 16 * unit), l.close.h));
+        else
+            text(c, 20 * unit, height - 32 * unit, room, hint, DIM);
     }
-    button(c, l.folder, "Open mods folder", 0);
-    draw_modsdir(c, &l);
+    if (!packs) {
+        button(c, l.folder, "Open mods folder", 0);
+        draw_modsdir(c, &l);
+    }
     button(c, l.close, pending ? "Cancel" : "Close", 0);
-    button(c, l.apply, apply_label(), changed() || pending || folder_restart());
+    if (packs) {
+        /* Restart is the detail's own (Restart to activate), not the footer's */
+    }
+    else
+        button(c, l.apply, apply_label(), changed() || pending || folder_restart());
 }
 static int needs_restart(void)
 {
@@ -2050,6 +3880,14 @@ int ModsWindow_Tick(void)
 {
     char why[400];
     int result;
+    if (pack_poll())
+        return 1;
+    if (prep_poll())
+        return 1;
+    if (export_poll())
+        return 1;
+    if (import_poll())
+        return 1;
     if (folder_poll())
         return 1;
     if (hd_step)
@@ -2225,7 +4063,7 @@ static int option_press(const Layout *l, int x, int y, int act)
     }
     return 0;
 }
-int ModsWindow_TextFocus(void) { return focus; }
+int ModsWindow_TextFocus(void) { return packs ? pack_focus : focus; }
 int ModsWindow_Locate(int id, int *x, int *y)
 {
     Layout l;
@@ -2321,7 +4159,7 @@ void ModsWindow_Drag(int x, int y, int dy)
 }
 int ModsWindow_Redraws(const MenuEvent *e)
 {
-    return e->type != MENU_EVENT_MOTION || slider_drag >= 0 || bar_drag;
+    return e->type != MENU_EVENT_MOTION || slider_drag >= 0 || bar_drag || description_drag;
 }
 int ModsWindow_RequestClose(void)
 {
@@ -2340,6 +4178,29 @@ int ModsWindow_Event(const MenuEvent *e)
 {
     Layout l;
     layout(&l);
+    /* Keep the pending save dialog's export selection and metadata stable. */
+    if (packs && pack_picking) return 0;
+    if (e->type == MENU_EVENT_BUTTON_UP || e->type == MENU_EVENT_LEAVE) description_drag = 0;
+    if (packs && pack_form && !pending) {
+        PackLayout k;
+        pack_layout(&l, &k);
+        int click = e->type == MENU_EVENT_BUTTON_DOWN && e->button == 1 &&
+                    inside(k.detail, e->x, e->y) && inside(k.fields[3], e->x, e->y);
+        if (click || (description_drag && e->type == MENU_EVENT_MOTION)) {
+            Rect f = k.fields[3];
+            int top = max(f.y + 6 * unit, k.detail.y), bottom = min(f.y + f.h - 6 * unit, k.detail.y + k.detail.h);
+            if (!click) {
+                if (e->y < top) description_scroll = max(0, description_scroll - LINE);
+                if (e->y > bottom) description_scroll = min(description_max, description_scroll + LINE);
+            }
+            size_t at = TextEdit_Hit(pack_description, f.w - 20 * unit, LINE, width_text,
+                                    e->x - f.x - 10 * unit, e->y - f.y - 6 * unit + description_scroll);
+            TextEdit_Move(&description_edit, at, !click || (e->modifiers & MENU_MOD_SHIFT));
+            pack_focus = 4;
+            description_drag = 1;
+            return 0;
+        }
+    }
     if (e->type == MENU_EVENT_BUTTON_UP || e->type == MENU_EVENT_LEAVE)
         slider_drag = -1, bar_drag = 0, drag_rest = 0;
     if (e->type == MENU_EVENT_MOTION && bar_drag) {
@@ -2351,6 +4212,82 @@ int ModsWindow_Event(const MenuEvent *e)
         slider_value(slider_drag, e->x);
         return 0;
     }
+    if (packs && !touch && !pending && pack_type(e))
+        return 0;
+    if (pack_locked_out(&l, e)) {
+        put(status, sizeof(status), "This modpack's author locked its settings.");
+        return 0;
+    }
+    if (packs && !touch && !pending) { /* the Modpack tab: its own keys, wheel and presses */
+        if (e->type == MENU_EVENT_KEY_DOWN && e->key == MENU_KEY_ESCAPE && pack_form) {
+            pack_form = pack_focus = 0;
+            status[0] = 0;
+            return 0;
+        }
+        if (e->type == MENU_EVENT_KEY_DOWN && e->key == MENU_KEY_ESCAPE) {
+            packs = pack_ask = pack_confirm = 0;
+            status[0] = 0;
+            return 0;
+        }
+        if (e->type == MENU_EVENT_KEY_DOWN && (e->key == MENU_KEY_UP || e->key == MENU_KEY_DOWN)) {
+            PackLayout k;
+            int delta = e->key == MENU_KEY_DOWN ? 1 : -1;
+            int n = pack_visible_count(), row = 0;
+            int *sel = pack_form ? &export_sel : &pack_sel;
+            int *offset = pack_form ? &export_scroll : &pack_scroll;
+            pack_layout(&l, &k);
+            while (row < n && pack_shown(row) != *sel) row++;
+            if (n) {
+                row = row == n ? 0 : min(n - 1, max(0, row + delta));
+                *sel = pack_shown(row);
+                *offset = max(min(*offset, row), row - pack_rows(&k) + 1);
+            }
+            pack_ask = 0;
+            return 0;
+        }
+        if (e->type == MENU_EVENT_KEY_DOWN && e->key == MENU_KEY_ENTER) {
+            int sel = pack_form ? export_sel : pack_sel;
+            for (int row = 0, i; (i = pack_shown(row)) >= 0; row++)
+                if (i == sel) {
+                    if (pack_form) export_mods[i].selected = !export_mods[i].selected;
+                    else pack_choose();
+                    break;
+                }
+            return 0;
+        }
+        if (e->type == MENU_EVENT_KEY_DOWN && e->key == MENU_KEY_TAB) {
+            pack_focus = 5;
+            return 0;
+        }
+        if (e->type == MENU_EVENT_KEY_DOWN || e->type == MENU_EVENT_TEXT)
+            return 0;
+        if (e->type == MENU_EVENT_WHEEL) {
+            PackLayout k;
+            pack_layout(&l, &k);
+            if (!pack_form && inside(k.detail, e->x, e->y)) {
+                pack_detail_scroll = min(pack_detail_max, max(0, pack_detail_scroll - e->wheel * 3 * LINE));
+                return 0;
+            }
+            if (pack_form && inside(k.fields[3], e->x, e->y)) {
+                int next = min(description_max, max(0, description_scroll - e->wheel * 3 * LINE));
+                if (next != description_scroll) { description_scroll = next; return 0; }
+            }
+            if (pack_form && inside(k.detail, e->x, e->y)) {
+                pack_form_scroll = min(max(0, pack_form_h - k.detail.h), max(0, pack_form_scroll - e->wheel * 3 * LINE));
+                return 0;
+            }
+            if (pack_form)
+                export_scroll = min(max(0, export_scroll - e->wheel), max(0, pack_visible_count() - pack_rows(&k)));
+            else
+                pack_scroll = min(max(0, pack_scroll - e->wheel), max(0, pack_visible_count() - pack_rows(&k)));
+            return 0;
+        }
+        if (e->type == MENU_EVENT_BUTTON_DOWN && e->button == 1 && pack_press(&l, e->x, e->y))
+            return 0;
+        if (e->type == MENU_EVENT_BUTTON_DOWN && !inside(l.close, e->x, e->y))
+            return 0; /* the mods' list and details are not shown */
+    } else if (!touch && !pending && e->type == MENU_EVENT_BUTTON_DOWN && e->button == 1 && pack_press(&l, e->x, e->y))
+        return 0;
     if (e->type == MENU_EVENT_KEY_DOWN) {
         if (e->key == MENU_KEY_ESCAPE) {
             if (pending) {

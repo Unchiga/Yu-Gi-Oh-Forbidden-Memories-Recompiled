@@ -4371,6 +4371,336 @@ static void activate_once(int index, int on)
     }
 }
 
+/* SHA-256 (FIPS 180-4), for a modpack's list of files. */
+typedef struct {
+    uint32_t h[8];
+    unsigned char block[64];
+    uint64_t length;
+    size_t used;
+} Sha256;
+static const uint32_t sha_k[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
+    0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,
+    0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819,
+    0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+    0xc67178f2};
+#define ROR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+static void sha_block(Sha256 *s, const unsigned char *p)
+{
+    uint32_t w[64], a, b, c, d, e, f, g, h;
+    for (int i = 0; i < 16; i++)
+        w[i] = (uint32_t)p[i * 4] << 24 | (uint32_t)p[i * 4 + 1] << 16 | (uint32_t)p[i * 4 + 2] << 8 | p[i * 4 + 3];
+    for (int i = 16; i < 64; i++)
+        w[i] = w[i - 16] + (ROR(w[i - 15], 7) ^ ROR(w[i - 15], 18) ^ (w[i - 15] >> 3)) + w[i - 7] +
+               (ROR(w[i - 2], 17) ^ ROR(w[i - 2], 19) ^ (w[i - 2] >> 10));
+    a = s->h[0], b = s->h[1], c = s->h[2], d = s->h[3], e = s->h[4], f = s->h[5], g = s->h[6], h = s->h[7];
+    for (int i = 0; i < 64; i++) {
+        uint32_t t1 = h + (ROR(e, 6) ^ ROR(e, 11) ^ ROR(e, 25)) + ((e & f) ^ (~e & g)) + sha_k[i] + w[i];
+        uint32_t t2 = (ROR(a, 2) ^ ROR(a, 13) ^ ROR(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+        h = g, g = f, f = e, e = d + t1, d = c, c = b, b = a, a = t1 + t2;
+    }
+    s->h[0] += a, s->h[1] += b, s->h[2] += c, s->h[3] += d, s->h[4] += e, s->h[5] += f, s->h[6] += g, s->h[7] += h;
+}
+/* *done grows by the bytes read (atomically, for another thread's progress
+ * bar); a nonzero *cancel stops the reading (0). Both may be NULL. */
+static int sha256_file(const char *path, char hex[65], long long *done, const int *cancel)
+{
+    static const uint32_t start[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    Sha256 s;
+    unsigned char buffer[16384];
+    size_t got;
+    FILE *file = fopen(path, "rb");
+    if (!file)
+        return 0;
+    memcpy(s.h, start, sizeof(start));
+    s.length = 0;
+    s.used = 0;
+    while ((got = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        if (cancel && __atomic_load_n(cancel, __ATOMIC_RELAXED)) { fclose(file); return 0; }
+        for (size_t i = 0; i < got; i++) {
+            s.block[s.used++] = buffer[i];
+            if (s.used == 64) { sha_block(&s, s.block); s.used = 0; }
+            s.length += 8;
+        }
+        if (done) __atomic_add_fetch(done, (long long)got, __ATOMIC_RELAXED);
+    }
+    if (ferror(file)) { fclose(file); return 0; }
+    fclose(file);
+    {
+        uint64_t bits = s.length;
+        s.block[s.used++] = 0x80;
+        if (s.used > 56) {
+            while (s.used < 64) s.block[s.used++] = 0;
+            sha_block(&s, s.block);
+            s.used = 0;
+        }
+        while (s.used < 56) s.block[s.used++] = 0;
+        for (int i = 7; i >= 0; i--) s.block[s.used++] = (unsigned char)(bits >> (i * 8));
+        sha_block(&s, s.block);
+    }
+    for (int i = 0; i < 8; i++)
+        snprintf(hex + i * 8, 9, "%08x", (unsigned)s.h[i]);
+    return 1;
+}
+int Mods_Sha256File(const char *path, char hex[65]) { return sha256_file(path, hex, NULL, NULL); }
+int Mods_Sha256FileProgress(const char *path, char hex[65], long long *done, const int *cancel)
+{
+    return sha256_file(path, hex, done, cancel);
+}
+
+/* --- Modpacks (mods.h) ----------------------------------------------- */
+static char modpack_launched[128]; /* the modpack this launch read, "" none */
+static char modpack_problem[1024];  /* why the chosen one was not read */
+static int modpack_locked;         /* its author locked its settings */
+static JsonDocument *modpack_info; /* its modpack.json, NULL without */
+int Mods_ModpackDirectory(char *out, size_t size)
+{
+    if (Paths_User(out, size, "modpacks")) return -1;
+    return Paths_MakeDirs(out);
+}
+static int modpack_file(char *out, size_t size)
+{
+    char dir[PATH_MAX_];
+    if (Mods_ModpackDirectory(dir, sizeof(dir))) return -1;
+    return (size_t)snprintf(out, size, "%s/selected.txt", dir) >= size ? -1 : 0;
+}
+int Mods_ModpackNameValid(const char *name)
+{
+    size_t n = name ? strlen(name) : 0;
+    if (!n || n >= sizeof(modpack_launched) || name[0] == '.' || name[0] == ' ' || name[n - 1] == ' ' ||
+        name[n - 1] == '.')
+        return 0;
+    for (; *name; name++)
+        if ((unsigned char)*name < 32 || strchr("/\\:*?\"<>|", *name)) return 0;
+    return 1;
+}
+int Mods_ModpackSelected(char *name, size_t size)
+{
+    char path[PATH_MAX_], line[256];
+    FILE *file;
+    size_t n;
+    if (size) name[0] = '\0';
+    if (modpack_file(path, sizeof(path)) || !(file = fopen(path, "rb"))) return 0;
+    if (!fgets(line, sizeof(line), file)) line[0] = '\0';
+    fclose(file);
+    n = strcspn(line, "\r\n");
+    line[n] = '\0';
+    if (!Mods_ModpackNameValid(line)) return 0;
+    snprintf(name, size, "%s", line);
+    return 1;
+}
+int Mods_ModpackSelect(const char *name)
+{
+    char path[PATH_MAX_];
+    FILE *file;
+    if (modpack_file(path, sizeof(path))) return -1;
+    if (!name || !*name) return remove(path) && errno != ENOENT ? -1 : 0;
+    if (!Mods_ModpackNameValid(name) || !(file = fopen(path, "wb"))) return -1;
+    fprintf(file, "%s\n", name);
+    return fclose(file) ? -1 : 0;
+}
+const char *Mods_ModpackLaunched(void) { return modpack_launched; }
+const char *Mods_ModpackProblem(void) { return modpack_problem; }
+int Mods_ModpackLocked(void) { return modpack_locked; }
+/* modpacks/<name>/.verified: one line a file that passed the check, in the
+ * order of modpack.json's "files": its size, its modified time, its SHA-256
+ * and its name. A file whose size, time and listed hash are still those is
+ * not read again at the start (Activate modpack read them all once). */
+typedef struct { long long size, time; char hex[65]; char *name; } Verified;
+static Verified *verified_read(const char *folder, int *count)
+{
+    char path[PATH_MAX_], line[PATH_MAX_ + 128];
+    Verified *list = NULL;
+    int n = 0, cap = 0;
+    FILE *file;
+    *count = 0;
+    if ((size_t)snprintf(path, sizeof(path), "%s/.verified", folder) >= sizeof(path) || !(file = fopen(path, "rb")))
+        return NULL;
+    while (fgets(line, sizeof(line), file)) {
+        Verified v;
+        int at = 0;
+        line[strcspn(line, "\r\n")] = 0;
+        if (sscanf(line, "%lld %lld %64s %n", &v.size, &v.time, v.hex, &at) != 3 || !at || !line[at]) continue;
+        if (n == cap) {
+            Verified *grown = realloc(list, (size_t)(cap = cap ? cap * 2 : 256) * sizeof(*list));
+            if (!grown) break;
+            list = grown;
+        }
+        if (!(v.name = strdup(line + at))) break;
+        list[n++] = v;
+    }
+    fclose(file);
+    *count = n;
+    return list;
+}
+static void verified_free(Verified *list, int count)
+{
+    for (int i = 0; i < count; i++) free(list[i].name);
+    free(list);
+}
+/* The record of `name` (the i-th listed file): looked for at i first. */
+static const Verified *verified_find(const Verified *list, int count, int i, const char *name)
+{
+    if (i < count && !strcmp(list[i].name, name)) return &list[i];
+    for (int j = 0; j < count; j++)
+        if (!strcmp(list[j].name, name)) return &list[j];
+    return NULL;
+}
+/* Every file the export listed must be as it was: a pack changed after it was
+ * made is not read (the normal mods are). 1 when it is whole. `all` reads
+ * every file (Activate modpack), else one the record vouches for is skipped;
+ * *done, *total and *cancel as in sha256_file (may be NULL). A whole pack's
+ * record is written again when a file had to be read. */
+static int modpack_check(const char *folder, const JsonValue *files, int all, long long *done, long long *total,
+                         const int *cancel, char *why, size_t why_size)
+{
+    char path[PATH_MAX_], hex[65];
+    int bad = 0, n = 0, read = 0, known = 0;
+    const char *first = NULL;
+    Verified *record = verified_read(folder, &known);
+    FILE *out = NULL;
+    struct stat info;
+    if (total) {
+        long long sum = 0;
+        for (const JsonValue *f = Json_At(files, 0); f; f = Json_Next(f)) {
+            const char *name = Json_Name(f);
+            if (name && Paths_Contained(name) && (size_t)snprintf(path, sizeof(path), "%s/%s", folder, name) < sizeof(path) &&
+                !stat(path, &info))
+                sum += (long long)info.st_size;
+        }
+        __atomic_store_n(total, sum, __ATOMIC_RELAXED);
+    }
+    for (const JsonValue *f = Json_At(files, 0); f; f = Json_Next(f), n++) {
+        const char *name = Json_Name(f), *want = Json_String(f, "");
+        const Verified *v;
+        int ok = name && Paths_Contained(name) && (size_t)snprintf(path, sizeof(path), "%s/%s", folder, name) < sizeof(path) &&
+                 !stat(path, &info);
+        if (ok && !all && (v = verified_find(record, known, n, name)) && v->size == (long long)info.st_size &&
+            v->time == (long long)info.st_mtime && !strcmp(v->hex, want)) {
+            if (done) __atomic_add_fetch(done, (long long)info.st_size, __ATOMIC_RELAXED);
+            continue;
+        }
+        read++;
+        if (ok && !sha256_file(path, hex, done, cancel)) {
+            if (cancel && __atomic_load_n(cancel, __ATOMIC_RELAXED)) {
+                snprintf(why, why_size, "Cancelled.");
+                verified_free(record, known);
+                return 0;
+            }
+            ok = 0;
+        }
+        if (!ok || strcmp(hex, want))
+            if (!bad++) first = name;
+    }
+    verified_free(record, known);
+    if (bad) {
+        snprintf(why, why_size, "%d of its %d files were changed or are missing (%s), so it was not loaded.", bad, n,
+                 first ? first : "?");
+        snprintf(path, sizeof(path), "%s/.verified", folder);
+        remove(path);
+        return 0;
+    }
+    if (read && (size_t)snprintf(path, sizeof(path), "%s/.verified", folder) < sizeof(path) && (out = fopen(path, "wb"))) {
+        n = 0;
+        for (const JsonValue *f = Json_At(files, 0); f; f = Json_Next(f), n++) {
+            char file[PATH_MAX_];
+            if ((size_t)snprintf(file, sizeof(file), "%s/%s", folder, Json_Name(f)) < sizeof(file) && !stat(file, &info))
+                fprintf(out, "%lld %lld %s %s\n", (long long)info.st_size, (long long)info.st_mtime, Json_String(f, ""),
+                        Json_Name(f));
+        }
+        if (fclose(out)) remove(path);
+    }
+    return 1;
+}
+int Mods_ModpackPrepare(const char *name, long long *done, long long *total, const int *cancel, char *why,
+                        size_t why_size)
+{
+    char dir[PATH_MAX_], folder[PATH_MAX_], path[PATH_MAX_], error[200];
+    JsonDocument *info;
+    struct stat st;
+    int ok;
+    if (!Mods_ModpackNameValid(name) || Mods_ModpackDirectory(dir, sizeof(dir)) ||
+        (size_t)snprintf(folder, sizeof(folder), "%s/%s", dir, name) >= sizeof(folder) || stat(folder, &st) ||
+        !S_ISDIR(st.st_mode)) {
+        snprintf(why, why_size, "The modpack %s is gone.", name ? name : "?");
+        return 0;
+    }
+    if ((size_t)snprintf(path, sizeof(path), "%s/modpack.json", folder) >= sizeof(path)) {
+        snprintf(why, why_size, "Its folder's path is too long.");
+        return 0;
+    }
+    if (access(path, 0)) return 1; /* a folder made by hand: nothing listed to check */
+    if (!(info = Json_ParseFile(path, error, sizeof(error)))) {
+        snprintf(why, why_size, "Its modpack.json is damaged (%s).", error);
+        return 0;
+    }
+    ok = modpack_check(folder, Json_Member(Json_Root(info), "files"), 1, done, total, cancel, why, why_size);
+    Json_Free(info);
+    return ok;
+}
+/* Its mods' settings and load order, as exported: at every launch when it
+ * is locked, else at its first. */
+static void modpack_settings(const char *folder)
+{
+    char path[PATH_MAX_], key[256];
+    const JsonValue *list = Json_Member(Json_Root(modpack_info), "mods");
+    FILE *marker;
+    snprintf(path, sizeof(path), "%s/.settings-applied", folder);
+    if (!modpack_locked && !access(path, 0)) return;
+    for (int i = 0; i < Json_Count(list); i++) {
+        const JsonValue *mod = Json_At(list, i), *settings = Json_Member(mod, "settings");
+        const char *id = Json_String(Json_Member(mod, "id"), "");
+        if (!*id) continue;
+        if (Json_TypeOf(Json_Member(mod, "order")) == JSON_NUMBER && setting_key(key, sizeof(key), id, "order"))
+            Settings_SetNamed(key, (int)Json_Number(Json_Member(mod, "order"), 0));
+        for (const JsonValue *v = Json_At(settings, 0); v; v = Json_Next(v))
+            if (Json_Name(v) && setting_key(key, sizeof(key), id, Json_Name(v)))
+                Settings_SetNamed(key, (int)Json_Number(v, 0));
+    }
+    if (!modpack_locked && (marker = fopen(path, "wb"))) fclose(marker);
+}
+/* The selected modpack's folder, when there is one that exists: the scan
+ * then reads it alone (the normal mods folders wait for a launch without). */
+static int modpack_folder(char *out, size_t size)
+{
+    char name[128], dir[PATH_MAX_];
+    struct stat info;
+    if (!Mods_ModpackSelected(name, sizeof(name)) || Mods_ModpackDirectory(dir, sizeof(dir))) return 0;
+    if ((size_t)snprintf(out, size, "%s/%s", dir, name) >= size) return 0;
+    if (stat(out, &info) || !S_ISDIR(info.st_mode)) {
+        snprintf(modpack_problem, sizeof(modpack_problem), "The modpack %s is gone, so the normal mods were loaded.",
+                 name);
+        fprintf(stderr, "memories-pc: %s\n", modpack_problem);
+        return 0;
+    }
+    {
+        char path[PATH_MAX_], error[200], why[300];
+        snprintf(path, sizeof(path), "%s/modpack.json", out);
+        if (!access(path, 0)) {
+            if (!(modpack_info = Json_ParseFile(path, error, sizeof(error)))) {
+                snprintf(modpack_problem, sizeof(modpack_problem), "The modpack %s: modpack.json is damaged (%s), so the normal mods were loaded.", name, error);
+                fprintf(stderr, "memories-pc: %s\n", modpack_problem);
+                return 0;
+            }
+            if (!modpack_check(out, Json_Member(Json_Root(modpack_info), "files"), 0, NULL, NULL, NULL, why, sizeof(why))) {
+                snprintf(modpack_problem, sizeof(modpack_problem), "The modpack %s was modified: %s The normal mods were loaded.", name, why);
+                fprintf(stderr, "memories-pc: %s\n", modpack_problem);
+                Json_Free(modpack_info);
+                modpack_info = NULL;
+                return 0;
+            }
+            modpack_locked = Json_Bool(Json_Member(Json_Root(modpack_info), "locked"), 0);
+            modpack_settings(out);
+        }
+    }
+    snprintf(modpack_launched, sizeof(modpack_launched), "%s", name);
+    return 1;
+}
+
 int Mods_InstallDirectory(char *out, size_t size)
 {
     const char *named = getenv("MEMORIES_MODS_DIR");
@@ -4464,6 +4794,10 @@ void Mods_Load(void)
         if (named && *named) {
             scan(named, "installed");
             scan_folder(1);
+        } else if (modpack_folder(path, sizeof(path))) {
+            /* A modpack: its mods alone, all on at the start (the Modpack tab). */
+            scan(path, "installed");
+            say("modpack %s: %s", modpack_launched, path);
         } else {
             if (!Paths_Program(path, sizeof(path), "mods")) scan(path, "shipped");
             scan_folder(0);
@@ -4482,7 +4816,9 @@ void Mods_Load(void)
         char key[256];
         int want;
         want = mods[i].enabled;
-        if (setting_key(key, sizeof(key), mods[i].id, NULL)) want = Settings_GetNamed(key, want);
+        if (modpack_launched[0]) {
+            if (first || modpack_locked) want = 1;
+        } else if (setting_key(key, sizeof(key), mods[i].id, NULL)) want = Settings_GetNamed(key, want);
         want = environment_choice(mods[i].id, want) != 0;
         if (all && (!strcmp(all, "0") || !strcmp(all, "off"))) want = 0;
         mods[i].enabled = want;
