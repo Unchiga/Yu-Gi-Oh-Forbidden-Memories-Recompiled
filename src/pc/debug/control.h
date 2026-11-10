@@ -30,6 +30,9 @@ int Control_Pointer(int *x, int *y, unsigned *buttons);
 /* The notches the client turned (`wheel`) since the last call, which
  * host->wheel adds to the real wheel's. Signal-safe. */
 int Control_PointerWheel(void);
+/* The next key the client typed (`key`), which host->text_key gives a mod ahead
+ * of the real keyboard's; 0 when none. Signal-safe. */
+int Control_TextKey(void);
 /* A `poke` or `jump` line a recording kept (recorder.h, C lines), done
  * again as the channel did it: 0 done, -1 not (a line of another kind, or
  * one the game refuses now). The line is modified in place. */

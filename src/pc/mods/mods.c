@@ -621,6 +621,42 @@ void Mods_SetPointer(int (*pointer)(int *x, int *y, unsigned *buttons), int (*wh
     wheel_read = wheel;
     wheel_take = take;
 }
+/* Typed text (API 27): the window's own (Mods_SetText), and the mod that took
+ * the keyboard, which is given back when it is turned off. */
+static void (*text_capture_fn)(int);
+static int (*text_next_fn)(void);
+static int text_owner = -1;
+static void host_text_capture(const MemoriesModHost *host, int on)
+{
+    Mod *mod = owner(host);
+    int index = mod ? (int)(mod - mods) : -1;
+    if (!mod || (on && !mod->active)) return;
+    if (on) {
+        text_owner = index;
+    } else if (text_owner == index) {
+        text_owner = -1;
+    } else {
+        return; /* another mod has it */
+    }
+    if (text_capture_fn) text_capture_fn(on != 0);
+}
+static int host_text_key(const MemoriesModHost *host)
+{
+    Mod *mod = owner(host);
+    return mod && mod->active && (int)(mod - mods) == text_owner && text_next_fn ? text_next_fn() : 0;
+}
+static void release_text(int index)
+{
+    if (text_owner == index) {
+        text_owner = -1;
+        if (text_capture_fn) text_capture_fn(0);
+    }
+}
+void Mods_SetText(void (*capture)(int on), int (*next)(void))
+{
+    text_capture_fn = capture;
+    text_next_fn = next;
+}
 /* The parts of the port's HUD the applied mods hide (host->hide_hud). */
 static void host_hide_hud(const MemoriesModHost *host, unsigned mask)
 {
@@ -2320,6 +2356,8 @@ static void fill_host(Mod *mod)
     mod->host.pointer = host_pointer;
     mod->host.wheel = host_wheel;
     mod->host.take_wheel = host_take_wheel;
+    mod->host.text_capture = host_text_capture;
+    mod->host.text_key = host_text_key;
     mod->host.api = MEMORIES_MOD_API;
     mod->host.id = mod->id;
     mod->host.directory = mod->directory;
@@ -4366,6 +4404,7 @@ static void activate_once(int index, int on)
         mod->hud_hidden = 0;
         release_mouse(index);
         release_wheel(index);
+        release_text(index);
         ahead_drop(mod);
         if (mod->hooks.applied) mod->hooks.applied(0);
     }

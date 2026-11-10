@@ -144,6 +144,12 @@ int ControlProtocol_Parse(char *line, ControlCommand *command, uint8_t *data, ch
             return fail(error, error_size, "usage: pointer X Y [BTN] (BTN is hex, up to 7)");
         command->pointer_buttons = argument ? value : 0;
         if (!at_end(&cursor)) return fail(error, error_size, "usage: pointer X Y [BTN]");
+    } else if (!strcmp(name, "key")) {
+        command->kind = CONTROL_KEY;
+        if (signed_number(word(&cursor), &command->pointer_x) || !at_end(&cursor) ||
+            !(command->pointer_x == 8 || command->pointer_x == 13 || command->pointer_x == 27 ||
+              (command->pointer_x >= 32 && command->pointer_x <= 126)))
+            return fail(error, error_size, "usage: key N (N is 8, 13, 27 or an ASCII code from 32 to 126, decimal)");
     } else if (!strcmp(name, "wheel")) {
         command->kind = CONTROL_WHEEL;
         if (signed_number(word(&cursor), &command->pointer_x) || !at_end(&cursor))

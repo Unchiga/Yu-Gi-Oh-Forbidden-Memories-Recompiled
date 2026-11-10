@@ -47,6 +47,9 @@ static void commands(void)
     CHECK(parse("pointer 1 2 8", &c) == -1 && parse("pointer 1 2 zz", &c) == -1 && parse("pointer 1 2 1 1", &c) == -1);
     CHECK(parse("pointer 100001 0", &c) == -1);
     CHECK(parse("wheel 3", &c) == 0 && c.kind == CONTROL_WHEEL && c.pointer_x == 3);
+    CHECK(parse("key 13", &c) == 0 && c.kind == CONTROL_KEY && c.pointer_x == 13);
+    CHECK(parse("key 65", &c) == 0 && c.kind == CONTROL_KEY && c.pointer_x == 65);
+    CHECK(parse("key 9", &c) != 0 && parse("key 200", &c) != 0 && parse("key", &c) != 0);
     CHECK(parse("wheel -2", &c) == 0 && c.pointer_x == -2);
     CHECK(parse("wheel", &c) == -1 && parse("wheel x", &c) == -1 && parse("wheel 1 2", &c) == -1);
     CHECK(parse("shot D:/some dir/a b.png ", &c) == 0 && c.kind == CONTROL_SHOT && !strcmp(c.path, "D:/some dir/a b.png"));

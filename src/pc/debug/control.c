@@ -54,6 +54,17 @@ int Control_PointerWheel(void)
     wheel_pending = 0;
     return notches;
 }
+static volatile int text_keys[32];
+static volatile int text_key_head, text_key_count;
+int Control_TextKey(void)
+{
+    int key;
+    if (text_key_count <= 0) return 0;
+    key = text_keys[text_key_head];
+    text_key_head = (text_key_head + 1) % 32;
+    text_key_count--;
+    return key;
+}
 int Control_Pointer(int *x, int *y, unsigned *buttons)
 {
     if (!pointer_set) return 0;
@@ -359,6 +370,10 @@ static int handle(char *text)
         return 0;
     case CONTROL_WHEEL:
         wheel_pending += command.pointer_x;
+        send_line("ok");
+        return 0;
+    case CONTROL_KEY:
+        if (text_key_count < 32) text_keys[(text_key_head + text_key_count++) % 32] = command.pointer_x;
         send_line("ok");
         return 0;
     case CONTROL_SHOT:
