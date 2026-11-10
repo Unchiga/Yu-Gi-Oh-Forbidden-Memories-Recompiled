@@ -974,7 +974,7 @@ if(BUILD_TESTING)
     # finish in the time limit.
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_executable(memories_translated_arena_test tests/pc/translated_arena_test.c
-            src/pc/guest/translated_runtime.c src/pc/memory.c)
+            src/pc/guest/translated_runtime.c src/pc/guest/translated_alloc.c src/pc/memory.c)
         target_include_directories(memories_translated_arena_test PRIVATE src)
         target_compile_definitions(memories_translated_arena_test PRIVATE _DEFAULT_SOURCE)
         if(NOT MSVC)

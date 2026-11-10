@@ -140,6 +140,7 @@ def main():
             [
                 "tests/pc/translated_arena_test.c",
                 "src/pc/guest/translated_runtime.c",
+                "src/pc/guest/translated_alloc.c",
                 "src/pc/memory.c",
             ],
             [],

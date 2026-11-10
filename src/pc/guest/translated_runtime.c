@@ -11,9 +11,16 @@
 /* External native data uses explicit guest-visible spans, never truncation. */
 #define EXTERNAL_BASE (MEMORIES_GUEST_RAM + MEMORIES_RAM_SIZE)
 #define EXTERNAL_END 0xf0000000u
-/* Automatic globals/heaps are a subset of the external mapping arena. */
-#define AUTOMATIC_BASE 0xd0000000u
+/* Automatic globals/heaps are a subset of the external mapping arena, from
+ * where the console's direct segments end up to the game's stacks, which have
+ * fixed tokens from 0xE0000000 and register after the mods have loaded. A save
+ * state holds its globals by token, so they stay where they have always been:
+ * tokens start at AUTOMATIC_START, go on to the end, and only then come back to
+ * the base. */
+#define AUTOMATIC_BASE 0xc0000000u
+#define AUTOMATIC_START 0xd0000000u
 #define AUTOMATIC_END 0xe0000000u
+_Static_assert(AUTOMATIC_BASE >= MEMORIES_GUEST_DIRECT_END, "the arena must not reach the direct segments");
 struct Function {
     u32 guest;
     uintptr_t host;
@@ -24,7 +31,7 @@ static GuestRuntimeRegion *regions;
 static unsigned *region_order; /* region indices sorted by guest base */
 static unsigned *host_order;   /* region indices sorted by native base */
 static size_t region_capacity;
-static u32 automatic_cursor = AUTOMATIC_BASE;
+static u32 automatic_cursor = AUTOMATIC_START;
 static struct Function functions[FUNCTION_LIMIT];
 static unsigned function_host_order[FUNCTION_LIMIT];
 static unsigned region_count, function_count;
@@ -101,7 +108,7 @@ void GuestRuntime_Reset(void)
     region_order = NULL;
     host_order = NULL;
     region_capacity = 0;
-    automatic_cursor = AUTOMATIC_BASE;
+    automatic_cursor = AUTOMATIC_START;
 }
 int GuestRuntime_IsBound(void) { return GuestRuntime_ActiveMemory != NULL; }
 MemoriesMemory *GuestRuntime_Memory(void) { return GuestRuntime_ActiveMemory; }
@@ -217,13 +224,14 @@ static unsigned first_region_past(u32 address)
     }
     return low;
 }
-void GuestRuntime_RegisterAutomatic(void *host, size_t length)
+/* 0, or -1 with the arena full when the caller can do without (`fatal` 0). */
+static int register_automatic(void *host, size_t length, int fatal)
 {
     u32 candidate = automatic_cursor;
     unsigned i, position;
-    if (!host || !length) return;
+    if (!host || !length) return 0;
     for (i = 0; i < region_count; ++i)
-        if (regions[i].host == (uintptr_t)host && regions[i].length == length) return;
+        if (regions[i].host == (uintptr_t)host && regions[i].length == length) return 0;
     /* Try the cursor first, then the complete arena. A larger temporary
      * allocation may skip a small free span and leave the cursor above it.
      * Failing at the upper end must not hide that reusable lower span.
@@ -235,7 +243,10 @@ void GuestRuntime_RegisterAutomatic(void *host, size_t length)
         const GuestRuntimeRegion *r;
         size_t next;
         if (length > AUTOMATIC_END - candidate) {
-            if (wrapped) invalid("guest token arena exhausted", (uintptr_t)host, length);
+            if (wrapped) {
+                if (!fatal) return -1;
+                invalid("guest token arena exhausted", (uintptr_t)host, length);
+            }
             candidate = AUTOMATIC_BASE;
             wrapped = 1;
             position = first_region_past(candidate);
@@ -256,6 +267,11 @@ void GuestRuntime_RegisterAutomatic(void *host, size_t length)
     }
     if (GuestRuntime_RegisterData(host, length, candidate)) invalid("cannot register native allocation", (uintptr_t)host, length);
     automatic_cursor = (u32)(((size_t)candidate + length + 15u) & ~(size_t)15u);
+    return 0;
+}
+void GuestRuntime_RegisterAutomatic(void *host, size_t length)
+{
+    register_automatic(host, length, 1);
 }
 unsigned GuestRuntime_RegionCount(void) { return region_count; }
 const GuestRuntimeRegion *GuestRuntime_Region(unsigned index)
@@ -289,6 +305,16 @@ void GuestRuntime_RegisterAllocation(void *host, size_t length)
         regions[i].flags |= MEMORIES_REGION_HEAP;
         return;
     }
+}
+int GuestRuntime_TryRegisterAllocation(void *host, size_t length)
+{
+    unsigned i;
+    if (register_automatic(host, length, 0)) return -1;
+    for (i = 0; i < region_count; ++i) if (regions[i].host == (uintptr_t)host) {
+        regions[i].flags |= MEMORIES_REGION_HEAP;
+        break;
+    }
+    return 0;
 }
 int GuestRuntime_RegisterAllocationAt(void *host, size_t length, uint32_t guest)
 {
