@@ -752,32 +752,119 @@ variant module is called with a word of the record `% 1000`
 418's setup takes `D_8013E96C + 0xFC + command * 0x44` as its config entry
 without a bound. The retail table has 18 entries (commands 0 to 17, ending
 at `0x3F30`, inside the span). A native row therefore has a `command_table`
-(`table:stride:count:field`, or `none` when its C takes no command index; for
-418 `0x3A68:0x44:18:0x1B74`): `problems` fails when the entries are not
-inside the span, and `model_modules.c` sends to the interpreter a setup whose
-command is `>= count` and any update whose entry pointer (the work area's word
-at `field`, where the setup stored its choice) is not one of the `count`
-entries. That makes the decision stateless: an attack the interpreter set up
-stays with it, so does one a saved state resumes, and an update with no setup
-before it. When such a setup falls to the stand-in (the interpreter could not
-run it), the stand-in does not write the entry word, so `model_modules.c`
-clears it: one left by an earlier attack would send the updates to the C.
+(`table:stride:count:field[:indexN]`, or `none` when its C takes no command
+index; for 418 `0x3A68:0x44:18:0x1B74`): `problems` fails when the entries are
+not inside the span, and `model_modules.c` sends to the interpreter a setup
+whose command is `>= count` and any update whose entry (the work area's word
+at `field`, which the setup left) is not one of the `count` entries. The
+setup leaves it in one of two forms. **A pointer** (no fifth part):
+`work->config = &D_...[command]`, and the update's word must point at an entry
+of `stride` bytes from `table`. **An index** (`index8`, `index16`, `index32`):
+`work->command = command`, which every update then indexes the table with
+(`D_8013C800[work->command]`), so there is no pointer to check; `field` is the
+offset of that member and the suffix is its type's width (take both from the
+record layout of the state struct, `clang -Xclang -fdump-record-layouts`),
+and the update's index, zero-extended, must be `< count`. A narrow member
+truncates a setup command >= 256 that the interpreter took, but the truncated
+index is accepted only when it is itself a covered entry, so the table read
+stays inside the hash (so `problems` fails an index row whose `count` exceeds
+what its width can name). What each form guarantees differs. A **pointer** must
+equal the address of an exact entry, which a stale or foreign value almost never
+does, so the work area alone decides: an attack the interpreter set up stays
+with it, so does one a saved state resumes, and an update with no setup before it
+(a zeroed pointer is no entry). An **index** is weaker evidence: any small
+number passes, a zeroed work area reads as index 0 (so an update with no setup
+before it is NOT kept from the C by the index), and the stand-in does not write
+its work area the way a native setup does (the stand-in's first bytes are random
+sparks, `func_8006F1B4` writes `sparks[0].vx` on its setup and on every update).
+What is guaranteed for an index row is that the table read stays inside the
+hashed entries; whose attack it is comes from elsewhere: `model_control.c` runs
+the setup (`handler(secondary, request % 1000)`, state 7) before the first
+update (state 8) of every attack, and `model_modules.c` keeps a flag per slot,
+`ModelVerdict.stand_in`, set whenever the stand-in runs a call of the slot's
+variant module (a setup the interpreter could not run, or an update it failed in
+the middle of an attack: the stand-in writes its sparks over that work area too)
+and cleared by the next setup or by a new module in the slot.
+While it is set no update of that slot goes native, whatever the work area
+holds, for pointer and index rows alike; writing a sentinel into the stand-in's
+work area instead would not do (the stand-in overwrites it, and a byte it holds
+lands below `count` once in `count/256` updates). A pointer row's word is also
+cleared to 0 when the stand-in takes the setup, because the work area outlives
+the flag.
 The first such call of a slot's code is logged under
 `MEMORIES_TRACE=mods`; the model trace shows `interpreter` for each. The
 batch reviewer therefore greps the shape's C for an index taken from the
 command or the work area, as well as from slot data, and sets `command_table`
 by hand from the C (`count` is where the retail table ends; the gated oracle
 fails a retail record whose command or entry pointer a wrong `count` or
-`field` would send to the interpreter). The gate only
+`field` would send to the interpreter). `model_gate.py check` does the greps:
+it finds each table of the slot's data that the shape's C indexes with the
+command (`D_8013xxxx[command]`, `&D_8013xxxx[command]`,
+`D_8013xxxx[work->command]`, `D_8013xxxx[(work)->command]`, `D_8013xxxx[command % 100]`,
+`(T *)(D_8013xxxx + 0xFC) + command`, through the `#define` aliases of the
+wrappers) and fails a native row whose `command_table` is `none` or does not
+cover that table inside the span: `none` is only for C that never indexes with
+the command. The scan (`model_gate_scan.py`) does not propose an index row (it
+knows the work offset the setup keeps the command at, not the member's
+width), so `check` is what catches a `none` that should be one. The gate only
 matches the US disc's modules: the other regions' 418 images differ and are
-interpreted. To port a shape:
-copy the decomp's `variant<shape>_*.c` into `src/native_overlays/model_variant` (not
+interpreted. **To port a shape**, `python tools/pc/model_gate.py port <shape>...
+--disc <disc>` (tools/pc/model_gate_port.py) copies its C from the `upstream`
+remote (`--upstream`, default `upstream/master`), never by hand. The upstream
+layout of each US module (config/slus_01411/overlays/<module>.yaml, its `c`
+subsegments) names the files; the file names do not say the shape (shape 59
+is french_model_variant/variant76_entry.c, 433 has two of header 450's
+through a wrapper of spanish_model_variant's, 79 is variant96_entry_usa.c), so
+the module's list goes to `config/pc/model_gate_sources.txt`, which
+`build_config.py` compiles (a shape the list lacks falls back to
+`variant<sources>_*.c`). The copies are upstream's bytes but for these
+rules: (1) every file the layout names and every file it includes goes to
+the same folder under `src/native_overlays` it has under `src/overlays` (not
 `src/overlays`: every C file there must be a subsegment of a split, which
-these modules do not have here; the headers' relative includes are the
-same depth) and
-the slot B wrappers (the same C under `#define`s of the `0x8017Bxxx`
-names) into `src/native_overlays/model_variant_slot1`, set the row to `native` with
-the decomp's data start as its span, run `update --disc` and a build.
+these modules do not have here; the folders are one level below `src/` in
+both, so `../../types.h` stays right), and a header outside the overlay
+folders the port lacks is copied (src/game/model_copy_slot_position.h: one
+the port has stays the port's); (2) an include that reaches another overlay
+folder through `src/` is written relative to `src/native_overlays`; (3) slot
+B's files (`#define`s of the `0x8017Bxxx` names around an include of slot A's
+C) go to `<folder>_slot1`, an include of a file beside them written
+`../<folder>/`; (4) G32 on every cast `check_x64_casts.py` reports in a copied
+unit (a `widened` one too, as `T *G32`); (5) a copied file that calls a
+resident function its headers do not declare under that name includes
+src/native_overlays/model_gate_names.h first, which includes the port's
+header that declares it and, for a function the port names otherwise (the
+same address in upstream's symbol files: upstream's
+`ModelTexture_PackPageClutCopy` is the port's `func_80059A50`), `#define`s
+upstream's name as the port's. Upstream's names of those addresses are also
+in `config/pc/model_gate_names.txt`, which `build_game32.py` and
+`build_arm64.py` resolve to the port's name at the address, and a name a
+model module uses that no table places stops the build (it would be a
+stub). Regenerating shape 418 gives the committed files byte for byte.
+`port` refuses a shape whose images' layouts name different files (668: one
+image has `variant685_rings.c` at `0x3520`, past its data start; 552, 402's
+slot B, one with `variant552_strand.c`), and reports a unit that does not
+compile against the port's headers (a member upstream renamed in
+`ModelTintColor` or `ModelSlot`). It sets the row's `data_start` and
+`sources`; backend, span and command_table come from the scan:
+**`python tools/pc/model_gate_scan.py --disc <disc> --commands <counts.json>
+--out <report.json>`** walks clang's AST of each slot A unit for every `/`,
+`%` and index whose operand is not a constant and follows it back, through
+locals (a loop counter takes its bound's sources), the module's functions'
+parameters and the work area's fields (by byte offset, from clang's record
+layouts, so `work->config` and `MODEL_VARIANT_WORD(work, 0x1B74)` are one
+field), to a slot word at a fixed offset (the span covers it), a field of
+the entry of a slot table the command picks (`&D_8013C31C[command]`,
+`(T *)(D + K) + command`: the command table; the work field holding the
+entry's address is its `field`), the command itself, or nothing of the
+slot's data. Upstream does not size the tables (the data after the last
+named object is one symbol to the end of the image: `D_8013E96C`, 0x1694
+bytes), so `count` is the retail commands' (`max + 1` of the setup commands
+a full oracle run's traces show for the shape, both slots). A site from a
+slot word or entry where the retail images differ makes the row `keep`; one
+the scan cannot follow is listed for review. For 418 it finds table
+`0x3A68`, entry size `0x44` and field `0x1B74`, and the seven divisions of
+spiral, sheet, bands and quad by the entry's timing words. Then
+`update --disc` and a build.
 `build_config.py` makes two gated modules of it (`model_variant_<shape>` and
 `_slot1`, banks `0x8013B000` and `0x8017B000`, every name prefixed as for the
 effect bank), and their entry is the function at the slot base + 4. These
@@ -873,6 +960,69 @@ came just before it, and was identical with the interpreter's stack zeroed
 before each outermost call (a diagnostic build). The sweep's two sides run
 the same battles in the same order, so they compare alike; native C for such
 a module would read the host's stack instead, and differ.
+
+**A shape's C can read a local before writing it too** (the scan does not
+see it): shape 84's (`variant101_entry.c`) first particle loop tests
+`flags[i]` before `RotTransPersN` fills it, so it takes what the earlier
+call left on the stack. The plain sweep showed it only because record 130's
+second-star battle came out a pixel apart at +716; another battle's garbage
+can happen to agree. **`--poison 0x00` and `--poison 0xFF`** make it
+systematic: the subject (a build with test hooks) fills 32 KiB of its stack
+below `run_module`'s frame with the byte before each native module call
+(`MEMORIES_MODEL_STACK_POISON`), so such a read takes the byte, and for one
+byte or the other differs from the interpreter. Every batch runs both over
+`--records gated`; a shape that differs under either is `keep` with the
+read in its note (84, beside 128), until its C writes what it reads.
+Shape 783 (`variant783_entry.c`) was the second: the spray loop sorts a box
+at `screen[0]`, which only the particle branches' `RotTransPersN` fills, so
+the plain sweep differed in five battles (records 252, 279, 350, 577, 590, a
+pixel in the white flash). Shape 169 (`variant169_entry.c`) was the third:
+the `ratan2` that aims the trail reads `vertices[0].vy/.vz`, which only the
+waiting branch fills, so records 197 and 550 differed from frame +696 on
+(under both poison bytes too).
+
+**When the read takes the slot's own previous call, the port keeps the
+local.** Shape 169 is native: what its retail stack slot holds at that read
+is what the same function wrote there on the slot's previous call (the
+waiting branch's part position, or a moving frame's). Rule 6 of
+`model_gate_port.py` (`STALE_LOCALS`) replaces the local with per-slot
+storage, `gModelVariant169Vertices[Model_GetActiveSlotIndex() & 1]`
+(`src/pc/overlays/model_stale_locals.h`), and with it records 197 and 550
+match the interpreter, plain and under both poison bytes. The storage is a
+game unit's (`src/pc/game/zzz_model_stale_locals.c`, after
+`zz_tower_storage.c` so no variable moves), so it is in every save state as
+the game stack is. It is zero at boot, and is not cleared at setup, which
+retail does not do to its stack either. Both retail images of each slot
+wait 65 frames (`delay`) before the trail moves, so the first read takes
+this attack's position; a mod's row with `delay` 0 reads the slot's
+previous attack's instead, where retail read whatever its stack held. The
+rule is a model of these battles, not of the stack: retail's two slots run
+their modules at one stack depth, so storage per slot matches it only
+because in 197 and 550 the two slots' 169 animations do not run at the same
+time. `check`
+fails a native row whose C lacks the rule, so a copy without it cannot
+pass for native. Shapes 84, 128 and 783 stay `keep`: their reads have not
+been shown to take the same function's previous call.
+
+**A frame past a page calls the Windows stack probe.** Shape 439's C
+(`variant456_sprays.c`, about 12 KB of arrays) makes the Windows compilers
+call the toolchain's probe before the frame is used: `__alloca` on i686,
+`___chkstk_ms` on x86-64 (Linux, Android and macOS probe inline or not at
+all). The probe is not a guest name, so build_game32.py's `STACK_PROBES`
+keeps it out of the pinned names and the stubs and the link takes it from
+the toolchain's runtime (the exe's `___chkstk`). It touches each page of
+the frame in turn, and the game stack (state.c, 8 MiB at
+`MEMORIES_GAME_STACK_BASE`) is mapped and committed at start, its guard
+page at the far end, so a frame of a few pages costs a few touches.
+
+**A module's `printf` format string is covered by the span.** The
+interpreter only logs a module's format string (`mips.c`, `LOG_MIPS_PRINTF`);
+native C calls the host's `printf` with it, so a mod that changed the string
+past the span could make it read or write anywhere (`%s`, `%n`).
+`model_gate.py check --disc` therefore finds each `printf(D_8013xxxx, ...)`
+of a native shape's C and fails when the string, through its NUL, is not
+inside the span; 643's and 672's spans are widened by 24 bytes over theirs
+(their data start was the string's first byte).
 
 ### Credits
 
@@ -1114,6 +1264,99 @@ send a key with Left Alt held (`alt+return` is Alt+Enter; `kp_plus` and
 key across frames (a `key` is pressed and released in one pump, before the
 game reads the pad; `s` is Circle and `x` Cross by default), which is how
 Japanese buttons was checked through the keyboard; `f8` is one of the names.
+
+### Loading screen (`platform/loading.c`, `Platform_ShowLoading` in `sdl.c`)
+
+A big mod makes the start take long (More Cards 1.61: about 13 s on Windows,
+minutes on a phone), and until now the window stayed empty all that time.
+When the start-up has taken more than half a second (`LOADING_DELAY_US`) the
+window shows a dark screen with one line of what is happening ("Cards 432 of
+1588", "Fusions 2000 of 9000", "Reading mods 1 of 4") and, when the total is
+known, a progress bar; a start under half a second shows nothing, not a frame,
+so it is as before. There is no setting; `MEMORIES_LOADING_DELAY_MS=<ms>`
+(0: from the first step) replaces the half second to look at the screen on a
+quick start.
+
+- **Two-phase load.** `Menu_LoadSettings` is two halves now,
+  `Menu_LoadSettingsWithoutMods` and `Menu_LoadMods` (`Mods_Load`: scan,
+  `Mods_CheckManifest`, `apply_overrides`, `activate`). `Platform_Open` (sdl.c)
+  does the first, opens the window and the renderer, then `Menu_PrepareFont`
+  (the font the screen needs, which `Menu_Init` then keeps), `Loading_Begin`,
+  `Menu_LoadMods` and `Menu_Init`. Without a window (headless) it reads the
+  mods at once, in the old order; the settings reload (`ACT_RELOAD_SETTINGS`)
+  and the x11 backend call `Menu_LoadSettings`, both halves. What reads mod
+  state was checked: `Menu_Init` (language items read language packs and the
+  disc, not mods), `Menu_SetHdPicture`, `GlPicture_Init` (the texture packs
+  are mapped by generation, as for a live change) and `create_window` do not.
+  `Mods_SetPointer`, `Mods_SetMouse` and `Mods_SetOverlaySink` are set before
+  the mods are read now instead of after; a mod reaches them only once the
+  game runs.
+- **Steps.** `Loading_Step(what, done, total)` is called from the loops the
+  start-up already runs on the main thread, before the game's own stack:
+  `scan` (per manifest, before and after the parse, since one huge `mod.json`
+  has no loop inside to step from: the label stays while it parses and the
+  events are pumped on both sides), the apply loops of `Mods_Load` ("Checking
+  mods", "Preparing mods", "Starting mods"), `Cards_Build` (per card entry,
+  with a total counted first, then Duelists, Tables, Stars, Packs, Tower), the
+  duelist, portrait, drop and deck folders, the fusion and equip lists. With
+  nothing due it is a clock read (the Windows one reads the counter's
+  frequency once). `loading.c` only decides when to draw (`LoadingPace_Due`:
+  nothing before the delay, never within 50 ms of the last draw, a new `what`
+  at once past that, the same one at most every 100 ms); the drawing is the
+  sink's, so `tests/pc/loading_test.c` runs it with a fake clock. A stage
+  label skipped for the 50 ms floor is not drawn later by itself, and a stage
+  with no step inside (`Text_Build`) shows only its label.
+- **Before the delay.** A manifest over 1 MB is one blocking parse with no
+  loop to step from, so `read_manifest` calls `Loading_Show` ("Reading mod
+  <folder>") before it: drawn at once, whatever the delay (50 ms floor
+  only), and the delay is over from then on. Nothing else uses it, or a quick
+  start would flash the screen. The window's mode (`apply_display_settings`:
+  a phone's immersive fullscreen, a desktop's fullscreen or borderless) is
+  applied before the screen's first draw, so it is not drawn in bars and then
+  moves; the screen takes the window's size each time it draws. That call
+  comes before `Menu_Init` and the one after it stays: it is idempotent, so a
+  fullscreen or borderless desktop (and always Android) runs it twice.
+- **Drawing.** `Platform_ShowLoading` draws into a picture of a fixed size
+  (960x540 pixels for a 16:9 window, the same area in the window's shape
+  otherwise), in the Mods window's colors and the menu font, stretched to the
+  window by a texture of its own: desktop GL (the same quad as `show`) or the
+  SDL renderer (Android's OpenGL ES). It does not touch the picture, the
+  overlay or the layout, none of which exist before the first frame;
+  `Platform_EndLoading` frees it and the game's first frame replaces it.
+  On Android the window's surface comes a moment after the window, and again
+  after the immersive-mode change, and a frame presented before that never
+  reaches the display, so the first draw first pumps events until the window
+  is shown and its size has held for three checks (15 ms apart), at most
+  500 ms, then presents the first frame twice. Not while the app is in the
+  background (nothing is drawn then, and no wait). The first draw logs one
+  line, `memories-pc: loading screen: first draw, WxH (window WxH): "<line>"`,
+  once per start, to tell from a log that the screen was up.
+  Headless runs never begin it; the x11 backend's `Platform_ShowLoading`
+  answers -1.
+- **Events.** Each draw calls `SDL_PumpEvents`, which keeps Windows from
+  calling the window not responding and Android from waiting on input, and
+  leaves the events queued for the game's own pump. `app_event` (the watcher
+  that sees every event) notes the close button, `SDL_EVENT_QUIT` and a
+  phone's Back, and a render device reset, while the screen is watching.
+  A quit leaves by the game's own exit (`quit_while_loading` in `main.c`:
+  the exiting flag, `Platform_StopTimers`, `Mods_Shutdown`, `exit`) without
+  the quit question, nothing being lost yet. After a reset the screen's
+  texture is dropped, not destroyed, and made again on the next draw; the
+  event stays queued for the game's pump (`reset_renderer`). While the app is
+  in the background nothing is drawn. `Platform_EndLoading`, when a draw
+  happened, drops the key, text, mouse (not the device events), finger,
+  joystick and gamepad input of the wait so a tap or a stick's drift is not
+  replayed into the first frame; window, quit, device and background events
+  stay. A Back pressed after the last draw and before `Loading_Finish` is
+  dropped with the keys, so it has to be pressed again.
+- **Windows.** The window now exists while the mods are read, where before it
+  did not. Events are pumped only when a step draws, so a long stretch with no
+  step in it (one huge HD pack, a slow code mod's init) can still make Windows
+  call the window not responding after about five seconds.
+- **Names.** `Loading_Begin`, `Loading_Step`, `Loading_Show`,
+  `Loading_Finish`, `Loading_SetQuit`, `Platform_ShowLoading` and
+  `Platform_EndLoading` are port globals, so a code mod
+  can bind them like every other.
 
 ### Screenshots
 

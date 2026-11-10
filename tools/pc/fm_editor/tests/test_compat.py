@@ -228,17 +228,75 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual((api, len(reasons)), (18, 2))
         self.assertIn("newer than v0.3.0", compat.release_text(18))
 
-    def test_api_25_variants(self):
+    def test_api_25(self):
+        """An ATK/DFD caption picture on a style that keeps retail's frame: a
+        game of API 24 draws it only on a full-bleed frame and leaves retail's
+        caption, so the mod would show retail's DFD where it asks for HP."""
+        def layout(**style):
+            return {"card_layout": {"frame_styles": {"s": {"hand_color": "gold", **style}}}}
+        label = {"image": "hp.png", "x": 12, "y": 184}
+        for value in (layout(dfd_label=label), layout(atk_label=label),
+                      layout(image="a.png", full_bleed=False, dfd_label=label),
+                      layout(image="", dfd_label=label)):
+            with self.subTest(value=value):
+                api, reasons = compat.required(value)
+                self.assertEqual(api, 25)
+                self.assertIn("keeps retail's frame", reasons[0])
+        # On a frame of the style's own the picture is API 18's, as before.
+        for value in (layout(image="a.png", dfd_label=label),
+                      layout(image="a.png", full_bleed=True, atk_label=label),
+                      layout(full_bleed=True, dfd_label=label)):
+            with self.subTest(value=value):
+                self.assertEqual(self.needs(value), 18)
+        # A caption with no picture of its own (a move, a hide) draws nothing new.
+        for value in (layout(dfd_label={"x": 12, "y": 184}), layout(atk_label={"hide": True}),
+                      layout(dfd_label={"image": ""}), layout(dfd_label="hp.png")):
+            with self.subTest(value=value):
+                self.assertEqual(self.needs(value), 18)
+        self.assertEqual(self.needs({"card_layout": {"atk_label": label}}), 18)   # not read by the game
+        # The game reads "full_bleed" with Json_Bool: a number is a bool (0 false), another value says nothing.
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=0, dfd_label=label)), 25)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=0.0, dfd_label=label)), 25)
+        self.assertEqual(self.needs(layout(full_bleed=1, dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=2.5, dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed="no", dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(full_bleed=None, dfd_label=label)), 25)
+        self.assertIn("newer than v0.3.0", compat.release_text(25))
+
+    def test_api_25_digits(self):
+        """A digit strip on a style that keeps retail's frame, the style's own
+        or the layout's shared one: a game of API 24 draws a strip only on a
+        full-bleed frame and keeps retail's digits."""
+        strip = {"image": "d.png", "width": 10, "height": 12}
+        def layout(shared=None, **style):
+            value = {"frame_styles": {"s": {"hand_color": "gold", **style}}}
+            if shared is not None:
+                value["digits"] = shared
+            return {"card_layout": value}
+        for value in (layout(digits=strip), layout(shared=strip), layout(image="a.png", full_bleed=False, digits=strip)):
+            with self.subTest(value=value):
+                api, reasons = compat.required(value)
+                self.assertEqual(api, 25)
+                self.assertIn("\"digits\" strip", reasons[0])
+        # A frame of the style's own, a strip with no picture, or a style
+        # whose own "digits" hides the shared one (layout_part): nothing new.
+        for value in (layout(image="a.png", digits=strip), layout(shared=strip, image="a.png"),
+                      layout(digits={"atk": {"x": 90}}), layout(shared=strip, digits={"width": 8}),
+                      layout(shared=strip, digits=None)):
+            with self.subTest(value=value):
+                self.assertLess(self.needs(value), 25)
+
+    def test_api_26_variants(self):
         """A card's variant keys (notes/more-cards.md, "Variants"): a game of
-        API 24 would read the copy as an ordinary one that takes its base's
+        API 25 would read the copy as an ordinary one that takes its base's
         place in an even share, or not at all."""
         for entry in ({"copy": 1, "id": "a", "variant_permille": 50},
                       {"copy": 1, "id": "a", "variant_permille": 50, "variant_label": "Rainbow foil"},
                       {"copy": 1, "id": "a", "variant_label": "Rainbow foil"}):
             with self.subTest(entry=entry):
-                self.assertEqual(self.needs({"cards": [entry]}), 25)
+                self.assertEqual(self.needs({"cards": [entry]}), 26)
         self.assertEqual(self.needs({"cards": [{"copy": 1, "id": "a", "drops": False}]}), 0)
-        self.assertIn("newer than v0.3.0", compat.release_text(25))
+        self.assertIn("newer than v0.3.0", compat.release_text(26))
 
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})

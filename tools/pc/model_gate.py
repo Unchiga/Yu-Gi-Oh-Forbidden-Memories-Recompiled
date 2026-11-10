@@ -21,13 +21,21 @@ word of its own):
                  images have in common, the most a hash can cover
     data_start   the decomp's data start for the shape (native rows)
     command_table  where the C indexes the slot's data by the command its
-                 caller passes (a native row's `table:stride:count:field`,
-                 or `none` when it does not): the table's offset from the
-                 slot base, the entry size, how many entries the hash
-                 covers, and the offset in the work area of the pointer to
-                 the entry the setup chose. A setup command past `count`, or
-                 an update whose entry pointer is not one of the covered
-                 entries, runs the interpreter (model_modules.c)
+                 caller passes (a native row's `table:stride:count:field`
+                 or `table:stride:count:field:indexN`, or `none` when it
+                 does not): the table's offset from the slot base, the entry
+                 size, how many entries the hash covers, and the offset in
+                 the work area of what the setup left for the updates. That
+                 is the POINTER to the entry the setup chose
+                 (`work->config = &D_...[command]`), or with `index8`,
+                 `index16` or `index32` the COMMAND ITSELF, which the setup
+                 stored as a u8, u16 or u32 member and every update indexes
+                 the table with (`work->command = command`). A setup command
+                 past `count`, or an update whose pointer is not one of the
+                 covered entries (whose index is not below `count`), runs
+                 the interpreter (model_modules.c). `check` fails a native
+                 row whose C indexes a table with the command and whose
+                 command_table is `none` or does not cover that table
     sources      the numbers of the upstream headers whose C the module is
                  made of (variant<N>_*.c), separated by `;`; empty: the
                  shape's own number. A few modules mix two
@@ -58,10 +66,12 @@ native row's span is written from the disc by `update`, never by hand.
     python tools/pc/model_gate.py check --disc game/rpg-yfm.bin   # and the disc: hashes, spans, boundaries
     python tools/pc/model_gate.py update --disc game/rpg-yfm.bin  # rewrite the table from the disc
     python tools/pc/model_gate.py write                  # rewrite src/pc/overlays/model_gate_table.inc
+    python tools/pc/model_gate.py port 418 433 --disc game/rpg-yfm.bin   # copy shapes' C from upstream
 
-To port a shape: copy the decomp's C (variant<shape>_*.c; the slot B wrappers
-go to src/native_overlays/model_variant_slot1), set the row's backend to `native`
-and its span to the decomp's data start, run `update --disc` and then
+To port a shape: `port` copies the decomp's C by rule (model_gate_port.py; the
+slot B wrappers go to src/native_overlays/model_variant_slot1) and sets the
+row's data start and sources; model_gate_scan.py proposes its backend, span and
+command_table. Then run `update --disc` and
 `python tools/pc/build_game32.py` to write the address sections
 (config/pc/guest_addresses.txt). `check --disc` reports how far the images
 agree beyond the span.
@@ -80,6 +90,7 @@ import re
 import struct
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "config/pc/model_gate.csv"
 HEADER = ROOT / "src/pc/overlays/model_gate_table.inc"
@@ -88,6 +99,8 @@ COLUMNS = ("shape", "backend", "span", "data_start", "sources", "command_table",
            "images", "sha256_a", "sha256_b", "note")
 NO_TABLE = 0xFFFFFFFF   # model_modules.c: the C takes no command index
 BACKENDS = ("native", "interpret", "keep")
+INDEX_WIDTH = {"index8": 1, "index16": 2, "index32": 4}   # a command_table's stored index, in bytes
+MAX_WORK_FIELD = 0x10000   # no variant module's work area is larger (the largest state is about 16 KB)
 IMAGE_SIZE = 0x5000        # the ten sectors a variant image is (model_oracle.py, VARIANT_SECTORS)
 BASE = {"A": 0x8013B000, "B": 0x8017B000}
 SLOT_SUFFIX = {"A": "", "B": "_slot1"}
@@ -114,14 +127,25 @@ class Row(dict):
         return [int(number) for number in self["sources"].split(";")] if self["sources"] else [self.shape]
 
     @property
-    def command_table(self) -> tuple[int, int, int, int] | None:
+    def command_table(self) -> tuple[int, int, int, int, int] | None:
         """(table offset, entry size, entries covered, work-area offset of the
-        entry pointer), None for `none` or no table."""
+        entry pointer or of the stored command index, the index's width in
+        bytes: 0 for a pointer), None for `none` or no table."""
         text = self["command_table"]
         if text in ("", "none"):
             return None
-        table, stride, count, field = (int(part, 0) for part in text.split(":"))
-        return table, stride, count, field
+        parts = text.split(":")
+        if len(parts) not in (4, 5):
+            raise ValueError(text)
+        table, stride, count, field = (int(part, 0) for part in parts[:4])
+        if min(table, stride, count, field) < 0:
+            raise ValueError(text)
+        width = 0
+        if len(parts) == 5:
+            if parts[4] not in INDEX_WIDTH:
+                raise ValueError(text)
+            width = INDEX_WIDTH[parts[4]]
+        return table, stride, count, field, width
 
     def identifier(self, slot: str) -> int:
         return int(self["identifier_" + slot.lower()])
@@ -165,14 +189,74 @@ def write_table(rows: list[Row], path: Path = TABLE) -> None:
 
 # --- what the build needs ---------------------------------------------------------
 
-def source_patterns(row: Row, slot: str) -> tuple[str, ...]:
-    """The globs of the module's C files in a slot (a tuple: a module may be
-    made of the C of several headers)."""
+SOURCES = ROOT / "config/pc/model_gate_sources.txt"
+
+
+_LISTED: dict[tuple, dict[str, list[str]]] = {}
+_TEXTS: dict[str, str] = {}
+
+
+def listed_sources(root: Path = ROOT) -> dict[str, list[str]]:
+    """{module: [C files]} from config/pc/model_gate_sources.txt, which
+    `port` writes from the upstream layouts (model_gate_port.py); read once
+    while the file stays the same."""
+    import model_gate_port
+    path = root / SOURCES.relative_to(ROOT)
+    key = (str(path), path.stat().st_mtime_ns if path.exists() else 0)
+    if key not in _LISTED:
+        _LISTED[key] = model_gate_port.read_sections(path)
+    return _LISTED[key]
+
+
+def source_patterns(row: Row, slot: str, root: Path = ROOT) -> tuple[str, ...]:
+    """The module's C files in a slot: the list `port` wrote, or for a shape
+    it has no list of, the globs of the shape's own headers (a tuple: a module
+    may be made of the C of several)."""
+    listed = listed_sources(root).get(row.module(slot))
+    if listed:
+        return tuple(listed)
     folder = "model_variant" if slot == "A" else "model_variant_slot1"
     return tuple(f"src/native_overlays/{folder}/variant{number}_*.c" for number in row.sources)
 
 
 SYMBOL = re.compile(r"\b(func|D)_([0-9A-F]{8})\b")
+INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
+ALIAS = re.compile(r"^\s*#\s*define\s+((?:func|D)_[0-9A-F]{8})\s+((?:func|D)_[0-9A-F]{8})\s*$", re.M)
+COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+
+
+def without_comments(text: str) -> str:
+    return COMMENT.sub(" ", text)
+
+
+def _text(path: Path) -> str:
+    """A file's text without comments, read once a process."""
+    key = str(path)
+    if key not in _TEXTS:
+        _TEXTS[key] = without_comments(path.read_text(encoding="utf-8", errors="replace"))
+    return _TEXTS[key]
+
+
+_CLOSURES: dict[str, list[Path]] = {}
+
+
+def port_closure(path: Path, root: Path = ROOT) -> list[Path]:
+    """A C file and every file of the repository it includes, transitively
+    (beside the including file first, then from src/); once a process."""
+    start = os.path.normpath(str(path))
+    if start in _CLOSURES:
+        return _CLOSURES[start]
+    seen, todo = [], [start]
+    while todo:
+        current = todo.pop(0)
+        if current in seen or not os.path.isfile(current):
+            continue
+        seen.append(current)
+        for name in INCLUDE.findall(_text(Path(current))):
+            beside = os.path.normpath(os.path.join(os.path.dirname(current), name))
+            todo.append(beside if os.path.isfile(beside) else os.path.normpath(os.path.join(root, "src", name)))
+    _CLOSURES[start] = [Path(one) for one in seen]
+    return _CLOSURES[start]
 
 
 def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
@@ -180,17 +264,31 @@ def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
     config/pc/guest_addresses.txt. Retail ELFs give these for the modules
     that have one; the decomp's names carry their address, so the module's C
     (and, for slot B, its wrappers) gives them here: every func_ and D_ name
-    that falls inside the slot's image."""
+    the module's C files and the C files they include use outside comments
+    that falls inside the slot's image (a header's prototypes of another
+    module's functions are not the module's; build_game32.py stops on a name
+    of the module's objects the section lacks). A `#define func_X func_Y` (a
+    wrapper putting C written at one address at another: slot B's, or another
+    region's C at the US address) makes func_X func_Y."""
     base = BASE[slot]
+    texts = []
+    for pattern in source_patterns(row, slot, root):
+        for path in sorted(root.glob(pattern)):
+            for one in port_closure(path, root):
+                if one.suffix == ".c":
+                    texts.append(_text(one))
+    renamed = {old: new for text in texts for old, new in ALIAS.findall(text)}
     found = {}
-    folder = root / ("src/native_overlays/model_variant" if slot == "A" else "src/native_overlays/model_variant_slot1")
-    for number in row.sources:
-        for path in sorted(folder.glob(f"variant{number}_*")):
-            if path.suffix in (".c", ".h"):
-                for kind, digits in SYMBOL.findall(path.read_text(encoding="utf-8", errors="replace")):
-                    address = int(digits, 16)
-                    if base <= address < base + IMAGE_SIZE:
-                        found[f"{kind}_{digits}"] = address
+    for text in texts:
+        for kind, digits in SYMBOL.findall(ALIAS.sub(lambda match: match.group(2), text)):
+            name = f"{kind}_{digits}"
+            seen = set()
+            while name in renamed and name not in seen:
+                seen.add(name)
+                name = renamed[name]
+            address = int(name.split("_")[1], 16)
+            if base <= address < base + IMAGE_SIZE:
+                found[name] = address
     return found
 
 
@@ -206,17 +304,18 @@ def address_sections(root: Path = ROOT) -> dict[str, dict[str, int]]:
 def header_text(rows: list[Row]) -> str:
     lines = ["/* Written by tools/pc/model_gate.py from config/pc/model_gate.csv: do not edit.\n",
              " * One row for each variant module the decomp's C stands in for:\n",
-             " * MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field):\n",
+             " * MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width):\n",
              " * entries is NO_TABLE for a C that takes no command index; otherwise the setup command\n",
-             " * must be below it, and an update's entry pointer (at `field` in the work area) one\n",
-             " * of the `entries` of `stride` bytes from `table` (offsets from the slot base). */\n"]
+             " * must be below it, and an update's entry (at `field` in the work area) covered: with\n",
+             " * index_width 0 a pointer to one of the `entries` of `stride` bytes from `table` (offsets\n",
+             " * from the slot base), else the stored command itself, a u8, u16 or u32, below `entries`. */\n"]
     for row in sorted(rows, key=lambda row: row.shape):
         if row["backend"] != "native":
             continue
         for slot in "AB":
             table = row.command_table
-            bound = (f"0x{table[2]:X}u, 0x{table[0]:X}u, 0x{table[1]:X}u, 0x{table[3]:X}u" if table
-                     else f"0x{NO_TABLE:X}u, 0u, 0u, 0u")
+            bound = (f"0x{table[2]:X}u, 0x{table[0]:X}u, 0x{table[1]:X}u, 0x{table[3]:X}u, {table[4]}u" if table
+                     else f"0x{NO_TABLE:X}u, 0u, 0u, 0u, 0u")
             lines.append(f'MODEL_GATE_ROW({"AB".index(slot)}, {row.identifier(slot)}u, 0x{row.span:X}u, '
                          f'"{row.sha256(slot)}", {row.entry(slot)}, {bound}) /* shape {row.shape} */\n')
     return "".join(lines)
@@ -352,15 +451,20 @@ def problems(rows: list[Row]) -> list[str]:
         try:
             table = row.command_table
         except ValueError:
-            bad.append(f"{where}: command_table {row['command_table']!r} is not table:stride:count:field")
+            bad.append(f"{where}: command_table {row['command_table']!r} is not table:stride:count:field[:index8|index16|index32]")
             table = None
         if row["backend"] == "native":
             if row["command_table"] == "":
                 bad.append(f"{where}: a native row gives its command_table, or `none` when its C takes no command index")
             if table:
-                offset, stride, count, field = table
+                offset, stride, count, field, width = table
                 if count <= 0 or stride <= 0:
                     bad.append(f"{where}: command_table has no entries")
+                elif field + max(width, 4) > MAX_WORK_FIELD:
+                    bad.append(f"{where}: command_table field 0x{field:X} is past any work area (0x{MAX_WORK_FIELD:X} bytes)")
+                elif width and count > (1 << (8 * width)):
+                    bad.append(f"{where}: an index{8 * width} command_table covers {count} entries, but a "
+                               f"u{8 * width} index names {1 << (8 * width)} at most")
                 elif offset + stride * count > span:
                     bad.append(f"{where}: the {count} command_table entries end at 0x{offset + stride * count:X}, "
                                f"past the span 0x{span:X}: the hash must cover every entry the commands can pick")
@@ -379,6 +483,111 @@ def problems(rows: list[Row]) -> list[str]:
     bad += [f"shape {shape} has {count} rows" for shape, count in shapes.items() if count > 1]
     hashes = collections.Counter((slot, row.sha256(slot)) for row in rows if row["backend"] == "native" for slot in "AB")
     bad += [f"slot {slot}: native rows share the hash {sha[:12]}" for (slot, sha), count in hashes.items() if count > 1]
+    return bad
+
+
+# The command a caller passes (a word of the record, % 1000: a MODEL.MRG mod controls it)
+# picks a row of a table in the slot's data. The forms the decomp's C writes it in:
+#   D_8013xxxx[command]   &D_8013xxxx[command]   D_8013xxxx[work->command]   D_8013xxxx[(work)->command]
+#   D_8013xxxx[command % 100]
+#   (T *)(D_8013xxxx + 0xFC) + command
+COMMAND_MEMBER = r"(?:\(?\s*\w+\s*\)?\s*->\s*)?command\b"   # command, work->command, (work)->command
+COMMAND_INDEX = re.compile(r"\b(D_8013[0-9A-F]{4})\s*\[\s*" + COMMAND_MEMBER + r"[^\]]*\]")
+COMMAND_OFFSET = re.compile(r"\(\s*(D_8013[0-9A-F]{4})\s*\+\s*(0x[0-9A-Fa-f]+|\d+)\s*\)\s*\+\s*" + COMMAND_MEMBER)
+
+
+def command_sites(text: str, renamed: dict[str, str] | None = None) -> list[tuple[int, int]]:
+    """(offset in the slot A image, line) of each table the C indexes with the
+    command, in a C file's text (comments are blanked with their newlines kept;
+    a `#define D_X D_Y` of the text, or of `renamed`, is followed first: a
+    wrapper puts C written at another address at this one)."""
+    text = COMMENT.sub(lambda match: "\n" * match.group().count("\n"), text)
+    aliases = {**(renamed or {}), **dict(ALIAS.findall(text))}
+    found = []
+    for pattern, offset_group in ((COMMAND_INDEX, None), (COMMAND_OFFSET, 2)):
+        for match in pattern.finditer(text):
+            symbol = aliases.get(match.group(1), match.group(1))
+            extra = int(match.group(offset_group), 0) if offset_group else 0
+            found.append((int(symbol[2:], 16) - BASE["A"] + extra, text.count("\n", 0, match.start()) + 1))
+    return found
+
+
+def indexed_tables(row: Row) -> list[tuple[int, str, int]]:
+    """(table offset, file, line) for each use of the command as a table index
+    in the shape's C (slot A; slot B's files are #defines around it)."""
+    files = []
+    for pattern in source_patterns(row, "A"):
+        for source in sorted(ROOT.glob(pattern)):
+            files += [path for path in port_closure(source) if path.suffix == ".c"]
+    raws = {path: path.read_text(encoding="utf-8", errors="replace") for path in files}
+    renamed = {old: new for raw in raws.values() for old, new in ALIAS.findall(COMMENT.sub(" ", raw))}
+    found = set()
+    for path, raw in raws.items():
+        for offset, line in command_sites(raw, renamed):
+            found.add((offset, path.relative_to(ROOT).as_posix(), line))
+    return sorted(found)
+
+
+def command_problems(rows: list[Row], find=indexed_tables) -> list[str]:
+    """A native row whose C indexes a table of the slot's data with the command
+    must bound it: command_table has to cover that table inside the span, or
+    a mod could make the C read (and, through the entry's fields, loop or
+    write) past the hash. `none` is for C that takes no command index."""
+    bad = []
+    for row in rows:
+        if row["backend"] != "native":
+            continue
+        try:
+            table = row.command_table
+        except ValueError:
+            continue
+        sites: dict[tuple[int, str], list[int]] = {}
+        for offset, path, line in find(row):
+            sites.setdefault((offset, path), []).append(line)
+        for (offset, path), lines in sites.items():
+            where = (f"shape {row.shape}: {path}:{','.join(map(str, lines[:4]))}{'...' if len(lines) > 4 else ''} "
+                     f"indexes the table at 0x{offset:X} with the command")
+            if table is None:
+                bad.append(f"{where}, and the row's command_table is `none` (give table:stride:count:field[:indexN])")
+            elif not table[0] <= offset < table[0] + table[1] * table[2]:
+                bad.append(f"{where}, outside the command_table's 0x{table[0]:X}..0x{table[0] + table[1] * table[2]:X}")
+    return bad
+
+
+PRINTF = re.compile(r"\bprintf\s*\(\s*\(?\s*(?:const\s+)?(?:char\s*\*\s*\)\s*)?(D_8013[0-9A-F]{4})\b")
+
+
+def printf_formats(row: Row) -> list[int]:
+    """Offsets in the slot A image of the format strings the shape's C hands
+    to printf. The interpreter only logs a module's format string
+    (mips.c); native C calls the host's printf with it, so a mod that
+    changed the string could make it read or write anywhere (%s, %n). The
+    span must therefore cover each one through its NUL (check --disc)."""
+    found = set()
+    for pattern in source_patterns(row, "A"):
+        for source in ROOT.glob(pattern):
+            for path in port_closure(source):
+                text = without_comments(_text(path))
+                aliases = dict(ALIAS.findall(text))
+                for symbol in PRINTF.findall(text):
+                    symbol = aliases.get(symbol, symbol)
+                    found.add(int(symbol[2:], 16) - 0x8013B000)
+    return sorted(found)
+
+
+def printf_problems(shapes: dict[int, Shape], rows: list[Row]) -> list[str]:
+    bad = []
+    for row in rows:
+        if row["backend"] != "native":
+            continue
+        for offset in printf_formats(row):
+            for image in shapes[row.shape].images["A"].values():
+                end = image.find(b"\0", offset)
+                if end < 0 or end + 1 > row.span:
+                    bad.append(f"shape {row.shape}: printf's format string at 0x{offset:X} ends at "
+                               f"0x{end + 1:X}, past the span 0x{row.span:X}: a mod could change it, and native C "
+                               f"passes it to the host's printf (widen the span over it)")
+                    break
     return bad
 
 
@@ -411,16 +620,30 @@ def check_sources(rows: list[Row]) -> list[str]:
             if sections.get(row.module(slot)) != want:
                 bad.append(f"config/pc/guest_addresses.txt: [{row.module(slot)}] is not what the C gives "
                            f"({len(want)} names); python tools/pc/build_game32.py writes it")
+    import model_gate_port
+    bad += model_gate_port.stale_local_problems(
+        listed_sources(), {row.module(slot) for row in rows if row["backend"] == "native" for slot in "AB"})
     return bad
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("check", "update", "write"))
+    parser.add_argument("command", choices=("check", "update", "write", "port"))
+    parser.add_argument("shapes", nargs="*", type=int, help="port: the shapes to copy from upstream")
     parser.add_argument("--disc", type=Path, default=os.environ.get("MEMORIES_DISC"),
                         help="the disc image (default: MEMORIES_DISC)")
+    parser.add_argument("--upstream", default="upstream/master",
+                        help="port: the upstream decomp's revision (default: upstream/master)")
+    parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     arguments = parser.parse_args()
+    if arguments.command == "port":
+        if not arguments.disc or not Path(arguments.disc).is_file():
+            parser.error("port needs the disc (the first word of each module names its shape): --disc or MEMORIES_DISC")
+        if not arguments.shapes:
+            parser.error("port: name the shapes")
+        import model_gate_port
+        return model_gate_port.port(arguments.shapes, Path(arguments.disc), arguments.upstream, arguments.jobs)
     rows = load_table()
     failed = problems(rows)
     if arguments.command == "update":
@@ -440,6 +663,7 @@ def main() -> int:
         if not HEADER.exists() or HEADER.read_text(encoding="utf-8").replace("\r\n", "\n") != header_text(rows):
             failed.append(f"{HEADER.relative_to(ROOT)} is not what the table gives: python tools/pc/model_gate.py write")
         failed += check_sources(rows)
+        failed += command_problems(rows)
         if arguments.disc and Path(arguments.disc).is_file():
             shapes = read_shapes(Path(arguments.disc))
             fresh = {row.shape: row for row in rewrite(shapes, rows)}
@@ -451,6 +675,7 @@ def main() -> int:
                     differing = [c for c in COLUMNS if str(want[c]) != row[c]]
                     failed.append(f"shape {row.shape}: {', '.join(differing)} differ from the disc: update --disc")
             failed += [f"shape {number} is on the disc and not in the table" for number in shapes if number not in {r.shape for r in rows}]
+            failed += printf_problems(shapes, rows)
             print("\n".join(boundaries(shapes, rows)))
     for line in failed:
         print("model_gate: " + line, file=sys.stderr)

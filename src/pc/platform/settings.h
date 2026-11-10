@@ -72,6 +72,7 @@ typedef enum {
     SET_HD_FAST,
     SET_TOUCH_OPACITY,
     SET_TOUCH_STYLE,
+    SET_DUEL_HUD_EDGES,         /* widescreen: the duel's life-point panel and FIELD box at the picture's edges */
     SET_LIBRARY_FOLD_VARIANTS,  /* the Library shows a card and its variants as one entry */
     SET_BUILD_DECK_FOLD_VARIANTS,  /* the Build Deck's chest does too */
     SET_COUNT

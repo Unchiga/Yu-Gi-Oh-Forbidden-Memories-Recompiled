@@ -45,6 +45,41 @@ static void expect_abort(int which)
     assert(strstr(diagnostic, "regions=") && strstr(diagnostic, "live="));
     assert(strstr(diagnostic, "heap=") && strstr(diagnostic, "cursor="));
 }
+/* What the crash report asks for, from a handler of the abort. */
+static int detail_fd;
+static void write_detail(int number)
+{
+    (void)number;
+    GuestRuntime_WriteFatalDetail(detail_fd);
+    _exit(7);
+}
+static void expect_detail(void)
+{
+    int output[2], status;
+    char text[1024];
+    ssize_t length;
+    pid_t child;
+    assert(pipe(output) == 0);
+    child = fork();
+    assert(child >= 0);
+    if (!child) {
+        close(output[0]);
+        detail_fd = output[1];
+        GuestRuntime_WriteFatalDetail(detail_fd); /* no detail yet: nothing */
+        signal(SIGABRT, write_detail);
+        GuestRuntime_ResolveData((void *)(uintptr_t)0xffffffffu, 1);
+        _exit(0);
+    }
+    close(output[1]);
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 7);
+    length = read(output[0], text, sizeof(text) - 1);
+    close(output[0]);
+    assert(length > 0);
+    text[length] = 0;
+    assert(!strncmp(text, "translated runtime: invalid guest data span at 0xffffffff", 57));
+    assert(strstr(text, "regions=") && text[length - 1] == '\n');
+}
 int main(void)
 {
     MemoriesMemory *memory = calloc(1, sizeof(*memory));
@@ -109,6 +144,7 @@ int main(void)
     function = (s32 (*)(s32, s32))GuestRuntime_ResolveFunction((void *)(intptr_t)(int32_t)0x80010000u);
     assert(function(10, -3) == 7);
     for (i = 0; i < 4; ++i) expect_abort((int)i);
+    expect_detail();
     {
         u32 *tags = (u32 *)(void *)(memory->ram + 0x10000);
         u32 *a = (u32 *)(void *)(memory->ram + 0x20000);

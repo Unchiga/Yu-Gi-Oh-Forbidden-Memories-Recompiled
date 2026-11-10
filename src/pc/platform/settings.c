@@ -96,6 +96,9 @@ static const SettingInfo info[SET_COUNT] = {
      * 1 Simple, a handheld's layout in grey with MENU, STATES and SPEED along
      * the top (touch_pad.h). */
     [SET_TOUCH_STYLE] = {"touch_style", NULL, "MEMORIES_TOUCH_STYLE", NULL, 0, 0, 1},
+    /* 1: with View > Aspect 16:9, the duel's life-point panel and FIELD box sit at the right and left edges of the
+     * wider picture instead of where a 4:3 one has them (src/pc/cards/duel_ui.c). Read when a duel starts. */
+    [SET_DUEL_HUD_EDGES] = {"duel_hud_edges", NULL, "MEMORIES_DUEL_HUD_EDGES", NULL, 0, 0, 1},
     [SET_MASTER_VOLUME] = {"master_volume", "volume", "MEMORIES_MASTER_VOLUME", "MEMORIES_VOLUME", 100, 0, 100},
     [SET_MUSIC_VOLUME] = {"music_volume", NULL, "MEMORIES_MUSIC_VOLUME", NULL, 100, 0, 100},
     [SET_SFX_VOLUME] = {"sfx_volume", NULL, "MEMORIES_SFX_VOLUME", NULL, 100, 0, 100},
