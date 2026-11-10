@@ -752,23 +752,61 @@ variant module is called with a word of the record `% 1000`
 418's setup takes `D_8013E96C + 0xFC + command * 0x44` as its config entry
 without a bound. The retail table has 18 entries (commands 0 to 17, ending
 at `0x3F30`, inside the span). A native row therefore has a `command_table`
-(`table:stride:count:field`, or `none` when its C takes no command index; for
-418 `0x3A68:0x44:18:0x1B74`): `problems` fails when the entries are not
-inside the span, and `model_modules.c` sends to the interpreter a setup whose
-command is `>= count` and any update whose entry pointer (the work area's word
-at `field`, where the setup stored its choice) is not one of the `count`
-entries. That makes the decision stateless: an attack the interpreter set up
-stays with it, so does one a saved state resumes, and an update with no setup
-before it. When such a setup falls to the stand-in (the interpreter could not
-run it), the stand-in does not write the entry word, so `model_modules.c`
-clears it: one left by an earlier attack would send the updates to the C.
+(`table:stride:count:field[:indexN]`, or `none` when its C takes no command
+index; for 418 `0x3A68:0x44:18:0x1B74`): `problems` fails when the entries are
+not inside the span, and `model_modules.c` sends to the interpreter a setup
+whose command is `>= count` and any update whose entry (the work area's word
+at `field`, which the setup left) is not one of the `count` entries. The
+setup leaves it in one of two forms. **A pointer** (no fifth part):
+`work->config = &D_...[command]`, and the update's word must point at an entry
+of `stride` bytes from `table`. **An index** (`index8`, `index16`, `index32`):
+`work->command = command`, which every update then indexes the table with
+(`D_8013C800[work->command]`), so there is no pointer to check; `field` is the
+offset of that member and the suffix is its type's width (take both from the
+record layout of the state struct, `clang -Xclang -fdump-record-layouts`),
+and the update's index, zero-extended, must be `< count`. A narrow member
+truncates a setup command >= 256 that the interpreter took, but the truncated
+index is accepted only when it is itself a covered entry, so the table read
+stays inside the hash (so `problems` fails an index row whose `count` exceeds
+what its width can name). What each form guarantees differs. A **pointer** must
+equal the address of an exact entry, which a stale or foreign value almost never
+does, so the work area alone decides: an attack the interpreter set up stays
+with it, so does one a saved state resumes, and an update with no setup before it
+(a zeroed pointer is no entry). An **index** is weaker evidence: any small
+number passes, a zeroed work area reads as index 0 (so an update with no setup
+before it is NOT kept from the C by the index), and the stand-in does not write
+its work area the way a native setup does (the stand-in's first bytes are random
+sparks, `func_8006F1B4` writes `sparks[0].vx` on its setup and on every update).
+What is guaranteed for an index row is that the table read stays inside the
+hashed entries; whose attack it is comes from elsewhere: `model_control.c` runs
+the setup (`handler(secondary, request % 1000)`, state 7) before the first
+update (state 8) of every attack, and `model_modules.c` keeps a flag per slot,
+`ModelVerdict.stand_in`, set whenever the stand-in runs a call of the slot's
+variant module (a setup the interpreter could not run, or an update it failed in
+the middle of an attack: the stand-in writes its sparks over that work area too)
+and cleared by the next setup or by a new module in the slot.
+While it is set no update of that slot goes native, whatever the work area
+holds, for pointer and index rows alike; writing a sentinel into the stand-in's
+work area instead would not do (the stand-in overwrites it, and a byte it holds
+lands below `count` once in `count/256` updates). A pointer row's word is also
+cleared to 0 when the stand-in takes the setup, because the work area outlives
+the flag.
 The first such call of a slot's code is logged under
 `MEMORIES_TRACE=mods`; the model trace shows `interpreter` for each. The
 batch reviewer therefore greps the shape's C for an index taken from the
 command or the work area, as well as from slot data, and sets `command_table`
 by hand from the C (`count` is where the retail table ends; the gated oracle
 fails a retail record whose command or entry pointer a wrong `count` or
-`field` would send to the interpreter). The gate only
+`field` would send to the interpreter). `model_gate.py check` does the greps:
+it finds each table of the slot's data that the shape's C indexes with the
+command (`D_8013xxxx[command]`, `&D_8013xxxx[command]`,
+`D_8013xxxx[work->command]`, `D_8013xxxx[(work)->command]`, `D_8013xxxx[command % 100]`,
+`(T *)(D_8013xxxx + 0xFC) + command`, through the `#define` aliases of the
+wrappers) and fails a native row whose `command_table` is `none` or does not
+cover that table inside the span: `none` is only for C that never indexes with
+the command. The scan (`model_gate_scan.py`) does not propose an index row (it
+knows the work offset the setup keeps the command at, not the member's
+width), so `check` is what catches a `none` that should be one. The gate only
 matches the US disc's modules: the other regions' 418 images differ and are
 interpreted. **To port a shape**, `python tools/pc/model_gate.py port <shape>...
 --disc <disc>` (tools/pc/model_gate_port.py) copies its C from the `upstream`
@@ -922,6 +960,19 @@ came just before it, and was identical with the interpreter's stack zeroed
 before each outermost call (a diagnostic build). The sweep's two sides run
 the same battles in the same order, so they compare alike; native C for such
 a module would read the host's stack instead, and differ.
+
+**A shape's C can read a local before writing it too** (the scan does not
+see it): shape 84's (`variant101_entry.c`) first particle loop tests
+`flags[i]` before `RotTransPersN` fills it, so it takes what the earlier
+call left on the stack. The plain sweep showed it only because record 130's
+second-star battle came out a pixel apart at +716; another battle's garbage
+can happen to agree. **`--poison 0x00` and `--poison 0xFF`** make it
+systematic: the subject (a build with test hooks) fills 32 KiB of its stack
+below `run_module`'s frame with the byte before each native module call
+(`MEMORIES_MODEL_STACK_POISON`), so such a read takes the byte, and for one
+byte or the other differs from the interpreter. Every batch runs both over
+`--records gated`; a shape that differs under either is `keep` with the
+read in its note (84, beside 128), until its C writes what it reads.
 
 ### Credits
 

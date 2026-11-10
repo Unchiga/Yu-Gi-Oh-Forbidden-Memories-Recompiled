@@ -105,7 +105,7 @@ class SpanRules(unittest.TestCase):
         self.assertTrue(model_gate.problems([self.row(command_table="")]))
         self.assertEqual(model_gate.problems([self.row(command_table="none")]), [])
         self.assertIsNone(self.row(command_table="none").command_table)
-        self.assertEqual(self.row().command_table, (0x3A68, 0x44, 18, 0x1B74))
+        self.assertEqual(self.row().command_table, (0x3A68, 0x44, 18, 0x1B74, 0))
 
     def test_the_hash_must_cover_every_entry_the_commands_can_pick(self):
         # 19 entries of 0x44 from 0x3A68 end at 0x3F74, past the span 0x3F60.
@@ -118,12 +118,75 @@ class SpanRules(unittest.TestCase):
         text = model_gate.header_text([self.row(), self.row(shape="500", command_table="none", sha256_a="c" * 64,
                                                             sha256_b="d" * 64, identifier_a="500",
                                                             identifier_b="650")])
-        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x1B74u)", text)
-        self.assertIn("0xFFFFFFFFu, 0u, 0u, 0u)", text)
+        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x1B74u, 0u)", text)
+        self.assertIn("0xFFFFFFFFu, 0u, 0u, 0u, 0u)", text)
+
+    def test_a_command_table_may_bound_an_index_word(self):
+        """`:indexN` says the work area keeps the command itself as a uN."""
+        for suffix, width in (("index8", 1), ("index16", 2), ("index32", 4)):
+            row = self.row(command_table=f"0x3A68:0x44:18:0x20:{suffix}")
+            self.assertEqual(row.command_table, (0x3A68, 0x44, 18, 0x20, width))
+            self.assertEqual(model_gate.problems([row]), [])
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:index64")]))
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:pointer")]))
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:index8:x")]))
+
+    def test_a_command_table_is_well_formed(self):
+        """No negative number (it would not compile in the table), a field inside a
+        work area, and an index that can name the entries it covers."""
+        for bad in ("-0x1:0x44:18:0x20", "0x3A68:-0x44:18:0x20", "0x3A68:0x44:-18:0x20", "0x3A68:0x44:18:-0x20:index8"):
+            self.assertTrue(model_gate.problems([self.row(command_table=bad)]), bad)
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x10000")]))
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0xFFFF:index32")]))
+        self.assertEqual(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0xFFFC:index32")]), [])
+        wide = self.row(span="0x6000", command_table="0x3A68:0x44:257:0x20:index8")
+        self.assertTrue([p for p in model_gate.problems([wide]) if "names 256 at most" in p])
+        self.assertFalse([p for p in model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:index8")]) if "at most" in p])
+
+    def test_the_header_carries_the_index_width(self):
+        text = model_gate.header_text([self.row(command_table="0x3A68:0x44:18:0x20:index16")])
+        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x20u, 2u)", text)
+
+    def test_the_tables_the_command_indexes_are_found(self):
+        """Each form the decomp's C picks a row with; a wrapper's #define puts
+        C written at another address at this one."""
+        text = chr(10).join([
+            "work->config = &D_8013D674[command];",
+            "/* D_8013D000[command] is in a comment */",
+            "work->config = (Variant460Config *)(D_8013CDCC + 0xFC) + command;",
+            "work->radius = D_8013C800[work->command].radius;",
+            "config = &D_8013D298[command % 100];",
+            "#define COLOR(i) (D_8013D418[(work)->command].color[i])",
+            "x = D_8013C7C8[1];",
+        ])
+        offsets = sorted(offset for offset, _ in model_gate.command_sites(text))
+        self.assertEqual(offsets, sorted([0x2674, 0x1800, 0x2298, 0x1DCC + 0xFC, 0x2418]))
+        self.assertEqual(model_gate.command_sites("work->config = &D_8013D674[command];", {"D_8013D674": "D_8013D700"}),
+                         [(0x2700, 1)])
+
+    def test_a_native_row_that_indexes_a_table_by_the_command_bounds_it(self):
+        """A `none` row for C that indexes a table of the slot's data with the
+        command, past the span, let a mod's row run the C past its work area
+        (shape 834 of a later batch)."""
+        found = lambda row: [(0x2674, "src/native_overlays/model_variant/variant834_entry.c", 39)]
+        self.assertTrue(model_gate.command_problems([self.row(shape="834", command_table="none", span="0x2620")], found))
+        self.assertTrue(model_gate.command_problems([self.row(shape="834", command_table="")], found))
+        self.assertEqual(model_gate.command_problems([self.row(shape="834", command_table="0x2674:0x26:2:0x0")], found), [])
+        self.assertEqual(model_gate.command_problems([self.row(shape="834", command_table="0x2674:0x26:2:0x0:index8")], found), [])
+        # against the real C of a shape native here: 418's pointer form
+        real = {r.shape: r for r in model_gate.load_table()}[418]
+        self.assertEqual(model_gate.command_problems([real]), [])
+        self.assertTrue(model_gate.command_problems([self.row(shape="418", command_table="none")]))
+        # a table the bound does not cover is a problem too, and so is a row past its entries
+        self.assertTrue(model_gate.command_problems([self.row(shape="834", command_table="0x2700:0x26:2:0x0")], found))
+        self.assertTrue(model_gate.command_problems([self.row(shape="834", command_table="0x2600:0x26:2:0x0")], found))
+        # C that takes no command index may say `none`; a row that is not native is not looked at
+        self.assertEqual(model_gate.command_problems([self.row(command_table="none")], lambda row: []), [])
+        self.assertEqual(model_gate.command_problems([self.row(backend="keep", command_table="")], found), [])
 
     def test_the_committed_418_row_bounds_to_the_retail_table(self):
-        row = model_gate.native_rows()[0]
-        table, stride, count, field = row.command_table
+        row = next(r for r in model_gate.native_rows() if r.shape == 418)
+        table, stride, count, field, width = row.command_table
         self.assertEqual((count, stride), (18, 0x44))
         self.assertEqual(table + count * stride, 0x3F30)   # where the retail table ends, inside the span
         self.assertLessEqual(table + count * stride, row.span)

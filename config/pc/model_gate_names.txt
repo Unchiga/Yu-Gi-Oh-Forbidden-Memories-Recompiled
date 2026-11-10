@@ -1,3 +1,11 @@
 # Upstream's names for resident functions the ported model modules call, which the port names
 # otherwise, with their address (tools/pc/model_gate.py port, from upstream's symbol files).
 # tools/pc/build_game32.py resolves them to the port's name at that address.
+Graphics_SubmitDrawModePacket 8005B260
+ModelTexture_PackPageClutCopy 80059A50
+Model_CopySlotPosition 80058FB0
+Model_GetSlotDimensionsWithMinimums 80057E20
+Model_QueueCameraOrbitFromPreset 8005F5C8
+Model_QueueCameraShake 8005F7B0
+Model_QueueTintRequestForAllParts 80059AF8
+Model_SetSlotAmbient 800595C8
