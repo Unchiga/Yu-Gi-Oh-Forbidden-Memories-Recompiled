@@ -979,10 +979,18 @@ the plain sweep differed in five battles (records 252, 279, 350, 577, 590, a
 pixel in the white flash). Shape 169 (`variant169_entry.c`) was the third:
 the `ratan2` that aims the trail reads `vertices[0].vy/.vz`, which only the
 waiting branch fills, so records 197 and 550 differed from frame +696 on
-(under both poison bytes too). A module's stack-frame size matters as well:
-shape 439's C (`variant456_sprays.c`, a 12 KB frame of arrays) makes the
-Windows i386 compiler call `_alloca` as a stack probe, which no table places,
-so the build stops; 439 stays `interpret` until the build ignores that symbol.
+(under both poison bytes too).
+
+**A frame past a page calls the Windows stack probe.** Shape 439's C
+(`variant456_sprays.c`, about 12 KB of arrays) makes the Windows compilers
+call the toolchain's probe before the frame is used: `__alloca` on i686,
+`___chkstk_ms` on x86-64 (Linux, Android and macOS probe inline or not at
+all). The probe is not a guest name, so build_game32.py's `STACK_PROBES`
+keeps it out of the pinned names and the stubs and the link takes it from
+the toolchain's runtime (the exe's `___chkstk`). It touches each page of
+the frame in turn, and the game stack (state.c, 8 MiB at
+`MEMORIES_GAME_STACK_BASE`) is mapped and committed at start, its guard
+page at the far end, so a frame of a few pages costs a few touches.
 
 **A module's `printf` format string is covered by the span.** The
 interpreter only logs a module's format string (`mips.c`, `LOG_MIPS_PRINTF`);
