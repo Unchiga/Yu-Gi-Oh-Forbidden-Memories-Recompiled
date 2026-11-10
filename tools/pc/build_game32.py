@@ -45,8 +45,9 @@ package_android.py) with the SDK's build tools; notes/pc-build.md, "Android"."""
 import argparse, concurrent.futures, csv, filecmp, glob, hashlib, json, os, re, shutil, struct, subprocess, sys
 import build_process
 from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURCE_ADDRESSED_MODULES, TARGETS,
-                          game_sources, native_sources)
+                          game_sources, native_sources, newest_input)
 import model_gate
+import model_gate_port
 import ptr32_stores
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -278,6 +279,16 @@ def host_address(address):
 
 HOST_LIBC = {"printf", "sprintf", "strcmp", "strcpy", "bzero", "qsort", "memcpy", "memset",
              "memmove", "strlen", "strcat", "strncmp", "strncpy", "memcmp"}
+
+# The stack probe a Windows compiler calls in a function whose frame passes
+# a page (shape 439's sprays, variant456_sprays.c: about 12 KB of arrays),
+# as C names (c_name): i686 `_alloca` (clang's `__alloca`; GCC's
+# `___chkstk_ms` is `__chkstk_ms`), x86-64 `___chkstk_ms`. The toolchain's
+# runtime defines it and the link takes it from there. It is not a C function
+# (the size comes in eax), so it is neither a pinned name nor a stub, nor one
+# of HOST_LIBC, which build_arm64.py renames to GuestRuntime_*. The game stack
+# it walks is committed (state.c), so each page it touches is there.
+STACK_PROBES = ({"___chkstk_ms"} if X64 else {"_alloca", "__chkstk_ms"}) if WINDOWS else set()
 
 def c_name(symbol):
     """The C name of an object-file symbol, or None for toolchain symbols."""
@@ -1242,8 +1253,10 @@ def main():
     if not options.release:
         NATIVE_CFLAGS.append("-DMEMORIES_TEST_HOOKS")
     native_newest = max(NEWEST_HEADER, flags_changed(f"{options.build}/native-flags.txt", NATIVE_CFLAGS))
-    jobs = [(s, obj(s), CFLAGS, renames_file, NEWEST_HEADER) for s in game]
-    jobs += [(s, obj(s), NATIVE_CFLAGS, None, native_newest) for s in NATIVE]
+    # A unit's object is stale when anything it includes is newer, not only
+    # a header: slot B's wrappers include slot A's C (build_config.newest_input).
+    jobs = [(s, obj(s), CFLAGS, renames_file, max(NEWEST_HEADER, newest_input(s))) for s in game]
+    jobs += [(s, obj(s), NATIVE_CFLAGS, None, max(native_newest, newest_input(s))) for s in NATIVE]
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as pool:
         list(pool.map(compile_unit, jobs))
 
@@ -1355,6 +1368,11 @@ def main():
     for name, _, _, _ in MODULES:
         for symbol, address in module_elf[name].items():
             addresses.setdefault(renamed.get(name, {}).get(symbol, symbol), address)
+    # Upstream's names for resident functions the ported model modules call
+    # where the port names the address otherwise (model_gate_names.txt): an
+    # alias to the port's name below, like a func_ name's.
+    for symbol, address in model_gate_port.read_names().items():
+        addresses.setdefault(symbol, address)
 
     # A native definition replaces the game's: weaken the original so the
     # linker prefers src/pc/overrides (calls are symbol-relative at -O0).
@@ -1390,7 +1408,8 @@ def main():
                 run([OBJCOPY, *[f"--weaken-symbol={name}" for name in hits], obj(source)])
     # Position-independent i386 code (Android) names the GOT, which the
     # linker defines.
-    wanted = (undefined | tentative | KEPT_FOR_MODS) - game_defined - native_defined - HOST_LIBC - {"_GLOBAL_OFFSET_TABLE_"}
+    wanted = (undefined | tentative | KEPT_FOR_MODS) - game_defined - native_defined - HOST_LIBC - STACK_PROBES - \
+        {"_GLOBAL_OFFSET_TABLE_"}
     pinned, stubs, unknown, aliases = {}, [], [], {}
     for name in sorted(wanted):
         address = addresses.get(name)
@@ -1411,6 +1430,14 @@ def main():
     for name in native_undefined - game_defined - native_defined:
         if name.startswith("D_8") and name in addresses:
             pinned[name] = host_address(addresses[name])
+    # A ported model module has no ELF: a name its C uses that no table
+    # places would be a stub, so it stops the build instead.
+    unplaced = sorted(name for name in unknown
+                      if any(name in module_symbols[module][2] | module_symbols[module][1]
+                             for module in SOURCE_ADDRESSED_MODULES))
+    if unplaced:
+        sys.exit("names the model modules' C uses that no table places (config/pc/guest_addresses.txt, "
+                 "config/pc/model_gate_names.txt): " + ", ".join(unplaced[:20]))
     # Overlay entry points and data live outside the resident image.
     stubs += [name for name in unknown if name in undefined]
     # Some pinned names are functions of a loadable module that the C calls

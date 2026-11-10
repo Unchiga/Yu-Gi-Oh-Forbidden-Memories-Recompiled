@@ -9,6 +9,7 @@
 #include "ai_script_read_byte.h"
 #ifdef MEMORIES_PC
 #include "pc/cards/tables.h"
+#include "pc/cards/monster_effects_duel.h"
 #endif
 
 /* -fno-strength-reduce, fourth user. The record walk reads card_id, attack,
@@ -62,6 +63,11 @@ void AiScript_FindKiller(void) {
             d = c->attack - ref->defense;
         }
         d = d + Duel_CalcGuardianStarMatchup(c->guardian_star, ref->guardian_star);
+#ifdef MEMORIES_PC
+        /* What each one's "combat" boosts do to the monster it battles
+           (monster_effects_duel.h); their own are in the snapshot. */
+        d += MonsterEffects_AiBattleEdge(i, a, m != 0);
+#endif
         if (d > 0) {
             t = c->attack;
             if (t < best) {

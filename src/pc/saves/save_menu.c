@@ -32,6 +32,15 @@ static struct {
 
 static SaveSlotCheck check;
 static int shown_rows = SAVE_SLOT_COUNT; /* how many rows the last draw had room for */
+/* Where the last draw put what the mouse can point at (SaveMenu_Pointer), in
+ * the canvas's pixels. Good while the menu shows the view and the first row
+ * it was drawn for. */
+static struct {
+    int valid, view, top;
+    int x, y, w, h;           /* the rows: the highlight's width and the first row's top */
+    int row_h, rows;
+    int button[2][4];         /* the confirm's two buttons: x, y, w, h */
+} hit;
 /* Under a failed save's message: where and why (SaveSlots_LastError). Kept
  * out of `menu`, whose bytes save states carry, so their layout stays. */
 static char detail[1200];
@@ -223,6 +232,7 @@ int SaveMenu_Begin(int step, unsigned char *buffer, unsigned char *second, int s
     menu.started = 0;
     menu.choice = CHOICE_KEEP;
     menu.view = VIEW_LIST; /* open; the first poll reads the slots */
+    hit.valid = 0;
     changed();
     return 1;
 }
@@ -316,6 +326,43 @@ int SaveMenu_Poll(unsigned pressed, int channel, int *sound, SaveSlotCheck valid
     menu.view = VIEW_CONFIRM;
     changed();
     return 0;
+}
+
+/* The mouse over the menu: the row it is on is the cursor once it moves
+ * there, and a click is Cross on that row (or on the Overwrite or Cancel it
+ * is over, or on a message). Returns the pad bits that stand for it, to add
+ * to what SaveMenu_Poll is given; *sound is the move sound for a hover that
+ * changed the cursor or the choice. Right click and the wheel are the pad's
+ * own Circle, Up and Down. */
+unsigned SaveMenu_Pointer(int x, int y, int moved, int clicked, int *sound)
+{
+    int i;
+    *sound = SAVE_MENU_SOUND_NONE;
+    if (menu.view == VIEW_CLOSED || !menu.started) return 0;
+    if (menu.view == VIEW_MESSAGE) return clicked ? SAVE_MENU_PAD_CONFIRM : 0;
+    if (!hit.valid || hit.view != menu.view || hit.top != menu.top) return 0;
+    if (menu.view == VIEW_CONFIRM) {
+        for (i = 0; i < 2; i++) {
+            const int *b = hit.button[i];
+            if (x < b[0] || x >= b[0] + b[2] || y < b[1] || y >= b[1] + b[3]) continue;
+            if ((moved || clicked) && menu.choice != i) {
+                menu.choice = i;
+                *sound = SAVE_MENU_SOUND_MOVE;
+                changed();
+            }
+            return clicked ? SAVE_MENU_PAD_CONFIRM : 0;
+        }
+        return 0;
+    }
+    if (x < hit.x || x >= hit.x + hit.w || y < hit.y || y >= hit.y + hit.rows * hit.row_h) return 0;
+    i = menu.top + (y - hit.y) / hit.row_h;
+    if (i >= SAVE_SLOT_COUNT) return 0;
+    if ((moved || clicked) && i != menu.cursor) {
+        menu.cursor = i;
+        *sound = SAVE_MENU_SOUND_MOVE;
+        changed();
+    }
+    return clicked ? SAVE_MENU_PAD_CONFIRM : 0;
 }
 
 unsigned SaveMenu_Signature(void)
@@ -531,6 +578,7 @@ static void draw_confirm(MenuCanvas *canvas, int px, int pw, int cy, int s)
         for (i = 0; i < 2; i++) {
             int chosen = i == menu.choice, left = bx + i * (bw + 16 * s);
             fill(canvas, left, top - line_h / 2 + 8 * s, bw, 24 * s, chosen ? 0x3a5aa8u : 0x22263au, 255);
+            hit.button[i][0] = left, hit.button[i][1] = top - line_h / 2 + 8 * s, hit.button[i][2] = bw, hit.button[i][3] = 24 * s;
             centred(canvas, left, bw, top - line_h / 2 + 20 * s, labels[i], chosen ? COLOR_TEXT : COLOR_DIM);
         }
         return;
@@ -545,6 +593,7 @@ static void draw_confirm(MenuCanvas *canvas, int px, int pw, int cy, int s)
         int chosen = i == menu.choice;
         int left = bx + i * (bw + 16 * s);
         fill(canvas, left, y + 96 * s, bw, 24 * s, chosen ? 0x3a5aa8u : 0x22263au, 255);
+        hit.button[i][0] = left, hit.button[i][1] = y + 96 * s, hit.button[i][2] = bw, hit.button[i][3] = 24 * s;
         centred(canvas, left, bw, y + 108 * s, labels[i], chosen ? COLOR_TEXT : COLOR_DIM);
     }
 }
@@ -593,6 +642,10 @@ void SaveMenu_Draw(MenuCanvas *canvas, int *x, int *y, int *w, int *h)
     draw_text(canvas, px + 14 * s, py + 20 * s, title(), COLOR_TITLE);
     list_y = py + 38 * s;
     top = menu.top;
+    hit.valid = 1;
+    hit.view = menu.view;
+    hit.top = menu.top;
+    hit.x = px + 6 * s, hit.y = list_y, hit.w = pw - 12 * s, hit.row_h = row_h, hit.rows = rows;
     for (i = 0; i < rows && top + i < SAVE_SLOT_COUNT; i++) {
         int slot = top + i, ry = list_y + i * row_h, cy = ry + row_h / 2;
         const SaveSlotInfo *info = &menu.slots[slot];

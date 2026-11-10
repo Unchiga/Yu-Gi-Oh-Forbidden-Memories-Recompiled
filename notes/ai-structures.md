@@ -44,7 +44,9 @@ types unchanged; no loop bound or clearing behavior changes.
 `AiScript_FindKiller` and `AiScript_FindBestAttack` both walk `AiActiveCard`
 records and read the `+0x06` halfword as the typed `flags` member, tested
 against the shared `DUEL_CARD_FLAG_*` masks. `AiScript_FindKiller` skips empty
-and used-this-turn entries among the own monsters. `AiScript_FindBestAttack`'s
+and used-this-turn entries among the own monsters; in the port its difference
+also takes `MonsterEffects_AiBattleEdge`, what that battle's `combat` boosts
+add. `AiScript_FindBestAttack`'s
 attacker filter also excludes used-this-turn entries; its target filters separately
 exclude used and defense-position entries, and hide face-down targets for any
 nonzero scripted visibility value. That condition differs from the strongest/weakest
