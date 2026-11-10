@@ -667,8 +667,10 @@ card a drop pool gave.
 `src/pc/cards/tables.c` reads the rules once, after the cards
 (`Cards_Build`), from the mods in the order they loaded (`Mods_Loaded`).
 Nothing the game loaded is changed, except the Password screen's table
-(its search is a loop over the loaded records); the functions that read
-each table ask it first:
+(its search is a loop over the loaded records). Fusion rules go to
+`src/pc/cards/fusion_table.c`, eight bytes each, in a bucket per lower card and
+on the host heap (a mod can hold millions, none of it in a save state), sorted
+once the rules are read. The functions that read each table ask it first:
 
 | Game function | Table | Asks |
 |---|---|---|

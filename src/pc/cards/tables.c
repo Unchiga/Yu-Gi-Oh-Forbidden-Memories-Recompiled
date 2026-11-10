@@ -16,6 +16,7 @@
  * so a data mod's patch of the same pool comes first and the edits here go
  * on top of it. */
 #include "tables.h"
+#include "fusion_table.h"
 #include "cards.h"
 #include "fields.h"
 #include "pc/free_duel/duelists.h"
@@ -164,12 +165,6 @@ static const char *const pool_long_names[TABLES_POOL_COUNT] = {"deck", "sa-pow",
 #define POOL_TOTAL DUEL_DROP_WEIGHT_TOTAL
 #define DECK_POOL_MIN_CARDS ((DECK_SIZE + DECK_CARD_COPY_LIMIT - 1) / DECK_CARD_COPY_LIMIT)
 
-typedef struct {
-    unsigned short low, high;   /* the two cards, low <= high */
-    int result;                 /* 0: the fusion is forbidden */
-    unsigned order;             /* later rules win */
-} FusionRule;
-
 enum { TARGET_ANY, TARGET_TYPE, TARGET_CARD };
 typedef struct {
     unsigned short equip;
@@ -198,8 +193,6 @@ typedef struct {
     unsigned short *cards, *weights;
 } PoolEdit;
 
-static FusionRule *fusions;
-static int fusion_count, fusion_room;
 static unsigned char *removed_results;   /* by card id: no retail recipe makes it */
 static int removed_room;
 static int removed_all;                  /* {"remove": "all"}: no retail recipe makes anything */
@@ -271,7 +264,6 @@ static int is_edited(int duelist, int pool)
     return edited[(size_t)duelist * TABLES_POOL_COUNT + pool];
 }
 static unsigned order_counter;
-static int fusions_sorted;
 
 /* Grow an array by one; NULL when memory runs out. */
 static void *grow(void *array, int *room, int count, size_t size)
@@ -326,14 +318,7 @@ static int target(const char *mod, const char *where, const JsonValue *value, Eq
 
 static void add_fusion(int a, int b, int result)
 {
-    FusionRule *rule = grow(&fusions, &fusion_room, fusion_count, sizeof(*fusions));
-    if (!rule) return;
-    rule->low = (unsigned short)(a < b ? a : b);
-    rule->high = (unsigned short)(a < b ? b : a);
-    rule->result = result;
-    rule->order = ++order_counter;
-    fusion_count++;
-    fusions_sorted = 0;
+    FusionTable_Add(a, b, result, ++order_counter);
 }
 
 static int removes_all(const JsonValue *removed)
@@ -406,55 +391,33 @@ static void read_fusions(const char *mod, const JsonValue *list)
     }
 }
 
-static int by_pair(const void *left, const void *right)
-{
-    const FusionRule *a = left, *b = right;
-    if (a->low != b->low) return a->low < b->low ? -1 : 1;
-    if (a->high != b->high) return a->high < b->high ? -1 : 1;
-    return a->order > b->order ? -1 : a->order < b->order;   /* the latest first */
-}
-
-static const FusionRule *find_fusion(int a, int b)
-{
-    int low = 0, high = fusion_count;
-    FusionRule key;
-    key.low = (unsigned short)(a < b ? a : b);
-    key.high = (unsigned short)(a < b ? b : a);
-    while (low < high) {   /* the first rule for the pair: the latest */
-        int middle = (low + high) / 2;
-        const FusionRule *rule = &fusions[middle];
-        if (rule->low < key.low || (rule->low == key.low && rule->high < key.high)) low = middle + 1;
-        else high = middle;
-    }
-    if (low < fusion_count && fusions[low].low == key.low && fusions[low].high == key.high) return &fusions[low];
-    return NULL;
-}
-
 int Tables_Fusion(int a, int b, int *result)
 {
-    const FusionRule *rule;
-    int base_a, base_b;
-    if (!fusion_count || !Cards_Valid(a) || !Cards_Valid(b)) return 0;
-    if (!fusions_sorted) {
-        qsort(fusions, (size_t)fusion_count, sizeof(*fusions), by_pair);
-        fusions_sorted = 1;
-    }
-    rule = find_fusion(a, b);
+    int base_a, base_b, found;
+    unsigned order;
+    if (!FusionTable_Count() || !Cards_Valid(a) || !Cards_Valid(b)) return 0;
+    found = FusionTable_Find(a, b, result, &order);
     base_a = Cards_BaseId(a);
     base_b = Cards_BaseId(b);
     /* A copy fuses as its base, as it does in the disc's table; a rule
      * naming a copy itself is surer, so one that names both cards as they
      * are comes first, then one that names one of them (a copy with its
      * partner's base; of two such, the later), then the bases' own. */
-    if (!rule) {
-        const FusionRule *one = base_b != b ? find_fusion(a, base_b) : NULL;
-        const FusionRule *other = base_a != a ? find_fusion(base_a, b) : NULL;
-        rule = one && (!other || one->order > other->order) ? one : other;
+    if (!found) {
+        int one_result = 0, other_result = 0;
+        unsigned one_order = 0, other_order = 0;
+        int one = base_b != b && FusionTable_Find(a, base_b, &one_result, &one_order);
+        int other = base_a != a && FusionTable_Find(base_a, b, &other_result, &other_order);
+        if (one && (!other || one_order > other_order)) {
+            *result = one_result;
+            found = 1;
+        } else if (other) {
+            *result = other_result;
+            found = 1;
+        }
     }
-    if (!rule && base_a != a && base_b != b) rule = find_fusion(base_a, base_b);
-    if (!rule) return 0;
-    *result = rule->result;
-    return 1;
+    if (!found && base_a != a && base_b != b) found = FusionTable_Find(base_a, base_b, result, &order);
+    return found;
 }
 
 int Tables_FilterFusion(int result)
@@ -2446,7 +2409,8 @@ void Tables_Clear(void)
             free(edits[i].weights);
         }
     }
-    fusion_count = equip_count = ritual_count = edit_count = fixed_count = bonus_count = 0;
+    FusionTable_Clear();
+    equip_count = ritual_count = edit_count = fixed_count = bonus_count = 0;
     overflow_starchips = chest_limit = 0;
     memset(shop_set, 0, sizeof(shop_set));
     memset(shop_from, 0, sizeof(shop_from));
@@ -2487,9 +2451,9 @@ void Tables_Build(void)
         read_pool_folder("user", Paths_UserDir(), 0);
         read_pool_folder("user", Paths_UserDir(), 1);
     }
-    if (fusion_count || equip_count || bonus_count || equip_default_set || ritual_count || edit_count || fixed_count || overflow_starchips || chest_limit)
+    if (FusionTable_Count() || equip_count || bonus_count || equip_default_set || ritual_count || edit_count || fixed_count || overflow_starchips || chest_limit)
         LOG(LOG_MODS, "tables: %d fusion rules, %d equip rules, %d equip bonuses, %d rituals, %d pool edits, "
-            "%d fixed decks, a chest of %d with %ld starchips a card past it", fusion_count, equip_count,
+            "%d fixed decks, a chest of %d with %ld starchips a card past it", FusionTable_Count(), equip_count,
             bonus_count, ritual_count, edit_count, fixed_count, Tables_ChestLimit(), overflow_starchips);
     if (removed_all) LOG(LOG_MODS, "tables: every disc fusion removed");
     if (shop_count) LOG(LOG_MODS, "tables: %d Password screen entries", shop_count);
@@ -2507,4 +2471,6 @@ void Tables_Build(void)
         for (i = 0; i < TABLES_VALUE_COUNT; i++)
             if (value_given[i]) LOG(LOG_MODS, "tables: value %s %ld", value_keys[i].key, value_set[i]);
     }
+    /* Before any duel asks: sorting millions of rules takes seconds. */
+    FusionTable_Seal();
 }
