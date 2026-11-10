@@ -79,10 +79,13 @@
  * rather than the default case, since the default case is exactly the
  * extent-coupled path this function exists to avoid. */
 static void CardLayout_DrawArt(SpritePrim *src, s32 x, s32 y, s32 w, s32 h,
-                                s32 ot, s32 mode, Func80028B08Extra *EXT)
+                                s32 ot, s32 mode, Func80028B08Extra *EXT, s32 clip_x, s32 clip_y, s32 clip_w,
+                                s32 clip_h)
 {
     POLY_GT4 art;
     u32 attr = src->attribute;
+    s32 u_left, u_right, v_top, v_bottom;
+    s32 x0 = x, y0 = y, x1 = x + w, y1 = y + h;
     s32 projected = ((u32)mode >> 16) == 0xF;
     s32 packet_attr = (projected ? 0x04000000 : 0) | (attr & 0x70000000);
     s32 art_mode = (mode & 0xFFFF) | 0x50000;
@@ -118,8 +121,31 @@ static void CardLayout_DrawArt(SpritePrim *src, s32 x, s32 y, s32 w, s32 h,
         }
     }
 
-    setXY4(&art, (short)x, (short)y, (short)(x + w), (short)y,
-           (short)x, (short)(y + h), (short)(x + w), (short)(y + h));
+    /* A picture bigger than the card (a full art card's: its rectangle runs past the card's edges) is
+     * cut at the card's box (clip_w/clip_h 0: not cut): the rectangle shrinks to what is inside and the
+     * texture's corners move in the same proportion. A picture inside the box is drawn as ever. */
+    if (clip_w > 0 && clip_h > 0 && w > 0 && h > 0 &&
+        (x0 < clip_x || y0 < clip_y || x1 > clip_x + clip_w || y1 > clip_y + clip_h)) {
+        s32 nx0 = x0 < clip_x ? clip_x : x0, ny0 = y0 < clip_y ? clip_y : y0;
+        s32 nx1 = x1 > clip_x + clip_w ? clip_x + clip_w : x1, ny1 = y1 > clip_y + clip_h ? clip_y + clip_h : y1;
+
+        if (nx1 <= nx0 || ny1 <= ny0) return;
+        u_left = art.u0;
+        u_right = art.u1;
+        v_top = art.v0;
+        v_bottom = art.v2;
+        art.u0 = art.u2 = (u8)(u_left + ((u_right - u_left) * (nx0 - x0) + (u_right >= u_left ? w / 2 : -w / 2)) / w);
+        art.u1 = art.u3 = (u8)(u_left + ((u_right - u_left) * (nx1 - x0) + (u_right >= u_left ? w / 2 : -w / 2)) / w);
+        art.v0 = art.v1 = (u8)(v_top + ((v_bottom - v_top) * (ny0 - y0) + (v_bottom >= v_top ? h / 2 : -h / 2)) / h);
+        art.v2 = art.v3 = (u8)(v_top + ((v_bottom - v_top) * (ny1 - y0) + (v_bottom >= v_top ? h / 2 : -h / 2)) / h);
+        x0 = nx0;
+        y0 = ny0;
+        x1 = nx1;
+        y1 = ny1;
+    }
+
+    setXY4(&art, (short)x0, (short)y0, (short)x1, (short)y0,
+           (short)x0, (short)y1, (short)x1, (short)y1);
 
     DisplayObject_SubmitPacket((SpritePrim *)packet_attr, (Func80028B08Ctx *)&art,
                                ot, art_mode, EXT);
@@ -254,6 +280,25 @@ static int CardLayout_DrawDigits(s32 base_x, s32 base_y, s32 cx, s32 cy, const u
     return 1;
 }
 
+/* The style's own level star (card_layout.h's CardLayout_StarImage), `count` of them, the first's left edge
+ * at (x, y) and the rest each a step to its left; the row centred on x instead when `centered` (the layout's
+ * older convention, as the game's own row is). 1 when drawn, 0 when the style has none: the game's own stars
+ * are drawn then. */
+static int CardLayout_DrawStars(s32 x, s32 y, s32 count, s32 centered, s32 ot, s32 mode, u32 rgb,
+                                Func80028B08Extra *EXT)
+{
+    char path[1024];
+    s32 w, h, step, tpage, u, v, clut, cell_w, cell_h, i;
+
+    if (!CardLayout_StarImage(path, sizeof(path), &w, &h, &step) ||
+        !CardLayoutArt_StarCell(&tpage, &u, &v, &clut, &cell_w, &cell_h)) return 0;
+    if (centered) x += step * count / 2 - step;
+    for (i = 0; i < count; i++) {
+        CardLayout_DrawCell(x - i * step, y, w, h, tpage, u, v, clut, cell_w, cell_h, ot, mode, rgb, EXT);
+    }
+    return 1;
+}
+
 /* A frame style's static ATK/DFD caption. It is separate from the digit
  * strip so a style can use any art and move either caption independently.
  * 1 when the style's image was drawn; 0 when it has none (or it did not
@@ -369,6 +414,8 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
     CardLayoutPart star_layout = CardLayout_Part(CARD_LAYOUT_LEVEL_STARS);
     CardLayoutPart attr_layout = CardLayout_Part(CARD_LAYOUT_ATTRIBUTE);
     CardLayoutPart art_layout = CardLayout_Part(CARD_LAYOUT_ART);
+    SpritePrim art_prim;      /* the art's quad, drawn after the parts: see below */
+    s32 art_deferred = 0;
 #endif
 
     wrap = 0xFFFF;
@@ -449,9 +496,18 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
      * the original attribute/tpage/cxcy/uv/extent at this point, which is
      * exactly what that helper reads its texel footprint from. */
     if (art_layout.visible && art_layout.w != 0) {
-        CardLayout_DrawArt(PRM, win->field_30.h.field_30 + art_layout.x,
-                           win->field_30.h.field_32 + art_layout.y,
-                           art_layout.w, art_layout.h, arg1, arg, EXT);
+        if (CardLayout_PartsOverArt()) {
+            /* Kept for later (art_prim, drawn below the name, stars, element and ATK/DEF and above the frame): a
+             * picture may be bigger than its window (a full art card's), and those must show over it. The packet
+             * submitted last is drawn first, so the art goes in after the parts and before the frame. */
+            art_prim = *PRM;
+            art_deferred = 1;
+        } else {
+            CardLayout_DrawArt(PRM, win->field_30.h.field_30 + art_layout.x,
+                               win->field_30.h.field_32 + art_layout.y,
+                               art_layout.w, art_layout.h, arg1, arg, EXT,
+                               win->field_30.h.field_30, win->field_30.h.field_32, frame_layout.w, frame_layout.h);
+        }
     } else if (art_layout.visible)
 #endif
     DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
@@ -475,7 +531,7 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
     PRM->xy.h.y = win->field_30.h.field_32 + title_layout.y;
     PRM->rgb = CardLayout_Tint(win->field_0C, title_layout.r, title_layout.g, title_layout.b);
     if (title_layout.visible) {
-        if (!HdText_Enabled() && CardLayout_FullBleed() &&
+        if (!HdText_Enabled() && CardLayout_FullBleed() && !CardLayout_GameTitle() &&
             CardLayout_DrawTitleMask(PRM, PRM->xy.h.x, PRM->xy.h.y, arg1, arg, PRM->rgb, EXT)) {
             /* The low-resolution white mask was submitted. */
         } else
@@ -512,10 +568,14 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
          * A style that keeps retail's frame may give its own "atk_label"
          * picture: it is drawn here, in the caption's place in the draw
          * order, and retail's sprite (a separate one on the font page, not
-         * part of the plate) is not submitted under it. */
-        if (!CardLayout_FullBleed() && atk_label_layout.visible &&
-            !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
-                                      0, arg1, arg, win->field_0C, EXT))
+         * part of the plate) is not submitted under it. A full-bleed style
+         * that keeps the game's own frame (game_frame) has retail's sprite. */
+        if (atk_label_layout.visible &&
+            ((!CardLayout_FullBleed() &&
+              !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32, 0, arg1, arg,
+                                        CardLayout_Tint(win->field_0C, atk_label_layout.r, atk_label_layout.g,
+                                                        atk_label_layout.b), EXT)) ||
+             (CardLayout_FullBleed() && CardLayout_GameLabel(0))))
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;
@@ -525,9 +585,12 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             PRM->cxcy.h.cy = 0xF9;
         }
 #ifdef MEMORIES_PC
-        if (!CardLayout_FullBleed() && def_label_layout.visible &&
-            !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
-                                      1, arg1, arg, win->field_0C, EXT))
+        if (def_label_layout.visible &&
+            ((!CardLayout_FullBleed() &&
+              !CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32, 1, arg1, arg,
+                                        CardLayout_Tint(win->field_0C, def_label_layout.r, def_label_layout.g,
+                                                        def_label_layout.b), EXT)) ||
+             (CardLayout_FullBleed() && CardLayout_GameLabel(1))))
 #endif
         DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
         PRM->cxcy.h.cy = white;
@@ -586,14 +649,21 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
              * drawn only where the strip was not. A card no style claims
              * keeps retail's digits: a layout's shared strip is for its
              * styles' cards (and a game before mod API 25 drew it only on a
-             * full-bleed frame, which such a card never has). */
+             * full-bleed frame, which such a card never has).
+             * A label's and a digit strip's own "color" multiplies the picture (white
+             * ink takes any color); the game's own digits below are drawn by
+             * subtraction instead, and cannot be given a color of their own. */
             if (CardLayout_FullBleed() && atk_label_layout.visible) {
                 CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
-                                         0, arg1, arg, win->field_0C, EXT);
+                                         0, arg1, arg,
+                                         CardLayout_Tint(win->field_0C, atk_label_layout.r, atk_label_layout.g,
+                                                         atk_label_layout.b), EXT);
             }
             if (CardLayout_FullBleed() && def_label_layout.visible) {
                 CardLayout_DrawStatLabel(win->field_30.h.field_30, win->field_30.h.field_32,
-                                         1, arg1, arg, win->field_0C, EXT);
+                                         1, arg1, arg,
+                                         CardLayout_Tint(win->field_0C, def_label_layout.r, def_label_layout.g,
+                                                         def_label_layout.b), EXT);
             }
             {
             s32 atk_custom = 0, def_custom = 0;
@@ -601,11 +671,15 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
             if (CardLayout_Styled() && atk_layout.visible)
                 atk_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
                                                     atk_left + row_width / 2, atk_top + 0x0D / 2, buf1, digits,
-                                                    (rec->field_3C & 0x80) != 0, arg1, arg, win->field_0C, EXT);
+                                                    (rec->field_3C & 0x80) != 0, arg1, arg,
+                                                    CardLayout_Tint(win->field_0C, atk_layout.r, atk_layout.g,
+                                                                    atk_layout.b), EXT);
             if (CardLayout_Styled() && def_layout.visible)
                 def_custom = CardLayout_DrawDigits(win->field_30.h.field_30, win->field_30.h.field_32,
                                                     def_left + row_width / 2, def_top + 0x0D / 2, buf2, digits,
-                                                    (rec->field_3C & 0x40) != 0, arg1, arg, win->field_0C, EXT);
+                                                    (rec->field_3C & 0x40) != 0, arg1, arg,
+                                                    CardLayout_Tint(win->field_0C, def_layout.r, def_layout.g,
+                                                                    def_layout.b), EXT);
 
             /* A fallback style's own "color" (card_layout.h's CardLayoutPart):
              * a filter on the card's own fade tint, not a replacement for it,
@@ -716,6 +790,15 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
         PRM->uv.b.lo = 0;
         PRM->cxcy.h.cx = 0x1C0;
         PRM->cxcy.h.cy = 0xF8;
+#ifdef MEMORIES_PC
+        /* The style's own star picture, when it has one: drawn instead of the game's row. */
+        if (star_layout.visible && rec->field_3A != 0 &&
+            CardLayout_DrawStars(win->field_30.h.field_30 + star_layout.x,
+                                 win->field_30.h.field_32 + star_layout.y, (s32)rec->field_3A,
+                                 CardLayout_StarsCentered(), arg1, arg,
+                                 CardLayout_Tint(win->field_0C, star_layout.r, star_layout.g, star_layout.b), EXT)) {
+        } else
+#endif
         if (star_layout.visible && rec->field_3A != 0) {
             i = 0;
             do {
@@ -790,11 +873,17 @@ void func_80028B08(DisplayObject *obj, s32 arg1) {
     if (attr_layout.visible && attr_layout.w != 0) {
         CardLayout_DrawArt(PRM, win->field_30.h.field_30 + attr_layout.x,
                            win->field_30.h.field_32 + attr_layout.y,
-                           attr_layout.w, attr_layout.h, arg1, arg, EXT);
+                           attr_layout.w, attr_layout.h, arg1, arg, EXT, 0, 0, 0, 0);
     } else if (attr_layout.visible)
 #endif
     DisplayObject_SubmitPacket(PRM, CTX, arg1, arg, EXT);
 #ifdef MEMORIES_PC
+    if (art_deferred) {
+        CardLayout_DrawArt(&art_prim, win->field_30.h.field_30 + art_layout.x,
+                           win->field_30.h.field_32 + art_layout.y,
+                           art_layout.w, art_layout.h, arg1, arg, EXT,
+                           win->field_30.h.field_30, win->field_30.h.field_32, frame_layout.w, frame_layout.h);
+    }
     /* Last on purpose (CardLayout_DrawFrame's own comment explains why):
      * submitted after art/digits/stars/attribute above, so it ends up
      * drawn before them -- underneath. */

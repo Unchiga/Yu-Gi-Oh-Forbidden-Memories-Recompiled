@@ -298,6 +298,15 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(self.needs({"cards": [{"copy": 1, "id": "a", "drops": False}]}), 0)
         self.assertIn("newer than v0.3.0", compat.release_text(26))
 
+    def test_api_27_frame_looks(self):
+        """The richer parts of a frame style, and a see-through picture (notes/modding.md, "Frame styles"): a game
+        of API 24 would ignore them and draw the plain card."""
+        for style in ({"game_frame": True}, {"parts_over_art": True}, {"stars": {"image": "s.png"}}):
+            with self.subTest(style=style):
+                self.assertEqual(self.needs({"card_layout": {"frame_styles": {"a": style}}}), 27)
+        self.assertEqual(self.needs({"cards": [{"copy": 1, "id": "a", "art_transparent": True}]}), 27)
+        self.assertEqual(self.needs({"card_layout": {"frame_styles": {"a": {"stars": {"width": 9}}}}}), 18)
+
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})
         self.assertEqual(api, 11)

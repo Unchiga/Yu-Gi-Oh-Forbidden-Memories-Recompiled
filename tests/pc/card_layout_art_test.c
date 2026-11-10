@@ -83,6 +83,11 @@ int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step)
     (void)path; (void)size; (void)w; (void)h; (void)step;
     return 0;
 }
+int CardLayout_StarImage(char *path, size_t size, int *w, int *h, int *step)
+{
+    (void)path; (void)size; (void)w; (void)h; (void)step;
+    return 0;
+}
 int CardLayout_StatLabel(int dfd, char *path, size_t size, int *x, int *y, int *w, int *h)
 {
     (void)dfd; (void)path; (void)size; (void)x; (void)y; (void)w; (void)h;

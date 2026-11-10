@@ -80,6 +80,10 @@
  *      style that keeps retail's frame (manifest only); no host layout or
  *      event change
  *  26  a card's "variant_permille" and "variant_label" (notes/more-cards.md)
+ *  27  a frame style's richer parts (stars.image, game_frame, parts_over_art, color on the
+ *      labels and digit strips) and a card's art_transparent (notes/modding.md, card_layout);
+ *      a card_layout of frame_styles alone no longer replaces another mod's layout
+ *      (manifest only; no host layout or event change)
  *      only; no host layout or event change
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"

@@ -134,6 +134,13 @@ int TexturePack_AddMade(const void *pixels, int words, int rows, int bpp, const 
     (void)x; (void)y; (void)w; (void)h;
     return 1;
 }
+int TexturePack_AddMadeSeeThrough(const void *pixels, int words, int rows, int bpp, const void *clut,
+                                  int clut_entries, const char *file, int x, int y, int w, int h)
+{
+    (void)pixels; (void)words; (void)rows; (void)bpp; (void)clut; (void)clut_entries; (void)file;
+    (void)x; (void)y; (void)w; (void)h;
+    return 0;
+}
 int Glyphs_Code(uint32_t character) { return (int)character; }
 uint32_t Glyphs_NextCharacter(const char **at) { return (unsigned char)*(*at)++; }
 int Paths_Contained(const char *path) { return path && strncmp(path, "..", 2) != 0; }

@@ -179,6 +179,7 @@ checked as well, when it starts.
 | 23 | the release after v0.3.0 | a `menu`'s `slide`; for a code mod, the mouse, the overlay's pictures and `clip` (`api` 23, [below](#code-mods)) |
 | 25 | the release after v0.3.0 | a frame style's `atk_label` or `dfd_label` picture on a style that keeps retail's frame (no `image`, or `"full_bleed": false`): it replaces retail's own "ATK"/"DFD" caption; a `digits` strip on such a style, in place of retail's digits ([Frame styles](#frame-styles-and-the-rules-that-pick-them)) |
 | 26 | the release after v0.3.0 | a card's `variant_permille` and `variant_label`: alternate versions of a retail card ([Variants](more-cards.md#variants-alternate-versions-of-a-card)) |
+| 27 | the release after v0.3.0 | a frame style's `stars` picture, `game_frame` and `parts_over_art`, a `color` on the ATK/DFD labels and digit strips, and a card's `art_transparent` (card_layout, [Frame styles](#frame-styles-and-the-rules-that-pick-them)); a `card_layout` of `frame_styles` alone, which no longer replaces another mod's layout ([Layouts of several mods](#layouts-of-several-mods)) |
 
 The FM Editor writes `min_api` on save as the lowest one of these that has
 everything the mod uses, never lowering one written higher, and its Mod
@@ -1187,6 +1188,14 @@ independent paint over it, so it still dims and fades with the rest of the
 card. `"atk": {"x": 38, "y": 179, "color": {"r": 255, "g": 96, "b": 96}}`
 reddens just the ATK number, retail position and all.
 
+A tint on the *game's own* ATK/DEF numbers cannot give them a color: they are
+drawn by subtraction, so they can only darken what is behind them (a darker
+tint makes them fainter, and a strong red turns them cyan on a light card).
+Numbers drawn from a `digits` strip, and the `atk_label`/`dfd_label` pictures,
+are ordinary pictures: their `color` multiplies the picture, so a picture of
+white ink takes any color (`#000000` is black ink). `atk`'s and `def`'s
+`color` tints the strip's digits, `atk_label`'s and `dfd_label`'s their word.
+
 `digits` (optional) replaces the ATK/DFD numbers with the mod's own while the
 layout is on: `{"image": "digits.png", "width": 10, "height": 12, "step": 10}`.
 Put it inside a `frame_styles` entry to use that image only for cards wearing
@@ -1258,6 +1267,13 @@ above, not retail's right-anchored first-star position: a card can carry
 up to 12 stars at a fixed 9px each, and `func_80028B08.c` centres however
 many a card has around this point so a wide row never runs past the frame.
 
+A style's `stars` takes an `"image"` too (a PNG, any size, drawn square; only
+while the layout is on): the stars are then that picture instead of the game's
+round star, `"width"` and `"height"` card units each (9 and 9, at most 32), a
+row going left from the first by `"step"` units (the width left out), in the
+part's `"color"`, which multiplies the picture (white ink takes any color):
+`"stars": {"image": "star.png", "x": 130, "y": 30, "color": {"r": 255, "g": 176, "b": 32}}`.
+
 Retail draws a small frame with a title plate, the card's picture at its
 own fixed size, and ATK/DEF stacked under a separate plaque. A mod's own
 `full_bleed` setting (a `bool` the mod declares, as every setting is)
@@ -1297,6 +1313,37 @@ use retail's art rectangle (`x: 19`, `y: 50`, `width: 102`, `height: 96`).
 This makes a position-only override such as `"art": {"y": 84}` valid: it
 keeps the retail size and X position while moving the picture down. Leave
 the whole `art` object out to keep the unmodified retail art draw path.
+
+The rectangle may be bigger than the card, or start before its top-left corner
+(`"art": {"x": -5, "y": 0, "width": 150, "height": 205}`): what is past the
+card's edges (its `width` x `height`, 140 x 196 as the frame's own) is cut off,
+so a full art card's picture can run past its frame. The picture is always
+stretched whole into the rectangle: a card's own `art` PNG is cut to the
+picture's 102:96 shape when it is read, so a picture of another shape (a tall
+one for a full art card) is squeezed to that shape in the PNG, and the
+rectangle gives it its own shape back (the FM Editor's Variants tab does that
+for **Full art**).
+
+A card's own `art` PNG may have transparent parts (a cut-out figure on a clear
+background) when the card says `"art_transparent": true`: a pixel under half
+alpha is then see-through, so the frame behind the picture shows there; the
+card's `thumbnail` (the small picture the hand shows) and the larger copies of
+both keep it too. (Left out, a picture is drawn over black, as always.)
+
+The picture is drawn over the card's name, stars, element and ATK/DEF, which
+a layout like the HD pack's relies on (it covers the game's own "[Trap Card]"
+captions with it). A frame style with `"parts_over_art": true` draws the
+picture under them instead (and still over the frame), so a picture that runs
+past its window does not hide them.
+
+A full-bleed style with no `image` has no frame at all (the game's own is
+left out, the card is the picture and its parts). `"game_frame": true` keeps
+the game's own frame behind it: the card's colour (monster, magic, trap...),
+its name bar and stat boxes, under a picture and parts the style places where
+it likes (the FM Editor's Full art uses it). On that frame the card's name, its
+ATK and DFD words and its numbers are the game's own, where the game puts them
+(`title`, `atk_label`, `dfd_label` and `digits`' `atk`/`def` left out), and a
+part the style gives is the style's, as in any full bleed.
 
 ### Frame styles and the rules that pick them
 
@@ -1364,7 +1411,8 @@ disagree. Three keys say it:
   kind, a style named for the card's six-color `"frame"`, the first
   `frame_for` rule that applies, `default_style`, then retail. This lets a
   cards mod opt into a new frame without using a tag as an implementation
-  detail. `null` clears an inherited named style.
+  detail. `null` clears an inherited named style. The style may be one of
+  another mod's layout ([Layouts of several mods](#layouts-of-several-mods)).
 - `frame_for`: a list of rules, the first that applies to a card wins. A rule
   says `"style"` and, to limit it, any of `"class"` (what the card is, below),
   `"tag"` (one of the card's [`tags`](more-cards.md#tags)) and `"setting"` (a
@@ -1447,9 +1495,11 @@ there (a card-kind badge, say) has nowhere resident to read one from yet;
 a Build Deck badge sheet and a duel-resident word texture were both tried
 and backed out (wrong VRAM residency and wrong shape, respectively).
 
-Only one mod's `card_layout` is read at a time -- the last applied one that
-declares it, the same "a later mod wins" rule other singular keys follow --
-so two layout mods together is the last one's layout, not a merge of both.
+The shared keys of a `card_layout` are read from one mod at a time -- the last
+applied one that declares more than `frame_styles`, the same "a later mod
+wins" rule other singular keys follow -- so two whole layouts together are the
+last one's, not a merge of both. Frame styles do combine
+([Layouts of several mods](#layouts-of-several-mods)).
 Forbidden Memories HD carries this as its own `full_bleed` setting, no code
 of its own needed: `tools/pc/hd_assets_pack.py`'s `--anime-frame-<kind>`
 flags default to `tools/pc/hd_recipes/anime_frame_<kind>.png` if present,
@@ -1458,6 +1508,43 @@ none` gives a kind no picture even where `hd_recipes` has one (effect monsters
 then wear the monster frame). A model for writing another: a pure data mod, no
 `library`, with one `full_bleed` setting, frame styles and rules, and the
 positions above.
+
+### Layouts of several mods
+
+Every applied mod's `frame_styles` is read, and a style is drawn by the mod
+that declared it: its pictures are in that mod's folder, its own parts
+(`art`, `atk`, `stars`, ...) place the card's elements, and it is on while
+**that mod's** `full_bleed` setting is: off until the player turns it on, or
+on from the start when the mod's `settings` entry for `full_bleed` has
+`"default": 1`. (A mod whose `card_layout` holds only `frame_styles`, below,
+and that declares no `full_bleed` setting has its styles always on: only the
+cards that name one are drawn in it.) The shared keys (`frame_for`,
+`default_style`, `default_styles`, the layout's own `art`, `atk`, `def`,
+`stars`, `attribute`, `spell`, `digits` and `type_label`, and the older
+per-kind `frame`) come from one layout, as above.
+
+A `card_layout` with **nothing but `frame_styles`** adds styles and takes none
+of that away from the layout before it. A cards mod that brings its own
+frames is written that way: its cards name its styles with `frame_style`, and
+everything else keeps the frames and positions of the player's other layout
+(Forbidden Memories HD's anime frames, or retail's). Put every part a style
+needs inside the style (`art`, `atk`, `def`, `stars`, `attribute`, `title`):
+with no shared layout of its own, what it leaves out is retail's place.
+
+How a card finds its style:
+
+- A card's own `frame_style` is looked up in the mod that declared the card
+  (the one its identity names), then in the newest mod that has it. The style
+  is used while its owner's `full_bleed` is on; off, the card is drawn as any
+  other card of the player's frames (so a card made as a copy wears what its
+  original does). A name no layout has is noted in the Mods window and the card keeps
+  retail's frame.
+- Every other card is picked by the shared layout's rules, as before. The rules
+  look a name up in the shared layout's own styles first, then the others'. A
+  style named for the card's `frame` color may be any layout's.
+- A name two mods declare is taken from the newer one, with a note, unless the
+  shared layout's own rules or the declaring mod named it: prefix the styles
+  of a cards mod (`foil-rainbow`) so they cannot meet another mod's `gold`.
 
 **Known limitation**: the frame image itself does not render in the duel's
 own card viewer (opened from the hand) -- `CardLayout_DrawFrame` submits
@@ -2307,6 +2394,14 @@ byte. `hook` returns 0 for anything that is not a game function (the port's
 own code, the C library, a function of another mod). `host->unhook` removes
 one hook, and `host->symbol("name")` looks a name up at run time, for a mod
 that can do without it.
+
+A mod must not call a game function that **returns a structure by value**
+(`CardLayout_HandGet`, `CardLayout_Get`, `CardLayout_Part`): the structure comes
+back through a hidden pointer the mod's compiler and the game's handle
+differently, and the stack and the locals after the call are wrong (a mod that
+called `CardLayout_HandGet` drew a card as a spell). Its pointer version,
+`void CardLayout_HandPlace(int card_id, int element, int *out)` (five ints:
+visible, x, y, width, height), is the one to call.
 
 How it works: every game unit is compiled with
 `-fpatchable-function-entry=8,6`, which leaves six bytes of `nop` before
