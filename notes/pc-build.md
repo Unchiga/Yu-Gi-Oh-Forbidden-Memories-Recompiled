@@ -981,6 +981,29 @@ the `ratan2` that aims the trail reads `vertices[0].vy/.vz`, which only the
 waiting branch fills, so records 197 and 550 differed from frame +696 on
 (under both poison bytes too).
 
+**When the read takes the slot's own previous call, the port keeps the
+local.** Shape 169 is native: what its retail stack slot holds at that read
+is what the same function wrote there on the slot's previous call (the
+waiting branch's part position, or a moving frame's). Rule 6 of
+`model_gate_port.py` (`STALE_LOCALS`) replaces the local with per-slot
+storage, `gModelVariant169Vertices[Model_GetActiveSlotIndex() & 1]`
+(`src/pc/overlays/model_stale_locals.h`), and with it records 197 and 550
+match the interpreter, plain and under both poison bytes. The storage is a
+game unit's (`src/pc/game/zzz_model_stale_locals.c`, after
+`zz_tower_storage.c` so no variable moves), so it is in every save state as
+the game stack is. It is zero at boot, and is not cleared at setup, which
+retail does not do to its stack either. Both retail images of each slot
+wait 65 frames (`delay`) before the trail moves, so the first read takes
+this attack's position; a mod's row with `delay` 0 reads the slot's
+previous attack's instead, where retail read whatever its stack held. The
+rule is a model of these battles, not of the stack: retail's two slots run
+their modules at one stack depth, so storage per slot matches it only
+because in 197 and 550 the two slots' 169 animations do not run at the same
+time. `check`
+fails a native row whose C lacks the rule, so a copy without it cannot
+pass for native. Shapes 84, 128 and 783 stay `keep`: their reads have not
+been shown to take the same function's previous call.
+
 **A frame past a page calls the Windows stack probe.** Shape 439's C
 (`variant456_sprays.c`, about 12 KB of arrays) makes the Windows compilers
 call the toolchain's probe before the frame is used: `__alloca` on i686,

@@ -51,6 +51,8 @@ MODEL_GATE_ROW(0, 160u, 0x12A0u, "10ce994f2fbeb2863c9adb3d54bef21893c70d693e1ebb
 MODEL_GATE_ROW(1, 290u, 0x12A0u, "9ad2f28236cf3f4bb35496ffda0d493b98603e9d435bb39af9664177495596e9", model_variant_160_slot1__func_8017B004, 0x4u, 0x1224u, 0x1Eu, 0x0u, 0u) /* shape 160 */
 MODEL_GATE_ROW(0, 167u, 0xFB8u, "afbb2d9dca3f99782612a5561821b27f0cc51885c6f0e45b753a499b54c2c8bf", model_variant_167__func_8013B004, 0x2u, 0xF7Cu, 0x1Cu, 0x0u, 0u) /* shape 167 */
 MODEL_GATE_ROW(1, 297u, 0xFB8u, "442e23c8f7a48389e3884368c3d050c9d0dbcc799588a9f3addb5d5766406677", model_variant_167_slot1__func_8017B004, 0x2u, 0xF7Cu, 0x1Cu, 0x0u, 0u) /* shape 167 */
+MODEL_GATE_ROW(0, 169u, 0x215Cu, "d20572770664b2f9bb2ae84111a582cfaf93a70bc1c515a5053e295dca0e02e4", model_variant_169__func_8013B004, 0x1u, 0x2138u, 0x22u, 0x0u, 0u) /* shape 169 */
+MODEL_GATE_ROW(1, 299u, 0x215Cu, "0f72c5a913707fdee6db1ad49d26d6d881d4291fe1624365c50a072885f24a45", model_variant_169_slot1__func_8017B004, 0x1u, 0x2138u, 0x22u, 0x0u, 0u) /* shape 169 */
 MODEL_GATE_ROW(0, 170u, 0x2064u, "df851f6b643c7523c4d4357d7253181ea89aea43c1b89303c270223d2ee46f6b", model_variant_170__func_8013B004, 0x1u, 0x2038u, 0x2Au, 0x0u, 0u) /* shape 170 */
 MODEL_GATE_ROW(1, 300u, 0x2064u, "ddb6ad630bcf9c75adb0f9f9e725086cd628d7974d33e8273db51500856ca4d4", model_variant_170_slot1__func_8017B004, 0x1u, 0x2038u, 0x2Au, 0x0u, 0u) /* shape 170 */
 MODEL_GATE_ROW(0, 176u, 0x15D8u, "549e71da701d840d2acbbf9163102b2adc6ec76df45dbcf8d1200365ec41f692", model_variant_176__func_8013B004, 0xEu, 0x13FCu, 0x22u, 0x0u, 0u) /* shape 176 */
