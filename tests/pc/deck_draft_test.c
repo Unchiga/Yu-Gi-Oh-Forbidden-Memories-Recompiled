@@ -19,6 +19,7 @@ uint16_t Platform_PadFixedBits(int port) { (void)port; return pad_fixed; }
 void SD_SEPlayFull(u32 id) { (void)id; }
 void Menu_SetItemEnabled(int id, int enabled) { (void)id; (void)enabled; }
 int Menu_Scale(void) { return 1; }
+int OverlayPointer_Read(int *x, int *y, int *moved, int *clicked) { (void)x; (void)y; (void)moved; (void)clicked; return 0; }
 int Menu_Height(void) { return 26; }
 void Menu_OverlayArea(const MenuCanvas *canvas, int *left, int *right, int *top)
 {

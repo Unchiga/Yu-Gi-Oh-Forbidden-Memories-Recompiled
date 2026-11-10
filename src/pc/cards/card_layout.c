@@ -639,6 +639,13 @@ int CardLayout_Active(void)
     return full_bleed_of(&source);
 }
 
+int CardLayout_Styled(void)
+{
+    LayoutSource source = find_source();
+    /* SetCard leaves the name empty when no style resolved. */
+    return full_bleed_of(&source) && current.name[0];
+}
+
 int CardLayout_TitleStyled(int card_id)
 {
     LayoutSource source = find_source();

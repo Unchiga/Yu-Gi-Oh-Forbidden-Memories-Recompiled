@@ -97,9 +97,19 @@ typedef enum {
  * and the mods they say are applied. Applied whether or not a window opens,
  * so headless runs honour them too. */
 void Menu_LoadSettings(void);
+/* Menu_LoadSettings in its two halves, for a window that opens between them
+ * (sdl.c): the settings, then the mods they say are applied. The mods are
+ * read after the window exists so the loading screen (loading.h) can show
+ * the minutes a big one takes. A backend with no such screen, and a reload of
+ * the settings, call Menu_LoadSettings. */
+void Menu_LoadSettingsWithoutMods(void);
+void Menu_LoadMods(void);
 int Menu_Height(void);
 /* Prepare fonts and layout; needs no display. */
 void Menu_Init(void);
+/* The font alone, for text before Menu_Init (the loading screen): the same
+ * face at the menu's scale as it stands, which Menu_Init then keeps. */
+void Menu_PrepareFont(void);
 /* The menu's size multiple: bar, rows, font and HUD scale together. The
  * platform sets it from the setting, or from the window height when that is
  * 0 (Menu_AutoScale), before it sizes a window or lays one out. */

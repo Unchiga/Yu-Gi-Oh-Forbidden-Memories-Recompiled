@@ -29,4 +29,17 @@ extern POLY_FT4 gModelVariant163Quad[2];
 extern u16 gModelVariant102Depths[2][110];
 extern u16 gModelVariant102Flags[2][110];
 
+/* Shape 831: `points`. The halo reads it, and only the gathering frames
+ * (elapsed <= gather_end) write it. */
+extern SVECTOR gModelVariant831Points[2][2];
+
+/* Shape 769, and image31368_entry.c (shape 772's body): `quad` and `screen`.
+ * After the burst, `quad` is submitted without its UVs, which the frames
+ * before the burst wrote; the spray reads screen[0], which only the
+ * gathering frames and the burst's first frames write. */
+extern POLY_FT4 gModelVariant769Quad[2];
+extern DVECTOR gModelVariant769Screen[2][128];
+extern POLY_FT4 gModelImage31368Quad[2];
+extern DVECTOR gModelImage31368Screen[2][128];
+
 #endif
