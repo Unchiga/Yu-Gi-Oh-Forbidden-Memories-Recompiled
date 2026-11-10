@@ -47,6 +47,7 @@ import build_process
 from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURCE_ADDRESSED_MODULES, TARGETS,
                           game_sources, native_sources, newest_input)
 import model_gate
+import model_gate_port
 import ptr32_stores
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1357,6 +1358,11 @@ def main():
     for name, _, _, _ in MODULES:
         for symbol, address in module_elf[name].items():
             addresses.setdefault(renamed.get(name, {}).get(symbol, symbol), address)
+    # Upstream's names for resident functions the ported model modules call
+    # where the port names the address otherwise (model_gate_names.txt): an
+    # alias to the port's name below, like a func_ name's.
+    for symbol, address in model_gate_port.read_names().items():
+        addresses.setdefault(symbol, address)
 
     # A native definition replaces the game's: weaken the original so the
     # linker prefers src/pc/overrides (calls are symbol-relative at -O0).
@@ -1413,6 +1419,14 @@ def main():
     for name in native_undefined - game_defined - native_defined:
         if name.startswith("D_8") and name in addresses:
             pinned[name] = host_address(addresses[name])
+    # A ported model module has no ELF: a name its C uses that no table
+    # places would be a stub, so it stops the build instead.
+    unplaced = sorted(name for name in unknown
+                      if any(name in module_symbols[module][2] | module_symbols[module][1]
+                             for module in SOURCE_ADDRESSED_MODULES))
+    if unplaced:
+        sys.exit("names the model modules' C uses that no table places (config/pc/guest_addresses.txt, "
+                 "config/pc/model_gate_names.txt): " + ", ".join(unplaced[:20]))
     # Overlay entry points and data live outside the resident image.
     stubs += [name for name in unknown if name in undefined]
     # Some pinned names are functions of a loadable module that the C calls

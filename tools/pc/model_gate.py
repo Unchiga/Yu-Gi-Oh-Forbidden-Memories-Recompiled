@@ -58,10 +58,12 @@ native row's span is written from the disc by `update`, never by hand.
     python tools/pc/model_gate.py check --disc game/rpg-yfm.bin   # and the disc: hashes, spans, boundaries
     python tools/pc/model_gate.py update --disc game/rpg-yfm.bin  # rewrite the table from the disc
     python tools/pc/model_gate.py write                  # rewrite src/pc/overlays/model_gate_table.inc
+    python tools/pc/model_gate.py port 418 433 --disc game/rpg-yfm.bin   # copy shapes' C from upstream
 
-To port a shape: copy the decomp's C (variant<shape>_*.c; the slot B wrappers
-go to src/native_overlays/model_variant_slot1), set the row's backend to `native`
-and its span to the decomp's data start, run `update --disc` and then
+To port a shape: `port` copies the decomp's C by rule (model_gate_port.py; the
+slot B wrappers go to src/native_overlays/model_variant_slot1) and sets the
+row's data start and sources; model_gate_scan.py proposes its backend, span and
+command_table. Then run `update --disc` and
 `python tools/pc/build_game32.py` to write the address sections
 (config/pc/guest_addresses.txt). `check --disc` reports how far the images
 agree beyond the span.
@@ -80,6 +82,7 @@ import re
 import struct
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "config/pc/model_gate.csv"
 HEADER = ROOT / "src/pc/overlays/model_gate_table.inc"
@@ -165,14 +168,74 @@ def write_table(rows: list[Row], path: Path = TABLE) -> None:
 
 # --- what the build needs ---------------------------------------------------------
 
-def source_patterns(row: Row, slot: str) -> tuple[str, ...]:
-    """The globs of the module's C files in a slot (a tuple: a module may be
-    made of the C of several headers)."""
+SOURCES = ROOT / "config/pc/model_gate_sources.txt"
+
+
+_LISTED: dict[tuple, dict[str, list[str]]] = {}
+_TEXTS: dict[str, str] = {}
+
+
+def listed_sources(root: Path = ROOT) -> dict[str, list[str]]:
+    """{module: [C files]} from config/pc/model_gate_sources.txt, which
+    `port` writes from the upstream layouts (model_gate_port.py); read once
+    while the file stays the same."""
+    import model_gate_port
+    path = root / SOURCES.relative_to(ROOT)
+    key = (str(path), path.stat().st_mtime_ns if path.exists() else 0)
+    if key not in _LISTED:
+        _LISTED[key] = model_gate_port.read_sections(path)
+    return _LISTED[key]
+
+
+def source_patterns(row: Row, slot: str, root: Path = ROOT) -> tuple[str, ...]:
+    """The module's C files in a slot: the list `port` wrote, or for a shape
+    it has no list of, the globs of the shape's own headers (a tuple: a module
+    may be made of the C of several)."""
+    listed = listed_sources(root).get(row.module(slot))
+    if listed:
+        return tuple(listed)
     folder = "model_variant" if slot == "A" else "model_variant_slot1"
     return tuple(f"src/native_overlays/{folder}/variant{number}_*.c" for number in row.sources)
 
 
 SYMBOL = re.compile(r"\b(func|D)_([0-9A-F]{8})\b")
+INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
+ALIAS = re.compile(r"^\s*#\s*define\s+((?:func|D)_[0-9A-F]{8})\s+((?:func|D)_[0-9A-F]{8})\s*$", re.M)
+COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+
+
+def without_comments(text: str) -> str:
+    return COMMENT.sub(" ", text)
+
+
+def _text(path: Path) -> str:
+    """A file's text without comments, read once a process."""
+    key = str(path)
+    if key not in _TEXTS:
+        _TEXTS[key] = without_comments(path.read_text(encoding="utf-8", errors="replace"))
+    return _TEXTS[key]
+
+
+_CLOSURES: dict[str, list[Path]] = {}
+
+
+def port_closure(path: Path, root: Path = ROOT) -> list[Path]:
+    """A C file and every file of the repository it includes, transitively
+    (beside the including file first, then from src/); once a process."""
+    start = os.path.normpath(str(path))
+    if start in _CLOSURES:
+        return _CLOSURES[start]
+    seen, todo = [], [start]
+    while todo:
+        current = todo.pop(0)
+        if current in seen or not os.path.isfile(current):
+            continue
+        seen.append(current)
+        for name in INCLUDE.findall(_text(Path(current))):
+            beside = os.path.normpath(os.path.join(os.path.dirname(current), name))
+            todo.append(beside if os.path.isfile(beside) else os.path.normpath(os.path.join(root, "src", name)))
+    _CLOSURES[start] = [Path(one) for one in seen]
+    return _CLOSURES[start]
 
 
 def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
@@ -180,17 +243,31 @@ def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
     config/pc/guest_addresses.txt. Retail ELFs give these for the modules
     that have one; the decomp's names carry their address, so the module's C
     (and, for slot B, its wrappers) gives them here: every func_ and D_ name
-    that falls inside the slot's image."""
+    the module's C files and the C files they include use outside comments
+    that falls inside the slot's image (a header's prototypes of another
+    module's functions are not the module's; build_game32.py stops on a name
+    of the module's objects the section lacks). A `#define func_X func_Y` (a
+    wrapper putting C written at one address at another: slot B's, or another
+    region's C at the US address) makes func_X func_Y."""
     base = BASE[slot]
+    texts = []
+    for pattern in source_patterns(row, slot, root):
+        for path in sorted(root.glob(pattern)):
+            for one in port_closure(path, root):
+                if one.suffix == ".c":
+                    texts.append(_text(one))
+    renamed = {old: new for text in texts for old, new in ALIAS.findall(text)}
     found = {}
-    folder = root / ("src/native_overlays/model_variant" if slot == "A" else "src/native_overlays/model_variant_slot1")
-    for number in row.sources:
-        for path in sorted(folder.glob(f"variant{number}_*")):
-            if path.suffix in (".c", ".h"):
-                for kind, digits in SYMBOL.findall(path.read_text(encoding="utf-8", errors="replace")):
-                    address = int(digits, 16)
-                    if base <= address < base + IMAGE_SIZE:
-                        found[f"{kind}_{digits}"] = address
+    for text in texts:
+        for kind, digits in SYMBOL.findall(ALIAS.sub(lambda match: match.group(2), text)):
+            name = f"{kind}_{digits}"
+            seen = set()
+            while name in renamed and name not in seen:
+                seen.add(name)
+                name = renamed[name]
+            address = int(name.split("_")[1], 16)
+            if base <= address < base + IMAGE_SIZE:
+                found[name] = address
     return found
 
 
@@ -417,10 +494,21 @@ def check_sources(rows: list[Row]) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("check", "update", "write"))
+    parser.add_argument("command", choices=("check", "update", "write", "port"))
+    parser.add_argument("shapes", nargs="*", type=int, help="port: the shapes to copy from upstream")
     parser.add_argument("--disc", type=Path, default=os.environ.get("MEMORIES_DISC"),
                         help="the disc image (default: MEMORIES_DISC)")
+    parser.add_argument("--upstream", default="upstream/master",
+                        help="port: the upstream decomp's revision (default: upstream/master)")
+    parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     arguments = parser.parse_args()
+    if arguments.command == "port":
+        if not arguments.disc or not Path(arguments.disc).is_file():
+            parser.error("port needs the disc (the first word of each module names its shape): --disc or MEMORIES_DISC")
+        if not arguments.shapes:
+            parser.error("port: name the shapes")
+        import model_gate_port
+        return model_gate_port.port(arguments.shapes, Path(arguments.disc), arguments.upstream, arguments.jobs)
     rows = load_table()
     failed = problems(rows)
     if arguments.command == "update":

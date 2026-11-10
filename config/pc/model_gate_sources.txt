@@ -1,0 +1,22 @@
+# The C files of each native variant module (tools/pc/model_gate.py port writes this from
+# the upstream layouts; tools/pc/build_config.py compiles them). Paths from the repository root.
+[model_variant_418]
+src/native_overlays/model_variant/variant418_entry.c
+src/native_overlays/model_variant/variant418_spiral.c
+src/native_overlays/model_variant/variant418_sheet.c
+src/native_overlays/model_variant/variant418_webs.c
+src/native_overlays/model_variant/variant418_ribbons.c
+src/native_overlays/model_variant/variant418_bands.c
+src/native_overlays/model_variant/variant418_spokes.c
+src/native_overlays/model_variant/variant418_rings.c
+src/native_overlays/model_variant/variant418_quad.c
+[model_variant_418_slot1]
+src/native_overlays/model_variant_slot1/variant418_entry_slot1.c
+src/native_overlays/model_variant_slot1/variant418_spiral_slot1.c
+src/native_overlays/model_variant_slot1/variant418_sheet_slot1.c
+src/native_overlays/model_variant_slot1/variant418_webs_slot1.c
+src/native_overlays/model_variant_slot1/variant418_ribbons_slot1.c
+src/native_overlays/model_variant_slot1/variant418_bands_slot1.c
+src/native_overlays/model_variant_slot1/variant418_spokes_slot1.c
+src/native_overlays/model_variant_slot1/variant418_rings_slot1.c
+src/native_overlays/model_variant_slot1/variant418_quad_slot1.c

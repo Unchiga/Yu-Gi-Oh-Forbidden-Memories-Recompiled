@@ -58,6 +58,32 @@ static int model_mode(void)
     return mode;
 }
 
+#ifdef MEMORIES_TEST_HOOKS
+/* MEMORIES_MODEL_STACK_POISON=<byte> (tools/pc/model_oracle.py --poison, a
+ * build with test hooks): the stack below run_module's frame is filled with
+ * the byte before a native module runs, so a module's C that reads a local it
+ * never wrote (shape 128's CVECTOR, 84's flags[]) takes the byte, where the
+ * interpreter takes what its own stack held. Run with two bytes, such a shape
+ * differs from the interpreter for one of them; the scan does not see it. */
+static int stack_poison(void)
+{
+    static int value = -2;
+    if (value == -2) {
+        const char *setting = getenv("MEMORIES_MODEL_STACK_POISON");
+        value = setting && *setting ? (int)(strtol(setting, NULL, 0) & 0xFF) : -1;
+    }
+    return value;
+}
+
+/* Not inlined: its frame is where the module's frames will be. */
+static __attribute__((noinline)) void paint_stack(int byte)
+{
+    volatile unsigned char area[0x8000];
+    size_t i;
+    for (i = 0; i < sizeof(area); i++) area[i] = (unsigned char)byte;
+}
+#endif
+
 typedef struct {
     ModelSparkEffect effect;
     int age;
@@ -269,6 +295,9 @@ static int run_module(uint32_t module, int variant, void *context, int command)
         (unsigned)D_8009AFA0, command, (unsigned)identifier, slot ? 'B' : 'A',
         native ? "native" : interpret ? "interpreter" : "stand-in");
     if (native) {
+#ifdef MEMORIES_TEST_HOOKS
+        if (stack_poison() >= 0) paint_stack(stack_poison());
+#endif
         return native(context, command);
     }
     if (interpret) {
