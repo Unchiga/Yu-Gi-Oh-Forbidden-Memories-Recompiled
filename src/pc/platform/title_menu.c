@@ -365,6 +365,43 @@ unsigned TitleMenu_Before(void)
     return 0;
 }
 
+/* The mouse over the menu. An item is where it is drawn: its middle at run.x and its y, as large as its picture (or
+ * the game's 96 x 24 entry, at the item's size in percent). Looked up by the item's place and size, not by the
+ * game's sprites, which stand off the screen for every entry a mod gave a picture. */
+int TitleMenu_PointerAt(int x, int y)
+{
+    int menu = TitleMenu_Showing(), row;
+    if (menu < 0 || !waiting()) return -1;
+    for (row = 0; row < config()->shown[menu]; row++) {
+        int item = config()->order[menu][row], w = 96, h = 24, which;
+        const TitleItem *it = &config()->items[item];
+        if (it->hidden) continue;
+        which = TITLE_IMAGE_ITEM(item, 0);
+        if (!TitleImages_Ready(which, &w, &h)) {
+            const int scale = it->scale > 0 ? it->scale : 100;
+            w = 96 * scale / 100;
+            h = 24 * scale / 100;
+        }
+        if (x >= run.x[item] - w / 2 && x < run.x[item] - w / 2 + w && y >= item_y(it) - h / 2 &&
+            y < item_y(it) - h / 2 + h)
+            return item;
+    }
+    return -1;
+}
+
+/* The cursor onto `item`, as the pad's Up and Down would leave it. 1 when it moved. */
+int TitleMenu_PointerSelect(int item)
+{
+    int menu = TitleMenu_Showing(), row;
+    if (menu < 0 || !waiting()) return 0;
+    row = row_of(menu, item);
+    if (row < 0 || row == run.cursor[menu]) return 0;
+    run.cursor[menu] = row;
+    settle(menu);
+    SD_SEPlay(SE_MOVE, 0xFF, 0);
+    return 1;
+}
+
 /* The game's slide (frontend_update.c): from + sin(90 degrees * t / 16) *
  * (to - from), t the ticks gone. The smooth one: smoothstep, at rest at
  * both ends, the same rounded place for the game's sprites and the port's

@@ -72,6 +72,7 @@ typedef enum {
     SET_HD_FAST,
     SET_TOUCH_OPACITY,
     SET_TOUCH_STYLE,
+    SET_DUEL_HUD_EDGES,         /* widescreen: the duel's life-point panel and FIELD box at the picture's edges */
     SET_COUNT
 } SettingId;
 
