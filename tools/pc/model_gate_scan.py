@@ -735,7 +735,10 @@ def propose(row: model_gate.Row, common: int, commands: dict | None, compile_err
             else:
                 reads = [int(v.split()[3], 16) for e in out["b"] for v in e["text"].split(", ")
                          if v.startswith("tablefield")]
-                end = table + (count - 1) * stride + max([stride - 4] + reads) + 4
+                # The last entry ends at its stride, the C element's sizeof, so
+                # a member read inside it needs no more; one at or past the
+                # stride (a cast) is taken as a word.
+                end = table + (count - 1) * stride + max([stride] + [r + 4 for r in reads if r >= stride])
                 if end > model_gate.IMAGE_SIZE:
                     reasons.append(f"retail commands up to {count - 1} pick entries past the image "
                                    f"(table 0x{table:X}, 0x{stride:X} bytes): the C reduces the command "
@@ -743,7 +746,10 @@ def propose(row: model_gate.Row, common: int, commands: dict | None, compile_err
                 else:
                     span = max(span, end)
                     command_table = f"0x{table:X}:0x{stride:X}:{count}:0x{fields[0]:X}"
-    span = (span + 3) & ~3   # a hash of whole words
+    # A hash of whole words, unless the word past the C's last byte differs
+    # per record: then to the byte (`common` is the bytes every image shares).
+    if (span + 3) & ~3 <= common:
+        span = (span + 3) & ~3
     if out["c"]:
         backend = "keep"
         note = "per-record words as divisor or index: " + ", ".join(e["where"] for e in out["c"][:4])
@@ -779,7 +785,7 @@ def _one(job):
 def scan_all(shapes: list[int], disc: Path, commands: dict | None, errors: dict[int, list[str]], jobs: int) -> list[dict]:
     import concurrent.futures
     found = model_gate.read_shapes(disc)
-    work = [(shape, min(found[shape].common("A"), found[shape].common("B")), commands, errors.get(shape, []))
+    work = [(shape, min(found[shape].common("A", 1), found[shape].common("B", 1)), commands, errors.get(shape, []))
             for shape in shapes]
     with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
         return list(pool.map(_one, work))
