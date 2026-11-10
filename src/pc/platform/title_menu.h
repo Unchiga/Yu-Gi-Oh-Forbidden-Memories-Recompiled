@@ -45,6 +45,11 @@ int TitleMenu_Reopen(int selection, int reopen);
 void TitleMenu_State(struct MemoriesState *state);
 /* Whether a menu is up (not PUSH START BUTTON); 0 or 1, which. -1 none. */
 int TitleMenu_Showing(void);
+/* The mouse (game picture coordinates, as host->pointer gives them): the item the pointer is over while a menu waits
+ * for a choice, as drawn (a mod's picture or button, any size, the game's own entry), or -1; and the cursor put on
+ * an item as Up and Down would (1 when it moved). A click is then the pad's Cross. */
+int TitleMenu_PointerAt(int x, int y);
+int TitleMenu_PointerSelect(int item);
 /* The name of item `index` ("load", "my-mod:credits"), or NULL: for the
  * mods' MEMORIES_EVENT_MENU. */
 const char *TitleMenu_ItemName(int index);

@@ -5,7 +5,8 @@
  * The game asks for a load or a save through MemCardDialog_Request and then
  * calls MemCardDialog_Poll every frame until it returns the outcome
  * (src/game/mem_card_dialog_runtime.c). On the port those two hand the
- * request to this menu instead: the player picks a slot with the pad, is
+ * request to this menu instead: the player picks a slot with the pad (or hovers and clicks it with the
+ * mouse, SaveMenu_Pointer), is
  * asked before an existing save is overwritten, and the poll returns what
  * the card dialog would have: 1 done, 2 failed, 3 cancelled.
  *
@@ -68,5 +69,9 @@ int SaveMenu_Poll(unsigned pressed, int channel, int *sound, SaveSlotCheck valid
 void SaveMenu_Draw(MenuCanvas *canvas, int *x, int *y, int *w, int *h);
 /* Changes whenever what SaveMenu_Draw would draw changes. */
 unsigned SaveMenu_Signature(void);
+/* The mouse (window pixels, overlay_pointer.h): moves the cursor or the
+ * choice to what it is over and returns the pad bits a click stands for, to
+ * add to what SaveMenu_Poll is given. *sound as SaveMenu_Poll's. */
+unsigned SaveMenu_Pointer(int x, int y, int moved, int clicked, int *sound);
 
 #endif
