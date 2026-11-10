@@ -349,9 +349,9 @@ def write_plan(plan: Plan, root: Path = ROOT) -> None:
 # what its RotTransPersN writes. Shape 831's halo reads `points`, which only
 # the gathering frames write. Shape 769 and image31368_entry.c (shape 772's
 # body, and the French header 789's) submit `quad` after the burst without
-# writing its UVs, and their spray reads screen[0], which no call writes from
-# the launch to the burst. The oracle matches the interpreter with the slot's
-# last value (notes/pc-build.md).
+# writing its UVs, and their spray reads screen[0], which only the gathering
+# frames and the burst's first frames write. The oracle matches the
+# interpreter with the slot's last value (notes/pc-build.md).
 def _stale_quad(name: str) -> tuple[str, str, str]:
     return ("    POLY_FT4 quad;\n",
             f"    POLY_FT4 *quad = &{name}Quad[Model_GetActiveSlotIndex() & 1];\n", "quad")
