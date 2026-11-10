@@ -2918,6 +2918,18 @@ static int pointer_read(int *x, int *y, unsigned *buttons)
     return 1;
 }
 
+int Platform_WindowPointer(int *x, int *y, unsigned *buttons)
+{
+    if (!window || !(SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) || !pointer_inside || !pointer_is_mouse ||
+        mouse_relative)
+        return 0;
+    if (Menu_IsOpen() || Menu_NoticeShown() || Panel_Shown() || pointer_y < Menu_Height()) return 0;
+    *x = pointer_x;
+    *y = pointer_y;
+    *buttons = mouse_held;
+    return 1;
+}
+
 /* host->wheel and host->take_wheel: the notches (and the control channel's
  * `wheel`) since the last read. */
 static int wheel_read(void)
