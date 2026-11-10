@@ -121,7 +121,10 @@ int CardLayout_Digits(char *path, size_t size, int *w, int *h, int *step);
 
 /* An optional, active-style-only static ATK or DFD label. `dfd` is non-zero
  * for the defense label. The PNG's own texture is drawn at x/y and w/h in
- * card units; 0 means that style does not supply that label. */
+ * card units; 0 means that style does not supply that label. It does not
+ * depend on the style having a frame image: with the mod's full_bleed
+ * setting on, a style that keeps retail's frame gets its label too, drawn
+ * in place of retail's own caption (func_80028B08.c). */
 int CardLayout_StatLabel(int dfd, char *path, size_t size, int *x, int *y, int *w, int *h);
 
 /* `kind`'s own "type_label" entry: card_constants.h's CARD_TYPE_MAGIC,

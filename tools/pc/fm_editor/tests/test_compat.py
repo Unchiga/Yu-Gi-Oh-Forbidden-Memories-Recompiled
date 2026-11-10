@@ -228,6 +228,41 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual((api, len(reasons)), (18, 2))
         self.assertIn("newer than v0.3.0", compat.release_text(18))
 
+    def test_api_25(self):
+        """An ATK/DFD caption picture on a style that keeps retail's frame: a
+        game of API 24 draws it only on a full-bleed frame and leaves retail's
+        caption, so the mod would show retail's DFD where it asks for HP."""
+        def layout(**style):
+            return {"card_layout": {"frame_styles": {"s": {"hand_color": "gold", **style}}}}
+        label = {"image": "hp.png", "x": 12, "y": 184}
+        for value in (layout(dfd_label=label), layout(atk_label=label),
+                      layout(image="a.png", full_bleed=False, dfd_label=label),
+                      layout(image="", dfd_label=label)):
+            with self.subTest(value=value):
+                api, reasons = compat.required(value)
+                self.assertEqual(api, 25)
+                self.assertIn("keeps retail's frame", reasons[0])
+        # On a frame of the style's own the picture is API 18's, as before.
+        for value in (layout(image="a.png", dfd_label=label),
+                      layout(image="a.png", full_bleed=True, atk_label=label),
+                      layout(full_bleed=True, dfd_label=label)):
+            with self.subTest(value=value):
+                self.assertEqual(self.needs(value), 18)
+        # A caption with no picture of its own (a move, a hide) draws nothing new.
+        for value in (layout(dfd_label={"x": 12, "y": 184}), layout(atk_label={"hide": True}),
+                      layout(dfd_label={"image": ""}), layout(dfd_label="hp.png")):
+            with self.subTest(value=value):
+                self.assertEqual(self.needs(value), 18)
+        self.assertEqual(self.needs({"card_layout": {"atk_label": label}}), 18)   # not read by the game
+        # The game reads "full_bleed" with Json_Bool: a number is a bool (0 false), another value says nothing.
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=0, dfd_label=label)), 25)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=0.0, dfd_label=label)), 25)
+        self.assertEqual(self.needs(layout(full_bleed=1, dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed=2.5, dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(image="a.png", full_bleed="no", dfd_label=label)), 18)
+        self.assertEqual(self.needs(layout(full_bleed=None, dfd_label=label)), 25)
+        self.assertIn("newer than v0.3.0", compat.release_text(25))
+
     def test_reasons_are_the_highest_apis(self):
         api, reasons = compat.required({"card_text_colors": {}, "ui": {}, "limits": {"swords_turns": 5}})
         self.assertEqual(api, 11)

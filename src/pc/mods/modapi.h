@@ -76,6 +76,8 @@
  *      picture_only_frame: a frame the CPU does not raster as well
  *  24  pointer, wheel, take_wheel: where the mouse is over the game's
  *      picture and the wheel, for a mod that points with it
+ *  25  a frame style's atk_label/dfd_label picture on a style that keeps
+ *      retail's frame (manifest only); no host layout or event change
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 
