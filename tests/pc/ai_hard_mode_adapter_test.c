@@ -28,6 +28,17 @@ static int spawned, released, original_calls, hidden_lookups, observed_visibilit
 static int deck_mode, hidden_mode, custom_window = 20, retail_hand = 1;
 static int terrain_override, terrain_points, star_points;
 static int ai_card, ai_value;
+static int edge_calls;
+
+/* Own slot 1 attacking enemy slot 56: +700 against its ATK, +300 against
+ * its DEF; that enemy attacking own slot 1: -400 against either. */
+int MonsterEffects_AiBattleEdge(int attacker_slot, int target_slot, int against_defense)
+{
+    edge_calls++;
+    if (attacker_slot == 1 && target_slot == 56) return against_defense ? 300 : 700;
+    if (attacker_slot == 56 && target_slot == 1) return -400;
+    return 0;
+}
 
 int Cards_Valid(int id) { return id > 0 && id < 1024; }
 int Cards_EffectId(int id) { if (id == 999) hidden_lookups++; return id; }
@@ -167,6 +178,19 @@ int main(void)
     D_800E9FF0[0].swords_turns_remaining = 2; b = board(&o); assert(b.enemy_pinned);
     D_800E9FF0[0].swords_turns_remaining = 1; b = board(&o); assert(!b.enemy_pinned);
     D_800E9FF0[0].swords_turns_remaining = 0;
+
+    /* The "combat" edges between the field's monsters, from the game; not
+       against a hidden enemy, and none on printed stats. */
+    gDuel_aActiveCards[1] = (AiActiveCard){10,1000,1000,0,0,1,2,0};
+    gDuel_aActiveCards[56].flags = 0;
+    edge_calls = 0; b = board(&o);
+    assert(b.own[0].zone == 1 && !b.enemy[0].zone && b.edge[0][0][0] == 700 && b.edge[0][0][1] == 300);
+    assert(b.hit[0][0][0] == -400 && b.hit[0][0][1] == -400 && edge_calls == 4);
+    gDuel_aActiveCards[56].flags = HM_DOWN; hidden_mode = 1;
+    edge_calls = 0; b = board(&o); assert(!edge_calls && !b.edge[0][0][0]);
+    hidden_mode = 2; o.effective = 0;
+    edge_calls = 0; b = board(&o); assert(!edge_calls && !b.hit[0][0][0]);
+    o = options(); gDuel_aActiveCards[1].card_id = 0;
     hidden_mode = 1;
     for (i = 0; i < 5; i++) D_801A8000[i] = i;
     gAiScript_aMemory[2] = 123;

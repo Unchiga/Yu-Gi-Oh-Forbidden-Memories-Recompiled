@@ -12,11 +12,19 @@
 typedef struct {
     int id, effect, type, attack, defense, star, star2, flags;
     int worth; /* what a stat cut took off value(): a kill is worth as much */
+    int zone;  /* an own field monster's zone + 1 (HmBoard's battles); 0 another card */
 } HmCard;
 typedef struct {
     HmCard own[5], enemy[5], back[5], enemy_back[5], hand[HM_HAND];
     int hand_count, lp, max_lp, enemy_lp, pinned, enemy_pinned, terrain;
     int spellbinding, shadow_spell; /* what each takes off ATK and DEF */
+    /* What the two monsters' "combat" boosts on the monster each battles
+     * add to a battle's difference (the game's MonsterEffects_AiBattleEdge;
+     * their own boosts are in the stats): edge[i][j][d] to own i's ATK less
+     * enemy j's ATK (d 0) or DEF (d 1) when i attacks j; hit[j][i][d] to
+     * enemy j's ATK less own i's ATK or DEF when j attacks i. All 0 without
+     * such effects. */
+    int edge[5][5][2], hit[5][5][2];
 } HmBoard;
 typedef struct {
     int hand, fusion, guardian, attacks, defense, spells, effective;

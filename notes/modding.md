@@ -1542,6 +1542,13 @@ into what is moved where it reaches (the editor says so). The bar's own
 `tint`, `hide` and `image` are its picture's only; its parts are drawn over
 whichever it is.
 
+View > Duel HUD at the 16:9 edges (`duel_hud_edges`, off) does the same for the
+life-point panel and the FIELD box with View > Aspect 16:9: they sit at the
+right and left edges of the wider picture, as far out as a mod's `x` would put
+them, read when a duel starts. (The widescreen renderer clips sprites to the
+4:3 frame and lets polygons run past it, so a piece that reaches over an edge is
+drawn as a quad.)
+
 Everything is done as the game draws the pictures, never to the game's own
 objects, so its slides, the turn's colors and the cursors' moves go on as
 they do. The game hides the panel and the FIELD box by sliding them off the

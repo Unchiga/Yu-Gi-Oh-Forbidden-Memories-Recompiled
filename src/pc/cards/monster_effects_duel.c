@@ -27,6 +27,7 @@
 #include "game/display_object_core.h"
 #include "game/duel_apply_card_object_flags.h"
 #include "game/sound.h"
+#include "game/ai_constants.h"
 #include <string.h>
 
 /* The mods' event numbers what happened as the cards' "when" does. */
@@ -232,13 +233,15 @@ static int reaches(const MonsterEffect *effect, int source, int target, int card
 
 /* How many times `effect` of the card at `source` is made: 1, or with a
  * "for_each" the face-up monsters it counts as the field was last looked
- * at (the battle's two as face up once it begins), the card too. */
-static int times(const MonsterEffect *effect, int source)
+ * at (the battle's two as face up once it begins), the card too;
+ * `fighter` and `foe` (-1 none) count face up, as a battle's two will. */
+static int counted(const MonsterEffect *effect, int source, int fighter, int foe)
 {
     int record, n = 0;
     if (effect->each == MONSTER_EACH_NONE) return 1;
     for (record = 0; record < MONSTER_RECORDS; record++) {
-        if (!monster_zone(record) || !S.card[record] || !S.face_up[record]) continue;
+        if (!monster_zone(record) || !S.card[record] ||
+            !(S.face_up[record] || record == fighter || record == foe)) continue;
         if (effect->each == MONSTER_EACH_OWN && owner(record) != owner(source)) continue;
         if (effect->each == MONSTER_EACH_OPPONENT && owner(record) == owner(source)) continue;
         if (effect->each_type != -1 && Cards_Type(S.card[record]) != (unsigned char)effect->each_type) continue;
@@ -247,6 +250,7 @@ static int times(const MonsterEffect *effect, int source)
     }
     return n;
 }
+static int times(const MonsterEffect *effect, int source) { return counted(effect, source, -1, -1); }
 
 static int clamp(int value, int low, int high) { return value < low ? low : value > high ? high : value; }
 
@@ -761,6 +765,87 @@ void MonsterEffects_Battle(void)
         announce(card, record, MONSTER_WHEN_COMBAT, MEMORIES_AFTER);
     }
     if (played) SD_SEPlayFull(SE_BOOST);
+}
+
+/* What the "combat" boosts of the monster at `source` give the one at
+ * `target` in a battle not yet begun, as MonsterEffects_Battle will make
+ * them: its own (`source` is `target`), or those on the monster it battles
+ * (`target` the other). The two monsters count face up for a "for_each",
+ * `foe` being the battle's other one (-1: not known). A code mod that takes
+ * the occasion (MEMORIES_EVENT_MONSTER, before) is not foreseen. */
+static void foresee(int source, int target, int foe, int *attack, int *defense)
+{
+    const MonsterEffect *effects;
+    int n, e, card;
+    if (!monster_zone(source) || !monster_zone(target) || !(D_801A7AD8[source].flags & DUEL_CARD_FLAG_OCCUPIED) ||
+        !(D_801A7AD8[target].flags & DUEL_CARD_FLAG_OCCUPIED))
+        return;
+    card = D_801A7AD8[target].card_id;
+    n = Cards_MonsterEffects(D_801A7AD8[source].card_id, &effects);
+    for (e = 0; e < n; e++) {
+        const MonsterEffect *effect = &effects[e];
+        int count;
+        if (effect->when != MONSTER_WHEN_COMBAT || effect->action != MONSTER_DO_BOOST ||
+            (effect->target == MONSTER_TARGET_BATTLE) != (source != target))
+            continue;
+        /* The type and attribute only, as the battle asks them: `target` is
+           settled, and reaches() takes MONSTER_TARGET_BATTLE for a flip's. */
+        if (!reaches(&(MonsterEffect){.target = MONSTER_TARGET_ALL, .type = effect->type, .attribute = effect->attribute},
+                     source, target, card))
+            continue;
+        count = counted(effect, source, target, foe);
+        *attack += effect->attack * count;
+        *defense += effect->defense * count;
+    }
+}
+
+int MonsterEffects_AiStats(const void *pointer, int stats)
+{
+    const DuelCardRecord *card = pointer;
+    int record = (int)(card - D_801A7AD8), attack = 0, defense = 0;
+    if (!S.ready || !monster_zone(record)) return stats;
+    foresee(record, record, -1, &attack, &defense);
+    if (!attack && !defense) return stats;
+    attack = clamp((stats & 0xFFFF) + attack, 0, Tables_StatCap(0));
+    defense = clamp((int)((unsigned)stats >> 16) + defense, 0, Tables_StatCap(1));
+    return defense << 16 | attack;
+}
+
+/* The monster record of an AI snapshot slot (func_80027DF8.c: the side
+ * whose turn it is first, its monsters from slot 1), -1 for another slot. */
+static int ai_record(int slot)
+{
+    int side = D_8009B1D5;
+    if (slot >= AI_SLOT_OPPONENT_MONSTER_FIRST) {
+        slot -= AI_SLOT_OPPONENT_MONSTER_FIRST;
+        side ^= 1;
+    } else {
+        slot -= AI_SLOT_OWN_MONSTER_FIRST;
+    }
+    return side < 2 && slot >= 0 && slot < DUEL_FIELD_ROW_SIZE ? side * 15 + 5 + slot : -1;
+}
+
+/* What the battle with `foe` gives the monster at `record` past what the AI
+ * snapshot has for it: the foe's boosts on it, and its own "for_each" with
+ * the foe counted face up too (the snapshot counts only the monster). */
+static void foresee_battle(int record, int foe, int *attack, int *defense)
+{
+    int own_attack = 0, own_defense = 0;
+    foresee(foe, record, foe, attack, defense);
+    foresee(record, record, foe, attack, defense);
+    foresee(record, record, -1, &own_attack, &own_defense);
+    *attack -= own_attack;
+    *defense -= own_defense;
+}
+
+int MonsterEffects_AiBattleEdge(int attacker_slot, int target_slot, int against_defense)
+{
+    int attacker = ai_record(attacker_slot), target = ai_record(target_slot);
+    int attack = 0, attacker_defense = 0, target_attack = 0, target_defense = 0;
+    if (!S.ready || attacker < 0 || target < 0 || attacker == target) return 0;
+    foresee_battle(attacker, target, &attack, &attacker_defense);
+    foresee_battle(target, attacker, &target_attack, &target_defense);
+    return attack - (against_defense ? target_defense : target_attack);
 }
 
 void MonsterEffects_Stats(const void *pointer, int *attack, int *defense)

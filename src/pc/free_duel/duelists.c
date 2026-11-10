@@ -21,6 +21,7 @@
 #include "pc/mods/json.h"
 #include "pc/debug/log.h"
 #include "pc/platform/paths.h"
+#include "pc/platform/loading.h"
 #include "pc/compat/fs.h"
 #include "pc/cards/art.h"
 #include "pc/render/texture_pack.h"
@@ -1067,6 +1068,7 @@ static void read_duelist_folder(const char *mod, const char *directory)
     for (i = 0; i < count; i++) {
         char file[1200], error[256];
         JsonDocument *document;
+        Loading_Step("Duelists", (unsigned)i, (unsigned)count);
         if (snprintf(file, sizeof file, "%s/%s.json", path, names[i].name) >= (int)sizeof file) continue;
         document = Json_ParseFile(file, error, sizeof error);
         if (!document) {
