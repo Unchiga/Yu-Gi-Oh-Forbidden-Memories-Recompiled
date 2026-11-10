@@ -19,5 +19,6 @@
 #define Model_SetCameraOrbitFromPreset func_8005F27C
 #define Model_SetSlotAmbient func_800595C8
 #define Model_SetSlotPlaybackDirection func_80059700
+#define Model_SetSlotScale func_800594C0
 #define Model_TransformPartVertex func_800593D0
 #endif

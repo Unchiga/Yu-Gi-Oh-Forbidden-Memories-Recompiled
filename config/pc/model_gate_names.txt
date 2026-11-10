@@ -14,4 +14,6 @@ Model_RequestCameraMoveToSlots 80059F18
 Model_SetCameraOrbitFromPreset 8005F27C
 Model_SetSlotAmbient 800595C8
 Model_SetSlotPlaybackDirection 80059700
+Model_SetSlotScale 800594C0
 Model_TransformPartVertex 800593D0
+Model_UpdateCoordinateUnitMatrix 8005922C

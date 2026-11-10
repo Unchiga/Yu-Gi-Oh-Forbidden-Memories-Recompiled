@@ -1012,8 +1012,17 @@ the oracle; in each, the frames that write `quad`'s colour come before those
 that read it stale, so the zero at boot is never read. As for 169, storage
 per slot is a model of these battles: a mod's row that runs one of these
 shapes in both slots at once keeps each slot's colour, where retail's shared
-stack depth would show the other slot's. Shapes 84, 128 and 783 stay `keep`: their reads have not been
-shown to take the same function's previous call.
+stack depth would show the other slot's. A file may take more than one
+local, and `check` reads the files a native unit includes as well as the
+unit (shape 772's unit is a wrapper of image31368_entry.c, the French header
+789's body). Shape 831's halo reads `points`, which only the gathering frames
+write. Shape 769 and image31368_entry.c submit `quad` after the burst
+without writing its UVs, which every frame before the burst writes, and
+their spray reads `screen[0]`, which no call writes from the launch to the
+burst (the gathering frames before the launch do). Records 301, 189 and
+113, one battle each, match with the rule under both poison bytes. Shapes
+84, 128 and 783 stay `keep`: their reads have not been shown to take the
+same function's previous call.
 
 **A frame past a page calls the Windows stack probe.** Shape 439's C
 (`variant456_sprays.c`, about 12 KB of arrays) makes the Windows compilers

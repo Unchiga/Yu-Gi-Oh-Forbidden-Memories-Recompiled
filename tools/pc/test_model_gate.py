@@ -271,7 +271,7 @@ class PortRules(unittest.TestCase):
     def test_a_stale_local_takes_the_slot_storage(self):
         import model_gate_port as port
         path = "src/native_overlays/model_variant/variant169_entry.c"
-        declaration, replacement, _ = port.STALE_LOCALS[path]
+        (declaration, replacement, _), = port.STALE_LOCALS[path]
         text = '#include "../../types.h"\n#include "variant169_entry.h"\n\ns32 f(void)\n{\n' + declaration + "}\n"
         self.assertEqual(port.stale_local_text(path, text),
                          '#include "../../types.h"\n' + port.STALE_INCLUDE + '#include "variant169_entry.h"\n\n'
@@ -285,7 +285,7 @@ class PortRules(unittest.TestCase):
     def test_a_stale_struct_local_becomes_a_pointer(self):
         import model_gate_port as port
         path = "src/native_overlays/model_variant/variant163_entry.c"
-        declaration, replacement, _ = port.STALE_LOCALS[path]
+        (declaration, replacement, _), = port.STALE_LOCALS[path]
         text = ('#include "../../types.h"\n\ns32 f(void)\n{\n' + declaration +
                 "    SetPolyFT4(&quad);\n    quad.r0 = 1;\n    g(&quad.x0, (u32 *)&quad);\n"
                 "    work->quad.r0 = quads.r0;\n}\n")
@@ -298,7 +298,7 @@ class PortRules(unittest.TestCase):
         import tempfile
         import model_gate_port as port
         path = "src/native_overlays/model_variant/variant169_entry.c"
-        declaration, *_ = port.STALE_LOCALS[path]
+        (declaration, *_), = port.STALE_LOCALS[path]
         text = '#include "../../types.h"\n\ns32 f(void)\n{\n' + declaration + "}\n"
         listed = {"model_variant_169": [path]}
         with tempfile.TemporaryDirectory() as temporary:
@@ -309,6 +309,37 @@ class PortRules(unittest.TestCase):
             self.assertEqual(port.stale_local_problems(listed, set(), root), [])   # not native: no rule needed
             (root / path).write_text(port.stale_local_text(path, text).replace("\n", "\r\n"), newline="")
             self.assertEqual(port.stale_local_problems(listed, {"model_variant_169"}, root), [])
+
+    def test_a_file_takes_each_of_its_stale_locals(self):
+        import model_gate_port as port
+        path = "src/native_overlays/model_variant/variant769_entry.c"
+        (quad, quad_storage, _), (screen, screen_storage, _) = port.STALE_LOCALS[path]
+        text = ('#include "../../types.h"\n\ns32 f(void)\n{\n' + quad + screen +
+                "    setlen(&quad, 9);\n    quad.u0 = 0;\n    box.x = screen[0].vx;\n}\n")
+        self.assertEqual(port.stale_local_text(path, text),
+                         '#include "../../types.h"\n' + port.STALE_INCLUDE + '\ns32 f(void)\n{\n' +
+                         quad_storage + screen_storage +
+                         "    setlen(quad, 9);\n    quad->u0 = 0;\n    box.x = screen[0].vx;\n}\n")
+        with self.assertRaises(SystemExit):   # each declaration must be there
+            port.stale_local_text(path, text.replace(screen, ""))
+
+    def test_check_reads_the_files_a_native_unit_includes(self):
+        # Shape 772's unit is a wrapper; rule 6 is on the body it includes.
+        import tempfile
+        import model_gate_port as port
+        body = "src/native_overlays/french_model_variant/image31368_entry.c"
+        unit = "src/native_overlays/model_variant/variant772_entry.c"
+        text = "s32 f(void)\n{\n" + "".join(rule[0] for rule in port.STALE_LOCALS[body]) + "}\n"
+        listed = {"model_variant_772": [unit]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for path in (unit, body):
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / unit).write_text('#include "../french_model_variant/image31368_entry.c"\n')
+            (root / body).write_text(text)
+            self.assertEqual(len(port.stale_local_problems(listed, {"model_variant_772"}, root)), 2)
+            (root / body).write_text(port.stale_local_text(body, text))
+            self.assertEqual(port.stale_local_problems(listed, {"model_variant_772"}, root), [])
 
     def test_every_native_module_lists_its_files(self):
         listed = model_gate.listed_sources()
