@@ -4,8 +4,11 @@
 /* Experimental native backend helpers used by translated LLVM IR. Registering
  * data, resolving and encoding are safe from any thread (translated_runtime.c);
  * Bind, Reset, RegisterFunction and walking the regions are not. */
-/* Fatal diagnostics are formatted before abort, never in a signal handler. */
-const char *GuestRuntime_FatalDetail(void);
+/* Fatal diagnostics are formatted before abort, never in a signal handler.
+ * This end writes them, so the handler's translated code never reads the
+ * text: "translated runtime: <detail>\n" to `fd`, and nothing when there is
+ * none. Safe in a signal handler. */
+void GuestRuntime_WriteFatalDetail(int fd);
 int GuestRuntime_Bind(MemoriesMemory *memory);
 void GuestRuntime_Reset(void);
 void GuestRuntime_SetFunctionResolver(void *(*resolver)(uint32_t));
