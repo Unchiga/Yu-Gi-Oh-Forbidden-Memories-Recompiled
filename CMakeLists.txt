@@ -968,6 +968,21 @@ if(BUILD_TESTING)
         target_compile_options(memories_mod_import_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mod_import COMMAND memories_mod_import_test)
+    # Where the translated game's token arena puts an allocation
+    # (src/pc/guest/translated_runtime.c), which needs 64-bit host pointers.
+    # A search that looks at every region again after each step does not
+    # finish in the time limit.
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_executable(memories_translated_arena_test tests/pc/translated_arena_test.c
+            src/pc/guest/translated_runtime.c src/pc/memory.c)
+        target_include_directories(memories_translated_arena_test PRIVATE src)
+        target_compile_definitions(memories_translated_arena_test PRIVATE _DEFAULT_SOURCE)
+        if(NOT MSVC)
+            target_compile_options(memories_translated_arena_test PRIVATE -O2 -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME pc_translated_arena COMMAND memories_translated_arena_test)
+        set_tests_properties(pc_translated_arena PROPERTIES TIMEOUT 60)
+    endif()
     # What Cards_Named finds through its tables (src/pc/cards/name_index.inc),
     # against going down the names.
     add_executable(memories_name_index_test tests/pc/name_index_test.c)
