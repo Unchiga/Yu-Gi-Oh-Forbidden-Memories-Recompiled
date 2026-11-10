@@ -9,7 +9,10 @@
 #include "build_deck_transition_state.h"
 #include "color_constants.h"
 #ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
 #include "pc/cards/tables.h"
+#include "pc/cards/build_deck_fold.h"
+#include "duel_card.h"
 #endif
 #include "duel_card_stat_display.h"
 #include "func_80031784.h"
@@ -46,6 +49,9 @@ void func_80031874(DisplayObject *obj, GsOT *ot)
     s32 id;
     s32 n;
     u32 attr;
+#ifdef MEMORIES_PC
+    s32 head, atk, def, folded;
+#endif
 
     x0 = (s16)obj->field_30.h.field_30;
     y0 = (s16)obj->field_30.h.field_32;
@@ -105,6 +111,20 @@ void func_80031874(DisplayObject *obj, GsOT *ot)
                 sprite->y -= 8;
             }
 #ifdef MEMORIES_PC
+            /* A row of the chest that is a card and its variants (build_deck_fold.h) shows the card on show: its
+               number, its stats and its own count; the deck's count is the entry's, as the limit is. */
+            head = id;
+            atk = *(s16 *)(row - 2);
+            def = *(s16 *)row;
+            folded = kind == 0 && BuildDeckFold_Active() && Cards_VariantCount(head) > 0;
+            if (folded) {
+                id = BuildDeckFold_Shown(gBuildDeck_pState, head);
+                if (id != head) {
+                    s32 stats = gDuel_adwCardStats[id - 1];
+                    atk = (stats & 0x1FF) * 10;
+                    def = ((stats >> 9) & 0x1FF) * 10;
+                }
+            }
             /* The PC port's ids reach past 999 (card_constants.h): those
                are drawn with narrower steps, in the same 24 pixels. */
             if (id >= 1000) {
@@ -137,7 +157,11 @@ void func_80031874(DisplayObject *obj, GsOT *ot)
                 *(u16 *)&sprite->u = 0x58D0;
                 GsSortFastSprite(sprite, ot, 0);
                 sprite->x += 8;
+#ifdef MEMORIES_PC
+                Text_EncodeDecimalDigits(atk, 4, text);
+#else
                 Text_EncodeDecimalDigits(*(s16 *)(row - 2), 4, text);
+#endif
                 func_800316F0(sprite, ot, text, 4);
                 /* u 0xD8, v 0x58: the DEF label, one line down. */
                 *(u16 *)&sprite->u = 0x58D8;
@@ -145,7 +169,11 @@ void func_80031874(DisplayObject *obj, GsOT *ot)
                 sprite->y += 8;
                 GsSortFastSprite(sprite, ot, 0);
                 sprite->x += 8;
+#ifdef MEMORIES_PC
+                Text_EncodeDecimalDigits(def, 4, text);
+#else
                 Text_EncodeDecimalDigits(*(s16 *)row, 4, text);
+#endif
                 func_800316F0(sprite, ot, text, 4);
                 sprite->y -= 8;
             }
@@ -156,11 +184,20 @@ void func_80031874(DisplayObject *obj, GsOT *ot)
                     gBuildDeck_pState->chest_card_quantities[id], 3, text);
                 func_800316F0(sprite, ot, text, 3);
                 n = gBuildDeck_pState->deck_card_quantities[id];
+#ifdef MEMORIES_PC
+                if (folded) {
+                    /* Another variant's copies are not this one's own count, though the limit is shared: the
+                       entry's copies in the deck, red at the limit as ever. */
+                    n = Cards_FamilyCopies(gBuildDeck_pState->deck_card_quantities, id);
+                }
+#endif
                 /* Red once the deck holds the limit: three copies, or one of
                    ids 0x11-0x15. */
 #ifdef MEMORIES_PC
-                /* At a mod's "deck_copies" (tables.h), else the three. */
-                if (n >= Tables_Value(TABLES_VALUE_DECK_COPIES, 3) ||
+                /* At a mod's "deck_copies" (tables.h), else the three; a
+                   variant counts with its card (cards.h). */
+                if (Cards_FamilyCopies(gBuildDeck_pState->deck_card_quantities, id) >=
+                        Tables_Value(TABLES_VALUE_DECK_COPIES, 3) ||
                     ((u32)(id - 0x11) < 5 && n != 0)) {
 #else
                 if (n >= 3 || ((u32)(id - 0x11) < 5 && n != 0)) {
@@ -172,6 +209,23 @@ void func_80031874(DisplayObject *obj, GsOT *ot)
                 func_800316F0(sprite, ot, text, 2);
                 GS_SPRITE_COLOR_WORD(sprite) = COLOR_RGB24_NEUTRAL_GREY;
                 sprite->y -= 8;
+#ifdef MEMORIES_PC
+                if (folded) {
+                    /* What the player has of the whole entry, when that is more than the card on show's own,
+                       dimmer, on the line above the count. */
+                    s32 whole = BuildDeckFold_ChestTotal(gBuildDeck_pState->chest_card_quantities, head);
+                    if (whole != gBuildDeck_pState->chest_card_quantities[id]) {
+                        GS_SPRITE_COLOR_WORD(sprite) = COLOR_RGB24_DIM_GREY;
+                        sprite->x = x + 0x107;
+                        /* Right-aligned, no leading zeros (a glyph past 9 is left blank). */
+                        text[0] = whole % 10;
+                        text[1] = whole >= 10 ? (whole / 10) % 10 : 0xFF;
+                        text[2] = whole >= 100 ? (whole / 100) % 10 : 0xFF;
+                        func_800316F0(sprite, ot, text, 3);
+                        GS_SPRITE_COLOR_WORD(sprite) = COLOR_RGB24_NEUTRAL_GREY;
+                    }
+                }
+#endif
             }
         }
         row += sizeof(CardEntry);

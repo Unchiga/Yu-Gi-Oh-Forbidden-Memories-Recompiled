@@ -79,6 +79,8 @@
  *  25  a frame style's atk_label/dfd_label picture or "digits" strip on a
  *      style that keeps retail's frame (manifest only); no host layout or
  *      event change
+ *  26  a card's "variant_permille" and "variant_label" (notes/more-cards.md)
+ *      only; no host layout or event change
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 

@@ -33,6 +33,12 @@
 #define PAD_BUTTON_SQUARE 0x80
 #define PAD_BUTTON_SELECT 0x100
 #define PAD_BUTTON_START 0x800
+#ifdef MEMORIES_PC
+/* The stick clicks of a DualShock: the PC port's pad word has them, between Select and Start. */
+#define PAD_BUTTON_L3 0x200
+#define PAD_BUTTON_R3 0x400
+#define PAD_BUTTON_L3_R3_MASK (PAD_BUTTON_L3 | PAD_BUTTON_R3)
+#endif
 
 #define PAD_BUTTON_CANCEL PAD_BUTTON_CIRCLE
 #define PAD_BUTTON_CONFIRM_MASK (PAD_BUTTON_CROSS | PAD_BUTTON_SQUARE)

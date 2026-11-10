@@ -113,6 +113,7 @@ void Library_DrawCardGrid(void)
     s32 attribute;
 #ifdef MEMORIES_PC
     s32 icon_tpage, icon_u, icon_v, icon_clut, icon_w, icon_h, icon_custom;
+    s32 card_j, card_k;   /* the cards of cells j and k (cards.h, Cards_LibraryEntry) */
 #endif
 
 #ifdef MEMORIES_PC
@@ -161,8 +162,10 @@ void Library_DrawCardGrid(void)
                 pj = &D_800EA1E8[j * 4];
                 do {
 #ifdef MEMORIES_PC
-                    /* The last section row may be short (card_grid.h). */
-                    r = j < CARD_ID_END_LIVE ? Library_GetCardFlags(tb, j) : 0;
+                    /* The last section row may be short (card_grid.h), and a
+                       cell shows its card, whose variants have none. */
+                    card_j = Cards_LibraryEntry(j);
+                    r = card_j ? Library_GetCardFlags(tb, card_j) : 0;
 #else
                     r = Library_GetCardFlags(tb, j);
 #endif
@@ -172,9 +175,13 @@ void Library_DrawCardGrid(void)
                             GS_SPRITE_COLOR_WORD(p) = grey;
                         }
                         p->x = c + 8;
-                        p->cx = *(u16 *)(pj + 0x54);
 #ifdef MEMORIES_PC
-                        icon_custom = CardLayoutArt_LibraryIconCell(j, &icon_tpage, &icon_u, &icon_v,
+                        p->cx = *(u16 *)(tb + card_j * 4 + 0x54);
+#else
+                        p->cx = *(u16 *)(pj + 0x54);
+#endif
+#ifdef MEMORIES_PC
+                        icon_custom = CardLayoutArt_LibraryIconCell(card_j, &icon_tpage, &icon_u, &icon_v,
                                                                     &icon_clut, &icon_w, &icon_h);
                         if (icon_custom) {
                             p->tpage = icon_tpage;
@@ -195,17 +202,27 @@ void Library_DrawCardGrid(void)
 #endif
                         GsSortFastSprite(p, ot, 2);
                     }
+#ifdef MEMORIES_PC
+                    card_k = Cards_LibraryEntry(k);
+                    if (card_k) {
+                        r = Library_GetCardFlags(tb, card_k);
+#else
                     if (k < CARD_ID_END_LIVE) {
                         r = Library_GetCardFlags(tb, k);
+#endif
                         if (r & 0x80) {
                             GS_SPRITE_COLOR_WORD(p) = white;
                             if (r & 1) {
                                 GS_SPRITE_COLOR_WORD(p) = grey;
                             }
                             p->x = c + 0xA8;
-                            p->cx = *(u16 *)(pk + 0x54);
 #ifdef MEMORIES_PC
-                            icon_custom = CardLayoutArt_LibraryIconCell(k, &icon_tpage, &icon_u, &icon_v,
+                            p->cx = *(u16 *)(tb + card_k * 4 + 0x54);
+#else
+                            p->cx = *(u16 *)(pk + 0x54);
+#endif
+#ifdef MEMORIES_PC
+                            icon_custom = CardLayoutArt_LibraryIconCell(card_k, &icon_tpage, &icon_u, &icon_v,
                                                                         &icon_clut, &icon_w, &icon_h);
                             if (icon_custom) {
                                 p->tpage = icon_tpage;

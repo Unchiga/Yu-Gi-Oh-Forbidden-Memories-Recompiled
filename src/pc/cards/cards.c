@@ -355,6 +355,19 @@ static const char *replaced[CARD_ID_END];          /* the mod that replaced a re
 static unsigned short *variants[2];                 /* per use: copies, grouped by base */
 static unsigned short variant_start[2][CARD_ID_END + 1];
 
+/* Variants of a retail card ("variant_permille", notes/more-cards.md): a copy
+ * that is the card's alternate version, won in its place by a chance of its
+ * own. Per variant: the retail card it is a version of (0: not a variant), its
+ * chance in thousandths, whether the CPU's deals roll it too, and its label.
+ * The family index lists each base's variants, in card order. */
+#define VARIANT_LABEL_MAX 24
+static unsigned short variant_base[CARD_TABLE_ID_END];
+static unsigned short variant_permille[CARD_TABLE_ID_END];
+static unsigned char variant_opponents[CARD_TABLE_ID_END];
+static char *variant_label[CARD_TABLE_ID_END];
+static unsigned short *family_members;
+static unsigned short family_start[CARD_ID_END + 1];
+
 static void say(const char *format, ...)
 {
     char message[512];
@@ -608,17 +621,18 @@ static unsigned char *encode_type_name(const char *mod, const char *text, const 
 #define LIBRARY_HEADING_ID 0xF8
 static unsigned char library_heading[64];
 static const unsigned char *library_source;
+static int library_heading_total;   /* the count the cached heading says */
 
 static const unsigned char *heading(const unsigned char *text)
 {
     const unsigned char *at;
     char digits[16];
     int width, i, n = 0;
-    if (text == library_source) return library_heading;
+    if (text == library_source && library_heading_total == Cards_LibraryEntryCount()) return library_heading;
     for (at = text; *at != 0xFF; at++) {
         if (*at >= 0xF9 && *at <= 0xFD) return text;
     }
-    width = snprintf(digits, sizeof(digits), "%d", gCard_nCount);
+    width = snprintf(digits, sizeof(digits), "%d", Cards_LibraryEntryCount());
     at = text;
     while (*at != 0xFF) {
         if ((size_t)n + 16 >= sizeof(library_heading)) return text;
@@ -640,11 +654,16 @@ static const unsigned char *heading(const unsigned char *text)
     }
     library_heading[n] = 0xFF;
     library_source = text;
+    library_heading_total = Cards_LibraryEntryCount();
     return library_heading;
 }
 
+/* The Library card view's line about the variants (Cards_LibraryVariantNote). */
+static unsigned char variant_text[96];
+
 const unsigned char *Cards_Text(int id, const unsigned char *text)
 {
+    if (id == LIBRARY_VARIANT_TEXT_ID) return variant_text;
     if (id == LIBRARY_HEADING_ID && gCard_nCount > CARD_COUNT && text) return heading(text);
     return text;
 }
@@ -1472,6 +1491,46 @@ static int notes_only(const JsonValue *entry)
     return Json_Member(entry, "notes") != NULL;
 }
 
+/* The entry's "variant_permille": the card `id`, a copy of retail card `base`,
+ * is a variant of it. 1 when it is one. A chance outside 1 to 1000, a base of
+ * Exodia and a label without a chance are noted and left out. */
+static int add_variant(const char *mod, int index, const JsonValue *entry, int id, int base)
+{
+    const JsonValue *chance = Json_Member(entry, "variant_permille");
+    const char *label = Json_String(Json_Member(entry, "variant_label"), NULL);
+    long permille;
+    if (!chance) {
+        if (Json_Member(entry, "variant_label"))
+            Mods_Note(mod, "cards[%d]: \"variant_label\" needs \"variant_permille\"", index);
+        return 0;
+    }
+    permille = Json_Number(chance, 0);
+    if (permille < 1 || permille > 1000) {
+        Mods_Note(mod, "cards[%d]: \"variant_permille\" is the chance in thousandths, 1 to 1000 (50 is 5%%)", index);
+        return 0;
+    }
+    if (base < CARD_ID_FIRST || base > CARD_COUNT || Cards_ExodiaPiece(base)) {
+        Mods_Note(mod, "cards[%d]: a variant must copy a retail card that is not a piece of Exodia", index);
+        return 0;
+    }
+    free(variant_label[id]);
+    variant_label[id] = NULL;
+    if (label && *label) {
+        if (strlen(label) > VARIANT_LABEL_MAX) {
+            Mods_Note(mod, "cards[%d]: \"variant_label\" is cut to %d letters", index, VARIANT_LABEL_MAX);
+        }
+        variant_label[id] = malloc(VARIANT_LABEL_MAX + 1);
+        if (variant_label[id]) {
+            strncpy(variant_label[id], label, VARIANT_LABEL_MAX);
+            variant_label[id][VARIANT_LABEL_MAX] = '\0';
+        }
+    }
+    variant_base[id] = (unsigned short)base;
+    variant_permille[id] = (unsigned short)permille;
+    variant_opponents[id] = (unsigned char)(Json_Bool(Json_Member(entry, "opponents"), 0) ? 1 : 0);
+    return 1;
+}
+
 static void add_entry(const char *mod, const char *directory, int index, const JsonValue *entry, BuildContext *context)
 {
     const JsonValue *replace = Json_Member(entry, "replace");
@@ -1959,7 +2018,16 @@ static void add_entry(const char *mod, const char *directory, int index, const J
              * picture too, not an earlier mod's plate. */
             plates[id] = NULL;
         }
-        if (replace) continue;
+        if (replace) {
+            if (Json_Member(entry, "variant_permille") || Json_Member(entry, "variant_label"))
+                Mods_Note(mod, "cards[%d]: \"variant_permille\" and \"variant_label\" belong to a \"copy\" entry", index);
+            continue;
+        }
+        if (add_variant(mod, index, entry, id, base)) {
+            /* Won by its own chance (Cards_PickVariant), not in an even share. */
+            context->use[id] = 0;
+            continue;
+        }
         context->use[id] = (unsigned char)((Json_Bool(Json_Member(entry, "drops"), 1) ? 1 : 0) |
                                            (Json_Bool(Json_Member(entry, "opponents"), 0) ? 2 : 0));
         if (context->use[id] & 1) context->use_count[CARDS_USE_DROP][base]++;
@@ -1993,6 +2061,33 @@ static void add_mod(const char *mod, const char *directory, const struct JsonVal
     for (i = 0, entry = Json_At(cards, 0); entry; i++, entry = Json_Next(entry)) {
         add_entry(mod, directory, i, entry, context);
         Loading_Step("Cards", ++entries_done, entries_total);
+    }
+}
+
+/* Each retail card's variants, in card order, for Cards_PickVariant and the
+ * family queries. */
+static void build_family_index(void)
+{
+    int id, base, total = 0, fill[CARD_ID_END];
+    for (id = CARD_ID_END; id <= gCard_nCount; id++) {
+        if (variant_base[id]) total++;
+    }
+    memset(family_start, 0, sizeof(family_start));
+    if (!total) return;
+    for (id = CARD_ID_END; id <= gCard_nCount; id++) {
+        if (variant_base[id]) family_start[variant_base[id] + 1]++;
+    }
+    for (base = 1; base <= CARD_COUNT; base++) {
+        family_start[base + 1] = (unsigned short)(family_start[base + 1] + family_start[base]);
+        fill[base] = family_start[base];
+    }
+    family_members = malloc((size_t)total * sizeof(unsigned short));
+    if (!family_members) {
+        memset(family_start, 0, sizeof(family_start));   /* no variants: every card stays itself */
+        return;
+    }
+    for (id = CARD_ID_END; id <= gCard_nCount; id++) {
+        if (variant_base[id]) family_members[fill[variant_base[id]]++] = (unsigned short)id;
     }
 }
 
@@ -2050,6 +2145,7 @@ void Cards_Build(void)
         }
     }
     free(context);
+    build_family_index();
     if (gCard_nCount > CARD_COUNT) {
         fprintf(stderr, "memories-pc: %d cards (%d added by mods)\n", gCard_nCount, gCard_nCount - CARD_COUNT);
     }
@@ -2124,6 +2220,207 @@ int Cards_Seen(int id)
 int Cards_LibraryPlaceholder(int id)
 {
     return Settings_Get(SET_LIBRARY_ALL_CARDS) && Cards_Valid(id) && !Cards_Seen(id);
+}
+
+/* --- the Library's entries (cards.h) ----------------------------------- */
+
+static unsigned short library_entries[CARD_TABLE_ID_END];   /* [1..count]: the card of each cell */
+static int library_entry_count;
+static int library_folded;
+static int library_built;   /* the entries are worked out for this setting: the Library opening does it, and a
+                             * state loaded inside the Library (a new process) finds them wanted */
+
+static void library_build(void)
+{
+    int id, n = 0;
+    library_built = 1;
+    library_folded = 0;
+    library_entry_count = 0;
+    if (!family_members || !Settings_Get(SET_LIBRARY_FOLD_VARIANTS)) return;
+    for (id = CARD_ID_FIRST; id <= gCard_nCount; id++) {
+        if (variant_base[id]) continue;
+        library_entries[++n] = (unsigned short)id;
+    }
+    library_entry_count = n;
+    library_folded = 1;
+}
+
+void Cards_LibraryBegin(void)
+{
+    library_build();
+}
+
+int Cards_LibraryFolded(void)
+{
+    if (!library_built) library_build();
+    return library_folded;
+}
+
+int Cards_LibraryEntryCount(void)
+{
+    if (!library_built) library_build();
+    return library_folded ? library_entry_count : gCard_nCount;
+}
+
+int Cards_LibraryEntry(int cell)
+{
+    if (!library_built) library_build();
+    if (cell < 1) return 0;
+    if (!library_folded) return cell <= gCard_nCount ? cell : 0;
+    return cell <= library_entry_count ? library_entries[cell] : 0;
+}
+
+int Cards_LibraryFamilySeen(int id)
+{
+    int i, count = Cards_VariantCount(id);
+    if (Cards_Seen(id)) return 1;
+    for (i = 0; i < count; i++) {
+        if (Cards_Seen(Cards_VariantMember(id, i))) return 1;
+    }
+    return 0;
+}
+
+/* The variants of `head` the Library shows: those seen, or all of them while it shows every card. */
+static int library_shows(int variant)
+{
+    return Cards_Seen(variant) || Settings_Get(SET_LIBRARY_ALL_CARDS);
+}
+
+int Cards_LibraryFamilySize(int head)
+{
+    int i, count = Cards_VariantCount(head), size = 1;
+    if (!Cards_LibraryFolded()) return 1;
+    for (i = 0; i < count; i++) {
+        if (library_shows(Cards_VariantMember(head, i))) size++;
+    }
+    return size;
+}
+
+int Cards_LibraryFamilyMember(int head, int index)
+{
+    int i, count = Cards_VariantCount(head);
+    if (index == 0) return head;
+    if (!Cards_LibraryFolded() || index < 0) return 0;
+    for (i = 0; i < count; i++) {
+        int variant = Cards_VariantMember(head, i);
+        if (library_shows(variant) && --index == 0) return variant;
+    }
+    return 0;
+}
+
+void Cards_LibraryVariantNote(int shown, int head)
+{
+    char line[80];
+    const char *label = shown == head ? "Original" : Cards_VariantLabel(shown);
+    int size = Cards_LibraryFamilySize(head), at, n = 0;
+    const char *p;
+    for (at = 0; at < size && Cards_LibraryFamilyMember(head, at) != shown; at++) {}
+    if (at == size) at = 0;   /* not one of them (a state loaded in the viewer): the card itself */
+    snprintf(line, sizeof(line), "L3 < %d/%d %.24s > R3", at + 1, size, label && *label ? label : "Variant");
+    /* The game's font has the ASCII letters, digits and punctuation: a label's other letters are left out. */
+    for (p = line; *p && n + 1 < (int)sizeof(variant_text); p++) {
+        if ((unsigned char)*p < 0x80) variant_text[n++] = (unsigned char)glyph_of((unsigned char)*p);
+    }
+    variant_text[n] = 0xFF;
+}
+
+static int row_names;
+
+void Cards_RowNames(int mode)
+{
+    row_names = mode;
+}
+
+#define ROW_LETTERS 16        /* the letters a row's name shows (the row's text stops there) */
+#define ROW_FULL_SIZE 160
+#define ROW_NAME_BUFFERS 32   /* a page of rows is eight; each text box reads its name as it builds */
+#define ROW_NAME_SIZE 72
+#define ROW_PAUSE_START 45    /* frames the cursor row's name waits before it scrolls, and at its end */
+#define ROW_PAUSE_END 60
+#define ROW_STEP 7            /* frames to a letter */
+
+/* The row's whole name, the variant's label before it ("Manga: Dark Magician"), as game text, ended by 0xFF in
+   `out`; returns its letters (an added letter, F1-F5 and a low byte, is one), and sets `*labelled` to whether
+   it has a label. */
+static int row_full(int id, unsigned char *out, int *labelled)
+{
+    const char *label = Cards_VariantLabel(id);
+    const unsigned char *name, *p;
+    int n = 0, units = 0, colon = glyph_of(':');
+    *labelled = 0;
+    out[0] = 0xFF;
+    if (!(name = Cards_NameCodes(id))) return 0;
+    for (; label && *label && n < 24; label++) {
+        int code = (unsigned char)*label < 0x80 ? glyph_of((unsigned char)*label) : -1;
+        if (code >= 0 && code < GLYPHS_EXTENDED_FIRST) {
+            out[n++] = (unsigned char)code;
+            units++;
+        }
+    }
+    if (n) {
+        *labelled = 1;
+        if (colon >= 0 && colon < GLYPHS_EXTENDED_FIRST) {
+            out[n++] = (unsigned char)colon;
+            units++;
+        }
+        out[n++] = 0;   /* the space */
+        units++;
+    }
+    for (p = name; *p != 0xFF && n + 3 < ROW_FULL_SIZE; units++) {
+        out[n++] = *p;
+        if (*p >= 0xF1 && *p <= 0xF5 && p[1] != 0xFF) out[n++] = *++p;
+        p++;
+    }
+    out[n] = 0xFF;
+    return units;
+}
+
+static int row_scroll_id, row_scroll_offset, row_scroll_wait;
+
+const unsigned char *Cards_RowNameText(int id)
+{
+    static unsigned char buffers[ROW_NAME_BUFFERS][ROW_NAME_SIZE];
+    static int next;
+    unsigned char full[ROW_FULL_SIZE], *out;
+    const unsigned char *p;
+    int labelled, units, skip, n = 0;
+    if (!row_names) return NULL;
+    units = row_full(id, full, &labelled);
+    /* A name no longer than the row is the game's own, unless a label goes with it; a longer name of the cursor
+       row is a window of it. */
+    if (!units || (!labelled && !(row_names == 2 && units > ROW_LETTERS))) return NULL;
+    skip = row_names == 2 && id == row_scroll_id && units > ROW_LETTERS ? row_scroll_offset : 0;
+    if (skip > units - ROW_LETTERS) skip = units - ROW_LETTERS;
+    out = buffers[next++ % ROW_NAME_BUFFERS];
+    for (p = full; skip > 0 && *p != 0xFF; skip--) p += *p >= 0xF1 && *p <= 0xF5 ? 2 : 1;
+    while (*p != 0xFF && n + 3 < ROW_NAME_SIZE) {
+        out[n++] = *p;
+        if (*p >= 0xF1 && *p <= 0xF5) out[n++] = *++p;
+        p++;
+    }
+    out[n] = 0xFF;
+    return out;
+}
+
+int Cards_RowScroll(int id)
+{
+    unsigned char full[ROW_FULL_SIZE];
+    int labelled, last, was = row_scroll_offset;
+    if (id != row_scroll_id) {
+        row_scroll_id = id;
+        row_scroll_offset = 0;
+        row_scroll_wait = 0;
+        return was != 0;   /* the row that scrolled is made plain again */
+    }
+    last = (id ? row_full(id, full, &labelled) : 0) - ROW_LETTERS;
+    if (last <= 0) return 0;
+    row_scroll_wait++;
+    if (row_scroll_wait < (row_scroll_offset == 0 ? ROW_PAUSE_START : row_scroll_offset >= last ? ROW_PAUSE_END : ROW_STEP)) {
+        return 0;
+    }
+    row_scroll_wait = 0;
+    row_scroll_offset = row_scroll_offset >= last ? 0 : row_scroll_offset + 1;
+    return 1;
 }
 
 void Cards_MarkSeen(int id)
@@ -2349,10 +2646,62 @@ const unsigned char *Cards_FieldArtRecord(int id)
     return field_art_records[Cards_BaseId(id)];
 }
 
+int Cards_VariantOf(int id)
+{
+    return id >= CARD_ID_END && id <= gCard_nCount ? variant_base[id] : 0;
+}
+
+int Cards_VariantCount(int base)
+{
+    if (!family_members || base < CARD_ID_FIRST || base > CARD_COUNT) return 0;
+    return family_start[base + 1] - family_start[base];
+}
+
+int Cards_VariantMember(int base, int index)
+{
+    if (index < 0 || index >= Cards_VariantCount(base)) return 0;
+    return family_members[family_start[base] + index];
+}
+
+int Cards_VariantPermille(int id)
+{
+    return Cards_VariantOf(id) ? variant_permille[id] : 0;
+}
+
+const char *Cards_VariantLabel(int id)
+{
+    return Cards_VariantOf(id) ? variant_label[id] : NULL;
+}
+
+int Cards_HaveVariants(void)
+{
+    return family_members != NULL;
+}
+
+int Cards_FamilyCopies(const unsigned char *quantities, int id)
+{
+    int base = Cards_VariantOf(id), count, copies, i;
+    if (!base) base = id;
+    count = Cards_VariantCount(base);
+    if (!count) return quantities[id];
+    copies = quantities[base];
+    for (i = 0; i < count; i++) copies += quantities[Cards_VariantMember(base, i)];
+    return copies;
+}
+
 int Cards_PickVariant(int id, int use)
 {
     int first, count, pick;
-    if (use < 0 || use > 1 || id < CARD_ID_FIRST || id > CARD_COUNT || !variants[use]) return id;
+    if (use < 0 || use > 1 || id < CARD_ID_FIRST || id > CARD_COUNT) return id;
+    /* The card's own variants first, each by its chance: one random number
+     * apiece, and none for a card without any. */
+    count = Cards_VariantCount(id);
+    for (pick = 0; pick < count; pick++) {
+        int variant = Cards_VariantMember(id, pick);
+        if (use == CARDS_USE_OPPONENT && !variant_opponents[variant]) continue;
+        if ((unsigned)Memories_Rand() % 1000u < variant_permille[variant]) return variant;
+    }
+    if (!variants[use]) return id;
     first = variant_start[use][id];
     count = variant_start[use][id + 1] - first;
     if (!count) return id;

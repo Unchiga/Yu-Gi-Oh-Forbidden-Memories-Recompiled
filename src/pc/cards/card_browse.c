@@ -25,6 +25,11 @@
  * text box is made: the rebuild leaves gDuel_wSelectedCardID on its last
  * row, and the description is set from gDuel_wSelectedCardID.
  *
+ * L3 and R3 show another variant of the card's entry (build_deck_fold.h), where
+ * Build Deck folds the chest's rows: the row's shown card changes with it, so
+ * the list is as the viewer leaves it. They work with or without Up/Down
+ * browsing.
+ *
  * Build Deck (mode 7): the active pane's list (build_deck_pane_input.c).
  * The pane is idle while the viewer is up (func_800339D0 only runs it when
  * DuelEffect_UpdateState is).
@@ -39,6 +44,8 @@
 #define GINPUT_PAD1_REPEAT_SIZED_VOLATILE /* both pads: [0] and [1] */
 #include "card_browse.h"
 #include "stars.h"
+#include "cards.h"
+#include "build_deck_fold.h"
 #include "pc/platform/settings.h"
 #include "types.h"
 #include <stddef.h>
@@ -112,6 +119,14 @@ static int page_for(int row, int cursor, int rows, int page_rows)
  * viewer (the viewer shows another card than the one under its cursor). */
 #define NOT_THIS_LIST 0xFFFF
 
+/* The card a row of the list shows: the chest's rows of a card with variants show the one on show. */
+static u16 row_card(BuildDeckTransitionState *state, CardList *list, int row)
+{
+    u16 id = list->entries[row].id;
+    if (list == &state->lists[0] && BuildDeckFold_Active()) return (u16)BuildDeckFold_Shown(state, id);
+    return id;
+}
+
 /* Build Deck: moves the list's cursor to the next card `step` (1 or -1)
  * along, and returns it; 0 at either end. */
 static u16 move_build_deck_cursor(int pad, int step)
@@ -123,7 +138,7 @@ static u16 move_build_deck_cursor(int pad, int step)
     list = &state->lists[state->pane_index];
     rows = list->row_count;
     at = list->first + list->cursor;
-    if (list->first != list->first_target || list->entries[at].id != gDuel_wViewerCardID) return NOT_THIS_LIST;
+    if (list->first != list->first_target || row_card(state, list, at) != gDuel_wViewerCardID) return NOT_THIS_LIST;
     for (row = at + step; row >= 0 && row < rows; row += step) {
         int first;
         if (list->entries[row].flags == 0) continue;
@@ -134,9 +149,36 @@ static u16 move_build_deck_cursor(int pad, int step)
             list->first = list->first_target = (s16)first;
             func_80031E04(list, BUILD_DECK_PAGE_ROWS);
         }
-        return list->entries[row].id;
+        return row_card(state, list, row);
     }
     return 0;
+}
+
+/* L3 / R3 in Build Deck: the next variant of the chest row's entry that the player has; 0 when there is none to
+ * show, NOT_THIS_LIST when the viewer is not on a folded row. */
+static u16 vary_build_deck(int step)
+{
+    BuildDeckTransitionState *state = gBuildDeck_pState;
+    CardList *list;
+    int at, head;
+    if (!state || !BuildDeckFold_Active()) return NOT_THIS_LIST;
+    list = &state->lists[state->pane_index];
+    if (list != &state->lists[0]) return NOT_THIS_LIST;
+    at = list->first + list->cursor;
+    head = list->entries[at].id;
+    if (list->first != list->first_target || Cards_VariantCount(head) == 0 ||
+        row_card(state, list, at) != gDuel_wViewerCardID) {
+        return NOT_THIS_LIST;
+    }
+    if (!BuildDeckFold_Step(state, state->chest_card_quantities, state->deck_card_quantities, head, step)) return 0;
+    func_80031E04(list, BUILD_DECK_PAGE_ROWS);
+    return row_card(state, list, at);
+}
+
+static u16 vary_duel_chest(int step)
+{
+    if (D_8009B26E != 0x80) return NOT_THIS_LIST;
+    return vary_build_deck(step);
 }
 
 /* The pre-duel chest: Build Deck's own list and cursor (gBuildDeck_pState is
@@ -158,9 +200,10 @@ static u16 move_duel_chest_cursor(int pad, int step)
 static const struct {
     int mode;
     u16 (*move)(int pad, int step);
+    u16 (*vary)(int step);
 } screens[] = {
-    {MAIN_MODE_BUILD_DECK, move_build_deck_cursor},
-    {MAIN_MODE_DUEL, move_duel_chest_cursor},
+    {MAIN_MODE_BUILD_DECK, move_build_deck_cursor, vary_build_deck},
+    {MAIN_MODE_DUEL, move_duel_chest_cursor, vary_duel_chest},
 };
 
 /* The viewer's opening for `id`, its pieces already where they slide to. */
@@ -227,6 +270,20 @@ int CardBrowse_Poll(void)
 {
     int mode = D_8009B26C & 0x1F, pad, step, at_end = 0;
     size_t i;
+    for (i = 0; i < sizeof(screens) / sizeof(screens[0]); i++) {
+        if (screens[i].mode != mode) continue;
+        if (gInput_wPad1Pressed & PAD_BUTTON_L3_R3_MASK) {
+            u16 id = screens[i].vary((gInput_wPad1Pressed & PAD_BUTTON_R3) ? 1 : -1);
+            if (id != NOT_THIS_LIST) {
+                if (id) {
+                    SD_SEPlayFull(SOUND_CURSOR);
+                    show(id);
+                    return 1;
+                }
+                return 0;
+            }
+        }
+    }
     if (!Settings_Get(SET_CARD_BROWSE)) return 0;
     for (i = 0; i < sizeof(screens) / sizeof(screens[0]); i++) {
         if (screens[i].mode != mode) continue;
