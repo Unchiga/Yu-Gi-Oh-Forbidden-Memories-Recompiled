@@ -9,10 +9,12 @@
 #include "../game/model_copy_slot_position.h"
 #include "../game/model_effect_state.h"
 #include "../game/model_slot_properties.h"
+#include "../game/model_slot_state_updates.h"
 #include "../game/model_texture_upload.h"
 #define ModelTexture_PackPageClutCopy func_80059A50
 #define Model_QueueCameraOrbitFromPreset func_8005F5C8
 #define Model_QueueCameraShake func_8005F7B0
 #define Model_SetSlotAmbient func_800595C8
+#define Model_SetSlotPlaybackDirection func_80059700
 #define Model_TransformPartVertex func_800593D0
 #endif
