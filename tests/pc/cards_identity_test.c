@@ -111,6 +111,7 @@ static void recent_drops(unsigned char *state)
     gCard_nCount = 724;
     identities[723] = "alpha:dragon:1"; gCard_awBaseId[723] = 1;
     identities[724] = "beta:mage:1"; gCard_awBaseId[724] = 2;
+    identities_changed();
     /* Saved in order alpha, beta: 730 is a card this run does not have. */
     set_recent(state, saved);
     Cards_SaveWritten(state, 1);
@@ -123,6 +124,7 @@ static void recent_drops(unsigned char *state)
     /* Loaded with the order turned round: beta is 723 now, alpha 724. */
     identities[723] = "beta:mage:1"; gCard_awBaseId[723] = 2;
     identities[724] = "alpha:dragon:1"; gCard_awBaseId[724] = 1;
+    identities_changed();
     Cards_SaveLoaded(state);
     assert(recent_at(state, 0) == 723 && recent_at(state, 1) == 5 && recent_at(state, 2) == 724);
     assert(recent_at(state, 3) == 0 && recent_at(state, 4) == 723 && recent_at(state, 5) == 0);
@@ -167,6 +169,80 @@ static void recent_drops(unsigned char *state)
     remove(path);
     Cards_SaveLoaded(state);
     assert(!memcmp(state + SAVE_RECENT, saved, sizeof(saved)));
+}
+
+/* Cards_FindIdentity against going down the identities, as it did: the first
+ * card of an identity, case told apart, cards missing an identity skipped,
+ * the count growing in steps and then falling. */
+static int identity_linear(const char *identity)
+{
+    int id;
+    for (id = CARD_ID_END; id <= gCard_nCount; id++)
+        if (identities[id] && !strcmp(identities[id], identity)) return id;
+    return 0;
+}
+
+static unsigned identity_random(void)
+{
+    static unsigned state = 0x9E3779B9u;
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+}
+
+static void identity_check(void)
+{
+    char text[24];
+    int id, i;
+    for (id = CARD_ID_END; id <= gCard_nCount + 20; id++) {
+        const char *at = identities[id];
+        if (!at) continue;
+        assert(Cards_FindIdentity(at) == identity_linear(at));
+        for (i = 0; at[i] && i < 23; i++) {   /* the other case, the letters' */
+            char c = at[i];
+            text[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+        }
+        text[i] = 0;
+        assert(Cards_FindIdentity(text) == identity_linear(text));
+    }
+    for (i = 0; i < 300; i++) {
+        static const char pieces[] = "aAbB:-_19";
+        int length = 1 + (int)(identity_random() % 5), n;
+        for (n = 0; n < length; n++) text[n] = pieces[identity_random() % (sizeof(pieces) - 1)];
+        text[n] = 0;
+        assert(Cards_FindIdentity(text) == identity_linear(text));
+    }
+    assert(!Cards_FindIdentity("") && !Cards_FindIdentity(NULL) && !Cards_FindIdentity("no:such:1"));
+}
+
+static void identity_oracle(void)
+{
+    enum { TOP = 3000 };
+    static char made[TOP + 1][8];
+    static const char pieces[] = "aAbB:-_19";
+    int id, found = 0;
+    /* Short, from few letters: many repeat, and many differ only in case. */
+    for (id = CARD_ID_END; id <= TOP; id++) {
+        int length = 1 + (int)(identity_random() % 5), n;
+        for (n = 0; n < length; n++) made[id][n] = pieces[identity_random() % (sizeof(pieces) - 1)];
+        identities[id] = id % 11 ? made[id] : NULL;
+    }
+    identities_changed();
+    gCard_nCount = CARD_COUNT;
+    assert(!Cards_FindIdentity("a"));            /* no card mod: nothing to find */
+    for (gCard_nCount = CARD_COUNT + 1; gCard_nCount <= TOP; gCard_nCount += 97) {
+        identity_check();
+        found += Cards_FindIdentity(made[CARD_ID_END + 1]) != 0;
+    }
+    gCard_nCount = TOP;
+    identity_check();
+    gCard_nCount = 1000;                         /* fewer cards than were indexed */
+    identity_check();
+    assert(found > 5);
+    for (id = CARD_ID_END; id <= TOP; id++) identities[id] = NULL;
+    identities_changed();
+    gCard_nCount = 724;
 }
 
 int main(void)
@@ -275,5 +351,6 @@ int main(void)
         assert(gCard_abExtraChest[724] == 2);
     }
     recent_drops(state);
+    identity_oracle();
     return 0;
 }
