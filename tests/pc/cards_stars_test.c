@@ -256,6 +256,13 @@ int TexturePack_AddMade(const void *pixels, int words, int rows, int bpp, const 
     (void)x; (void)y; (void)w; (void)h;
     return 0;
 }
+int TexturePack_AddMadeSeeThrough(const void *pixels, int words, int rows, int bpp, const void *clut,
+                                  int clut_entries, const char *file, int x, int y, int w, int h)
+{
+    (void)pixels; (void)words; (void)rows; (void)bpp; (void)clut; (void)clut_entries; (void)file;
+    (void)x; (void)y; (void)w; (void)h;
+    return 0;
+}
 int Language_Current(void) { return 0; }
 const char *Language_Code(int which) { (void)which; return "en-us"; }
 
