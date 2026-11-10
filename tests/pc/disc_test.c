@@ -12,6 +12,17 @@
 #include "pc/guest/image.h"
 #include <stdint.h>
 
+static int settled_base(const struct JsonValue *value)
+{
+    (void)value;
+    return 77;
+}
+static int never_asked(const struct JsonValue *value)
+{
+    (void)value;
+    abort();
+}
+
 static char image_path[1024];
 static int delivered_lba, callback_count, expected_lba, audio_blocks;
 static int model_file;   /* the models case: the directory has a MODEL.MRG of two records */
@@ -234,6 +245,17 @@ static int models_case(void)
     assert(!Mods_Model(0, &name, NULL, &mod) && !strcmp(name, "one") && mod == find("m-models"));
     assert(!Mods_Model(1, &name, NULL, NULL) && !strcmp(name, "two"));
     assert(Mods_Model(2, NULL, NULL, NULL) == -1);
+    /* A model's "base" stops being the manifest's as the cards are built. */
+    {
+        const struct JsonValue *base = (const struct JsonValue *)name;
+        int card = -1;
+        assert(!Mods_ModelBaseCard(0, &card) && card == -1);
+        Mods_ModelsSettle(settled_base);
+        assert(Mods_ModelBaseCard(0, &card) && card == 77);
+        assert(!Mods_Model(0, NULL, &base, NULL) && !base);
+        Mods_ModelsSettle(never_asked);
+        assert(Mods_ModelBaseCard(0, &card) && card == 77);
+    }
     assert(Mods_ModelSector(0) == 0x1000000 && Mods_ModelSector(1) == 0x1000000 + 0x114);
     assert(Mods_ModelSector(2) == -1 && Mods_ModelSector(-1) == -1);
     /* o-whole's MODEL.MRG, past the disc's 600 sectors, and each slot's

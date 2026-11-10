@@ -511,6 +511,10 @@ if(BUILD_TESTING)
     set(MOD_TEST_SOURCES src/pc/platform/loading.c src/pc/mods/mods.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/events.c src/pc/mods/hooks.c
         src/pc/mods/mod_libc.c src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c src/pc/mod_packets.c
         src/pc/platform/paths.c src/pc/platform/settings.c)
+    add_executable(memories_mods_signature_test tests/pc/mods_signature_test.c ${MOD_TEST_SOURCES})
+    target_include_directories(memories_mods_signature_test PRIVATE src)
+    target_link_libraries(memories_mods_signature_test PRIVATE m Threads::Threads PNG::PNG)
+    add_test(NAME pc_mods_signature COMMAND memories_mods_signature_test)
     add_executable(memories_mods_manager_test tests/pc/mods_manager_test.c ${MOD_TEST_SOURCES})
     target_include_directories(memories_mods_manager_test PRIVATE src)
     target_link_libraries(memories_mods_manager_test PRIVATE m Threads::Threads PNG::PNG)
@@ -565,14 +569,14 @@ if(BUILD_TESTING)
     # that need the game and renderer. ELF linkers resolve symbols after GC;
     # the PE linker reports them before it, so this test is ELF-only.
     if(NOT WIN32 AND NOT MSVC)
-        add_executable(memories_cards_identity_test tests/pc/cards_identity_test.c src/pc/platform/paths.c
+        add_executable(memories_cards_identity_test tests/pc/cards_identity_test.c src/pc/cards/fusion_table.c src/pc/platform/paths.c
                        src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
         target_include_directories(memories_cards_identity_test PRIVATE src)
         target_compile_definitions(memories_cards_identity_test PRIVATE MEMORIES_PC)
         target_compile_options(memories_cards_identity_test PRIVATE -ffunction-sections -fdata-sections)
         target_link_options(memories_cards_identity_test PRIVATE -Wl,--gc-sections)
         add_test(NAME pc_cards_identity COMMAND memories_cards_identity_test)
-        add_executable(memories_card_notes_test tests/pc/card_notes_test.c src/pc/cards/card_notes.c
+        add_executable(memories_card_notes_test tests/pc/card_notes_test.c src/pc/cards/fusion_table.c src/pc/cards/card_notes.c
                        src/pc/mods/json.c src/pc/platform/paths.c)
         target_include_directories(memories_card_notes_test PRIVATE src)
         target_compile_definitions(memories_card_notes_test PRIVATE MEMORIES_PC)
@@ -584,7 +588,7 @@ if(BUILD_TESTING)
     target_include_directories(memories_password_data_test PRIVATE src)
     target_compile_definitions(memories_password_data_test PRIVATE MEMORIES_PC)
     add_test(NAME pc_password_data COMMAND memories_password_data_test)
-    add_executable(memories_tables_test tests/pc/tables_test.c src/pc/platform/loading.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_tables_test tests/pc/tables_test.c src/pc/platform/loading.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_tables_test PRIVATE src)
     target_compile_definitions(memories_tables_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -619,7 +623,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_attributes COMMAND memories_attributes_test)
     # A card's "stars" through cards.c's own add_entry, on a stand-in for the
     # disc's tables (notes/modding.md, "No star").
-    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/platform/loading.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
+    add_executable(memories_cards_stars_test tests/pc/cards_stars_test.c src/pc/platform/loading.c src/pc/cards/fusion_table.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c
                    src/pc/mods/json.c src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_stars_test PRIVATE src)
     target_compile_definitions(memories_cards_stars_test PRIVATE MEMORIES_PC)
@@ -629,11 +633,20 @@ if(BUILD_TESTING)
     if(NOT MSVC)
         target_compile_options(memories_cards_stars_test PRIVATE -Wall -Wextra)
     endif()
+    # Under the sanitizers a value kept into a freed "cards" document is an error.
+    if(MEMORIES_SANITIZERS)
+        target_compile_options(memories_cards_stars_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(memories_cards_stars_test PRIVATE -fsanitize=address,undefined)
+    endif()
     add_test(NAME pc_cards_stars COMMAND memories_cards_stars_test)
+    if(MEMORIES_SANITIZERS)
+        # What it builds lives until exit, as in the game: use after free, not leaks.
+        set_tests_properties(pc_cards_stars PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+    endif()
     # Two mods' "cards" in the load order the settings give, through the real
     # mod loader and cards.c's Cards_Build: once as the folders sort, once
     # with the second moved first (notes/more-cards.md).
-    add_executable(memories_cards_order_test tests/pc/cards_order_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_cards_order_test tests/pc/cards_order_test.c src/pc/cards/fusion_table.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_cards_order_test PRIVATE src)
     target_compile_definitions(memories_cards_order_test PRIVATE MEMORIES_PC)
@@ -643,9 +656,10 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_cards_order_found COMMAND memories_cards_order_test found)
     add_test(NAME pc_cards_order_moved COMMAND memories_cards_order_test b-first)
+    add_test(NAME pc_cards_order_gone COMMAND memories_cards_order_test gone)
     # A card's variants (cards.c, notes/more-cards.md): the family index, the
     # roll by each variant's own chance, and the deck limit's family count.
-    add_executable(memories_card_variants_test tests/pc/card_variants_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_card_variants_test tests/pc/card_variants_test.c src/pc/cards/fusion_table.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_card_variants_test PRIVATE src)
     target_compile_definitions(memories_card_variants_test PRIVATE MEMORIES_PC)
@@ -667,7 +681,7 @@ if(BUILD_TESTING)
     # a retail type renamed, the whole 24-255 bank, a retail card converted
     # to and from a custom monster type, a name collision, two mods
     # redefining one id, and a name the game has no letters for.
-    add_executable(memories_card_types_test tests/pc/card_types_test.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
+    add_executable(memories_card_types_test tests/pc/card_types_test.c src/pc/cards/fusion_table.c tests/pc/battle_models_stub.c tests/pc/attribute_icons_stub.c tests/pc/fields_texture_pack_stub.c src/pc/cards/stars.c src/pc/cards/attributes.c src/pc/cards/fields.c ${MOD_TEST_SOURCES}
                    src/pc/cards/monster_effects.c tests/pc/effect_groups_stub.c)
     target_include_directories(memories_card_types_test PRIVATE src)
     target_compile_definitions(memories_card_types_test PRIVATE MEMORIES_PC)
@@ -693,7 +707,7 @@ if(BUILD_TESTING)
         target_compile_options(memories_type_icons_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_type_icons COMMAND memories_type_icons_test)
-    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c src/pc/platform/loading.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_free_duel_progress_test tests/pc/free_duel_progress_test.c src/pc/platform/loading.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_free_duel_progress_test PRIVATE src)
     target_compile_definitions(memories_free_duel_progress_test PRIVATE MEMORIES_PC)
     if(NOT MSVC)
@@ -710,7 +724,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_font_art COMMAND memories_font_art_test)
     set_tests_properties(pc_font_art PROPERTIES SKIP_RETURN_CODE 77)
-    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/platform/loading.c src/pc/cards/tables.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
+    add_executable(memories_card_drops_test tests/pc/card_drops_test.c src/pc/platform/loading.c src/pc/cards/tables.c src/pc/cards/fusion_table.c tests/pc/duelists_stubs.c tests/pc/fields_texture_pack_stub.c src/pc/cards/fields.c src/pc/mods/json.c)
     target_include_directories(memories_card_drops_test PRIVATE src)
     target_compile_definitions(memories_card_drops_test PRIVATE MEMORIES_PC)
     # The game's headers (drops.c's save and reward layouts) are 32-bit.
@@ -988,6 +1002,60 @@ if(BUILD_TESTING)
         target_compile_options(memories_mod_import_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pc_mod_import COMMAND memories_mod_import_test)
+    # The fusions mods add (src/pc/cards/fusion_table.c), against a plain list.
+    add_executable(memories_fusion_table_test tests/pc/fusion_table_test.c src/pc/cards/fusion_table.c)
+    target_include_directories(memories_fusion_table_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_fusion_table_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_fusion_table COMMAND memories_fusion_table_test)
+    # Where the translated game's token arena puts an allocation
+    # (src/pc/guest/translated_runtime.c), which needs 64-bit host pointers.
+    # A search that looks at every region again after each step does not
+    # finish in the time limit.
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_executable(memories_translated_arena_test tests/pc/translated_arena_test.c
+            src/pc/guest/translated_runtime.c src/pc/guest/translated_alloc.c src/pc/memory.c)
+        target_include_directories(memories_translated_arena_test PRIVATE src)
+        target_compile_definitions(memories_translated_arena_test PRIVATE _DEFAULT_SOURCE)
+        if(NOT MSVC)
+            target_compile_options(memories_translated_arena_test PRIVATE -O2 -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME pc_translated_arena COMMAND memories_translated_arena_test)
+        add_executable(memories_saved_text_test tests/pc/saved_text_test.c
+            src/pc/guest/translated_runtime.c src/pc/guest/translated_alloc.c src/pc/memory.c)
+        target_include_directories(memories_saved_text_test PRIVATE src)
+        target_compile_definitions(memories_saved_text_test PRIVATE _DEFAULT_SOURCE)
+        add_test(NAME pc_saved_text COMMAND memories_saved_text_test)
+        set_tests_properties(pc_translated_arena PROPERTIES TIMEOUT 60)
+        # The registry from several threads, as Import and the picture reader
+        # use it beside the game: this file natively, with no game around it.
+        find_package(Threads REQUIRED)
+        target_link_libraries(memories_translated_arena_test PRIVATE Threads::Threads)
+        add_executable(memories_translated_race_test tests/pc/translated_race_test.c
+            src/pc/guest/translated_runtime.c src/pc/guest/translated_alloc.c src/pc/memory.c)
+        target_include_directories(memories_translated_race_test PRIVATE src)
+        target_compile_definitions(memories_translated_race_test PRIVATE _DEFAULT_SOURCE)
+        target_link_libraries(memories_translated_race_test PRIVATE Threads::Threads)
+        if(NOT MSVC)
+            target_compile_options(memories_translated_race_test PRIVATE -O2)
+        endif()
+        add_test(NAME pc_translated_race COMMAND memories_translated_race_test)
+        set_tests_properties(pc_translated_race PROPERTIES TIMEOUT 120)
+        # And from a signal handler on the very thread that is changing it.
+        if(NOT WIN32)
+            add_executable(memories_translated_signal_test tests/pc/translated_signal_test.c
+                src/pc/guest/translated_alloc.c src/pc/memory.c)
+            target_include_directories(memories_translated_signal_test PRIVATE src)
+            target_compile_definitions(memories_translated_signal_test PRIVATE _DEFAULT_SOURCE)
+            target_link_libraries(memories_translated_signal_test PRIVATE Threads::Threads)
+            if(NOT MSVC)
+                target_compile_options(memories_translated_signal_test PRIVATE -O2)
+            endif()
+            add_test(NAME pc_translated_signal COMMAND memories_translated_signal_test)
+            set_tests_properties(pc_translated_signal PROPERTIES TIMEOUT 60)
+        endif()
+    endif()
     # What Cards_Named finds through its tables (src/pc/cards/name_index.inc),
     # against going down the names.
     add_executable(memories_name_index_test tests/pc/name_index_test.c)

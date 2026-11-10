@@ -16,6 +16,7 @@
  * so a data mod's patch of the same pool comes first and the edits here go
  * on top of it. */
 #include "tables.h"
+#include "fusion_table.h"
 #include "cards.h"
 #include "fields.h"
 #include "pc/free_duel/duelists.h"
@@ -164,12 +165,6 @@ static const char *const pool_long_names[TABLES_POOL_COUNT] = {"deck", "sa-pow",
 #define POOL_TOTAL DUEL_DROP_WEIGHT_TOTAL
 #define DECK_POOL_MIN_CARDS ((DECK_SIZE + DECK_CARD_COPY_LIMIT - 1) / DECK_CARD_COPY_LIMIT)
 
-typedef struct {
-    unsigned short low, high;   /* the two cards, low <= high */
-    int result;                 /* 0: the fusion is forbidden */
-    unsigned order;             /* later rules win */
-} FusionRule;
-
 enum { TARGET_ANY, TARGET_TYPE, TARGET_CARD };
 typedef struct {
     unsigned short equip;
@@ -198,8 +193,6 @@ typedef struct {
     unsigned short *cards, *weights;
 } PoolEdit;
 
-static FusionRule *fusions;
-static int fusion_count, fusion_room;
 static unsigned char *removed_results;   /* by card id: no retail recipe makes it */
 static int removed_room;
 static int removed_all;                  /* {"remove": "all"}: no retail recipe makes anything */
@@ -271,7 +264,6 @@ static int is_edited(int duelist, int pool)
     return edited[(size_t)duelist * TABLES_POOL_COUNT + pool];
 }
 static unsigned order_counter;
-static int fusions_sorted;
 
 /* Grow an array by one; NULL when memory runs out. */
 static void *grow(void *array, int *room, int count, size_t size)
@@ -326,14 +318,7 @@ static int target(const char *mod, const char *where, const JsonValue *value, Eq
 
 static void add_fusion(int a, int b, int result)
 {
-    FusionRule *rule = grow(&fusions, &fusion_room, fusion_count, sizeof(*fusions));
-    if (!rule) return;
-    rule->low = (unsigned short)(a < b ? a : b);
-    rule->high = (unsigned short)(a < b ? b : a);
-    rule->result = result;
-    rule->order = ++order_counter;
-    fusion_count++;
-    fusions_sorted = 0;
+    FusionTable_Add(a, b, result, ++order_counter);
 }
 
 static int removes_all(const JsonValue *removed)
@@ -342,119 +327,113 @@ static int removes_all(const JsonValue *removed)
            Cards_Reference(removed) <= 0;
 }
 
+static void read_fusion(const char *mod, const JsonValue *rule, long i);
+
 static void read_fusions(const char *mod, const JsonValue *list)
 {
-    int i;
+    long i;
+    unsigned total;
     const JsonValue *rule;
-    char where[64];
-    int total;
     if (list && Json_TypeOf(list) != JSON_ARRAY) {
         Mods_Note(mod, "\"fusions\" is not an array");
         return;
     }
-    /* One pass down the list: Json_At in the loop walked it from the start
-     * for every rule, which made a mod of every pair (261,003 rules, the
-     * editor's bulk fusions) take minutes to read. One Json_Count is one
-     * walk, kept for the loading screen's bar. */
-    total = Json_Count(list);
+    /* One pass down the list: Json_Count and Json_At each walk it from the
+     * start, which made a mod of every pair (261,003 rules, the editor's
+     * bulk fusions) take minutes to read. One Json_Count is one walk, kept
+     * for the loading screen's bar. */
+    total = (unsigned)Json_Count(list);
     for (i = 0, rule = Json_At(list, 0); rule; i++, rule = Json_Next(rule)) {
-        Loading_Step("Fusions", (unsigned)i, (unsigned)total);
-        const JsonValue *with = Json_Member(rule, "with");
-        const JsonValue *result = Json_Member(rule, "result");
-        const JsonValue *removed = Json_Member(rule, "remove");
-        int a, b, made = 0;
-        snprintf(where, sizeof(where), "fusions[%d]", i);
-        if (!Mods_EntryUsed(mod, rule, where)) continue;
-        if (removed) {
-            /* { "remove": card }: no recipe on the disc makes it any more;
-             * { "remove": "all" }: none makes anything (a card of that
-             * name first, as a type name for an equip's target). */
-            int id;
-            if (removes_all(removed)) {
-                removed_all = 1;
-                continue;
-            }
-            id = card(mod, where, removed);
-            if (!id) continue;
-            if (id >= removed_room) {
-                int room = gCard_nCount + 1 > id + 1 ? gCard_nCount + 1 : id + 1;
-                unsigned char *bigger = realloc(removed_results, (size_t)room);
-                if (!bigger) continue;
-                memset(bigger + removed_room, 0, (size_t)(room - removed_room));
-                removed_results = bigger;
-                removed_room = room;
-            }
-            removed_results[id] = 1;
-            continue;
-        }
-        if (Json_Count(with) != 2) {
-            Mods_Note(mod, "%s: \"with\" names two cards", where);
-            continue;
-        }
-        a = card(mod, where, Json_At(with, 0));
-        b = card(mod, where, Json_At(with, 1));
-        if (!a || !b) continue;
-        if (!result) {
-            Mods_Note(mod, "%s: \"result\" is a card, or null to forbid the fusion", where);
-            continue;
-        }
-        if (Json_TypeOf(result) != JSON_NULL && !(Json_TypeOf(result) == JSON_NUMBER && Json_Number(result, 0) == 0)) {
-            made = card(mod, where, result);
-            if (!made) continue;
-        }
-        add_fusion(a, b, made);
+        Loading_Step("Fusions", (unsigned)i, total);
+        read_fusion(mod, rule, i);
     }
 }
 
-static int by_pair(const void *left, const void *right)
+/* One entry of "fusions", from the manifest or from the file (Mods_EachFusion). */
+static void read_fusion(const char *mod, const JsonValue *rule, long i)
 {
-    const FusionRule *a = left, *b = right;
-    if (a->low != b->low) return a->low < b->low ? -1 : 1;
-    if (a->high != b->high) return a->high < b->high ? -1 : 1;
-    return a->order > b->order ? -1 : a->order < b->order;   /* the latest first */
+    char where[64];
+    const JsonValue *with = Json_Member(rule, "with");
+    const JsonValue *result = Json_Member(rule, "result");
+    const JsonValue *removed = Json_Member(rule, "remove");
+    int a, b, made = 0;
+    snprintf(where, sizeof(where), "fusions[%ld]", i);
+    if (!Mods_EntryUsed(mod, rule, where)) return;
+    if (removed) {
+        /* { "remove": card }: no recipe on the disc makes it any more;
+         * { "remove": "all" }: none makes anything (a card of that
+         * name first, as a type name for an equip's target). */
+        int id;
+        if (removes_all(removed)) {
+            removed_all = 1;
+            return;
+        }
+        id = card(mod, where, removed);
+        if (!id) return;
+        if (id >= removed_room) {
+            int room = gCard_nCount + 1 > id + 1 ? gCard_nCount + 1 : id + 1;
+            unsigned char *bigger = realloc(removed_results, (size_t)room);
+            if (!bigger) return;
+            memset(bigger + removed_room, 0, (size_t)(room - removed_room));
+            removed_results = bigger;
+            removed_room = room;
+        }
+        removed_results[id] = 1;
+        return;
+    }
+    if (Json_Count(with) != 2) {
+        Mods_Note(mod, "%s: \"with\" names two cards", where);
+        return;
+    }
+    a = card(mod, where, Json_At(with, 0));
+    b = card(mod, where, Json_At(with, 1));
+    if (!a || !b) return;
+    if (!result) {
+        Mods_Note(mod, "%s: \"result\" is a card, or null to forbid the fusion", where);
+        return;
+    }
+    if (Json_TypeOf(result) != JSON_NULL && !(Json_TypeOf(result) == JSON_NUMBER && Json_Number(result, 0) == 0)) {
+        made = card(mod, where, result);
+        if (!made) return;
+    }
+    add_fusion(a, b, made);
 }
 
-static const FusionRule *find_fusion(int a, int b)
+static int read_streamed_fusion(const JsonValue *rule, long index, void *mod)
 {
-    int low = 0, high = fusion_count;
-    FusionRule key;
-    key.low = (unsigned short)(a < b ? a : b);
-    key.high = (unsigned short)(a < b ? b : a);
-    while (low < high) {   /* the first rule for the pair: the latest */
-        int middle = (low + high) / 2;
-        const FusionRule *rule = &fusions[middle];
-        if (rule->low < key.low || (rule->low == key.low && rule->high < key.high)) low = middle + 1;
-        else high = middle;
-    }
-    if (low < fusion_count && fusions[low].low == key.low && fusions[low].high == key.high) return &fusions[low];
-    return NULL;
+    /* No total: the file is read an entry at a time, never counted. */
+    Loading_Step("Fusions", (unsigned)index, 0);
+    read_fusion(mod, rule, index);
+    return 1;
 }
 
 int Tables_Fusion(int a, int b, int *result)
 {
-    const FusionRule *rule;
-    int base_a, base_b;
-    if (!fusion_count || !Cards_Valid(a) || !Cards_Valid(b)) return 0;
-    if (!fusions_sorted) {
-        qsort(fusions, (size_t)fusion_count, sizeof(*fusions), by_pair);
-        fusions_sorted = 1;
-    }
-    rule = find_fusion(a, b);
+    int base_a, base_b, found;
+    unsigned order;
+    if (!FusionTable_Count() || !Cards_Valid(a) || !Cards_Valid(b)) return 0;
+    found = FusionTable_Find(a, b, result, &order);
     base_a = Cards_BaseId(a);
     base_b = Cards_BaseId(b);
     /* A copy fuses as its base, as it does in the disc's table; a rule
      * naming a copy itself is surer, so one that names both cards as they
      * are comes first, then one that names one of them (a copy with its
      * partner's base; of two such, the later), then the bases' own. */
-    if (!rule) {
-        const FusionRule *one = base_b != b ? find_fusion(a, base_b) : NULL;
-        const FusionRule *other = base_a != a ? find_fusion(base_a, b) : NULL;
-        rule = one && (!other || one->order > other->order) ? one : other;
+    if (!found) {
+        int one_result = 0, other_result = 0;
+        unsigned one_order = 0, other_order = 0;
+        int one = base_b != b && FusionTable_Find(a, base_b, &one_result, &one_order);
+        int other = base_a != a && FusionTable_Find(base_a, b, &other_result, &other_order);
+        if (one && (!other || one_order > other_order)) {
+            *result = one_result;
+            found = 1;
+        } else if (other) {
+            *result = other_result;
+            found = 1;
+        }
     }
-    if (!rule && base_a != a && base_b != b) rule = find_fusion(base_a, base_b);
-    if (!rule) return 0;
-    *result = rule->result;
-    return 1;
+    if (!found && base_a != a && base_b != b) found = FusionTable_Find(base_a, base_b, result, &order);
+    return found;
 }
 
 int Tables_FilterFusion(int result)
@@ -2408,6 +2387,11 @@ void Tables_AddFrom(const char *mod, const char *directory, const JsonValue *man
     pool_directory = directory;
     Loading_Step("Fusions and equips", 0, 0);
     read_fusions(mod, Json_Member(manifest, "fusions"));
+    {
+        char why[128];
+        if (Mods_EachFusion(mod, read_streamed_fusion, (void *)mod, why, sizeof(why)) < 0)
+            Mods_Note(mod, "\"fusions\": %s", why);
+    }
     read_equips(mod, Json_Member(manifest, "equips"));
     read_equip_default(mod, Json_Member(manifest, "equip_bonus_default"));
     Loading_Step("Rituals", 0, 0);
@@ -2446,7 +2430,8 @@ void Tables_Clear(void)
             free(edits[i].weights);
         }
     }
-    fusion_count = equip_count = ritual_count = edit_count = fixed_count = bonus_count = 0;
+    FusionTable_Clear();
+    equip_count = ritual_count = edit_count = fixed_count = bonus_count = 0;
     overflow_starchips = chest_limit = 0;
     memset(shop_set, 0, sizeof(shop_set));
     memset(shop_from, 0, sizeof(shop_from));
@@ -2487,9 +2472,9 @@ void Tables_Build(void)
         read_pool_folder("user", Paths_UserDir(), 0);
         read_pool_folder("user", Paths_UserDir(), 1);
     }
-    if (fusion_count || equip_count || bonus_count || equip_default_set || ritual_count || edit_count || fixed_count || overflow_starchips || chest_limit)
+    if (FusionTable_Count() || equip_count || bonus_count || equip_default_set || ritual_count || edit_count || fixed_count || overflow_starchips || chest_limit)
         LOG(LOG_MODS, "tables: %d fusion rules, %d equip rules, %d equip bonuses, %d rituals, %d pool edits, "
-            "%d fixed decks, a chest of %d with %ld starchips a card past it", fusion_count, equip_count,
+            "%d fixed decks, a chest of %d with %ld starchips a card past it", FusionTable_Count(), equip_count,
             bonus_count, ritual_count, edit_count, fixed_count, Tables_ChestLimit(), overflow_starchips);
     if (removed_all) LOG(LOG_MODS, "tables: every disc fusion removed");
     if (shop_count) LOG(LOG_MODS, "tables: %d Password screen entries", shop_count);
@@ -2507,4 +2492,6 @@ void Tables_Build(void)
         for (i = 0; i < TABLES_VALUE_COUNT; i++)
             if (value_given[i]) LOG(LOG_MODS, "tables: value %s %ld", value_keys[i].key, value_set[i]);
     }
+    /* Before any duel asks: sorting millions of rules takes seconds. */
+    FusionTable_Seal();
 }

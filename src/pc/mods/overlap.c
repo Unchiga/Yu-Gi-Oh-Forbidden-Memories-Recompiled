@@ -109,6 +109,8 @@ struct ModsOverlaps {
     Defined *defined;
     int defined_count, defined_room;
     unsigned char star_declared[16];
+    uint64_t *met;      /* the fusion keys two mods claim, sorted (find_fusions_met) */
+    size_t met_count;
     int seq, failed, packs_declared;
 };
 
@@ -622,7 +624,22 @@ static int notes_only(const JsonValue *entry)
 }
 static void read_cards(ModsOverlaps *x, int mod)
 {
-    for (const JsonValue *e = Json_At(list_of(member(x, mod, "cards")), 0); e; e = Json_Next(e)) {
+    const JsonValue *cards = list_of(member(x, mod, "cards"));
+    if (x->source.cards) {
+        JsonDocument *document = x->source.cards(mod, x->source.context), **documents;
+        if (document) {
+            documents = grow(x->documents, &x->document_room, x->document_count, sizeof(*x->documents));
+            if (!documents) {
+                Json_Free(document);
+                x->failed = 1;
+                return;
+            }
+            x->documents = documents;
+            documents[x->document_count++] = document;
+            cards = Json_Root(document);
+        }
+    }
+    for (const JsonValue *e = Json_At(cards, 0); e; e = Json_Next(e)) {
         const JsonValue *replaced = Json_Member(e, "replace");
         const char *text = Json_String(replaced, NULL);
         uint64_t key;
@@ -648,23 +665,167 @@ static int removes_all(ModsOverlaps *x, const JsonValue *removed)
 }
 
 /* "fusions": a pair in either order, the later mod's rule winning;
- * "remove"s add up (a mod's own recipes still make the card). */
-static void read_fusions(ModsOverlaps *x, int mod)
+ * "remove"s add up (a mod's own recipes still make the card). A big list is not
+ * in the manifest and is not held: each mod's is read from its file twice, first
+ * for the rules two mods share, then for those rules' claims. */
+typedef struct {
+    uint64_t key;
+    int mod, met; /* met: the largest list, which is not in the table, has it too */
+} FusionKey;
+typedef struct {
+    ModsOverlaps *x;
+    int mod;
+    FusionKey *keys;
+    size_t count, room;
+} FusionPass;
+
+/* What a rule claims, 0 for nothing. */
+static uint64_t fusion_key(ModsOverlaps *x, int mod, const JsonValue *rule)
 {
-    for (const JsonValue *rule = Json_At(list_of(member(x, mod, "fusions")), 0); rule; rule = Json_Next(rule)) {
-        const JsonValue *with = Json_Member(rule, "with"), *removed = Json_Member(rule, "remove");
-        if (!switched_on(x, mod, rule)) continue;
-        if (removed) {
-            uint64_t key = removes_all(x, removed) ? ALL_RECIPES : card_key(x, removed);
-            if (key) claim(x, MODS_OVERLAP_FUSIONS, mod, (1ull << 63) | key, ADD, 0, rule);
-        } else if (Json_Count(with) == 2) {
-            uint64_t a = card_key(x, Json_At(with, 0)), b = card_key(x, Json_Next(Json_At(with, 0)));
-            const JsonValue *result = Json_Member(rule, "result");
-            if (!a || !b || !result) continue;
-            claim(x, MODS_OVERLAP_FUSIONS, mod, (mix(a < b ? a : b, a < b ? b : a) >> 1), SET,
-                  (uint32_t)card_key(x, result) ^ (uint32_t)(card_key(x, result) >> 32), rule);
+    const JsonValue *with = Json_Member(rule, "with"), *removed = Json_Member(rule, "remove");
+    if (!switched_on(x, mod, rule)) return 0;
+    if (removed) {
+        uint64_t key = removes_all(x, removed) ? ALL_RECIPES : card_key(x, removed);
+        return key ? (1ull << 63) | key : 0;
+    }
+    if (Json_Count(with) == 2 && Json_Member(rule, "result")) {
+        uint64_t a = card_key(x, Json_At(with, 0)), b = card_key(x, Json_Next(Json_At(with, 0)));
+        if (a && b) return mix(a < b ? a : b, a < b ? b : a) >> 1;
+    }
+    return 0;
+}
+
+static void each_fusion(ModsOverlaps *x, int mod, int (*each)(const JsonValue *, long, void *), void *context)
+{
+    long i = 0;
+    for (const JsonValue *rule = Json_At(list_of(member(x, mod, "fusions")), 0); rule; rule = Json_Next(rule))
+        each(rule, i++, context);
+    if (x->source.fusions) x->source.fusions(mod, each, context, x->source.context);
+}
+
+static int note_fusion(const JsonValue *rule, long index, void *context)
+{
+    FusionPass *pass = context;
+    uint64_t key = fusion_key(pass->x, pass->mod, rule);
+    (void)index;
+    if (!key) return 1;
+    if (pass->count == pass->room) {
+        size_t room = pass->room ? pass->room * 2 : 1024;
+        FusionKey *bigger = realloc(pass->keys, room * sizeof(*bigger));
+        if (!bigger) {
+            pass->x->failed = 1;
+            return 0;
+        }
+        pass->keys = bigger;
+        pass->room = room;
+    }
+    pass->keys[pass->count].key = key;
+    pass->keys[pass->count].mod = pass->mod;
+    pass->keys[pass->count++].met = 0;
+    return 1;
+}
+
+static int by_fusion_key(const void *left, const void *right)
+{
+    const FusionKey *a = left, *b = right;
+    if (a->key != b->key) return a->key < b->key ? -1 : 1;
+    return (a->mod > b->mod) - (a->mod < b->mod);
+}
+
+static int met_by_largest(const JsonValue *rule, long index, void *context)
+{
+    FusionPass *pass = context;
+    uint64_t key = fusion_key(pass->x, pass->mod, rule);
+    size_t low = 0, high = pass->count;
+    (void)index;
+    while (key && low < high) {
+        size_t middle = low + (high - low) / 2;
+        if (pass->keys[middle].key < key) low = middle + 1;
+        else high = middle;
+    }
+    if (key && low < pass->count && pass->keys[low].key == key) pass->keys[low].met = 1;
+    return 1;
+}
+
+/* The keys two mods claim, sorted, in x->met. The list with the most in it only
+ * has its keys compared, so a big mod beside small ones holds next to nothing. */
+static void find_fusions_met(ModsOverlaps *x)
+{
+    FusionPass pass = {x, 0, NULL, 0, 0};
+    int largest = 0;
+    long most = 0;
+    for (int mod = 0; mod < x->mod_count && x->source.fusion_bytes; mod++) {
+        long bytes = x->source.fusion_bytes(mod, x->source.context);
+        if (bytes > most) {
+            most = bytes;
+            largest = mod;
         }
     }
+    for (pass.mod = 0; pass.mod < x->mod_count && !x->failed; pass.mod++)
+        if (pass.mod != largest) each_fusion(x, pass.mod, note_fusion, &pass);
+    if (!x->failed && pass.count) {
+        qsort(pass.keys, pass.count, sizeof(*pass.keys), by_fusion_key);
+        pass.mod = largest;
+        each_fusion(x, largest, met_by_largest, &pass);
+        for (size_t i = 0, end; i < pass.count; i = end) {
+            int met = pass.keys[i].met;
+            for (end = i + 1; end < pass.count && pass.keys[end].key == pass.keys[i].key; end++)
+                met |= pass.keys[end].met || pass.keys[end].mod != pass.keys[i].mod;
+            if (met) pass.keys[x->met_count++].key = pass.keys[i].key;
+        }
+    }
+    /* What was kept is at the head of the table, in order. */
+    if (x->met_count && !(x->met = malloc(x->met_count * sizeof(*x->met)))) x->failed = 1;
+    for (size_t i = 0; x->met && i < x->met_count; i++) x->met[i] = pass.keys[i].key;
+    free(pass.keys);
+}
+
+static int fusion_is_met(const ModsOverlaps *x, uint64_t key)
+{
+    size_t low = 0, high = x->met_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        if (x->met[middle] < key) low = middle + 1;
+        else high = middle;
+    }
+    return low < x->met_count && x->met[low] == key;
+}
+
+/* The claim holds its line: the rule it came from is gone when this returns. */
+static int claim_fusion(const JsonValue *rule, long index, void *context)
+{
+    FusionPass *pass = context;
+    ModsOverlaps *x = pass->x;
+    uint64_t key = fusion_key(x, pass->mod, rule);
+    const JsonValue *removed = Json_Member(rule, "remove");
+    char a[120], b[120], line[260];
+    Claim *c;
+    (void)index;
+    if (!key || !fusion_is_met(x, key)) return 1;
+    if (removed) {
+        c = claim(x, MODS_OVERLAP_FUSIONS, pass->mod, key, ADD, 0, NULL);
+        if (key == ((1ull << 63) | ALL_RECIPES)) {
+            snprintf(line, sizeof(line), "Every disc recipe removed");
+        } else {
+            card_words(x, removed, a, sizeof(a));
+            snprintf(line, sizeof(line), "Disc recipes for %s removed", a);
+        }
+    } else {
+        const JsonValue *with = Json_Member(rule, "with");
+        uint64_t result = card_key(x, Json_Member(rule, "result"));
+        c = claim(x, MODS_OVERLAP_FUSIONS, pass->mod, key, SET, (uint32_t)result ^ (uint32_t)(result >> 32), NULL);
+        card_words(x, Json_At(with, 0), a, sizeof(a));
+        card_words(x, Json_Next(Json_At(with, 0)), b, sizeof(b));
+        snprintf(line, sizeof(line), "Fusion %s + %s", a, b);
+    }
+    labelled(x, c, line);
+    return 1;
+}
+
+static void read_fusions(ModsOverlaps *x, int mod)
+{
+    FusionPass pass = {x, mod, NULL, 0, 0};
+    if (x->met_count) each_fusion(x, mod, claim_fusion, &pass);
 }
 
 /* "equips": an entry per equip card. For a monster, the latest entry that
@@ -2058,6 +2219,7 @@ ModsOverlaps *Mods_OverlapCompute(const ModsOverlapMod *mods, int count, const M
             }
     if (count < 2) return x;
     for (int mod = 0; mod < count; mod++) read_duelists(x, mod); /* before the pools that name them */
+    if (having(x, "fusions") >= 2) find_fusions_met(x);
     for (int mod = 0; mod < count; mod++) {
         if (having(x, "data") >= 2) read_data(x, mod);
         if (having(x, "audio") >= 2) read_audio(x, mod);
@@ -2102,6 +2264,7 @@ void Mods_OverlapFree(ModsOverlaps *x)
     if (!x) return;
     for (int i = 0; i < x->document_count; i++) Json_Free(x->documents[i]);
     free(x->documents);
+    free(x->met);
     free(x->claims);
     free(x->groups);
     free(x->strings);
@@ -2199,18 +2362,7 @@ void Mods_OverlapLabel(const ModsOverlaps *x, int index, char *out, size_t size)
         card_words(x, Json_Member(c->src, "replace"), a, sizeof(a));
         snprintf(out, size, "Card %s", a);
         return;
-    case MODS_OVERLAP_FUSIONS:
-        if (c->key == ((1ull << 63) | ALL_RECIPES)) {
-            snprintf(out, size, "Every disc recipe removed");
-        } else if (Json_Member(c->src, "remove")) {
-            card_words(x, Json_Member(c->src, "remove"), a, sizeof(a));
-            snprintf(out, size, "Disc recipes for %s removed", a);
-        } else {
-            const JsonValue *with = Json_Member(c->src, "with");
-            card_words(x, Json_At(with, 0), a, sizeof(a));
-            card_words(x, Json_Next(Json_At(with, 0)), b, sizeof(b));
-            snprintf(out, size, "Fusion %s + %s", a, b);
-        }
+    case MODS_OVERLAP_FUSIONS: /* claim_fusion's label */
         return;
     case MODS_OVERLAP_EQUIPS:
         if (c->key == DEFAULT_EQUIP_BONUS) {

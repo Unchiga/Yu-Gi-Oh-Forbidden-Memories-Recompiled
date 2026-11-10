@@ -48,7 +48,17 @@ SOFT_GPU = "src/pc/render/soft_gpu.c"
 # Renderer caches and decoded PNGs never enter 32-bit guest storage.
 # Keep their LP64 pointers and lifetimes on the host, outside the token arena.
 # State restoration may replace guest heaps, but must not free live GL buffers.
-HOST_HEAP_UNITS = {"src/pc/render/texture_pack.c", "src/pc/render/gl_picture.c"}
+# So does a parsed manifest, and the overlap report, which points into manifests:
+# only src/pc reads them, a manifest can be hundreds of megabytes, and neither goes
+# in a save state. So no block that does (any other src/pc allocation) may point
+# into them: such a pointer is stale once a state loads in another session.
+HOST_HEAP_UNITS = {
+    "src/pc/render/texture_pack.c",
+    "src/pc/render/gl_picture.c",
+    "src/pc/mods/json.c",
+    "src/pc/mods/overlap.c",
+    "src/pc/cards/fusion_table.c",
+}
 
 
 ROOT = Path(__file__).resolve().parents[2]

@@ -647,6 +647,19 @@ two `"fusions"` lists reads the first and warns of the second, so the
 groups go in one list, each entry with its setting. The FM Editor shows
 the disc's table and keeps these entries as they are written.
 
+The game does not hold `fusions` in memory as text. At the scan the list is
+skipped, its brackets and strings looked at and its bytes hashed
+(`Json_ParseFileDeferring`), and its entries are read one at a time from
+`mod.json` when the tables are built (`Mods_EachFusion`). So a mistake inside an
+entry is a note on the mod in the Mods window, naming the entry, with the rest of
+the list read; before, it refused the whole `mod.json`. A list that never ends
+still refuses it. `cards` is out of the kept manifest too: checked at the scan, as
+ever, read whole for `Cards_Build` and freed as it ends (`Mods_CardsRelease`), a
+card's own `fusions` list being rows of the fusion table from then on. The overlap
+report reads it again when two mods have cards (`Mods_CardsDocument`). The rest of a
+manifest stays for as long as the game runs: `card_layout`, the settings, `data`
+and more are read while it plays.
+
 ## Where two mods disagree
 
 Mods apply in load order (priority, then `after` and `requires`, then the
@@ -667,8 +680,10 @@ card a drop pool gave.
 `src/pc/cards/tables.c` reads the rules once, after the cards
 (`Cards_Build`), from the mods in the order they loaded (`Mods_Loaded`).
 Nothing the game loaded is changed, except the Password screen's table
-(its search is a loop over the loaded records); the functions that read
-each table ask it first:
+(its search is a loop over the loaded records). Fusion rules go to
+`src/pc/cards/fusion_table.c`, eight bytes each, in a bucket per lower card and
+on the host heap (a mod can hold millions, none of it in a save state), sorted
+once the rules are read. The functions that read each table ask it first:
 
 | Game function | Table | Asks |
 |---|---|---|

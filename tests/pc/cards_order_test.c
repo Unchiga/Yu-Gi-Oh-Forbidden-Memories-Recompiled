@@ -168,10 +168,11 @@ int main(int argc, char **argv)
 {
     char path[2048];
     int b_first = argc > 1 && !strcmp(argv[1], "b-first");
+    int gone = argc > 1 && !strcmp(argv[1], "gone");
     const char *first = b_first ? "cardorder-b" : "cardorder-a", *last = b_first ? "cardorder-a" : "cardorder-b";
     int id;
-    if (argc < 2 || (!b_first && strcmp(argv[1], "found"))) {
-        fprintf(stderr, "usage: %s found|b-first\n", argv[0]);
+    if (argc < 2 || (!b_first && !gone && strcmp(argv[1], "found"))) {
+        fprintf(stderr, "usage: %s found|b-first|gone\n", argv[0]);
         return 2;
     }
     /* Every card of the disc a monster of 1000 ATK. */
@@ -188,13 +189,27 @@ int main(int argc, char **argv)
                "{\"id\":\"cardorder-a\",\"cards\":["
                "{\"replace\":1,\"name\":\"Alpha\",\"attack\":1100},"
                "{\"copy\":2,\"id\":\"twin\",\"name\":\"Alpha twin\"},"
-               "{\"replace\":4,\"name\":\"Alpha baby\"}]}");
+               "{\"replace\":4,\"name\":\"Alpha baby\"},"
+               /* A card's own fusions, read once every card exists: a partner named by
+                * an identity of the other mod, one forbidding, a result that is a card
+                * of this mod, a result that is no card, and a partner that is none. */
+               "{\"copy\":5,\"id\":\"fuser\",\"name\":\"Own fusions\",\"fusions\":["
+               "{\"with\":\"cardorder-b:of-one:1\",\"result\":6},"
+               "{\"with\":7,\"result\":null},"
+               "{\"with\":8,\"result\":\"cardorder-a:twin:1\"},"
+               "{\"with\":9,\"result\":\"cardorder-a:nobody:1\"},"
+               "{\"with\":\"cardorder-a:nobody:1\",\"result\":3},"
+               "{\"with\":7,\"result\":11}]}]}");
     make_dir("mods/cardorder-b");
     write_text("mods/cardorder-b/mod.json",
                "{\"id\":\"cardorder-b\",\"cards\":["
                "{\"copy\":1,\"id\":\"of-one\",\"name\":\"Beta copy\"},"
                "{\"replace\":1,\"name\":\"Beta\",\"attack\":2200},"
                "{\"replace\":4,\"attack\":500}]}");
+    if (gone) {
+        make_dir("mods/cardorder-c");
+        write_text("mods/cardorder-c/mod.json", "{\"id\":\"cardorder-c\",\"enabled\":true,\"requires\":[\"cardorder-b\"]}");
+    }
     /* What the Mods window writes: both applied, and b moved up. */
     write_text("settings.txt", b_first ? "mod.cardorder-a=1\nmod.cardorder-b=1\nmod.cardorder-b.order=-1\n"
                                        : "mod.cardorder-a=1\nmod.cardorder-b=1\n");
@@ -205,18 +220,55 @@ int main(int argc, char **argv)
     assert(!setenv("MEMORIES_USER_DIR", root, 1));
     Settings_Load();
     Mods_Load();
-    assert(Mods_LoadedCount() == 2);
+    assert(Mods_LoadedCount() == (gone ? 3 : 2));
     assert(!strcmp(Mods_Id(Mods_Loaded(0)), first) && !strcmp(Mods_Id(Mods_Loaded(1)), last));
 
+    /* The file goes between the scan and the build: the mod does not stay active
+     * without its cards, and says why. */
+    if (gone) {
+        snprintf(path, sizeof(path), "%s/mods/cardorder-b/mod.json", root);
+        assert(!remove(path));
+        Cards_Build();
+        assert(gCard_nCount == CARD_COUNT + 2);
+        id = Mods_Loaded(0);
+        assert(Mods_Active(id) && !strcmp(Mods_Id(id), "cardorder-a"));
+        for (id = 0; id < Mods_Count(); id++)
+            if (!strcmp(Mods_Id(id), "cardorder-b")) {
+                assert(!Mods_Active(id) && Mods_Failed(id));
+                assert(strstr(Mods_Status(id), "cannot read them"));
+            } else if (!strcmp(Mods_Id(id), "cardorder-c")) {
+                /* What needs it does not stay on. */
+                assert(!Mods_Active(id) && strstr(Mods_Status(id), "cardorder-b"));
+            }
+        printf("cards order (%s): ok\n", argv[1]);
+        return 0;
+    }
+
     Cards_Build();
+
+    /* A card's own fusions, in the list's order, from either card, with the entries
+     * themselves gone. */
+    {
+        int of_one = Cards_FindIdentity("cardorder-b:of-one:1"), twin = Cards_FindIdentity("cardorder-a:twin:1");
+        int fuser = Cards_FindIdentity("cardorder-a:fuser:1"), made = -1;
+        assert(of_one && twin && fuser && !definitions[fuser]);
+        assert(Cards_Fusion(fuser, of_one, &made) && made == 6);
+        made = -1;
+        assert(Cards_Fusion(of_one, fuser, &made) && made == 6);
+        assert(Cards_Fusion(fuser, 7, &made) && made == 0); /* forbids, and the later row is not read */
+        assert(Cards_Fusion(fuser, 8, &made) && made == twin);
+        assert(!Cards_Fusion(fuser, 9, &made));
+        assert(!Cards_Fusion(fuser, 10, &made) && !Cards_Fusion(6, 7, &made));
+    }
 
     /* The later mod in load order has the last word on card 1. */
     assert(replaced[1] && !strcmp(replaced[1], last));
     assert(attack(1) == (b_first ? 1100 : 2200));
     /* The copies take their ids in load order; their identities stay. */
-    assert(gCard_nCount == CARD_COUNT + 2);
+    assert(gCard_nCount == CARD_COUNT + 3);
     assert(!strcmp(Cards_Identity(CARD_COUNT + 1), b_first ? "cardorder-b:of-one:1" : "cardorder-a:twin:1"));
-    assert(!strcmp(Cards_Identity(CARD_COUNT + 2), b_first ? "cardorder-a:twin:1" : "cardorder-b:of-one:1"));
+    assert(!strcmp(Cards_Identity(CARD_COUNT + 2), b_first ? "cardorder-a:twin:1" : "cardorder-a:fuser:1"));
+    assert(!strcmp(Cards_Identity(CARD_COUNT + 3), b_first ? "cardorder-a:fuser:1" : "cardorder-b:of-one:1"));
     assert(Cards_FindIdentity("cardorder-a:twin:1") && Cards_FindIdentity("cardorder-b:of-one:1"));
     assert(Cards_BaseId(Cards_FindIdentity("cardorder-a:twin:1")) == 2);
     /* b's copy of card 1: card 1 as a left it when a came first, the disc's

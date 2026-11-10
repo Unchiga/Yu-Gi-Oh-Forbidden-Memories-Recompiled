@@ -52,24 +52,34 @@ path widening a narrow guest store and corrupting an adjacent field.
 
 ## Native allocation boundary
 
-Guest-visible allocations use the registered 32-bit token arena. A freed span
+Guest-visible allocations use the registered 32-bit token arena, 512 MiB from
+`0xC0000000`, where the console's direct segments end, to `0xE0000000`, where the
+game's stacks have fixed tokens (`0xE0000000` and `0xE1000000`, 8 MiB each,
+registered after the mods have loaded). Tokens start at `0xD0000000` and only come
+below it after a wrap: a save state holds the globals by token, so they stay
+where older states expect them. A freed span
 can be reused even when a larger temporary allocation moved the cursor above
-it; exhaustion retries from the arena base before failing. The arena remains
-256 MiB. Invalid accesses fail with the operation, requested size, region count,
+it; exhaustion retries from the arena base before failing. The search walks the
+regions in address order, each once, so a big allocation past tens of thousands
+of small ones costs one walk and not a pass over all of them at every step. Invalid accesses fail
+with the operation, requested size, region count,
 live registered bytes, heap bytes and allocation cursor. These diagnostics are
 prepared before abort, and the runtime writes them into the crash report itself,
 beside the loaded Mach-O UUID and build identity.
 
 External guest accesses cache a region index per 4 KiB page and validate the
 complete requested span on every hit. Small allocations may share a page;
-candidate misses use a guest-base-sorted index with logarithmic lookup. Registry
-growth retains indices, and removal or reset invalidates page candidates with
-an epoch. The page candidates occupy approximately 3.5 MiB of native storage,
+candidate misses use a guest-base-sorted index with logarithmic lookup. Every
+thread of the game registers and resolves. Writers take a lock; the tables are one
+mapping that never moves; a region keeps its slot while it lives and a slot is used
+again only long after it was freed, so a hit reads its slot with no barrier; the
+sorted indexes are read under a sequence that a change makes odd. Removal or reset
+invalidates page candidates with an epoch. The page candidates occupy approximately 3.5 MiB of native storage,
 outside guest memory and save payloads.
 Encoding native pointers uses separate host-base-sorted indexes for functions
 and data instead of scanning the entire registry. Function aliases keep their
 first registered token; containing allocations take precedence over adjacent
-one-past pointers. Registry growth and swap removal preserve both indexes.
+one-past pointers.
 External registrations reject spans that overlap RAM or scratchpad aliases,
 and host spans that belong to the bound console image. Console map constants
 are shared with the IR compiler, whose RAM-at-offset-zero assumption is
@@ -85,8 +95,18 @@ is cached across a module switch; the interpreter fallback is unchanged.
 Texture-pack tables, resampled pixels and decoded PNG caches are exclusively
 host data with LP64 pointers. Their allocations retain native libc ownership
 and consume no guest tokens. They are rebuilt by the renderer rather than
-serialized as guest heaps. Game allocations, guest globals, mod storage and
-callback bridges keep their registered memory contracts.
+serialized as guest heaps. A parsed manifest (`src/pc/mods/json.c`) and the overlap
+report (`overlap.c`) are host data too: only `src/pc` reads them, through 64-bit
+pointers, and neither goes in a save state. Everything else `src/pc` allocates does,
+and `relocate_word` only moves words that point into the old image or at saved
+regions, so such a block must not point into a manifest, nor at a block of libc's: a
+state loaded in another session would leave the pointer stale. The translated build
+renames `malloc` but not `strdup`, so a copy kept in such a block comes from
+`saved_text` (`src/pc/mods/saved_text.inc`). A model's name and path and a starter
+deck's name are copies, and a model's `base` is a card id once the cards are built.
+Statics of `src/pc` are not in a state, so `definitions[]` and the like may. A state from before this (no `REGIONS_FORMAT` in
+its last region) is refused: its heap tokens do not match. Game allocations, guest
+globals, mod storage and callback bridges keep their registered memory contracts.
 
 ## Code and test entry points
 

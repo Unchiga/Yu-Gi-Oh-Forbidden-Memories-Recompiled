@@ -65,14 +65,15 @@ const JsonValue *Mods_Manifest(int mod) { (void)mod; return NULL; }
 
 /* --- the harness -------------------------------------------------------- */
 
-/* A manifest's decks. The document lives on: a deck keeps its "name" by
- * pointer into it, exactly as a mod's manifest outlives the decks it gave. */
+/* A manifest's decks. The document goes at once: a block of this unit's is in a save
+ * state and the manifest is not, so a deck's or a pool's "name" must be a copy. */
 static void add(const char *mod, const char *text)
 {
     char error[256];
     JsonDocument *document = Json_Parse(text, error, sizeof(error));
     CHECK(document != NULL);
     Starter_Add(mod, Json_Root(document));
+    Json_Free(document);
 }
 
 static void one(const char *text)

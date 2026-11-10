@@ -27,7 +27,7 @@ from .gamedata import TYPE_EQUIP, TYPE_MAGIC, TYPE_RITUAL, TYPE_TRAP
 KINDS = ("monster", "magic", "trap", "ritual", "equip")
 
 # What a batch may leave the mod holding. The port keeps the rules in an
-# array it sorts once (src/pc/cards/tables.c), so the only true limit is the
+# array it sorts once (src/pc/cards/fusion_table.c), so the only true limit is the
 # pairs there are: n(n+1)/2 for n cards, 261,003 for the disc's 722.
 # Measured (a 32-bit Windows build, MEMORIES_TRACE=mods): a mod.json of all
 # 261,003 rules (24.3 MB) loads in about 3 s. The budget is that, with room

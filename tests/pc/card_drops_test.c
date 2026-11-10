@@ -77,6 +77,12 @@ int Cards_Named(const char *text) { (void)text; return -1; }
 int Cards_Reference(const JsonValue *value) { (void)value; return -1; }
 int Mods_EntryUsed(const char *id, const JsonValue *entry, const char *where) { (void)id; (void)entry; (void)where; return 1; }
 /* What the Mods window would say, every note in a row. */
+long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *), void *context, char *error,
+                     size_t error_size)
+{
+    (void)id; (void)each; (void)context; (void)error; (void)error_size;
+    return 0;
+}
 static char notes[2048];
 void Mods_Note(const char *id, const char *format, ...)
 {

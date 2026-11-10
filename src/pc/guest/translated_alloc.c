@@ -1,5 +1,6 @@
 #include "../../types.h"
 #include "translated_runtime.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
@@ -20,6 +21,21 @@ void *GuestRuntime_calloc(size_t count, size_t length)
     if (p && GuestRuntime_IsBound()) GuestRuntime_RegisterAllocation(p, size ? size : 1);
     return p;
 }
+void *GuestRuntime_TryCalloc(size_t count, size_t length)
+{
+    size_t size;
+    void *p;
+    if (count && length > SIZE_MAX / count) { errno = ENOMEM; return NULL; }
+    size = count * length;
+    p = calloc(1, size ? size : 1);
+    if (p && GuestRuntime_IsBound() && GuestRuntime_TryRegisterAllocation(p, size ? size : 1)) {
+        fprintf(stderr, "memories-pc: no room in the token arena for %zu bytes; the caller goes without\n", size);
+        free(p);
+        errno = ENOMEM;
+        return NULL;
+    }
+    return p;
+}
 void GuestRuntime_free(void *pointer)
 {
     void *host;
@@ -30,13 +46,7 @@ void GuestRuntime_free(void *pointer)
 }
 void *GuestRuntime_realloc(void *pointer, size_t length)
 {
-    void *old, *p;
     if (!pointer) return GuestRuntime_malloc(length);
     if (!length) { GuestRuntime_free(pointer); return NULL; }
-    old = GuestRuntime_ResolveData(pointer, 1);
-    p = realloc(old, length);
-    if (!p) return NULL;
-    GuestRuntime_UnregisterData(old);
-    if (GuestRuntime_IsBound()) GuestRuntime_RegisterAllocation(p, length);
-    return p;
+    return GuestRuntime_ReallocRegistered(GuestRuntime_ResolveData(pointer, 1), length);
 }

@@ -28,6 +28,7 @@
 #include "pc/mods/mods.h"
 #include "battle_models.h"
 #include "pc/mods/json.h"
+#include "fusion_table.h"
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
 #include "pc/platform/loading.h"
@@ -80,7 +81,7 @@ extern void Library_UpdateCardUsedFlag(int flag);
 /* Append-only once set: a card's identity is made when the card is added, and
  * never changes or goes (Cards_FindIdentity indexes it as far as the cards go). */
 static char *identities[CARD_TABLE_ID_END];
-static const JsonValue *definitions[CARD_TABLE_ID_END];
+static const JsonValue *definitions[CARD_TABLE_ID_END]; /* until read_own_fusions */
 static unsigned short model_ids[CARD_TABLE_ID_END], effect_ids[CARD_TABLE_ID_END], ai_effect_ids[CARD_TABLE_ID_END];
 /* Threshold plus one: zero inherits the effect's global/retail threshold. */
 static unsigned int trap_thresholds[CARD_TABLE_ID_END];
@@ -227,8 +228,10 @@ static int model_base(int model)
     const JsonValue *base = NULL;
     int i = mod_model(model), id;
     if (i < 0) return 0;
-    Mods_Model(i, NULL, &base, NULL);
-    id = Cards_Reference(base);
+    if (!Mods_ModelBaseCard(i, &id)) {
+        Mods_Model(i, NULL, &base, NULL);
+        id = Cards_Reference(base);
+    }
     return retail_monster(id) ? id : 0;
 }
 int Cards_ModelStatsIndex(int model)
@@ -292,28 +295,36 @@ int Cards_ExodiaPiece(int id)
 {
     return (unsigned)(id - EXODIA_FIRST_CARD_ID) < EXODIA_PIECE_COUNT && !not_exodia[id - EXODIA_FIRST_CARD_ID];
 }
-static int card_reference(const JsonValue *value)
-{
-    return Cards_Reference(value);   /* -1 matches no card, and makes none */
-}
 int Cards_Fusion(int a, int b, int *result)
 {
     int side;
     if (!Cards_Valid(a) || !Cards_Valid(b)) return 0;
     for (side = 0; side < 2; side++) {
-        const JsonValue *fusions = Json_Member(definitions[side ? b : a], "fusions");
-        int i;
-        for (i = 0; i < Json_Count(fusions); i++) {
-            const JsonValue *rule = Json_At(fusions, i);
-            int with = card_reference(Json_Member(rule, "with"));
-            if (with == (side ? a : b)) {
-                int output = card_reference(Json_Member(rule, "result"));
-                if (output && !Cards_Valid(output)) return 0;
-                *result = output; return 1;
-            }
+        int output;
+        if (FusionTable_FindOwn(side ? b : a, side ? a : b, &output)) {
+            if (output && !Cards_Valid(output)) return 0;
+            *result = output;
+            return 1;
         }
     }
     return 0;
+}
+
+/* Each card's own "fusions", once every card exists to be named (a reference that
+ * matches no card, -1, makes none, or stops the search for a result). The entries
+ * go with the rest of the list; the rows stay. */
+static void read_own_fusions(void)
+{
+    FusionTable_ClearOwn();
+    for (int id = 1; id <= gCard_nCount; id++) {
+        const JsonValue *fusions = Json_Member(definitions[id], "fusions");
+        for (const JsonValue *rule = Json_At(fusions, 0); rule; rule = Json_Next(rule)) {
+            int with = Cards_Reference(Json_Member(rule, "with"));
+            if (with > 0 && !FusionTable_AddOwn(id, with, Cards_Reference(Json_Member(rule, "result"))))
+                fprintf(stderr, "memories-pc: cards: card %d loses its own fusions: out of memory\n", id);
+        }
+        definitions[id] = NULL;
+    }
 }
 
 /* Own names and card text, in glyph codes. The game is handed them as text
@@ -2164,6 +2175,12 @@ void Cards_Build(void)
      * mod's "ui" is noted in the Mods window before any duel. */
     Loading_Step("Duel pictures", 0, 0);
     UiConfig_Load();
+    /* What the models' "base"s name is settled: the ids, not the manifest, go in
+     * a save state. */
+    Mods_ModelsSettle(Cards_Reference);
+    /* Nothing goes on pointing into the mods' "cards": they are read once. */
+    read_own_fusions();
+    Mods_CardsRelease();
 }
 
 /* --- what the game asks -------------------------------------------- */

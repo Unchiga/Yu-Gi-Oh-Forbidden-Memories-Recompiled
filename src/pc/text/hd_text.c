@@ -35,6 +35,7 @@
 #include "pc/cards/tables.h"
 #include "pc/cards/duel_ui.h"
 #include "pc/saves/save_slots.h"
+#include "pc/guest/try_alloc.h"
 #include "game/save_data.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -734,15 +735,20 @@ static int render(int slot, const unsigned char cell[CELL][CELL], int large, uin
 /* A new atlas for another factor: every picture is made again. */
 static int make_atlas(int wanted)
 {
+    /* There was no room for this factor (it is kept negative): the game's own
+     * font goes on being drawn, and this is not tried again for every glyph of
+     * every frame. */
+    if (wanted == -factor) return 0;
     free(atlas);
     side = SLOTS_ACROSS * CELL * wanted;
-    atlas = calloc((size_t)side * (size_t)side, 1);
+    atlas = Memories_TryCalloc((size_t)side * (size_t)side, 1);
     memset(entries, 0, sizeof(entries));
     memset(titles, 0, sizeof(titles));
     entry_count = slots_used = 0;
     generation++;
     if (!atlas) {
-        factor = side = 0;
+        factor = -wanted;
+        side = 0;
         return 0;
     }
     factor = wanted;

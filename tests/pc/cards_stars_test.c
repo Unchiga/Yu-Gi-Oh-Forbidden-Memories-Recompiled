@@ -45,6 +45,8 @@ static const char *model_names[2];
 static JsonDocument *model_bases[2];
 static int model_count_here;
 int Mods_ModelCount(void) { return model_count_here; }
+int Mods_ModelBaseCard(int i, int *card) { (void)i; (void)card; return 0; }
+void Mods_ModelsSettle(int (*card)(const struct JsonValue *)) { (void)card; }
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod)
 {
     if (i < 0 || i >= model_count_here) return -1;
@@ -174,18 +176,28 @@ static const char *const mod_cards[][2] = {
           " {\"replace\": 12, \"type\": \"Trap\", \"defense\": 0}]"},
 };
 
+static JsonDocument *cards_read[16];
+static int cards_read_count, cards_released;
 void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const struct JsonValue *cards, void *context),
                      void *context)
 {
     size_t i;
     for (i = 0; i < sizeof(mod_cards) / sizeof(mod_cards[0]); i++) {
         char error[256];
-        /* Kept: the cards keep their entries (definitions[]). */
+        /* Kept until Cards_Build ends, as the mod loader keeps them. */
         JsonDocument *document = Json_Parse(mod_cards[i][1], error, sizeof(error));
         if (!document) fprintf(stderr, "%s: %s\n", mod_cards[i][0], error);
         assert(document);
+        cards_read[cards_read_count++] = document;
         visit(mod_cards[i][0], ".", Json_Root(document), context);
     }
+}
+/* Freed, as the real one does: what this test reads after the build must not point
+ * into them, and under a sanitizer one that does is an error. */
+void Mods_CardsRelease(void)
+{
+    while (cards_read_count) Json_Free(cards_read[--cards_read_count]);
+    cards_released = 1;
 }
 int Mods_LoadedCount(void) { return 0; }
 int Mods_Loaded(int index) { return index; }
@@ -742,6 +754,7 @@ int main(void)
     assert(!Stars_NoStarUsed());
 
     Cards_Build();
+    assert(cards_released);
     assert(Stars_NoStarUsed());
 
     expect(1, 0, 0);
