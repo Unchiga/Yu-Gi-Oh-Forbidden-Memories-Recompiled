@@ -2,6 +2,7 @@
 #include "image.h"
 #include "state.h"
 #include "pc/platform/platform.h"
+#include "pc/platform/loading.h"
 #include "pc/debug/log.h"
 #include "pc/debug/symbols.h"
 #include "pc/debug/crash.h"
@@ -188,6 +189,16 @@ static void user_dir_fact(int writable, const char *why)
     else Monitor_Fact("user dir", "%s; writable: no: %s", Paths_UserDir(), why);
 }
 
+/* The loading screen's window was closed (or Back pressed): out the way the
+ * game's own exit goes (libetc.c, VSync), the clock first. */
+static void quit_while_loading(void)
+{
+    Monitor_Shared()->exiting = 1; /* a slow shutdown is not a freeze */
+    Platform_StopTimers();
+    Mods_Shutdown();
+    exit(0);
+}
+
 int main(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -236,15 +247,22 @@ int main(int argc, char **argv)
     if (Memories_ModulesInit() != 0) {
         return 1;
     }
+    /* Platform_Open begins the loading screen once its window is open, before
+     * it reads the mods (loading.h). */
+    Loading_SetQuit(quit_while_loading);
     if (Platform_Open("Yu-Gi-Oh! Forbidden Memories") != 0) {
         return 1;
     }
     Update_Start(); /* in the background; a newer release shows a notice */
     /* The mods are applied by now (Platform_Open reads the settings), and
      * the executable is in place: the cards they add come after its own. */
+    Loading_Step("Text and fonts", 0, 0);
     Text_Build();   /* the mods' translations and fonts, which the cards' names may use */
     Cards_Build();
+    Loading_Step("Sorting cards", 0, 0);
     Text_SortCards();
+    Loading_Step("Starting the game", 0, 0);
+    Loading_Finish();   /* the picture the game draws next replaces it */
     note_settings(SET_COUNT, 0);
     Settings_Observe(note_settings);
 #ifndef _WIN32 /* the Windows runtime has no line buffering, and takes no size 0 */

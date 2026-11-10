@@ -834,6 +834,15 @@ void Platform_Present(const uint16_t *vram, int stride, int x, int y, int w, int
     pump();
 }
 
+/* This backend has no loading screen (loading.h). */
+int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
+{
+    (void)line, (void)done, (void)total;
+    return -1;
+}
+
+void Platform_EndLoading(void) {}
+
 int Platform_ShouldQuit(void)
 {
     return quit;
