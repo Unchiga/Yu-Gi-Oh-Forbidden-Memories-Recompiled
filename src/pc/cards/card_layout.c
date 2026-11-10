@@ -891,8 +891,10 @@ int CardLayout_Active(void)
 int CardLayout_Styled(void)
 {
     LayoutSource source = find_source();
-    /* SetCard leaves the name empty when no style resolved. */
-    return full_bleed_of(&source) && current.name[0];
+    /* SetCard leaves the name empty when no style resolved. A style belongs to the mod that declared it,
+     * which is not the shared layout's owner when it is a mod of styles alone: that mod's switch decides. */
+    if (!current.name[0]) return 0;
+    return (current.mod >= 0 && mod_full_bleed(current.mod)) || full_bleed_of(&source);
 }
 
 int CardLayout_TitleStyled(int card_id)

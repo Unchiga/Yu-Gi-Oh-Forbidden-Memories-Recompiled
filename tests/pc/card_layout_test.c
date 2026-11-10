@@ -1475,6 +1475,7 @@ static void declared_default_is_the_switch(void)
     CHECK(!CardLayout_FrameStyleOf(1, &style));                                /* other cards: retail */
     CHECK(!strcmp(path_of(2), "/mods/foil/rainbow.png"));
     CHECK(CardLayout_FullBleed() && CardLayout_Part(CARD_LAYOUT_ATK).x == 11);   /* and its parts */
+    CHECK(CardLayout_Styled());                                                 /* its digits and labels too */
     reset();
     add_mod("hd", "/mods/hd", HD_MANIFEST, 1, NULL, 0);
     CHECK(!CardLayout_FrameStyleOf(1, &style) && !CardLayout_Active());
