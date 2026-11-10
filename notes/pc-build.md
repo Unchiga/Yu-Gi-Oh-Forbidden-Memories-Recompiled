@@ -973,6 +973,19 @@ below `run_module`'s frame with the byte before each native module call
 byte or the other differs from the interpreter. Every batch runs both over
 `--records gated`; a shape that differs under either is `keep` with the
 read in its note (84, beside 128), until its C writes what it reads.
+Shape 783 (`variant783_entry.c`) was the second: the spray loop sorts a box
+at `screen[0]`, which only the particle branches' `RotTransPersN` fills, so
+the plain sweep differed in five battles (records 252, 279, 350, 577, 590, a
+pixel in the white flash).
+
+**A module's `printf` format string is covered by the span.** The
+interpreter only logs a module's format string (`mips.c`, `LOG_MIPS_PRINTF`);
+native C calls the host's `printf` with it, so a mod that changed the string
+past the span could make it read or write anywhere (`%s`, `%n`).
+`model_gate.py check --disc` therefore finds each `printf(D_8013xxxx, ...)`
+of a native shape's C and fails when the string, through its NUL, is not
+inside the span; 643's and 672's spans are widened by 24 bytes over theirs
+(their data start was the string's first byte).
 
 ### Credits
 
