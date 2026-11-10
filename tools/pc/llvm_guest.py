@@ -304,8 +304,18 @@ def process(operation, text, **options):
             with tempfile.NamedTemporaryFile(
                 mode="w", dir=cache, delete=False
             ) as staging:
-                staging.write(result)
                 staged = Path(staging.name)
+                try:
+                    staging.write(result)
+                    # A rename can reach the disk before the data does: without
+                    # this a power cut leaves a good name on bad contents, which
+                    # every later build trusts and links with functions missing.
+                    staging.flush()
+                    os.fsync(staging.fileno())
+                except BaseException:
+                    staging.close()
+                    staged.unlink(missing_ok=True)
+                    raise
             staged.replace(cached)
     return json.loads(result) if operation == "inspect" else result
 

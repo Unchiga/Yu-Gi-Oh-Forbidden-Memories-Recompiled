@@ -30,6 +30,7 @@
 #include "pc/mods/json.h"
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
+#include "pc/platform/loading.h"
 #include "pc/debug/log.h"
 #include "pc/guest/low_memory.h"
 #include "pc/render/texture_dump.h"
@@ -37,6 +38,7 @@
 #include "pc/rng.h"
 #include "pc/compat/posix.h"
 #include "game/card_constants.h"
+#include "name_index.inc"
 #include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -75,6 +77,8 @@ extern unsigned char gDuel_abCardLevelAttr[];
 extern int Campaign_TestStoryFlag(int flag);
 extern void Library_UpdateCardUsedFlag(int flag);
 
+/* Append-only once set: a card's identity is made when the card is added, and
+ * never changes or goes (Cards_FindIdentity indexes it as far as the cards go). */
 static char *identities[CARD_TABLE_ID_END];
 static const JsonValue *definitions[CARD_TABLE_ID_END];
 static unsigned short model_ids[CARD_TABLE_ID_END], effect_ids[CARD_TABLE_ID_END], ai_effect_ids[CARD_TABLE_ID_END];
@@ -139,11 +143,44 @@ int Cards_CardEffectsReplace(int id) { return Cards_Valid(id) && card_effect_rep
 static unsigned int fusion_groups[CARD_TABLE_ID_END];
 static unsigned char has_fusion_groups[CARD_TABLE_ID_END];
 const char *Cards_Identity(int id) { return id > CARD_COUNT && Cards_Valid(id) && identities[id] ? identities[id] : ""; }
+/* The ids by identity, for the same reason as NameIndex: a big mod's fusions name
+ * the cards it adds a million times. Made as far as the cards go when asked.
+ * Asked from the game's thread only (it fills the table as it is asked). The
+ * hash folds case, as the names' does, though identities compare exactly: two
+ * that differ only in case share a chain, and the strcmp tells them apart. */
+#define IDENTITY_SLOTS 65536u
+_Static_assert(CARD_TABLE_ID_END * 2u <= IDENTITY_SLOTS, "the identity table is more than half empty");
+static unsigned short *identity_slots;
+static int identity_indexed;
+
+static void identities_changed(void)
+{
+    if (identity_slots) memset(identity_slots, 0, IDENTITY_SLOTS * sizeof(*identity_slots));
+    identity_indexed = 0;
+}
+
 int Cards_FindIdentity(const char *identity)
 {
     int id;
-    if (!identity || !*identity) return 0;
-    for (id = CARD_ID_END; id <= gCard_nCount; id++) if (identities[id] && !strcmp(identities[id], identity)) return id;
+    unsigned slot;
+    if (!identity || !*identity || gCard_nCount < CARD_ID_END) return 0;   /* no card mod: no identity */
+    if (!identity_slots) identity_slots = calloc(IDENTITY_SLOTS, sizeof(*identity_slots));
+    if (!identity_slots) {
+        for (id = CARD_ID_END; id <= gCard_nCount; id++) if (identities[id] && !strcmp(identities[id], identity)) return id;
+        return 0;
+    }
+    if (identity_indexed > gCard_nCount) identities_changed();
+    for (id = identity_indexed < CARD_ID_END ? CARD_ID_END : identity_indexed + 1; id <= gCard_nCount; id++) {
+        if (!identities[id]) continue;
+        slot = NameIndex_Hash(identities[id], 0) & (IDENTITY_SLOTS - 1u);
+        while (identity_slots[slot]) slot = (slot + 1u) & (IDENTITY_SLOTS - 1u);
+        identity_slots[slot] = (unsigned short)id;
+    }
+    if (gCard_nCount > identity_indexed) identity_indexed = gCard_nCount;
+    for (slot = NameIndex_Hash(identity, 0) & (IDENTITY_SLOTS - 1u); identity_slots[slot];
+         slot = (slot + 1u) & (IDENTITY_SLOTS - 1u)) {
+        if (identities[identity_slots[slot]] && !strcmp(identities[identity_slots[slot]], identity)) return identity_slots[slot];
+    }
     return 0;
 }
 int Cards_ModelId(int id) { return Cards_Valid(id) && model_ids[id] ? model_ids[id] : Cards_BaseId(id); }
@@ -629,15 +666,6 @@ static const char *const frame_names[] = {"Monster", "Magic", "Trap", "Ritual", 
  * Monster, Magic, Trap and Ritual (the disc's own labels for them). */
 static const char *const frame_color_names[] = {"Gold", "Green", "Pink", "Blue"};
 
-static int same_words(const char *a, const char *b)
-{
-    if (!a || !b) return 0;
-    for (; *a && *b; a++, b++) {
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
-    }
-    return !*a && !*b;
-}
-
 /* Json_Number's long, narrowed to int only when it actually fits -- -1
  * otherwise, the same sentinel a name choice() does not find already
  * means. Past int range (e.g. 2^32), narrowing first wraps into some
@@ -658,7 +686,7 @@ static int choice(const JsonValue *value, const char *const *choices, int count)
     text = Json_String(value, NULL);
     if (!text) return -1;
     for (i = 0; i < count; i++) {
-        if (choices[i] && same_words(text, choices[i])) return i;
+        if (choices[i] && Names_SameWords(text, choices[i])) return i;
     }
     return narrow(Json_Number(value, -1));
 }
@@ -676,18 +704,6 @@ static int type_choice(const JsonValue *value)
     return type >= 0 && type < CARD_TYPE_LIMIT && type_names[type] ? type : -1;
 }
 
-
-/* Letters and digits only, lowercased: "Blue-Eyes White Dragon" finds the
- * disc's "Blue-eyes White Dragon". */
-static int same_letters(const char *a, const char *b)
-{
-    for (;;) {
-        while (*a && !isalnum((unsigned char)*a)) a++;
-        while (*b && !isalnum((unsigned char)*b)) b++;
-        if (!*a || !*b) return !*a && !*b;
-        if (tolower((unsigned char)*a++) != tolower((unsigned char)*b++)) return 0;
-    }
-}
 
 /* "card_types": {"types": [{"id": 24, "name": "Cyberse"}]}.  A
  * declaration for an existing id changes its display/manifest name, never
@@ -730,7 +746,7 @@ static void add_card_types_section(const char *mod, const char *directory, const
              * custom) silently shadows that type whenever this one's name
              * is looked up by text instead of id. */
             for (other = 0; other < CARD_TYPE_LIMIT; other++) {
-                if (other != id && type_names[other] && same_letters(Json_String(name, ""), type_names[other])) {
+                if (other != id && type_names[other] && Names_SameLetters(Json_String(name, ""), type_names[other])) {
                     Mods_Note(mod, "%s.types[%d]: \"%s\" is already type %d's name; declaration left out",
                               where, index, Json_String(name, ""), other);
                     goto next_type;
@@ -739,7 +755,7 @@ static void add_card_types_section(const char *mod, const char *directory, const
             /* Retail spellings remain lookup aliases after a rename.  Do
              * not let a later custom declaration make one ambiguous. */
             for (other = CARD_TYPE_DRAGON; other <= CARD_TYPE_EQUIP; other++) {
-                if (other != id && same_letters(Json_String(name, ""), retail_type_names[other])) {
+                if (other != id && Names_SameLetters(Json_String(name, ""), retail_type_names[other])) {
                     Mods_Note(mod, "%s.types[%d]: \"%s\" is already type %d's retail alias; declaration left out",
                               where, index, Json_String(name, ""), other);
                     goto next_type;
@@ -810,28 +826,33 @@ int Cards_FusionGroupNamed(const char *text)
     };
     size_t i;
     for (i = 0; i < sizeof(groups) / sizeof(groups[0]); i++)
-        if (same_letters(text, groups[i].name)) return groups[i].group;
+        if (Names_SameLetters(text, groups[i].name)) return groups[i].group;
     return CARD_FUSION_GROUP_NONE;
 }
 
 /* The retail names, decoded once: a manifest may name hundreds of cards. */
 static char (*retail_names)[48];
+static NameIndex *retail_index;
 
 static int retail_by_name(const char *text)
 {
     int id;
     if (!retail_names) {
+        retail_index = calloc(1, sizeof(*retail_index));
         retail_names = calloc(CARD_ID_END, sizeof(*retail_names));
-        if (!retail_names) return 0;
-        for (id = 1; id <= CARD_COUNT; id++) retail_name(id, retail_names[id], sizeof(retail_names[id]));
+        if (!retail_names || !retail_index) {
+            free(retail_names);
+            free(retail_index);
+            retail_names = NULL;
+            retail_index = NULL;
+            return 0;
+        }
+        for (id = 1; id <= CARD_COUNT; id++) {
+            retail_name(id, retail_names[id], sizeof(retail_names[id]));
+            NameIndex_Add(retail_index, id, retail_names[id]);
+        }
     }
-    for (id = 1; id <= CARD_COUNT; id++) {
-        if (same_words(text, retail_names[id])) return id;
-    }
-    for (id = 1; id <= CARD_COUNT; id++) {
-        if (same_letters(text, retail_names[id])) return id;
-    }
-    return 0;
+    return NameIndex_Find(retail_index, text, retail_names[0], sizeof(retail_names[0]));
 }
 
 int Cards_Reference(const JsonValue *value)
@@ -876,13 +897,13 @@ int Cards_TypeNamed(const char *text)
 {
     int type;
     for (type = 0; text && type < CARD_TYPE_LIMIT; type++) {
-        if (type_names[type] && same_letters(text, type_names[type])) return type;
+        if (type_names[type] && Names_SameLetters(text, type_names[type])) return type;
     }
     /* A retail rename changes what the player sees, not what existing mods
      * may write in terrain/equip/ritual rules.  Keep the disc spelling as a
      * permanent lookup alias. */
     for (type = CARD_TYPE_DRAGON; text && type <= CARD_TYPE_EQUIP; type++) {
-        if (same_letters(text, retail_type_names[type])) return type;
+        if (Names_SameLetters(text, retail_type_names[type])) return type;
     }
     return -1;
 }
@@ -1946,11 +1967,24 @@ static void add_entry(const char *mod, const char *directory, int index, const J
     }
 }
 
+/* The loading screen's count (loading.h): the entries of every mod's
+ * "cards", counted before they are added so the screen has a total. */
+static unsigned entries_total, entries_done;
+
+static void count_mod(const char *mod, const char *directory, const struct JsonValue *cards, void *context)
+{
+    (void)mod, (void)directory, (void)context;
+    entries_total += (unsigned)Json_Count(cards);
+}
+
 static void add_mod(const char *mod, const char *directory, const struct JsonValue *cards, void *context)
 {
     const struct JsonValue *entry;
     int i;
-    for (i = 0, entry = Json_At(cards, 0); entry; i++, entry = Json_Next(entry)) add_entry(mod, directory, i, entry, context);
+    for (i = 0, entry = Json_At(cards, 0); entry; i++, entry = Json_Next(entry)) {
+        add_entry(mod, directory, i, entry, context);
+        Loading_Step("Cards", ++entries_done, entries_total);
+    }
 }
 
 void Cards_Build(void)
@@ -1972,6 +2006,7 @@ void Cards_Build(void)
     for (id = 0; id <= CARD_COUNT; id++) gCard_awBaseId[id] = (unsigned short)id;
     context = calloc(1, sizeof(*context));
     if (!context) return;
+    Mods_VisitCards(count_mod, NULL);
     Mods_VisitCards(add_mod, context);
     Mods_SetCardResolver(Cards_FindIdentity);
     Mods_SetOverlapCards(overlap_card, Cards_NameUtf8, overlap_card_info);
@@ -2013,21 +2048,27 @@ void Cards_Build(void)
      * new ones included. */
     /* The duelists a mod adds, before the tables: "drops" and "decks" name
      * them, so they have to exist by the time those are read. */
+    Loading_Step("Duelists", 0, 0);
     Duelists_Build();
+    Loading_Step("Tables", 0, 0);
     Tables_Build();
     /* What the stars a mod adds are worth noting, now the cards have them
      * and "limits" has set the stat cap (stars.h). */
+    Loading_Step("Stars and starter decks", 0, 0);
     Stars_Check();
     /* And so do the starter decks a new game may be dealt (starter.h). */
     Starter_Build();
     /* And the card packs (packs.h), whose files and pictures a state's
      * mod signature covers. */
+    Loading_Step("Card packs", 0, 0);
     Packs_Build();
     Mods_SetPackSignature(Packs_Signature());
     /* The tower (tower.h), whose floors name duelists and cards. */
+    Loading_Step("Tower", 0, 0);
     Tower_Build();
     /* The duel's pictures (ui_config.h), read now so that a mistake in a
      * mod's "ui" is noted in the Mods window before any duel. */
+    Loading_Step("Duel pictures", 0, 0);
     UiConfig_Load();
     /* What the models' "base"s name is settled: the ids, not the manifest, go in
      * a save state. */

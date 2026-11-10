@@ -834,6 +834,15 @@ void Platform_Present(const uint16_t *vram, int stride, int x, int y, int w, int
     pump();
 }
 
+/* This backend has no loading screen (loading.h). */
+int Platform_ShowLoading(const char *line, unsigned done, unsigned total)
+{
+    (void)line, (void)done, (void)total;
+    return -1;
+}
+
+void Platform_EndLoading(void) {}
+
 int Platform_ShouldQuit(void)
 {
     return quit;
@@ -851,6 +860,13 @@ void Platform_SetStateSlot(int slot)
 }
 
 void Platform_PumpEvents(void) { if (display) pump(); }
+
+/* No mouse for the overlay menus on this backend (platform.h). */
+int Platform_WindowPointer(int *x, int *y, unsigned *buttons)
+{
+    (void)x; (void)y; (void)buttons;
+    return 0;
+}
 
 uint16_t Platform_Pad(int port)
 {

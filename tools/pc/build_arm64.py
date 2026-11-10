@@ -32,6 +32,7 @@ from build_config import (
     native_sources,
 )
 from direct_overlay_bridges import ENTRIES as DIRECT_OVERLAY_ENTRIES
+import model_gate_port
 from direct_overlay_bridges import emit_bridge, validate_signature
 from guest_build import (
     CHECKED_LIBC,
@@ -272,6 +273,11 @@ def prepare_guest_units(jobs, groups, natives, ordinary, path_for, address_table
                     for k, v in address_tables.get(group, {}).items()
                 }
             )
+        if group in SOURCE_ADDRESSED_MODULES:
+            # Upstream's names for resident functions the ported C calls
+            # (model_gate_names.txt): aliases to the port's name below.
+            for symbol, address in model_gate_port.read_names().items():
+                pins.setdefault(symbol, address)
         pin_maps[group] = pins
     pin_maps["native"] = {
         **address_tables["SLUS_014.11"],
