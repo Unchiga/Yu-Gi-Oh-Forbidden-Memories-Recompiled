@@ -1,8 +1,9 @@
 #ifndef MEMORIES_TRANSLATED_RUNTIME_H
 #define MEMORIES_TRANSLATED_RUNTIME_H
 #include "pc/memory.h"
-/* Experimental native backend helpers used by translated LLVM IR.
- * Registration is single-threaded, before timers/game execution start. */
+/* Experimental native backend helpers used by translated LLVM IR. Registering
+ * data, resolving and encoding are safe from any thread (translated_runtime.c);
+ * Bind, Reset, RegisterFunction and walking the regions are not. */
 /* Fatal diagnostics are formatted before abort, never in a signal handler.
  * This end writes them, so the handler's translated code never reads the
  * text: "translated runtime: <detail>\n" to `fd`, and nothing when there is
@@ -42,6 +43,9 @@ int GuestRuntime_RegisterAllocationAt(void *host, size_t length, uint32_t guest)
 int GuestRuntime_RegisterMapping(void *host, size_t length, uint32_t guest);
 int GuestRuntime_ReserveRegions(size_t count);
 int GuestRuntime_UnregisterData(void *host);
+/* realloc for a registered heap block: the new block is registered, the old one
+ * not, and no other thread can be handed the old block before that is done. */
+void *GuestRuntime_ReallocRegistered(void *host, size_t length);
 int GuestRuntime_RegisterFunction(uint32_t guest, void (*host)(void));
 void *GuestRuntime_ResolveData(void *address, size_t length);
 /* Clear a resolved texture-map span and count entries whose value changed. */

@@ -69,14 +69,17 @@ beside the loaded Mach-O UUID and build identity.
 
 External guest accesses cache a region index per 4 KiB page and validate the
 complete requested span on every hit. Small allocations may share a page;
-candidate misses use a guest-base-sorted index with logarithmic lookup. Registry
-growth retains indices, and removal or reset invalidates page candidates with
-an epoch. The page candidates occupy approximately 3.5 MiB of native storage,
+candidate misses use a guest-base-sorted index with logarithmic lookup. Every
+thread of the game registers and resolves. Writers take a lock; the tables are one
+mapping that never moves; a region keeps its slot while it lives and a slot is used
+again only long after it was freed, so a hit reads its slot with no barrier; the
+sorted indexes are read under a sequence that a change makes odd. Removal or reset
+invalidates page candidates with an epoch. The page candidates occupy approximately 3.5 MiB of native storage,
 outside guest memory and save payloads.
 Encoding native pointers uses separate host-base-sorted indexes for functions
 and data instead of scanning the entire registry. Function aliases keep their
 first registered token; containing allocations take precedence over adjacent
-one-past pointers. Registry growth and swap removal preserve both indexes.
+one-past pointers.
 External registrations reject spans that overlap RAM or scratchpad aliases,
 and host spans that belong to the bound console image. Console map constants
 are shared with the IR compiler, whose RAM-at-offset-zero assumption is

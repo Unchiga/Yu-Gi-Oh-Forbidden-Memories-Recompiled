@@ -46,17 +46,7 @@ void GuestRuntime_free(void *pointer)
 }
 void *GuestRuntime_realloc(void *pointer, size_t length)
 {
-    void *old, *p;
-    volatile uintptr_t key;
     if (!pointer) return GuestRuntime_malloc(length);
     if (!length) { GuestRuntime_free(pointer); return NULL; }
-    old = GuestRuntime_ResolveData(pointer, 1);
-    key = (uintptr_t)old;
-    p = realloc(old, length);
-    if (!p) return NULL;
-    /* Only the old address is looked up, never read. Through a volatile, so
-     * GCC 13's -Wuse-after-free cannot trace the key back to the freed block. */
-    GuestRuntime_UnregisterData((void *)key);
-    if (GuestRuntime_IsBound()) GuestRuntime_RegisterAllocation(p, length);
-    return p;
+    return GuestRuntime_ReallocRegistered(GuestRuntime_ResolveData(pointer, 1), length);
 }
