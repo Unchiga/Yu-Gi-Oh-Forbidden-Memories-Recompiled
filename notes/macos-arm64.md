@@ -95,8 +95,18 @@ is cached across a module switch; the interpreter fallback is unchanged.
 Texture-pack tables, resampled pixels and decoded PNG caches are exclusively
 host data with LP64 pointers. Their allocations retain native libc ownership
 and consume no guest tokens. They are rebuilt by the renderer rather than
-serialized as guest heaps. Game allocations, guest globals, mod storage and
-callback bridges keep their registered memory contracts.
+serialized as guest heaps. A parsed manifest (`src/pc/mods/json.c`) and the overlap
+report (`overlap.c`) are host data too: only `src/pc` reads them, through 64-bit
+pointers, and neither goes in a save state. Everything else `src/pc` allocates does,
+and `relocate_word` only moves words that point into the old image or at saved
+regions, so such a block must not point into a manifest, nor at a block of libc's: a
+state loaded in another session would leave the pointer stale. The translated build
+renames `malloc` but not `strdup`, so a copy kept in such a block comes from
+`saved_text` (`src/pc/mods/saved_text.inc`). A model's name and path and a starter
+deck's name are copies, and a model's `base` is a card id once the cards are built.
+Statics of `src/pc` are not in a state, so `definitions[]` and the like may. A state from before this (no `REGIONS_FORMAT` in
+its last region) is refused: its heap tokens do not match. Game allocations, guest
+globals, mod storage and callback bridges keep their registered memory contracts.
 
 ## Code and test entry points
 
