@@ -133,7 +133,7 @@ static void preview_probe(MemoriesModEvent *event) { (void)event; }
 /* The game's check of a mod's model modules (Mods_SetModuleCheck), as the
  * stubbed disc reads: a module counts when any of its bytes is not zero, and
  * the sectors are read as the game would, with the mods' changes in. */
-static int fake_mips(const unsigned char *stages, char *detail, size_t size)
+static int module_check_mips(const unsigned char *stages, char *detail, size_t size)
 {
     static const int first[6] = {0, 10, 20, 30, 40, 42}, sectors[6] = {10, 10, 10, 10, 2, 2};
     int count = 0;
@@ -147,7 +147,7 @@ static int fake_mips(const unsigned char *stages, char *detail, size_t size)
     return count;
 }
 
-static int fake_read(int lba, int sectors, void *out)
+static int module_check_read(int lba, int sectors, void *out)
 {
     memset(out, 0, (size_t)sectors * 2048);
     for (int i = 0; i < sectors; i++) Mods_DiscSector(lba + i, (unsigned char *)out + (size_t)i * 2048);
@@ -270,7 +270,7 @@ int main(void)
                "  \"data\": [ { \"file\": \"\\\\DATA\\\\MODEL.MRG;1\","
                "               \"patch\": [ { \"at\": \"0xE6800\", \"bytes\": \"01\" },"
                "                            { \"at\": \"0x119000\", \"bytes\": \"01\" } ] } ] }");
-    Mods_SetModuleCheck(fake_mips, fake_read);
+    Mods_SetModuleCheck(module_check_mips, module_check_read);
 
     snprintf(settings, sizeof(settings), "%s/settings.txt", root);
     write_text("settings.txt", "hand_camera=1\nmod.replacer=1\n");
