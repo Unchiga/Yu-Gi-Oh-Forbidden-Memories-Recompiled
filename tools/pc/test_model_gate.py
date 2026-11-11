@@ -38,10 +38,10 @@ class ModelGate(unittest.TestCase):
         """config/pc/model_retail.csv: code rows for each native shape, images
         for the rest, and its table is what it gives."""
         retail = model_gate.load_retail()
-        self.assertEqual(model_gate.retail_problems(self.rows, retail), [])
+        self.assertEqual(model_gate.retail_problems(self.rows, retail, model_gate.primary_rows()), [])
         text = model_gate.RETAIL_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertEqual(text, model_gate.retail_header_text(retail))
-        self.assertEqual(sum(entry["kind"] == "primary" for entry in retail), 20)
+        self.assertEqual(sum(entry["kind"] == "primary" for entry in retail), 2 * len(model_gate.primary_rows()))
 
     def test_retail_problems_names_a_missing_or_wrong_row(self):
         retail = model_gate.load_retail()
@@ -394,6 +394,32 @@ class OracleBackends(unittest.TestCase):
     def test_native_where_the_table_says_is_a_match(self):
         verdict = self.verdict(side("subject", "native"), side("reference", "interpreter"))
         self.assertEqual(verdict["status"], "identical")
+
+    @staticmethod
+    def with_primary(run, ways):
+        """A run that also called slot A's primary module (record 116's effect, 39)."""
+        run["calls"] = run["calls"] + [(1, "primary", "A", 39, 0)]
+        run["paths"] = dict(run["paths"], **{"primary 39 in A": [ways]})
+        return run
+
+    def test_primary_backends_are_checked_as_the_variants(self):
+        subject = self.with_primary(side("subject", "native"), "native")
+        reference = self.with_primary(side("reference", "interpreter"), "interpreter")
+        holds = {"A": True, "B": False}
+        self.assertEqual(model_oracle.compare(subject, reference, holds, (True, False), holds)["status"], "identical")
+        subject = self.with_primary(side("subject", "native"), "interpreter")
+        verdict = model_oracle.compare(subject, reference, holds, (True, False), holds)
+        self.assertEqual(verdict["status"], "error")
+        self.assertIn("slot A holds a primary module the table runs as native C and ran interpreter", verdict["why"])
+        # The reference asked for the interpreter: native C there is an error.
+        reference = self.with_primary(side("reference", "interpreter"), "native")
+        verdict = model_oracle.compare(self.with_primary(side("subject", "native"), "native"), reference, holds,
+                                       (True, False), holds)
+        self.assertIn("ran native C for its primary module", verdict["why"])
+        # A slot whose primary holds native code but made no primary call (a
+        # record without one calls none) is no error.
+        self.assertEqual(model_oracle.compare(side("subject", "native"), side("reference", "interpreter"), holds,
+                                              (True, False), {"A": True, "B": True})["status"], "identical")
 
     def test_interpreter_where_native_is_expected_is_an_error(self):
         verdict = self.verdict(side("subject", "interpreter"), side("reference", "interpreter"))

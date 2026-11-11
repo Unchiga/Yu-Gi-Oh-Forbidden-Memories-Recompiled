@@ -589,9 +589,10 @@ Two kinds of duel code were loaded as MIPS bytes from the archives:
   id 23;
 - the per-monster MODEL control modules the loader swaps into
   `0x8013A000`/`0x8013B000` (slot A) and `0x8017A000`/`0x8017B000` (slot B)
-  with each monster: a primary module (`return 2` in every record seen) and
-  a variant module holding that monster's attack choreography and impact
-  particles. MODEL.MRG has 621 records and 1,181 distinct variant modules.
+  with each monster: a primary module (`return 2` in all but ten records,
+  and the disc calls only those ten's) and a variant module holding that
+  monster's attack choreography and impact particles. MODEL.MRG has 621
+  records and 1,181 distinct variant modules.
 
 Translating those one by one was the earlier plan; the default now runs the
 loaded bytes through the interpreter in `src/pc/guest/mips.c` (integer MIPS I
@@ -749,13 +750,43 @@ of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
 those 1,524 bytes runs the interpreter, and one that changes anything after
 them (the model's tables and textures) still runs the C.
 
+**The primary modules in native C.** A record's primary module is `return 2`
+in all but ten records (8, 116, 141, 150, 167, 320, 344, 366, 607 and 615,
+models 8 to 715), and the disc calls only those ten's: the oracle's
+battles over every record call no other. They are five shapes of upstream's
+`spanish_model_primary` C (every region's): `copy` (first word 38 in slot A,
+two records), `effect` (39, five records), `primary62` (45), `primary63`
+(46) and `primary64` (47). `config/pc/model_primary_gate.csv` is their
+table, with the variants' columns, and `model_primary_gate_table.inc`
+(`MODEL_PRIMARY_ROW`, the variants' fields and a modulus) what the game is
+built with; `model_gate.py port --primary` copies their C, `update --disc`
+writes their rows from the disc (`read_primary_shapes`), `check` holds them
+as it holds the variants'. `model_modules.c` gates them as the variants, with
+a verdict per slot of their own:
+- `copy` and `effect` share their code over several records and differ in
+  their data. Their spans end at their tables' last entries (`0x148`,
+  `0x10C`), which every image shares.
+- `effect` picks its entry with `command % 100` (and waits for the animation
+  `command / 100 + 3`): its `command_table` ends in `mod100`, and
+  `ModelGate_CommandCoveredModulo` covers a setup whose entry is in the table.
+  The retail commands are 0, 1, 101 and 102.
+- `primary62`, `primary63` and `primary64` have one image each, hashed whole
+  (the textures they upload are described inside the module). Their tables
+  have one entry the commands may pick: `primary63`'s second is zeros, a
+  divisor of 0.
+
+A `return 2` primary, which the disc never calls, a mod's record may: two
+word compares per call give it `native_primary`, which returns 2 as it would,
+and `model_module_class.c` counts it as the disc's.
+
 **What the disc's modules are, for a mod's.** `update --disc` also writes
 `config/pc/model_retail.csv` (and `write` its table,
 `src/pc/overlays/model_retail_table.inc`):
 - `code` rows: each shape's code in each slot, the SHA-256 of its first
   bytes. For a native row the first min(`data_start`, `span`) bytes; for
   any other row its span, the code its images share (the row's own hash);
-- `primary` rows: the 20 primary modules that are not `return 2`.
+- `primary` rows: the same for the primary shapes
+  (`config/pc/model_primary_gate.csv`, below).
 
 `check` holds the list to the table without the disc (one code row per slot
 of each shape, with the row's identifier and size, and a non-native row's
@@ -976,7 +1007,9 @@ every distinct image of the records asked for must count. Hashing after the
 battle is not enough: record 40's second-star modules (762 in slot A, 859
 in B) write six bytes at +0x1FFC inside their own image. The primary
 modules are reported too: 10 of the 605 distinct ones in slot A (604 in B)
-are called in these battles. The VRAM hash covers the frame being drawn, so
+are called in these battles, the ten that are not `return 2`, and the trace
+names their backend as the variants', which the oracle holds to
+`config/pc/model_primary_gate.csv` in the same way. The VRAM hash covers the frame being drawn, so
 it differs a frame before the screen does: `--shots N` pictures the first
 differing frame, the one before and the one after.
 

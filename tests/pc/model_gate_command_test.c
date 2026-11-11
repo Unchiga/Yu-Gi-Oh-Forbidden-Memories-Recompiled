@@ -57,6 +57,17 @@ int main(void)
     /* and it does not touch a setup: the next attack's setup is judged on its command. */
     assert(ModelGate_CommandCovered(3u, 0x1F9Cu, 0x28u, 0x8013B000u, 2, 0, 1, 1));
     assert(!ModelGate_CommandCovered(3u, 0x1F9Cu, 0x28u, 0x8013B000u, 3, 0, 1, 1));
+    /* A primary's effect (model_primary_gate.csv, mod100) picks entry command
+     * % 100 of its 3: the retail commands 0, 1, 101 and 102 are covered, 103
+     * is not, and without the modulus 101 is past the table. */
+    assert(ModelGate_CommandCoveredModulo(3u, 0xDCu, 0x10u, 0x8013A000u, 0, 0, 0, 0, 100u));
+    assert(ModelGate_CommandCoveredModulo(3u, 0xDCu, 0x10u, 0x8013A000u, 101, 0, 0, 0, 100u));
+    assert(ModelGate_CommandCoveredModulo(3u, 0xDCu, 0x10u, 0x8013A000u, 102, 0, 0, 0, 100u));
+    assert(!ModelGate_CommandCoveredModulo(3u, 0xDCu, 0x10u, 0x8013A000u, 103, 0, 0, 0, 100u));
+    assert(!ModelGate_CommandCoveredModulo(3u, 0xDCu, 0x10u, 0x8013A000u, 101, 0, 0, 0, 0u));
+    /* Its updates read the entry pointer as any row's. */
+    assert(ModelGate_CommandCoveredModulo(3u, 0xDCu, 0x10u, 0x8013A000u, -1, 0x8013A0ECu, 0, 0, 100u));
+    assert(!ModelGate_CommandCoveredModulo(3u, 0xDCu, 0x10u, 0x8013A000u, -1, 0x8013A10Cu, 0, 0, 100u));
     puts("model gate command bounds ok");
     return 0;
 }

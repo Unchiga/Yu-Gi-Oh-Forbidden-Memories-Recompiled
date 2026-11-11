@@ -156,6 +156,15 @@ def native_row(disc: "Disc", record: int, alternative: int, slot: str) -> "model
     return None
 
 
+def native_primary_row(disc: "Disc", record: int, slot: str) -> "model_gate.Row | None":
+    """The same for the record's primary module (config/pc/model_primary_gate.csv)."""
+    image = disc.primary(record, slot)
+    for row in model_gate.native_primary_rows():
+        if hashlib.sha256(image[:row.span]).hexdigest() == row.sha256(slot):
+            return row
+    return None
+
+
 class Battle(NamedTuple):
     record: int
     alternative: int
@@ -392,45 +401,50 @@ def first_difference(mine: array, theirs: array) -> int | None:
     return None
 
 
-def backends(side: dict) -> dict[str, set[str]]:
-    """{slot: what ran its variant module calls} from a side's paths."""
+def backends(side: dict, kind: str = "variant") -> dict[str, set[str]]:
+    """{slot: what ran its variant (or primary) module calls} from a side's paths."""
     found: dict[str, set[str]] = {}
     for module, ways in side["paths"].items():
-        kind, _, slot = module.rpartition(" in ")
-        if kind.startswith("variant "):
+        what, _, slot = module.rpartition(" in ")
+        if what.startswith(kind + " "):
             found.setdefault(slot, set()).update(ways)
     return found
 
 
-def backend_errors(side: dict, expected: dict[str, bool], native_allowed: bool) -> list[str]:
+def backend_errors(side: dict, expected: dict[str, bool], native_allowed: bool, kind: str = "variant") -> list[str]:
     """Where a side ran something other than what the table says: native C
     in the slots whose image is a native row's code, if it is a default-mode
     side, and the interpreter in the others; never native for a side that
     asked for the interpreter or the stand-in."""
     errors = []
-    ran = backends(side)
+    ran = backends(side, kind)
+    what = "primary " if kind == "primary" else ""   # the variants' messages keep their words
     # A slot that holds a native row's code and made no variant call at all
     # is an error too (compare() has already said so for the slots a battle's
     # outcome runs; expected holds only those).
     for slot in sorted(expected):
-        if native_allowed and expected[slot] and slot not in ran:
+        # A primary module is called only by the records with one (the disc
+        # calls no `return 2`): a slot that made no primary call is no error.
+        if native_allowed and expected[slot] and slot not in ran and kind == "variant":
             errors.append(f"{side['side']}: slot {slot} holds a module the table runs as native C and made no call")
     for slot, ways in sorted(ran.items()):
         want_native = native_allowed and expected.get(slot, False)
         if want_native and ways != {"native"}:
-            errors.append(f"{side['side']}: slot {slot} holds a module the table runs as native C and ran "
+            errors.append(f"{side['side']}: slot {slot} holds a {what}module the table runs as native C and ran "
                           f"{', '.join(sorted(ways))}")
         elif not want_native and "native" in ways:
-            errors.append(f"{side['side']}: slot {slot} ran native C where the table says "
+            errors.append(f"{side['side']}: slot {slot} ran native C{' for its primary module' if what else ''} where the table says "
                           f"{'interpreter' if native_allowed else 'the mode asks for no native C'}")
     return errors
 
 
 def compare(subject: dict, reference: dict, holds_native: dict[str, bool] | None = None,
-            native_allowed: tuple[bool, bool] = (False, False)) -> dict:
+            native_allowed: tuple[bool, bool] = (False, False),
+            holds_native_primary: dict[str, bool] | None = None) -> dict:
     """What one battle's two runs say: its verdict and why. `holds_native` says
-    which slots hold a native row's code; `native_allowed` whether each side
-    (subject, reference) is in the mode that runs native C."""
+    which slots hold a native row's code, `holds_native_primary` which hold a
+    native primary row's; `native_allowed` whether each side (subject,
+    reference) is in the mode that runs native C."""
     verdict = {"battle": subject["battle"], "frames": [len(subject.get("hashes", ())), len(reference.get("hashes", ()))]}
     errors = [f"{side['side']}: {side['error']}" for side in (subject, reference) if side.get("error")]
     errors += [f"{side['side']}: no frame hash for {side['hashes'].count(0)} of its {len(side['hashes'])} frames"
@@ -447,6 +461,8 @@ def compare(subject: dict, reference: dict, holds_native: dict[str, bool] | None
     if not errors and holds_native is not None:
         for side, allowed in zip((subject, reference), native_allowed):
             errors += backend_errors(side, holds_native, allowed)
+            if holds_native_primary is not None:
+                errors += backend_errors(side, holds_native_primary, allowed, "primary")
     if errors:
         verdict.update(status="error", why="; ".join(errors))
         return verdict
@@ -656,8 +672,10 @@ def main() -> int:
     expected = {b.key: {slot: native_row(disc, b.record, b.alternative, slot) is not None
                         for slot in running_slots(b.outcome)} for b in battles}
     allowed = tuple(mode not in ("interpreter", "spark") for mode in (arguments.mode, arguments.reference_mode))
-    verdicts = [compare(results["subject"][b.key], results["reference"][b.key], expected[b.key], allowed)
-                for b in battles]
+    primaries = {b.key: {slot: native_primary_row(disc, b.record, slot) is not None for slot in "AB"}
+                 for b in battles}
+    verdicts = [compare(results["subject"][b.key], results["reference"][b.key], expected[b.key], allowed,
+                        primaries[b.key]) for b in battles]
     cover = coverage(battles, results["subject"], results["reference"], disc)
     bases = sorted({r["base_hash"] for side in results.values() for r in side.values() if "base_hash" in r})
 

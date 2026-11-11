@@ -5,11 +5,12 @@
 
 /* What a MODEL.MRG control module is next to the disc's, so the game can say
  * which mods still need the MIPS interpreter (notes/modding.md, "Attack code:
- * C, not MIPS"). The disc's modules are config/pc/model_gate.csv's native rows
- * and config/pc/model_retail.csv (tools/pc/model_gate.py). */
+ * C, not MIPS"). The disc's modules are the native rows of config/pc/model_gate.csv
+ * (variant) and config/pc/model_primary_gate.csv (primary), and
+ * config/pc/model_retail.csv (tools/pc/model_gate.py). */
 typedef enum {
     MODEL_MODULE_NATIVE,  /* the disc's code, which the decomp's C runs; a primary that is `return 2` */
-    MODEL_MODULE_RETAIL,  /* the disc's code of a shape (or a primary) the port still interprets: the port's
+    MODEL_MODULE_RETAIL,  /* the disc's code of a shape the port still interprets: the port's
                            * to port, whatever data follows the code, not the mod's */
     MODEL_MODULE_EMPTY,   /* no entry (its word at +4 is 0): the stand-in runs it */
     MODEL_MODULE_TABLES,  /* a native shape's code, with other data where its C reads (code_size..span) */
