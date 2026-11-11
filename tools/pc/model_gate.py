@@ -104,10 +104,33 @@ MAX_WORK_FIELD = 0x10000   # no variant module's work area is larger (the larges
 IMAGE_SIZE = 0x5000        # the ten sectors a variant image is (model_oracle.py, VARIANT_SECTORS)
 BASE = {"A": 0x8013B000, "B": 0x8017B000}
 SLOT_SUFFIX = {"A": "", "B": "_slot1"}
+MODULUS = re.compile(r"mod(\d+)")   # a command_table's `modN`: the C indexes with command % N
+
+
+class Kind:
+    """The variant modules (the attack choreography, 0x5000 bytes at
+    0x8013B000/0x8017B000) or the primary modules (0x1000 bytes at
+    0x8013A000/0x8017A000, of which the disc calls only the ten records'
+    with code: notes/pc-build.md). Each has a table, the header the game is
+    built with, and the build's names for its modules."""
+
+    def __init__(self, name: str, table: str, header: str, macro: str, prefix: str, base: dict[str, int],
+                 image_size: int, folder: str):
+        self.name, self.table, self.header, self.macro = name, ROOT / table, ROOT / header, macro
+        self.prefix, self.base, self.image_size, self.folder = prefix, base, image_size, folder
+
+
+VARIANT = Kind("variant", "config/pc/model_gate.csv", "src/pc/overlays/model_gate_table.inc", "MODEL_GATE_ROW",
+               "model_variant_", BASE, IMAGE_SIZE, "model_variant")
+PRIMARY = Kind("primary", "config/pc/model_primary_gate.csv", "src/pc/overlays/model_primary_gate_table.inc",
+               "MODEL_PRIMARY_ROW", "model_primary_", {"A": 0x8013A000, "B": 0x8017A000}, 0x1000,
+               "spanish_model_primary")
 
 
 class Row(dict):
     """One shape's row; the numbers parsed."""
+
+    KIND = VARIANT
 
     @property
     def shape(self) -> int:
@@ -135,17 +158,26 @@ class Row(dict):
         if text in ("", "none"):
             return None
         parts = text.split(":")
-        if len(parts) not in (4, 5):
+        if not 4 <= len(parts) <= 6:
             raise ValueError(text)
         table, stride, count, field = (int(part, 0) for part in parts[:4])
         if min(table, stride, count, field) < 0:
             raise ValueError(text)
         width = 0
-        if len(parts) == 5:
-            if parts[4] not in INDEX_WIDTH:
+        for extra in parts[4:]:
+            if extra in INDEX_WIDTH and not width:
+                width = INDEX_WIDTH[extra]
+            elif not (MODULUS.fullmatch(extra) and int(extra[3:]) > 0 and extra == parts[-1]):
                 raise ValueError(text)
-            width = INDEX_WIDTH[parts[4]]
         return table, stride, count, field, width
+
+    @property
+    def command_modulus(self) -> int:
+        """N when the C indexes the table with command % N (`modN`, the last
+        part of command_table: a primary's `effect` picks entry command % 100
+        and takes command / 100 as the animation), else 0."""
+        parts = self["command_table"].split(":")
+        return int(parts[-1][3:]) if len(parts) > 4 and MODULUS.fullmatch(parts[-1]) else 0
 
     def identifier(self, slot: str) -> int:
         return int(self["identifier_" + slot.lower()])
@@ -155,26 +187,47 @@ class Row(dict):
 
     def module(self, slot: str) -> str:
         """The build's name for the shape's module in a slot (tools/pc/build_config.py)."""
-        return f"model_variant_{self.shape}{SLOT_SUFFIX[slot]}"
+        return f"{self.KIND.prefix}{self.shape}{SLOT_SUFFIX[slot]}"
 
     def entry(self, slot: str) -> str:
         """The C's entry as the build names it: the module's prefix and the
         decomp's name for the function at the slot base + 4 (GATED_MODULES)."""
-        return f"{self.module(slot)}__func_{BASE[slot] + 4:08X}"
+        return f"{self.module(slot)}__func_{self.KIND.base[slot] + 4:08X}"
 
 
-def load_table(path: Path = TABLE) -> list[Row]:
+class PrimaryRow(Row):
+    """A primary module's shape (config/pc/model_primary_gate.csv): the same
+    columns; `shape` is its slot A first word, which upstream's C does not
+    carry in its file names (they are spanish_model_primary/effect.c and the
+    like), so `sources` stays empty and port lists the files."""
+
+    KIND = PRIMARY
+
+
+def row_class(kind: Kind) -> type:
+    return PrimaryRow if kind.name == "primary" else Row  # by name: __main__ and model_gate are two modules
+
+
+def load_table(path: Path = TABLE, kind: Kind = VARIANT) -> list[Row]:
     if not path.exists():
         return []
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         if tuple(reader.fieldnames or ()) != COLUMNS:
             raise SystemExit(f"{path}: the columns are {reader.fieldnames}, not {list(COLUMNS)}")
-        return [Row(row) for row in reader]
+        return [row_class(kind)(row) for row in reader]
 
 
 def native_rows(path: Path = TABLE) -> list[Row]:
     return [row for row in load_table(path) if row["backend"] == "native"]
+
+
+def primary_rows(root: Path = ROOT) -> list[Row]:
+    return load_table(root / PRIMARY.table.relative_to(ROOT), PRIMARY)
+
+
+def native_primary_rows(root: Path = ROOT) -> list[Row]:
+    return [row for row in primary_rows(root) if row["backend"] == "native"]
 
 
 def write_table(rows: list[Row], path: Path = TABLE) -> None:
@@ -215,7 +268,7 @@ def source_patterns(row: Row, slot: str, root: Path = ROOT) -> tuple[str, ...]:
     listed = listed_sources(root).get(row.module(slot))
     if listed:
         return tuple(listed)
-    folder = "model_variant" if slot == "A" else "model_variant_slot1"
+    folder = row.KIND.folder + SLOT_SUFFIX[slot]
     return tuple(f"src/native_overlays/{folder}/variant{number}_*.c" for number in row.sources)
 
 
@@ -270,7 +323,7 @@ def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
     of the module's objects the section lacks). A `#define func_X func_Y` (a
     wrapper putting C written at one address at another: slot B's, or another
     region's C at the US address) makes func_X func_Y."""
-    base = BASE[slot]
+    base, size = row.KIND.base[slot], row.KIND.image_size
     texts = []
     for pattern in source_patterns(row, slot, root):
         for path in sorted(root.glob(pattern)):
@@ -287,26 +340,32 @@ def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
                 seen.add(name)
                 name = renamed[name]
             address = int(name.split("_")[1], 16)
-            if base <= address < base + IMAGE_SIZE:
+            if base <= address < base + size:
                 found[name] = address
     return found
 
 
 def address_sections(root: Path = ROOT) -> dict[str, dict[str, int]]:
-    """{module name: addresses} for every native shape, in the table's order."""
+    """{module name: addresses} for every native shape, variants then
+    primaries, each in its table's order."""
     sections = {}
-    for row in native_rows(root / "config/pc/model_gate.csv"):
+    for row in native_rows(root / "config/pc/model_gate.csv") + native_primary_rows(root):
         for slot in "AB":
             sections[row.module(slot)] = module_addresses(row, slot, root)
     return sections
 
 
-def header_text(rows: list[Row]) -> str:
-    lines = ["/* Written by tools/pc/model_gate.py from config/pc/model_gate.csv: do not edit.\n",
-             " * One row for each variant module the decomp's C stands in for:\n",
-             " * MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width):\n",
+def header_text(rows: list[Row], kind: Kind = VARIANT) -> str:
+    """The table the game is built with: MODEL_GATE_ROW for the variants,
+    MODEL_PRIMARY_ROW (the same, and the command's modulus) for the primaries."""
+    primary = kind.name == "primary"
+    lines = [f"/* Written by tools/pc/model_gate.py from {kind.table.relative_to(ROOT).as_posix()}: do not edit.\n",
+             f" * One row for each {kind.name} module the decomp's C stands in for:\n",
+             f" * {kind.macro}(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width"
+             + (", modulus" if primary else "") + "):\n",
              " * entries is NO_TABLE for a C that takes no command index; otherwise the setup command\n",
-             " * must be below it, and an update's entry (at `field` in the work area) covered: with\n",
+             " * must be below it" + (" (taken modulo `modulus` when that is not 0)" if primary else "")
+             + ", and an update's entry (at `field` in the work area) covered: with\n",
              " * index_width 0 a pointer to one of the `entries` of `stride` bytes from `table` (offsets\n",
              " * from the slot base), else the stored command itself, a u8, u16 or u32, below `entries`. */\n"]
     for row in sorted(rows, key=lambda row: row.shape):
@@ -316,7 +375,9 @@ def header_text(rows: list[Row]) -> str:
             table = row.command_table
             bound = (f"0x{table[2]:X}u, 0x{table[0]:X}u, 0x{table[1]:X}u, 0x{table[3]:X}u, {table[4]}u" if table
                      else f"0x{NO_TABLE:X}u, 0u, 0u, 0u, 0u")
-            lines.append(f'MODEL_GATE_ROW({"AB".index(slot)}, {row.identifier(slot)}u, 0x{row.span:X}u, '
+            if primary:
+                bound += f", {row.command_modulus}u"
+            lines.append(f'{kind.macro}({"AB".index(slot)}, {row.identifier(slot)}u, 0x{row.span:X}u, '
                          f'"{row.sha256(slot)}", {row.entry(slot)}, {bound}) /* shape {row.shape} */\n')
     return "".join(lines)
 
@@ -328,7 +389,7 @@ def common_prefix(images: list[bytes], unit: int = 4) -> int:
     the span a row starts from, bytes for how far a span may go (a table
     whose last entry ends inside a word that differs per record past it)."""
     first = images[0]
-    length = IMAGE_SIZE
+    length = min(IMAGE_SIZE, len(first))
     for image in images[1:]:
         at = 0
         while at < length and first[at:at + unit] == image[at:at + unit]:
@@ -379,6 +440,28 @@ def read_shapes(disc_path: Path) -> dict[int, Shape]:
     return shapes
 
 
+def read_primary_shapes(disc_path: Path) -> dict[int, Shape]:
+    """Every primary module on the disc that is not `return 2` (the disc
+    calls only those), grouped by its slot A first word as read_shapes groups
+    the variants. A record has one primary module per slot."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import model_oracle
+    disc = model_oracle.Disc(disc_path)
+    shapes: dict[int, Shape] = {}
+    for record in range(model_oracle.RECORDS):
+        image = {slot: disc.primary(record, slot)[:PRIMARY.image_size] for slot in "AB"}
+        if all(struct.unpack_from("<2I", image[slot], 4) == PRIMARY_RETURN_TWO for slot in "AB"):
+            continue
+        first, second = (struct.unpack_from("<I", image[slot], 0)[0] for slot in "AB")
+        shape = shapes.setdefault(first, Shape(first, second))
+        if shape.identifier_b != second:
+            raise SystemExit(f"primary shape {first} has slot B first words {shape.identifier_b} and {second}")
+        shape.records.add((record, 0))
+        for slot in "AB":
+            shape.images[slot].setdefault(hashlib.sha256(image[slot]).hexdigest(), image[slot])
+    return shapes
+
+
 def hashed(shape: Shape, slot: str, span: int) -> str:
     """SHA-256 of the first `span` bytes, which every image of the shape in the slot must share."""
     digests = {hashlib.sha256(image[:span]).hexdigest() for image in shape.images[slot].values()}
@@ -388,7 +471,7 @@ def hashed(shape: Shape, slot: str, span: int) -> str:
     return digests.pop()
 
 
-def rewrite(shapes: dict[int, Shape], old: list[Row]) -> list[Row]:
+def rewrite(shapes: dict[int, Shape], old: list[Row], kind: Kind = VARIANT) -> list[Row]:
     """The table the disc gives. A row keeps its backend and note, and a
     native or kept row its span; the rest is the disc's."""
     by_shape = {row.shape: row for row in old}
@@ -398,7 +481,7 @@ def rewrite(shapes: dict[int, Shape], old: list[Row]) -> list[Row]:
         backend = row["backend"] if row else "interpret"
         provisional = min(shape.common("A"), shape.common("B"))
         span = row.span if row and backend in ("native", "keep") else provisional
-        rows.append(Row(shape=number, backend=backend, span=f"0x{span:X}",
+        rows.append(row_class(kind)(shape=number, backend=backend, span=f"0x{span:X}",
                         data_start=row["data_start"] if row else "", sources=row["sources"] if row else "",
                         command_table=row["command_table"] if row else "",
                         identifier_a=number, identifier_b=shape.identifier_b,
@@ -444,7 +527,7 @@ def problems(rows: list[Row]) -> list[str]:
         except ValueError:
             bad.append(f"{where}: span {row['span']!r}")
             continue
-        if not 0 < span <= IMAGE_SIZE:
+        if not 0 < span <= row.KIND.image_size:
             bad.append(f"{where}: span 0x{span:X} is not inside the image")
         try:
             row.sources
@@ -455,6 +538,9 @@ def problems(rows: list[Row]) -> list[str]:
         except ValueError:
             bad.append(f"{where}: command_table {row['command_table']!r} is not table:stride:count:field[:index8|index16|index32]")
             table = None
+        if row.command_modulus and row.KIND.name != "primary":
+            bad.append(f"{where}: `mod{row.command_modulus}` is for a primary row (config/pc/model_primary_gate.csv); "
+                       "the variants' header has no modulus")
         if row["backend"] == "native":
             if row["command_table"] == "":
                 bad.append(f"{where}: a native row gives its command_table, or `none` when its C takes no command index")
@@ -498,7 +584,7 @@ COMMAND_INDEX = re.compile(r"\b(D_8013[0-9A-F]{4})\s*\[\s*" + COMMAND_MEMBER + r
 COMMAND_OFFSET = re.compile(r"\(\s*(D_8013[0-9A-F]{4})\s*\+\s*(0x[0-9A-Fa-f]+|\d+)\s*\)\s*\+\s*" + COMMAND_MEMBER)
 
 
-def command_sites(text: str, renamed: dict[str, str] | None = None) -> list[tuple[int, int]]:
+def command_sites(text: str, renamed: dict[str, str] | None = None, base: int = BASE["A"]) -> list[tuple[int, int]]:
     """(offset in the slot A image, line) of each table the C indexes with the
     command, in a C file's text (comments are blanked with their newlines kept;
     a `#define D_X D_Y` of the text, or of `renamed`, is followed first: a
@@ -510,7 +596,7 @@ def command_sites(text: str, renamed: dict[str, str] | None = None) -> list[tupl
         for match in pattern.finditer(text):
             symbol = aliases.get(match.group(1), match.group(1))
             extra = int(match.group(offset_group), 0) if offset_group else 0
-            found.append((int(symbol[2:], 16) - BASE["A"] + extra, text.count("\n", 0, match.start()) + 1))
+            found.append((int(symbol[2:], 16) - base + extra, text.count("\n", 0, match.start()) + 1))
     return found
 
 
@@ -525,7 +611,7 @@ def indexed_tables(row: Row) -> list[tuple[int, str, int]]:
     renamed = {old: new for raw in raws.values() for old, new in ALIAS.findall(COMMENT.sub(" ", raw))}
     found = set()
     for path, raw in raws.items():
-        for offset, line in command_sites(raw, renamed):
+        for offset, line in command_sites(raw, renamed, row.KIND.base["A"]):
             found.add((offset, path.relative_to(ROOT).as_posix(), line))
     return sorted(found)
 
@@ -573,7 +659,7 @@ def printf_formats(row: Row) -> list[int]:
                 aliases = dict(ALIAS.findall(text))
                 for symbol in PRINTF.findall(text):
                     symbol = aliases.get(symbol, symbol)
-                    found.add(int(symbol[2:], 16) - 0x8013B000)
+                    found.add(int(symbol[2:], 16) - row.KIND.base["A"])
     return sorted(found)
 
 
@@ -632,25 +718,22 @@ def check_sources(rows: list[Row]) -> list[str]:
 #
 # config/pc/model_retail.csv lets the game tell a module a mod brings from the
 # disc's (src/pc/overlays/model_module_class.c), and so say which mods still
-# need the MIPS interpreter (notes/modding.md, "Attack code: C, not MIPS"):
+# need the MIPS interpreter (notes/modding.md, "Attack code: C, not MIPS").
+# Each row is a shape's code in a slot: the SHA-256 of an image's first `size`
+# bytes. `code` rows are the variant shapes', `primary` rows the primary
+# shapes' (the ones that are not `return 2`, PRIMARY_RETURN_TWO). For a
+# native row the size is min(data_start, span): a module with that code
+# whose span hash fails changed the data the C reads (its tables), not the
+# code. For any other row it is the span, the code its images share (the
+# row's own hash): the port's to port, whatever data follows.
 #
-#   code     each shape's code in each slot: the SHA-256 of an image's first
-#            `size` bytes. For a native row min(data_start, span): a module
-#            with them whose span hash fails changed the data the C reads (its
-#            tables), not the code. For any other row its span, the code its
-#            images share (the row's own hash): the port's to port, whatever
-#            data follows;
-#   primary  a whole primary module (PRIMARY_SIZE bytes) that is not
-#            `return 2` (PRIMARY_RETURN_TWO): the disc's own.
-#
-# `update --disc` writes it, `check` holds it to the table (and to the disc
+# `update --disc` writes it, `check` holds it to the tables (and to the disc
 # with --disc), and `write` and `update` write RETAIL_HEADER from it.
 
 RETAIL = ROOT / "config/pc/model_retail.csv"
 RETAIL_HEADER = ROOT / "src/pc/overlays/model_retail_table.inc"
 RETAIL_COLUMNS = ("kind", "slot", "identifier", "shape", "size", "sha256", "records")
-RETAIL_KINDS = ("code", "primary")
-PRIMARY_SIZE = 0x1000          # a primary module: two sectors, of which the code takes the first page
+RETAIL_KINDS = {"code": VARIANT, "primary": PRIMARY}
 PRIMARY_RETURN_TWO = (0x03E00008, 0x24020002)   # the words at +4: jr ra; addiu v0, zero, 2
 
 
@@ -680,40 +763,19 @@ def code_size(row: Row) -> int:
     return row.span
 
 
-def read_primaries(disc_path: Path) -> dict[str, dict[str, tuple[int, list[int]]]]:
-    """{slot: {sha256: (identifier, records)}} of the primary modules that are not `return 2`."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import model_oracle
-    disc = model_oracle.Disc(disc_path)
-    found: dict[str, dict[str, tuple[int, list[int]]]] = {"A": {}, "B": {}}
-    for record in range(model_oracle.RECORDS):
-        for slot in "AB":
-            image = disc.primary(record, slot)[:PRIMARY_SIZE]
-            words = struct.unpack_from("<3I", image, 0)
-            if words[1:] == PRIMARY_RETURN_TWO:
-                continue
-            entry = found[slot].setdefault(hashlib.sha256(image).hexdigest(), (words[0], []))
-            entry[1].append(record)
-    return found
-
-
 def retail_rows(shapes: dict[int, Shape], rows: list[Row],
-                primaries: dict[str, dict[str, tuple[int, list[int]]]]) -> list[dict]:
-    """The retail list the disc and the table give, in a fixed order."""
+                primary_shapes: dict[int, Shape], primaries: list[Row]) -> list[dict]:
+    """The retail list the disc and the tables give, in a fixed order."""
     out: list[dict] = []
-    for row in sorted(rows, key=lambda row: row.shape):
-        shape = shapes.get(row.shape)
-        if shape is None:
-            continue
-        for slot in "AB":
-            size = code_size(row)
-            out.append({"kind": "code", "slot": slot, "identifier": row.identifier(slot), "shape": row.shape,
-                        "size": f"0x{size:X}", "sha256": hashed(shape, slot, size), "records": ""})
-    for slot in "AB":
-        for digest, (identifier, records) in sorted(primaries[slot].items(), key=lambda item: (item[1][1], item[0])):
-            out.append({"kind": "primary", "slot": slot, "identifier": identifier, "shape": "",
-                        "size": f"0x{PRIMARY_SIZE:X}", "sha256": digest,
-                        "records": ";".join(str(record) for record in records)})
+    for kind, found, table in (("code", shapes, rows), ("primary", primary_shapes, primaries)):
+        for row in sorted(table, key=lambda row: row.shape):
+            shape = found.get(row.shape)
+            if shape is None:
+                continue
+            for slot in "AB":
+                size = code_size(row)
+                out.append({"kind": kind, "slot": slot, "identifier": row.identifier(slot), "shape": row.shape,
+                            "size": f"0x{size:X}", "sha256": hashed(shape, slot, size), "records": ""})
     return [{key: str(value) for key, value in entry.items()} for entry in out]
 
 
@@ -721,44 +783,71 @@ def retail_header_text(retail: list[dict]) -> str:
     lines = ["/* Written by tools/pc/model_gate.py from config/pc/model_retail.csv: do not edit.\n",
              " * What the disc's modules are (src/pc/overlays/model_module_class.c):\n",
              " * MODEL_RETAIL(kind, slot, identifier, shape, size, sha256), the SHA-256 of an image's\n",
-             " * first `size` bytes: CODE a shape's code (a native row's up to its data, another row's\n",
-             " * span), PRIMARY a primary module that is not `return 2`. */\n"]
+             " * first `size` bytes: a shape's code (a native row's up to its data, another row's span),\n",
+             " * CODE of a variant shape, PRIMARY of a primary one. */\n"]
     for entry in retail:
-        shape = entry["shape"] or "0"
         lines.append(f'MODEL_RETAIL({entry["kind"].upper()}, {"AB".index(entry["slot"])}, {entry["identifier"]}u, '
-                     f'{shape}, {entry["size"]}u, "{entry["sha256"]}")\n')
+                     f'{entry["shape"]}, {entry["size"]}u, "{entry["sha256"]}")\n')
     return "".join(lines)
 
 
-def retail_problems(rows: list[Row], retail: list[dict]) -> list[str]:
-    """What the retail list must say of the table, without the disc: one code
-    row for each slot of each shape, with the row's identifier and size, and
-    for a row that is not native its own hash."""
+def retail_problems(rows: list[Row], retail: list[dict], primaries: list[Row] = ()) -> list[str]:
+    """What the retail list must say of the tables, without the disc: one
+    code row for each slot of each shape, with the row's identifier and size,
+    and for a row that is not native its own hash."""
     bad: list[str] = []
-    code: dict[tuple[int, str], list[dict]] = collections.defaultdict(list)
+    code: dict[tuple[str, int, str], list[dict]] = collections.defaultdict(list)
     for entry in retail:
         if entry["kind"] not in RETAIL_KINDS or entry["slot"] not in ("A", "B"):
             bad.append(f"{RETAIL.name}: a row of kind {entry['kind']!r}, slot {entry['slot']!r}")
-        elif entry["kind"] == "code":
-            code[(int(entry["shape"]), entry["slot"])].append(entry)
-    shapes = {row.shape for row in rows}
-    bad += [f"{RETAIL.name}: shape {shape} is not in the table: update --disc" for shape in sorted({s for s, _ in code})
-            if shape not in shapes]
-    for row in rows:
-        for slot in "AB":
-            entries = code[(row.shape, slot)]
-            if len(entries) != 1:
-                bad.append(f"shape {row.shape} slot {slot} has {len(entries)} code rows in {RETAIL.name}: update --disc")
-                continue
-            entry = entries[0]
-            if int(entry["identifier"]) != row.identifier(slot) or int(entry["size"], 0) != code_size(row):
-                bad.append(f"shape {row.shape} slot {slot}: its code row in {RETAIL.name} is not the table's "
-                           f"(identifier {entry['identifier']}, size {entry['size']}, not {row.identifier(slot)}, "
-                           f"0x{code_size(row):X}): update --disc")
-            elif row["backend"] != "native" and entry["sha256"] != row.sha256(slot):
-                bad.append(f"shape {row.shape} slot {slot}: its code row's hash in {RETAIL.name} is not the "
-                           "table's: update --disc")
+        elif not entry["shape"].isdigit():
+            bad.append(f"{RETAIL.name}: a {entry['kind']} row with no shape: update --disc")
+        else:
+            code[(entry["kind"], int(entry["shape"]), entry["slot"])].append(entry)
+    for kind, table in (("code", rows), ("primary", primaries)):
+        what = "primary shape" if kind == "primary" else "shape"
+        shapes = {row.shape for row in table}
+        bad += [f"{RETAIL.name}: {what} {shape} is not in its table: update --disc"
+                for shape in sorted({s for k, s, _ in code if k == kind}) if shape not in shapes]
+        for row in table:
+            for slot in "AB":
+                entries = code[(kind, row.shape, slot)]
+                if len(entries) != 1:
+                    bad.append(f"{what} {row.shape} slot {slot} has {len(entries)} code rows in {RETAIL.name}: "
+                               "update --disc")
+                    continue
+                entry = entries[0]
+                if int(entry["identifier"]) != row.identifier(slot) or int(entry["size"], 0) != code_size(row):
+                    bad.append(f"{what} {row.shape} slot {slot}: its code row in {RETAIL.name} is not the table's "
+                               f"(identifier {entry['identifier']}, size {entry['size']}, not {row.identifier(slot)}, "
+                               f"0x{code_size(row):X}): update --disc")
+                elif row["backend"] != "native" and entry["sha256"] != row.sha256(slot):
+                    bad.append(f"{what} {row.shape} slot {slot}: its code row's hash in {RETAIL.name} is not the "
+                               "table's: update --disc")
     return bad
+
+
+def disc_problems(shapes: dict[int, Shape], rows: list[Row], kind: Kind = VARIANT) -> list[str]:
+    """Where a table is not what the disc gives (check --disc)."""
+    bad = []
+    what = "primary shape" if kind.name == "primary" else "shape"
+    fresh = {row.shape: row for row in rewrite(shapes, rows, kind)}
+    for row in rows:
+        want = fresh.get(row.shape)
+        if want is None:
+            bad.append(f"{what} {row.shape} is not on the disc")
+        elif [c for c in COLUMNS if str(want[c]) != row[c]]:
+            differing = [c for c in COLUMNS if str(want[c]) != row[c]]
+            bad.append(f"{what} {row.shape}: {', '.join(differing)} differ from the disc: update --disc")
+    bad += [f"{what} {number} is on the disc and not in {kind.table.name}" for number in shapes
+            if number not in {r.shape for r in rows}]
+    return bad + printf_problems(shapes, rows)
+
+
+def header_problems(rows: list[Row], kind: Kind) -> list[str]:
+    if not kind.header.exists() or kind.header.read_text(encoding="utf-8").replace("\r\n", "\n") != header_text(rows, kind):
+        return [f"{kind.header.relative_to(ROOT)} is not what the table gives: python tools/pc/model_gate.py write"]
+    return []
 
 
 def main() -> int:
@@ -770,6 +859,8 @@ def main() -> int:
                         help="the disc image (default: MEMORIES_DISC)")
     parser.add_argument("--upstream", default="upstream/master",
                         help="port: the upstream decomp's revision (default: upstream/master)")
+    parser.add_argument("--primary", action="store_true",
+                        help="port: the shapes are primary modules' (config/pc/model_primary_gate.csv)")
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     arguments = parser.parse_args()
     if arguments.command == "port":
@@ -778,10 +869,12 @@ def main() -> int:
         if not arguments.shapes:
             parser.error("port: name the shapes")
         import model_gate_port
-        return model_gate_port.port(arguments.shapes, Path(arguments.disc), arguments.upstream, arguments.jobs)
+        return model_gate_port.port(arguments.shapes, Path(arguments.disc), arguments.upstream, arguments.jobs,
+                                    kind=PRIMARY if arguments.primary else VARIANT)
     rows = load_table()
+    primaries = primary_rows()
     retail = load_retail()
-    failed = problems(rows)
+    failed = problems(rows) + problems(primaries)
     if arguments.command == "update":
         if not arguments.disc or not Path(arguments.disc).is_file():
             parser.error("update needs the disc: --disc or MEMORIES_DISC")
@@ -791,43 +884,43 @@ def main() -> int:
         print(f"{TABLE.relative_to(ROOT)}: {len(rows)} shapes, {sum(r['backend'] == 'native' for r in rows)} native, "
               f"{sum(r['backend'] == 'keep' for r in rows)} kept")
         print("\n".join(boundaries(shapes, rows)))
-        failed = problems(rows)
-        retail = retail_rows(shapes, rows, read_primaries(Path(arguments.disc)))
+        primary_shapes = read_primary_shapes(Path(arguments.disc))
+        primaries = rewrite(primary_shapes, primaries, PRIMARY)
+        write_table(primaries, PRIMARY.table)
+        print(f"{PRIMARY.table.relative_to(ROOT)}: {len(primaries)} shapes, "
+              f"{sum(r['backend'] == 'native' for r in primaries)} native")
+        print("\n".join(boundaries(primary_shapes, primaries)))
+        failed = problems(rows) + problems(primaries)
+        retail = retail_rows(shapes, rows, primary_shapes, primaries)
         write_retail(retail)
         print(f"{RETAIL.relative_to(ROOT)}: {len(retail)} rows")
     if arguments.command in ("update", "write"):
-        HEADER.write_text(header_text(rows), encoding="utf-8", newline="\n")
-        print(f"{HEADER.relative_to(ROOT)} written")
+        for table, kind in ((rows, VARIANT), (primaries, PRIMARY)):
+            kind.header.write_text(header_text(table, kind), encoding="utf-8", newline="\n")
+            print(f"{kind.header.relative_to(ROOT)} written")
         RETAIL_HEADER.write_text(retail_header_text(retail), encoding="utf-8", newline="\n")
         print(f"{RETAIL_HEADER.relative_to(ROOT)} written")
-        failed += retail_problems(rows, retail)
+        failed += retail_problems(rows, retail, primaries)
     if arguments.command == "check":
         if arguments.disc and not Path(arguments.disc).is_file():
             parser.error(f"check: no disc at {arguments.disc} (--disc or MEMORIES_DISC); without one, leave both unset")
-        if not HEADER.exists() or HEADER.read_text(encoding="utf-8").replace("\r\n", "\n") != header_text(rows):
-            failed.append(f"{HEADER.relative_to(ROOT)} is not what the table gives: python tools/pc/model_gate.py write")
+        failed += header_problems(rows, VARIANT) + header_problems(primaries, PRIMARY)
         if (not RETAIL_HEADER.exists() or
                 RETAIL_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n") != retail_header_text(retail)):
             failed.append(f"{RETAIL_HEADER.relative_to(ROOT)} is not what {RETAIL.name} gives: "
                           "python tools/pc/model_gate.py write")
-        failed += retail_problems(rows, retail)
-        failed += check_sources(rows)
-        failed += command_problems(rows)
+        failed += retail_problems(rows, retail, primaries)
+        failed += check_sources(rows) + check_sources(primaries)
+        failed += command_problems(rows) + command_problems(primaries)
         if arguments.disc and Path(arguments.disc).is_file():
             shapes = read_shapes(Path(arguments.disc))
-            if retail != retail_rows(shapes, rows, read_primaries(Path(arguments.disc))):
+            primary_shapes = read_primary_shapes(Path(arguments.disc))
+            if retail != retail_rows(shapes, rows, primary_shapes, primaries):
                 failed.append(f"{RETAIL.relative_to(ROOT)} is not what the disc and the table give: update --disc")
-            fresh = {row.shape: row for row in rewrite(shapes, rows)}
-            for row in rows:
-                want = fresh.get(row.shape)
-                if want is None:
-                    failed.append(f"shape {row.shape} is not on the disc")
-                elif [c for c in COLUMNS if str(want[c]) != row[c]]:
-                    differing = [c for c in COLUMNS if str(want[c]) != row[c]]
-                    failed.append(f"shape {row.shape}: {', '.join(differing)} differ from the disc: update --disc")
-            failed += [f"shape {number} is on the disc and not in the table" for number in shapes if number not in {r.shape for r in rows}]
-            failed += printf_problems(shapes, rows)
+            failed += disc_problems(shapes, rows)
             print("\n".join(boundaries(shapes, rows)))
+            failed += disc_problems(primary_shapes, primaries, PRIMARY)
+            print("\n".join(boundaries(primary_shapes, primaries)))
     for line in failed:
         print("model_gate: " + line, file=sys.stderr)
     return 1 if failed else 0

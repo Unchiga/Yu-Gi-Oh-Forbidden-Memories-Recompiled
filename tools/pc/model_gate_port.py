@@ -66,8 +66,12 @@ ROOT = Path(__file__).resolve().parents[2]
 NATIVE = "src/native_overlays"
 SOURCES = ROOT / "config/pc/model_gate_sources.txt"
 NAMES = ROOT / "config/pc/model_gate_names.txt"
-OVERLAY_FOLDERS = ("model_variant", "french_model_variant", "spanish_model_variant")
+OVERLAY_FOLDERS = ("model_variant", "french_model_variant", "spanish_model_variant", "spanish_model_primary")
 BASES = {"A": 0x8013B000, "B": 0x8017B000}
+# The upstream module names of each kind (model_gate.Kind): the variant
+# modules (model_variant_*, model_image_*) and the primaries (model_primary_*,
+# whose C upstream keeps in spanish_model_primary for every region).
+MODULE_PREFIXES = {"variant": ("model_variant_", "model_image_"), "primary": ("model_primary_",)}
 INCLUDE = re.compile(r'^(\s*#\s*include\s+")([^"]+)(")', re.M)
 SUBSEGMENT = re.compile(r"^\s*-\s*\[(0x[0-9A-Fa-f]+|\d+),\s*([\w.]+),\s*([^\],]+)\]", re.M)
 
@@ -107,7 +111,7 @@ class Upstream:
 
 # --- the upstream layouts --------------------------------------------------------------
 
-def layouts(upstream: Upstream, disc) -> dict[int, dict[str, list[dict]]]:
+def layouts(upstream: Upstream, disc, kind=None) -> dict[int, dict[str, list[dict]]]:
     """{slot A identifier: {"A": [layout, ...], "B": [...]}} for the US
     MODEL.MRG variant modules. A layout: the module names, the `c`
     subsegments' paths (from src/, no extension) and offsets, the data start
@@ -118,14 +122,16 @@ def layouts(upstream: Upstream, disc) -> dict[int, dict[str, list[dict]]]:
     for module in modules:
         if not module["archive"].upper().endswith("MODEL.MRG"):
             continue
-        slot = {BASES["A"]: "A", BASES["B"]: "B"}.get(int(module["load_address"], 16))
-        if slot is None or not module["name"].startswith(("model_variant_", "model_image_")):
+        bases = kind.base if kind is not None else BASES
+        image_size = kind.image_size if kind is not None else 0x5000
+        slot = {bases["A"]: "A", bases["B"]: "B"}.get(int(module["load_address"], 16))
+        if slot is None or not module["name"].startswith(MODULE_PREFIXES[kind.name if kind is not None else "variant"]):
             continue
         text = upstream.text(module["layout"])
         subsegments = [(int(at, 0), kind, path.strip()) for at, kind, path in SUBSEGMENT.findall(text)]
         files = tuple(path for at, kind, path in subsegments if kind == "c")
         starts = tuple(at for at, kind, path in subsegments if kind == "c")
-        data_start = min((at for at, kind, path in subsegments if kind in ("data", "bin") and at > 0), default=0x5000)
+        data_start = min((at for at, kind, path in subsegments if kind in ("data", "bin") and at > 0), default=image_size)
         word = disc.module_word(module["sector_offset"])
         first_words[module["name"]] = word
         key = (files, starts, data_start)
@@ -465,17 +471,18 @@ def cast_pass(units: list[str], jobs: int) -> list[str]:
     return report + unreadable
 
 
-def port(shapes: list[int], disc_path: Path, revision: str, jobs: int, root: Path = ROOT) -> int:
+def port(shapes: list[int], disc_path: Path, revision: str, jobs: int, root: Path = ROOT, kind=None) -> int:
     """Copy the shapes' C and slot B wrappers, list their files, apply the
     cast rule over every listed unit, and give the table rows their data
     start and sources. Backend, span and command_table are not set here."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import model_gate
+    kind = kind or model_gate.VARIANT
     upstream = Upstream(revision, root)
-    found = layouts(upstream, MergeDisc(disc_path))
+    found = layouts(upstream, MergeDisc(disc_path), kind)
     plan = Plan()
     ported = {}
-    pairs = {row.shape: row.identifier("B") for row in model_gate.load_table()}
+    pairs = {row.shape: row.identifier("B") for row in model_gate.load_table(kind.table, kind)}
     for shape in shapes:
         if shape not in found or shape not in pairs:
             plan.refused.append(f"shape {shape}: upstream has no US module with that first word, or the table no row")
@@ -488,7 +495,7 @@ def port(shapes: list[int], disc_path: Path, revision: str, jobs: int, root: Pat
         print("model_gate port: refused " + line, file=sys.stderr)
     write_plan(plan, root)
     sections = read_sections(SOURCES)
-    rows = model_gate.load_table()
+    rows = model_gate.load_table(kind.table, kind)
     by_shape = {row.shape: row for row in rows}
     for shape, result in ported.items():
         row = by_shape[shape]
@@ -497,9 +504,9 @@ def port(shapes: list[int], disc_path: Path, revision: str, jobs: int, root: Pat
         row["data_start"] = f"0x{result['data_start']:X}"
         headers = sorted({int(n) for path in result["files"]["A"]
                           for n in re.findall(r"(?:variant|image)(\d+)", PurePosixPath(path).name)[:1]})
-        row["sources"] = "" if headers == [shape] else ";".join(str(n) for n in headers)
+        row["sources"] = "" if headers == [shape] or kind.name == "primary" else ";".join(str(n) for n in headers)
     write_sections(SOURCES, SOURCES_HEADER, sections)
-    model_gate.write_table(rows)
+    model_gate.write_table(rows, kind.table)
     names = resident_names(upstream, [path for files in sections.values() for path in files], root)
     write_sections_flat(NAMES, NAMES_HEADER, names)
     units = sorted({path for files in sections.values() for path in files})

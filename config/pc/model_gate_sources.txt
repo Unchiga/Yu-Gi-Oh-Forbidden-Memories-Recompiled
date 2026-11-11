@@ -1,5 +1,25 @@
 # The C files of each native variant module (tools/pc/model_gate.py port writes this from
 # the upstream layouts; tools/pc/build_config.py compiles them). Paths from the repository root.
+[model_primary_38]
+src/native_overlays/spanish_model_primary/copy.c
+[model_primary_38_slot1]
+src/native_overlays/spanish_model_primary_slot1/copy_slot1.c
+[model_primary_39]
+src/native_overlays/spanish_model_primary/effect.c
+[model_primary_39_slot1]
+src/native_overlays/spanish_model_primary_slot1/effect_slot1.c
+[model_primary_45]
+src/native_overlays/spanish_model_primary/primary62.c
+[model_primary_45_slot1]
+src/native_overlays/spanish_model_primary_slot1/primary62_slot1.c
+[model_primary_46]
+src/native_overlays/spanish_model_primary/primary63.c
+[model_primary_46_slot1]
+src/native_overlays/spanish_model_primary_slot1/primary63_slot1.c
+[model_primary_47]
+src/native_overlays/spanish_model_primary/primary64.c
+[model_primary_47_slot1]
+src/native_overlays/spanish_model_primary_slot1/primary64_slot1.c
 [model_variant_54]
 src/native_overlays/model_variant/variant54_entry.c
 [model_variant_54_slot1]

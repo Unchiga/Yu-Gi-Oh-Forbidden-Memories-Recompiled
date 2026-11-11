@@ -6,21 +6,27 @@
 
 #include "pc/guest/sha256.h"
 
-/* The native rows' spans and hashes (model_gate_table.inc, which
+/* The native rows' spans and hashes, variant and primary
+ * (model_gate_table.inc and model_primary_gate_table.inc, which
  * model_modules.c also reads for the C's entries). */
 typedef struct {
-    int slot;
+    int primary, slot;
     uint32_t identifier, span;
     const char *sha256;
 } SpanRow;
 
 static const SpanRow span_rows[] = {
 #define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width) \
-    {slot, identifier, span, sha256},
+    {0, slot, identifier, span, sha256},
 #include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
-    {0, 0, 0, NULL}};
+#define MODEL_PRIMARY_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
+    {1, slot, identifier, span, sha256},
+#include "pc/overlays/model_primary_gate_table.inc"
+#undef MODEL_PRIMARY_ROW
+    {0, 0, 0, 0, NULL}};
 
+/* A shape's code (model_retail_table.inc): CODE a variant shape's, PRIMARY a primary one's. */
 enum { RETAIL_CODE, RETAIL_PRIMARY };
 
 typedef struct {
@@ -71,10 +77,11 @@ static int hex_equal(const uint8_t digest[32], const char *hex)
     return 1;
 }
 
-static int shape_of(int slot, uint32_t identifier)
+static int shape_of(int primary, int slot, uint32_t identifier)
 {
+    int kind = primary ? RETAIL_PRIMARY : RETAIL_CODE;
     for (const RetailRow *row = retail_rows; row->sha256; row++) {
-        if (row->kind != RETAIL_PRIMARY && row->slot == slot && row->identifier == identifier) return row->shape;
+        if (row->kind == kind && row->slot == slot && row->identifier == identifier) return row->shape;
     }
     return 0;
 }
@@ -82,6 +89,7 @@ static int shape_of(int slot, uint32_t identifier)
 ModelModuleInfo ModelModule_Classify(const void *image, int slot, int primary)
 {
     const uint32_t *words = image;
+    int kind = primary ? RETAIL_PRIMARY : RETAIL_CODE;
     ModelModuleInfo info = {MODEL_MODULE_NEW, 0, 0, 0, 0};
     Digests cache;
     cache.image = image;
@@ -91,25 +99,15 @@ ModelModuleInfo ModelModule_Classify(const void *image, int slot, int primary)
         info.kind = MODEL_MODULE_EMPTY;
         return info;
     }
-    if (primary) {
-        if (words[1] == RETURN_TWO_0 && words[2] == RETURN_TWO_1) {
-            info.kind = MODEL_MODULE_NATIVE;
-            return info;
-        }
-        for (const RetailRow *row = retail_rows; row->sha256; row++) {
-            if (row->kind == RETAIL_PRIMARY && row->slot == slot &&
-                hex_equal(digest_of(&cache, MODEL_MODULE_PRIMARY_SIZE), row->sha256)) {
-                info.kind = MODEL_MODULE_RETAIL;
-                return info;
-            }
-        }
-        /* The disc's primaries have no shapes: any other code is the mod's. */
-        info.kind = MODEL_MODULE_CODE;
+    /* The disc's other primaries: `return 2`, which the port answers itself. */
+    if (primary && words[1] == RETURN_TWO_0 && words[2] == RETURN_TWO_1) {
+        info.kind = MODEL_MODULE_NATIVE;
         return info;
     }
-    info.shape = shape_of(slot, info.identifier);
+    info.shape = shape_of(primary, slot, info.identifier);
     for (const SpanRow *row = span_rows; row->sha256; row++) {
-        if (row->slot == slot && row->identifier == info.identifier && hex_equal(digest_of(&cache, row->span), row->sha256)) {
+        if (row->primary == primary && row->slot == slot && row->identifier == info.identifier &&
+            hex_equal(digest_of(&cache, row->span), row->sha256)) {
             info.kind = MODEL_MODULE_NATIVE;
             return info;
         }
@@ -118,11 +116,11 @@ ModelModuleInfo ModelModule_Classify(const void *image, int slot, int primary)
      * which its C reads (the mod's), or the data of a shape the port still
      * interprets whatever its data (the port's). */
     for (const RetailRow *row = retail_rows; row->sha256; row++) {
-        if (row->kind == RETAIL_CODE && row->slot == slot && row->identifier == info.identifier &&
+        if (row->kind == kind && row->slot == slot && row->identifier == info.identifier &&
             hex_equal(digest_of(&cache, row->size), row->sha256)) {
             info.kind = MODEL_MODULE_RETAIL;
             for (const SpanRow *span = span_rows; span->sha256; span++) {
-                if (span->slot == slot && span->identifier == info.identifier) {
+                if (span->primary == primary && span->slot == slot && span->identifier == info.identifier) {
                     info.kind = MODEL_MODULE_TABLES;
                     info.code_size = row->size;
                     info.span = span->span;

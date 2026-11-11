@@ -62,4 +62,19 @@ static inline int ModelGate_CommandCovered(uint32_t entries, uint32_t table, uin
     return entry_word >= first && entry_word - first < entries * stride && (entry_word - first) % stride == 0;
 }
 
+/* A primary module's row may pick its entry with command % modulus
+ * (config/pc/model_primary_gate.csv's `modN`: `effect` takes entry command %
+ * 100 and waits for animation command / 100 + 3), so a setup is covered when
+ * that entry is; modulus 0 is ModelGate_CommandCovered. The updates read the
+ * work area as for any row. */
+static inline int ModelGate_CommandCoveredModulo(uint32_t entries, uint32_t table, uint32_t stride, uint32_t base,
+                                                 int command, uint32_t entry_word, uint32_t index_width,
+                                                 int stand_in, uint32_t modulus)
+{
+    if (modulus != 0 && command >= 0) {
+        command = (int)((uint32_t)command % modulus);
+    }
+    return ModelGate_CommandCovered(entries, table, stride, base, command, entry_word, index_width, stand_in);
+}
+
 #endif

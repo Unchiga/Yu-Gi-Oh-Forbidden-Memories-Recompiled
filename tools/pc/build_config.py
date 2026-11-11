@@ -113,14 +113,15 @@ MODULES = [
     ("duel_effects", "src/overlays/duel_effects/*.c", 0x18, 0x80146000),
     ("credits", "src/overlays/credits/*.c", 0x10, 0x80180000),
 ]
-# MODEL.MRG's variant control modules: one module per slot for each shape the
-# table (config/pc/model_gate.csv) says is native, linked at the slot base.
+# MODEL.MRG's control modules: one module per slot for each shape the tables
+# say is native (config/pc/model_gate.csv, the variant modules;
+# config/pc/model_primary_gate.csv, the primary ones), linked at the slot base.
 # Their addresses come from the C (tools/pc/model_gate.py), not from a retail
 # ELF, and they are gated like the effect bank: src/pc/overlays/model_modules.c
 # runs the C for the retail code and interprets any other.
 MODEL_MODULES = [
-    (row.module(slot), model_gate.source_patterns(row, slot), row.identifier(slot), model_gate.BASE[slot])
-    for row in model_gate.native_rows() for slot in "AB"
+    (row.module(slot), model_gate.source_patterns(row, slot), row.identifier(slot), row.KIND.base[slot])
+    for row in model_gate.native_rows() + model_gate.native_primary_rows() for slot in "AB"
 ]
 MODULES += MODEL_MODULES
 MODULE_CONFIG = {"overworld": "overworld_before_coup"}

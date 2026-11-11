@@ -15,24 +15,28 @@
 #define RECORD_SECTORS 0x114
 
 typedef struct {
-    int slot;
+    int primary, slot;
     uint32_t identifier, span;
 } SpanRow;
 
 static const SpanRow span_rows[] = {
 #define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width) \
-    {slot, identifier, span},
+    {0, slot, identifier, span},
 #include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
-    {0, 0, 0}};
+#define MODEL_PRIMARY_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
+    {1, slot, identifier, span},
+#include "pc/overlays/model_primary_gate_table.inc"
+#undef MODEL_PRIMARY_ROW
+    {0, 0, 0, 0}};
 
 typedef struct {
-    int code, slot;
+    int primary, slot;
     uint32_t identifier, size;
 } CodeRow;
 
-#define CODE 1
-#define PRIMARY 0
+#define CODE 0
+#define PRIMARY 1
 static const CodeRow code_rows[] = {
 #define MODEL_RETAIL(kind, slot, identifier, shape, size, sha256) {kind, slot, identifier, size},
 #include "pc/overlays/model_retail_table.inc"
@@ -83,17 +87,17 @@ static void expect(int condition, const char *what, int record)
     }
 }
 
-static const SpanRow *span_row(int slot, uint32_t identifier)
+static const SpanRow *span_row(int primary, int slot, uint32_t identifier)
 {
     for (const SpanRow *row = span_rows; row->identifier; row++)
-        if (row->slot == slot && row->identifier == identifier) return row;
+        if (row->primary == primary && row->slot == slot && row->identifier == identifier) return row;
     return NULL;
 }
 
-static uint32_t code_size(int slot, uint32_t identifier)
+static uint32_t code_size(int primary, int slot, uint32_t identifier)
 {
     for (const CodeRow *row = code_rows; row->identifier; row++)
-        if (row->code && row->slot == slot && row->identifier == identifier) return row->size;
+        if (row->primary == primary && row->slot == slot && row->identifier == identifier) return row->size;
     return 0;
 }
 
@@ -137,56 +141,59 @@ int main(void)
             const unsigned char *image = stages + (primary ? 40 + 2 * (i - 4) : 10 * i) * SECTOR;
             size_t bytes = primary ? MODEL_MODULE_PRIMARY_SIZE : MODEL_MODULE_VARIANT_SIZE;
             ModelModuleInfo info = ModelModule_Classify(image, slot, primary);
-            if (primary) {
-                /* A primary that is not `return 2` is the disc's own, and changed it is the mod's. */
-                if (info.kind == MODEL_MODULE_RETAIL) {
-                    primaries++;
-                    expect(changed(image, bytes, 16, slot, 1) == MODEL_MODULE_CODE, "a changed primary is not CODE", record);
-                }
+            /* A primary that is `return 2` the port answers itself. */
+            if (primary && word(image + 4) == 0x03E00008u && word(image + 8) == 0x24020002u) {
+                expect(info.kind == MODEL_MODULE_NATIVE, "a `return 2` primary is not NATIVE", record);
                 continue;
+            }
+            /* The disc's primaries with code are its five shapes, all native. */
+            if (primary) {
+                primaries++;
+                expect(info.kind == MODEL_MODULE_NATIVE, "a primary with code is not NATIVE", record);
             }
             if (info.kind == MODEL_MODULE_RETAIL) {
                 /* A shape the port still interprets: its code changed is the
                  * mod's, other data after the code the port's. */
-                uint32_t code = code_size(slot, info.identifier);
+                uint32_t code = code_size(primary, slot, info.identifier);
                 retail++;
-                expect(span_row(slot, info.identifier) == NULL && code, "an interpreted image has no code row", record);
-                expect(changed(image, bytes, 8, slot, 0) == MODEL_MODULE_CODE, "a changed interpreted image is not CODE",
+                expect(span_row(primary, slot, info.identifier) == NULL && code, "an interpreted image has no code row",
                        record);
+                expect(changed(image, bytes, 8, slot, primary) == MODEL_MODULE_CODE,
+                       "a changed interpreted image is not CODE", record);
                 if (code && code < bytes)
-                    expect(changed(image, bytes, code, slot, 0) == MODEL_MODULE_RETAIL,
+                    expect(changed(image, bytes, code, slot, primary) == MODEL_MODULE_RETAIL,
                            "an interpreted image with other data is not RETAIL", record);
             }
             if (info.kind == MODEL_MODULE_NATIVE) {
-                const SpanRow *row = span_row(slot, info.identifier);
-                uint32_t code = code_size(slot, info.identifier);
+                const SpanRow *row = span_row(primary, slot, info.identifier);
+                uint32_t code = code_size(primary, slot, info.identifier);
                 unsigned char copy[MODEL_MODULE_VARIANT_SIZE];
                 native++;
                 expect(row && code, "a native image has no span or code row", record);
                 if (!row || !code) continue;
                 /* Past the span: the record's own data, still native. */
                 if (row->span < bytes)
-                    expect(changed(image, bytes, row->span, slot, 0) == MODEL_MODULE_NATIVE, "a byte past the span", record);
+                    expect(changed(image, bytes, row->span, slot, primary) == MODEL_MODULE_NATIVE, "a byte past the span", record);
                 /* Between the code and the span: the C's tables, the mod's. */
                 if (code < row->span) {
                     ModelModuleInfo got;
                     memcpy(copy, image, bytes);
                     copy[row->span - 1] ^= 0x5A;
-                    got = ModelModule_Classify(copy, slot, 0);
+                    got = ModelModule_Classify(copy, slot, primary);
                     tables++;
                     expect(got.kind == MODEL_MODULE_TABLES && got.code_size == code && got.span == row->span,
                            "a byte in the tables is not TABLES", record);
                 }
                 /* In the code. */
-                expect(changed(image, bytes, 8, slot, 0) == MODEL_MODULE_CODE, "a byte in the code is not CODE", record);
+                expect(changed(image, bytes, 8, slot, primary) == MODEL_MODULE_CODE, "a byte in the code is not CODE", record);
                 /* A first word no disc module has. */
                 memcpy(copy, image, bytes);
                 copy[0] = 0xFF, copy[1] = 0xFF, copy[2] = 0xFF, copy[3] = 0x7F;
-                expect(ModelModule_Classify(copy, slot, 0).kind == MODEL_MODULE_NEW, "an unknown first word is not NEW",
+                expect(ModelModule_Classify(copy, slot, primary).kind == MODEL_MODULE_NEW, "an unknown first word is not NEW",
                        record);
                 /* No entry: the stand-in. */
                 memset(copy + 4, 0, 4);
-                expect(ModelModule_Classify(copy, slot, 0).kind == MODEL_MODULE_EMPTY, "no entry is not EMPTY", record);
+                expect(ModelModule_Classify(copy, slot, primary).kind == MODEL_MODULE_EMPTY, "no entry is not EMPTY", record);
             }
         }
     }

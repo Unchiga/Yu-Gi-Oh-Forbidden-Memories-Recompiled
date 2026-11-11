@@ -752,7 +752,8 @@ A record is read in seventeen stages (`func_80056D7C`,
 
 The control modules are MIPS code built for their slot's addresses
 (`0x8013A000`/`0x8013B000`, `0x8017A000`/`0x8017B000`). The port runs the
-disc's variant modules as the decomp's C, and the rest in its interpreter
+disc's as the decomp's C (but for a few variant shapes still being ported),
+and anything else in its interpreter
 (`src/pc/guest/mips.c`), which is going away ([Attack code: C, not
 MIPS](#attack-code-c-not-mips)). A disc record is a starting point. Card C's (a monster: cards 301-350, 651-700 and 721 have
 none) is record number C - 1, from which take 50 when C - 1 is 350 or more,
@@ -835,10 +836,11 @@ A save state taken with a bigger model in a battle slot carries its arena
 
 **The MIPS interpreter is going away.** A record's control modules (the
 table above: four variant modules and two primaries) are PlayStation code.
-The port runs the disc's variant modules, the attacks, as the decomp's C,
-compiled into the game. A few of their shapes are still being ported, and
-the primaries, nearly all of them `return 2`, come next. After that, what
-the interpreter runs is a mod's own: a module the mod changed or brought.
+The port runs the disc's modules as the decomp's C, compiled into the
+game: the variant modules (the attacks), but for a few shapes still being
+ported, and the primaries (`return 2`, or one of the five shapes of the ten
+records that have code). After that, what the interpreter runs is a mod's
+own: a module the mod changed or brought.
 A later version then removes the interpreter. After that, a battle using such a module falls back to the
 stand-in's sparks instead of the attack the mod wrote. No version is set
 for it yet, and the warning below appears for as long as a mod needs the
