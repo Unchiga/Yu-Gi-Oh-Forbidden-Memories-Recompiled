@@ -662,6 +662,8 @@ def main() -> int:
         HEADER.write_text(header_text(rows), encoding="utf-8", newline="\n")
         print(f"{HEADER.relative_to(ROOT)} written")
     if arguments.command == "check":
+        if arguments.disc and not Path(arguments.disc).is_file():
+            parser.error(f"check: no disc at {arguments.disc} (--disc or MEMORIES_DISC); without one, leave both unset")
         if not HEADER.exists() or HEADER.read_text(encoding="utf-8").replace("\r\n", "\n") != header_text(rows):
             failed.append(f"{HEADER.relative_to(ROOT)} is not what the table gives: python tools/pc/model_gate.py write")
         failed += check_sources(rows)
