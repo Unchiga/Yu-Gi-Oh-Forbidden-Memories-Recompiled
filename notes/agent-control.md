@@ -99,6 +99,7 @@ build with the old combination; the eight smoke cases unchanged.
 | `save PATH` / `load PATH` | a save state |
 | `info` | frame, VBlank, mode, build id |
 | `wheel N` | turn the mouse wheel N notches (decimal, signed, positive away from the player), once, for `host->wheel` |
+| `key N` | type a key for `host->text_key`, once: N the decimal ASCII code (32 to 126), 8 Backspace, 13 Enter or 27 Escape |
 | `pointer X Y [BTN]` / `pointer off` | put the mouse at picture coordinates (decimal, 320x240; widescreen x -53 to 372) holding BTN (hex: 1 left, 2 right, 4 middle) for `host->pointer`, until `pointer off` or the client leaves; the real mouse is ignored meanwhile. It makes no pad bits, so a mod that reads it drives itself |
 | `quit` | exit |
 | `jump TARGET [OPPONENT [DECK]]` | another screen, as Debug > Jump to goes there (step 6; added with it) |

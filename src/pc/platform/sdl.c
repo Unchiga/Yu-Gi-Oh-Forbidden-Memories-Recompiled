@@ -159,6 +159,12 @@ static int escape_claimed, escape_pressed;
  * which then makes no D-pad press. */
 static volatile int wheel_notches;
 static volatile int wheel_taken;
+/* The keys typed for a mod that has a text field (mod API 28, Mods_SetText): kept in a ring while it has the
+ * keyboard (text_taken); none of those keys reaches the game's controls. */
+static volatile int text_taken;
+static int text_queue[64];
+static int text_head, text_count;
+static int text_event(const SDL_Event *event);
 /* The pointer's place is a mouse's (it hovers): the mouse events SDL makes
  * of a touch move it only while the finger is down, and leave it where the
  * finger lifted, so they never reveal the bar by hovering. */
@@ -2286,6 +2292,10 @@ static void pump(void)
             }
         }
         if (Panel_Shown() && dispatch_panel(&event, &menu_event)) continue;
+        if (text_taken && !Menu_IsOpen() && !Menu_NoticeShown() && !Panel_Shown() && !controls_window &&
+            window && SDL_GetWindowFromEvent(&event) == window) {
+            if (text_event(&event)) continue;
+        }
         /* A tap at the top of the screen shows the hidden bar under it, so
          * the press lands on the bar's menu there. */
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.which == SDL_TOUCH_MOUSEID) {
@@ -2930,6 +2940,69 @@ int Platform_WindowPointer(int *x, int *y, unsigned *buttons)
     return 1;
 }
 
+/* host->text_capture and host->text_key (mod API 28). */
+static void text_push(int key)
+{
+    if (text_count >= (int)(sizeof text_queue / sizeof *text_queue)) return;
+    text_queue[(text_head + text_count++) % (int)(sizeof text_queue / sizeof *text_queue)] = key;
+}
+
+/* A key or text the mod keeps: 1 when this event is taken (the game does not see it). */
+static int text_event(const SDL_Event *event)
+{
+    if (event->type == SDL_EVENT_TEXT_INPUT) {
+        const unsigned char *c = (const unsigned char *)event->text.text;
+        for (; *c; c++) {
+            if (*c >= 32 && *c <= 126) text_push(*c);
+        }
+        return 1;
+    }
+    if (event->type == SDL_EVENT_KEY_DOWN) {
+        const SDL_Keycode key = event->key.key;
+        /* Ctrl+V (Command+V, Shift+Insert): the clipboard's text, as if typed: its printable ASCII, up to what the
+         * queue holds (a field takes what it wants of it). */
+        if ((key == SDLK_V && (event->key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI))) ||
+            (key == SDLK_INSERT && (event->key.mod & SDL_KMOD_SHIFT))) {
+            char *clip = SDL_GetClipboardText();
+            if (clip) {
+                const unsigned char *c = (const unsigned char *)clip;
+                for (; *c; c++) {
+                    if (*c >= 32 && *c <= 126) text_push(*c);
+                }
+                SDL_free(clip);
+            }
+            return 1;
+        }
+        if (key == SDLK_BACKSPACE) text_push(8);
+        else if ((key == SDLK_RETURN || key == SDLK_KP_ENTER) && !event->key.repeat) text_push(13);
+        else if (key == SDLK_ESCAPE && !event->key.repeat) text_push(27);
+        return 1;   /* every key down is the field's: not Start, not a button */
+    }
+    return 0;   /* a release goes on to end what it began (above this) */
+}
+
+static int text_next(void)
+{
+    int key = Control_TextKey();   /* the control channel's (`key`) first */
+    if (key) return key;
+    if (text_count <= 0) return 0;
+    key = text_queue[text_head];
+    text_head = (text_head + 1) % (int)(sizeof text_queue / sizeof *text_queue);
+    text_count--;
+    return key;
+}
+
+static void text_take(int on)
+{
+    if (on == text_taken) return;
+    text_taken = on;
+    text_head = text_count = 0;
+    if (window) {
+        if (on) SDL_StartTextInput(window);
+        else if (!panel_typing) SDL_StopTextInput(window);
+    }
+}
+
 /* host->wheel and host->take_wheel: the notches (and the control channel's
  * `wheel`) since the last read. */
 static int wheel_read(void)
@@ -3198,6 +3271,7 @@ int Platform_Open(const char *title)
     if (getenv("MEMORIES_HEADLESS")) open_mods();
     /* Before the headless return: the control channel's pointer and wheel (tests) reach a mod without a window. */
     Mods_SetPointer(pointer_read, wheel_read, wheel_take);
+    Mods_SetText(text_take, text_next);
     if (getenv("MEMORIES_HEADLESS")) {
         return 0;
     }

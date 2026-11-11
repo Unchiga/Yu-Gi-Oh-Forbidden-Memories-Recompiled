@@ -30,6 +30,8 @@
  *     wheel N           turn the mouse wheel N notches (decimal, signed:
  *                       positive away from the player), once, for
  *                       host->wheel
+ *     key N             type a key for host->text_key, once: N a decimal ASCII code
+ *                       (32 to 126), 8 backspace, 13 enter or 27 escape
  *     quit              end the game
  *
  * Numbers that are hex may carry a 0x; decimal ones may be given as 0x...
@@ -53,7 +55,8 @@ typedef enum {
     CONTROL_JUMP,
     CONTROL_QUIT,
     CONTROL_POINTER,
-    CONTROL_WHEEL
+    CONTROL_WHEEL,
+    CONTROL_KEY
 } ControlKind;
 
 typedef struct {
