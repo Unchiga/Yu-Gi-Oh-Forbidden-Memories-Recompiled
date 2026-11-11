@@ -48,6 +48,10 @@ src/native_overlays/french_model_variant_slot1/variant97_entry_slot1.c
 src/native_overlays/model_variant/variant81_entry.c
 [model_variant_81_slot1]
 src/native_overlays/model_variant_slot1/variant81_entry_slot1.c
+[model_variant_84]
+src/native_overlays/french_model_variant/variant101_entry.c
+[model_variant_84_slot1]
+src/native_overlays/french_model_variant_slot1/variant101_entry_slot1.c
 [model_variant_85]
 src/native_overlays/model_variant/variant85_entry.c
 [model_variant_85_slot1]
@@ -1658,6 +1662,10 @@ src/native_overlays/model_variant_slot1/variant781_entry_slot1.c
 src/native_overlays/model_variant/variant782_entry.c
 [model_variant_782_slot1]
 src/native_overlays/model_variant_slot1/variant782_entry_slot1.c
+[model_variant_783]
+src/native_overlays/model_variant/variant783_entry.c
+[model_variant_783_slot1]
+src/native_overlays/model_variant_slot1/variant783_entry_slot1.c
 [model_variant_784]
 src/native_overlays/model_variant/variant784_entry.c
 [model_variant_784_slot1]

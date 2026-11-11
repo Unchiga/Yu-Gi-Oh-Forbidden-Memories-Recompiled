@@ -42,4 +42,15 @@ extern DVECTOR gModelVariant769Screen[2][128];
 extern POLY_FT4 gModelImage31368Quad[2];
 extern DVECTOR gModelImage31368Screen[2][128];
 
+/* Shape 84 (french_model_variant/variant101_entry.c): `flags`. The particles'
+ * first loop tests flags[i] before RotTransPersN writes the array; the MIPS
+ * code reads what the slot's previous call left there. */
+extern u16 gModelFrenchVariant101Flags[2][96];
+
+/* Shape 783: `quad` and `screen`, as 769. One path submits `quad` without
+ * its UVs, which only the other path writes; the spray sorts a box at
+ * screen[0] on calls that do not write it. */
+extern POLY_FT4 gModelVariant783Quad[2];
+extern DVECTOR gModelVariant783Screen[2][128];
+
 #endif

@@ -19,7 +19,11 @@
  * one that reads it stale, so their zeros are not read either; shape 102's
  * depths[109] and flags[109] are written by no call and stay zero. Shape
  * 831's `points` and the UVs and screen[0] of shape 769 and image31368_entry.c
- * are written by earlier frames of the same attack before they are read. */
+ * are written by earlier frames of the same attack before they are read, as
+ * are shape 783's (769's code with its own table). Shape 84's first loop
+ * draws the points the previous call projected with the flags that call's
+ * last RotTransPersN left; a slot's first call reads zeros there, where
+ * retail read its stack (record 130 matches the interpreter). */
 #include "pc/overlays/model_stale_locals.h"
 
 SVECTOR gModelVariant169Vertices[2][4] = {{{0}}};
@@ -33,3 +37,6 @@ POLY_FT4 gModelVariant769Quad[2] = {{0}};
 DVECTOR gModelVariant769Screen[2][128] = {{{0}}};
 POLY_FT4 gModelImage31368Quad[2] = {{0}};
 DVECTOR gModelImage31368Screen[2][128] = {{{0}}};
+u16 gModelFrenchVariant101Flags[2][96] = {{0}};
+POLY_FT4 gModelVariant783Quad[2] = {{0}};
+DVECTOR gModelVariant783Screen[2][128] = {{{0}}};

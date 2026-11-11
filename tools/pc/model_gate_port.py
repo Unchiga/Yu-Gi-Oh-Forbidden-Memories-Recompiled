@@ -379,6 +379,11 @@ STALE_LOCALS = {
         _stale_quad("gModelVariant769"), _stale_screen("gModelVariant769")),
     f"{NATIVE}/french_model_variant/image31368_entry.c": (
         _stale_quad("gModelImage31368"), _stale_screen("gModelImage31368")),
+    f"{NATIVE}/french_model_variant/variant101_entry.c": ((
+        "    u16 flags[96];\n",
+        "    u16 *flags = gModelFrenchVariant101Flags[Model_GetActiveSlotIndex() & 1];\n", None),),
+    f"{NATIVE}/model_variant/variant783_entry.c": (
+        _stale_quad("gModelVariant783"), _stale_screen("gModelVariant783")),
 }
 STALE_INCLUDE = '#include "pc/overlays/model_stale_locals.h"\n'
 
