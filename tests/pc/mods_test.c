@@ -25,6 +25,8 @@
 #define CARD_SIZE 5000u
 #define XA_LBA 9000
 #define XA_SIZE (3u * 2048u)
+#define MODEL_LBA 8000                    /* three records (mods.c, check_disc_models) */
+#define MODEL_SIZE (3u * 276u * 2048u)
 
 /* --- the port around the mod system ---------------------------------- */
 
@@ -43,10 +45,10 @@ int Memories_DiscReadSectors(int lba, int sectors, void *out)
 int Memories_DiscSectorCount(void) { return 10000; }
 int Memories_DiscOriginalFileInfo(const char *path, int *lba, unsigned *size)
 {
-    int xa = !strcmp(path, "\\DATA\\MASTER.XA;1");
-    if (!xa && strcmp(path, "\\DATA\\CARD.MRG;1")) return -1;
-    if (lba) *lba = xa ? XA_LBA : CARD_LBA;
-    if (size) *size = xa ? XA_SIZE : CARD_SIZE;
+    int xa = !strcmp(path, "\\DATA\\MASTER.XA;1"), model = !strcmp(path, "\\DATA\\MODEL.MRG;1");
+    if (!xa && !model && strcmp(path, "\\DATA\\CARD.MRG;1")) return -1;
+    if (lba) *lba = xa ? XA_LBA : model ? MODEL_LBA : CARD_LBA;
+    if (size) *size = xa ? XA_SIZE : model ? MODEL_SIZE : CARD_SIZE;
     return 0;
 }
 int Memories_DiscFileInfo(const char *path, int *lba, unsigned *size)
@@ -127,6 +129,30 @@ static int find(const char *id)
 }
 
 static void preview_probe(MemoriesModEvent *event) { (void)event; }
+
+/* The game's check of a mod's model modules (Mods_SetModuleCheck), as the
+ * stubbed disc reads: a module counts when any of its bytes is not zero, and
+ * the sectors are read as the game would, with the mods' changes in. */
+static int fake_mips(const unsigned char *stages, char *detail, size_t size)
+{
+    static const int first[6] = {0, 10, 20, 30, 40, 42}, sectors[6] = {10, 10, 10, 10, 2, 2};
+    int count = 0;
+    for (int i = 0; i < 6; i++)
+        for (size_t at = 0; at < (size_t)sectors[i] * 2048; at++)
+            if (stages[(size_t)first[i] * 2048 + at]) {
+                count++;
+                break;
+            }
+    snprintf(detail, size, "%d", count);
+    return count;
+}
+
+static int fake_read(int lba, int sectors, void *out)
+{
+    memset(out, 0, (size_t)sectors * 2048);
+    for (int i = 0; i < sectors; i++) Mods_DiscSector(lba + i, (unsigned char *)out + (size_t)i * 2048);
+    return sectors;
+}
 
 int main(void)
 {
@@ -236,6 +262,15 @@ int main(void)
                "  \"font\": [ { \"file\": \"jp.png\", \"setting\": \"names\", \"value\": 1 } ] }");
     make_dir("mods/plain");
     write_text("mods/plain/mod.json", "{ \"id\": \"plain\", \"enabled\": true, \"text\": \"text.txt\" }");
+    /* A data mod over MODEL.MRG: a byte in card 2's control modules (record
+     * 1, sector 185) and one in card 3's model data (record 2, sector 10). */
+    make_dir("mods/modeler");
+    write_text("mods/modeler/mod.json",
+               "{ \"id\": \"modeler\", \"name\": \"Modeler\", \"enabled\": true, \"restart\": false,"
+               "  \"data\": [ { \"file\": \"\\\\DATA\\\\MODEL.MRG;1\","
+               "               \"patch\": [ { \"at\": \"0xE6800\", \"bytes\": \"01\" },"
+               "                            { \"at\": \"0x119000\", \"bytes\": \"01\" } ] } ] }");
+    Mods_SetModuleCheck(fake_mips, fake_read);
 
     snprintf(settings, sizeof(settings), "%s/settings.txt", root);
     write_text("settings.txt", "hand_camera=1\nmod.replacer=1\n");
@@ -251,7 +286,12 @@ int main(void)
     assert(patcher >= 0 && replacer >= 0 && broken >= 0 && camera >= 0);
     assert(find("not-a-mod") < 0);          /* no manifest, no mod */
     sounds = find("sounds");
-    assert(Mods_Count() == 12);
+    assert(Mods_Count() == 13);
+    /* Only the record whose modules the mod patched is the mod's MIPS, said
+     * once in its status; a mod that does not touch MODEL.MRG is not. */
+    assert(Mods_Active(find("modeler")) &&
+           strstr(Mods_Status(find("modeler")), "1 attack module in MODEL.MRG card 2 is MIPS code"));
+    assert(!strstr(Mods_Status(patcher), "attack module") && !strstr(Mods_Status(replacer), "attack module"));
     assert(!Mods_Active(find("xa-named")) && strstr(Mods_Status(find("xa-named")), "MASTER.XA") &&
            strstr(Mods_Status(find("xa-named")), "\"audio\""));
     assert(!Mods_Active(find("xa-raw")) && strstr(Mods_Status(find("xa-raw")), "MASTER.XA"));

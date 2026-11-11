@@ -751,9 +751,10 @@ A record is read in seventeen stages (`func_80056D7C`,
 | 1 | metadata |
 
 The control modules are MIPS code built for their slot's addresses
-(`0x8013A000`/`0x8013B000`, `0x8017A000`/`0x8017B000`), which the port runs in
-its interpreter (`src/pc/guest/mips.c`), as it runs the disc's. A disc record
-is a starting point. Card C's (a monster: cards 301-350, 651-700 and 721 have
+(`0x8013A000`/`0x8013B000`, `0x8017A000`/`0x8017B000`). The port runs the
+disc's variant modules as the decomp's C, and the rest in its interpreter
+(`src/pc/guest/mips.c`), which is going away ([Attack code: C, not
+MIPS](#attack-code-c-not-mips)). A disc record is a starting point. Card C's (a monster: cards 301-350, 651-700 and 721 have
 none) is record number C - 1, from which take 50 when C - 1 is 350 or more,
 another 50 when it is 700 or more and another 1 when it is 721 or more; the
 record is the 276 sectors from `MODEL.MRG`'s start plus 276 times that number.
@@ -829,6 +830,66 @@ palettes changed (a megabyte).
 monsters share the frame's packets, and a bigger model there is a follow-up.
 A save state taken with a bigger model in a battle slot carries its arena
 (3 MiB more for the two slots, written once a bigger model is added).
+
+### Attack code: C, not MIPS
+
+**The MIPS interpreter is going away.** A record's control modules (the
+table above: four variant modules and two primaries) are PlayStation code.
+The port runs the disc's variant modules, the attacks, as the decomp's C,
+compiled into the game. A few of their shapes are still being ported, and
+the primaries, nearly all of them `return 2`, come next. After that, what
+the interpreter runs is a mod's own: a module the mod changed or brought.
+A later version then removes the interpreter. After that, a battle using such a module falls back to the
+stand-in's sparks instead of the attack the mod wrote. No version is set
+for it yet, and the warning below appears for as long as a mod needs the
+interpreter.
+
+**What the game says.** When a mod is applied, the game reads every
+control module it brings or changes:
+- a model's file (`models`);
+- the records of `MODEL.MRG` that its `data` replaces or patches where a
+  record keeps its modules (sectors 180 to 223).
+
+It compares each with the disc's modules (`config/pc/model_gate.csv` and
+`config/pc/model_retail.csv`). A mod with modules the interpreter would run
+shows one warning in the Mods window, such as `3 attack modules in model
+pikachu, MODEL.MRG card 1, 40 are MIPS code, which runs on an interpreter
+that a later version removes`. `MEMORIES_TRACE=mods` logs each of those
+modules and what it is:
+- `the disc's code with other tables, interpreted, bytes 0xB10-0xB60`: the
+  code is the disc's, and the mod changed the data the decomp's C reads
+  there (the tables it indexes by the attack, or divides by). Data past
+  the second offset is the record's own, and the C reads it from wherever
+  the mod put it.
+- `changed code, interpreted`: the code of a disc module, changed.
+- `code no disc module has, interpreted`: a first word no disc module of
+  that slot has.
+
+The records are read as the game will read them, with every mod applied
+before this one, so a mod that patches a record another mod changed is
+told of that record's modules too. The battle logs the same for the module
+in each slot when it first runs.
+It also logs an attack whose command (a word of the record) picks an entry
+past the ones the disc's table has: the interpreter runs that attack even
+with the disc's code, and loading does not see it.
+
+**What does not warn.**
+- A module that is the disc's, unchanged.
+- A module with the disc's code of a shape the port still interprets,
+  whatever data follows that code: it is the port's to finish, not the
+  mod's.
+- A module changed only past its span. The decomp's C runs it, reading
+  the mod's data.
+- A module with no entry (its second word 0, as in a model file shorter
+  than a record). The stand-in runs it, as before.
+
+**What to do with a warning.**
+- **Tables:** keep the disc's values in the bytes the log names, and put
+  your own data past them, if the attack allows it.
+- **Code:** the way to run your own attack code natively is planned: a mod
+  API that lets a mod give the game its own C for a model's control
+  modules, and a tool that finds the disc module nearest yours and starts
+  you from the decomp's C for it. Until then the interpreter runs it.
 
 ## Audio: songs, voices and sounds from files
 

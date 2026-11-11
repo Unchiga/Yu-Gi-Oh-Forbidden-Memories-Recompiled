@@ -33,7 +33,9 @@
 #include "controls_runtime.h"
 #include "update_check.h"
 #include "pc/debug/monitor.h"
+#include "pc/overlays/model_module_class.h"
 #include "pc/saves/deck_menu.h"
+#include "pc/sdk/disc.h"
 #include "pc/text/language.h"
 #ifdef _WIN32
 #include "win32.h"
@@ -837,6 +839,8 @@ void Menu_LoadSettingsWithoutMods(void)
 
 void Menu_LoadMods(void)
 {
+    /* Which mods' models still need the MIPS interpreter (model_module_class.h). */
+    Mods_SetModuleCheck(ModelModule_StagesMips, Memories_DiscReadSectorsUntracked);
     Mods_Load(); /* the mods the settings say are applied, once they are read */
 }
 
