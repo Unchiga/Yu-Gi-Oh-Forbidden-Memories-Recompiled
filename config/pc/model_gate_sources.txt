@@ -252,6 +252,10 @@ src/native_overlays/model_variant_slot1/variant137_entry_slot1.c
 src/native_overlays/model_variant/variant138_entry.c
 [model_variant_138_slot1]
 src/native_overlays/model_variant_slot1/variant138_entry_slot1.c
+[model_variant_139]
+src/native_overlays/model_variant/variant139_entry.c
+[model_variant_139_slot1]
+src/native_overlays/model_variant_slot1/variant139_entry_slot1.c
 [model_variant_140]
 src/native_overlays/model_variant/variant157_entry_usa.c
 [model_variant_140_slot1]
@@ -268,6 +272,10 @@ src/native_overlays/model_variant_slot1/variant142_entry_slot1.c
 src/native_overlays/model_variant/variant143us_entry.c
 [model_variant_143_slot1]
 src/native_overlays/model_variant_slot1/variant143us_entry_slot1.c
+[model_variant_144]
+src/native_overlays/model_variant/variant144_entry.c
+[model_variant_144_slot1]
+src/native_overlays/model_variant_slot1/variant144_entry_slot1.c
 [model_variant_145]
 src/native_overlays/model_variant/variant162_entry_usa.c
 [model_variant_145_slot1]
@@ -336,6 +344,10 @@ src/native_overlays/model_variant_slot1/variant177_entry_usa_slot1.c
 src/native_overlays/model_variant/variant178_entry_usa.c
 [model_variant_161_slot1]
 src/native_overlays/model_variant_slot1/variant178_entry_usa_slot1.c
+[model_variant_162]
+src/native_overlays/model_variant/variant162us_entry.c
+[model_variant_162_slot1]
+src/native_overlays/model_variant_slot1/variant162us_entry_slot1.c
 [model_variant_163]
 src/native_overlays/model_variant/variant163_entry.c
 [model_variant_163_slot1]
