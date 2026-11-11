@@ -28,6 +28,10 @@ src/native_overlays/model_variant_slot1/variant67_entry_slot1.c
 src/native_overlays/french_model_variant/variant87_entry.c
 [model_variant_70_slot1]
 src/native_overlays/french_model_variant_slot1/variant87_entry_slot1.c
+[model_variant_71]
+src/native_overlays/french_model_variant/variant88_entry.c
+[model_variant_71_slot1]
+src/native_overlays/french_model_variant_slot1/variant88_entry_slot1.c
 [model_variant_78]
 src/native_overlays/model_variant/variant78_entry.c
 [model_variant_78_slot1]
@@ -164,6 +168,14 @@ src/native_overlays/model_variant_slot1/variant125_entry_slot1.c
 src/native_overlays/french_model_variant/variant143_entry.c
 [model_variant_126_slot1]
 src/native_overlays/french_model_variant_slot1/variant143_entry_slot1.c
+[model_variant_127]
+src/native_overlays/model_variant/variant144_entry_usa.c
+[model_variant_127_slot1]
+src/native_overlays/model_variant_slot1/variant144_entry_usa_slot1.c
+[model_variant_129]
+src/native_overlays/model_variant/variant129_entry.c
+[model_variant_129_slot1]
+src/native_overlays/model_variant_slot1/variant129_entry_slot1.c
 [model_variant_130]
 src/native_overlays/model_variant/variant130_entry.c
 [model_variant_130_slot1]
@@ -196,6 +208,10 @@ src/native_overlays/model_variant_slot1/variant138_entry_slot1.c
 src/native_overlays/model_variant/variant157_entry_usa.c
 [model_variant_140_slot1]
 src/native_overlays/model_variant_slot1/variant157_entry_usa_slot1.c
+[model_variant_141]
+src/native_overlays/model_variant/variant141_entry.c
+[model_variant_141_slot1]
+src/native_overlays/model_variant_slot1/variant141_entry_slot1.c
 [model_variant_142]
 src/native_overlays/model_variant/variant142_entry.c
 [model_variant_142_slot1]
@@ -1450,6 +1466,10 @@ src/native_overlays/model_variant_slot1/variant662_entry_slot1.c
 src/native_overlays/model_variant/variant663_entry.c
 [model_variant_663_slot1]
 src/native_overlays/model_variant_slot1/variant663_entry_slot1.c
+[model_variant_664]
+src/native_overlays/model_variant/image60348_entry_usa.c
+[model_variant_664_slot1]
+src/native_overlays/model_variant_slot1/image60348_entry_usa_slot1.c
 [model_variant_665]
 src/native_overlays/model_variant/variant665_entry.c
 [model_variant_665_slot1]

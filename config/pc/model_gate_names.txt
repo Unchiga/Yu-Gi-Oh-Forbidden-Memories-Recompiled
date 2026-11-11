@@ -11,6 +11,7 @@ Model_QueueCameraOrbitFromPreset 8005F5C8
 Model_QueueCameraShake 8005F7B0
 Model_QueueTintRequestForAllParts 80059AF8
 Model_RequestCameraMoveToSlots 80059F18
+Model_SeekSlotAnimation 800597C8
 Model_SetCameraOrbitFromPreset 8005F27C
 Model_SetSlotAmbient 800595C8
 Model_SetSlotPlaybackDirection 80059700

@@ -11,6 +11,7 @@ int Cards_BaseId(int id) { (void)id; abort(); }
 int Cards_Type(int id) { (void)id; abort(); }
 const u8 *Cards_TypeNameText(int type) { (void)type; abort(); }
 const u8 *Cards_NameText(int id) { (void)id; abort(); }
+const u8 *Cards_RowNameText(int id) { (void)id; abort(); }
 const u8 *Cards_DescriptionText(int id) { (void)id; abort(); }
 int Stars_CardSingle(int id) { (void)id; abort(); }
 int Stars_NoStarUsed(void) { abort(); }

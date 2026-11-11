@@ -12,6 +12,9 @@
 #include "func_8002A660.h"
 #include "library_grid_cursor.h"
 #include "main_mode_state.h"
+#ifdef MEMORIES_PC
+#include "pc/cards/cards.h"
+#endif
 
 s32 Library_GetGridCursorCardId(u8 *state)
 {
@@ -38,10 +41,15 @@ s32 Library_GetGridCursorCardId(u8 *state)
     column_ones =
         (s8)(column - column_tens * CARD_GRID_SECTION_SIDE_LENGTH);
     index = base + column_ones;
+#ifdef MEMORIES_PC
+    /* The card of the cell: a card's variants share its cell (cards.h). */
+    return Cards_LibraryEntry(index);
+#else
     if (index >= CARD_ID_END_LIVE) {
         return 0;
     }
     return index;
+#endif
 }
 
 /*

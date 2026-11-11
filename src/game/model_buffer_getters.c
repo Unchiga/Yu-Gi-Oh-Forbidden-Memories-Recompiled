@@ -8,9 +8,9 @@ void *Model_GetCameraViewBuffer(void)
     return &D_800F56F0;
 }
 
-void *Model_GetViewMetricsBuffer(void)
+ModelViewMetrics *Model_GetViewMetricsBuffer(void)
 {
-    return &D_8009B478;
+    return (ModelViewMetrics *)&D_8009B478;
 }
 
 void *Model_GetCameraCoordinateUnit(void)

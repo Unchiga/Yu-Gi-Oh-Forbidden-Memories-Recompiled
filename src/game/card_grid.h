@@ -14,8 +14,11 @@
  * cards, or on the PC port as many as the cards this run has need
  * (card_constants.h). */
 #ifdef MEMORIES_PC
+/* The cells the grid has: one for each card, but a card's variants share its
+ * (cards.h, Cards_LibraryBegin). */
+int Cards_LibraryEntryCount(void);
 #define CARD_GRID_SECTION_ROW_COUNT \
-    ((CARD_COUNT_LIVE + CARD_GRID_SECTION_ROW_CARD_COUNT - 1) / \
+    ((Cards_LibraryEntryCount() + CARD_GRID_SECTION_ROW_CARD_COUNT - 1) / \
      CARD_GRID_SECTION_ROW_CARD_COUNT)
 #else
 #define CARD_GRID_SECTION_ROW_COUNT 4

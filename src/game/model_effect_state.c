@@ -107,7 +107,7 @@ void func_8005EBF4(Key *cur, s32 k, s32 scale, s32 den, s16 *out)
 void func_8005F070(s32 enabled)
 {
     GsRVIEW2 *left = Model_GetCameraViewBuffer();
-    u16 *right = Model_GetViewMetricsBuffer();
+    u16 *right = (u16 *)Model_GetViewMetricsBuffer();
 
     D_800F5768[0].vx = left->vpx;
     D_800F5768[0].vy = left->vpy;
@@ -240,7 +240,7 @@ void func_8005F27C(s32 arg0, s32 arg1, SVECTOR *arg2)
 void func_8005F3B8(int mode, int y, int a, int b, SVECTOR *offset)
 {
     unsigned short *p = Model_GetCameraViewBuffer();
-    unsigned short *q = Model_GetViewMetricsBuffer();
+    unsigned short *q = (unsigned short *)Model_GetViewMetricsBuffer();
     if (D_8009B07B == 1 && D_8009B07C == 1)
         return;
     if (mode >= 0) {

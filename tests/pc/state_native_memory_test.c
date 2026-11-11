@@ -100,6 +100,22 @@ int main(void)
     uint32_t *restored_mapping = GuestRuntime_ResolveData((void *)(uintptr_t)0x9ff00000u, 4096);
     assert(restored_mapping != mapping && restored_mapping[17] == 0x12345678);
     Memories_NativeMemoryFree(pending);
+    /* A state from before the format is refused, naming why. */
+    {
+        size_t length = 0;
+        uint8_t *chunk = (uint8_t *)Memories_StateFindChunk(&load, "arm64-regions", &length);
+        unsigned count;
+        uint64_t format, none = 0;
+        size_t at;
+        assert(chunk);
+        memcpy(&count, chunk, sizeof(count));
+        at = sizeof(count) + (count - 1) * (3 * sizeof(uint64_t) + 2 * sizeof(uint32_t)) + 2 * sizeof(uint64_t);
+        memcpy(&format, chunk + at, sizeof(format));
+        assert(format == 2);
+        memcpy(chunk + at, &none, sizeof(none));
+        assert(!Memories_NativeMemoryPrepare(&load, why, sizeof(why)) && strstr(why, "older build"));
+        memcpy(chunk + at, &format, sizeof(format));
+    }
     /* Invalid containers are rejected before modifying running storage. */
     load.image_size--;
     assert(!Memories_NativeMemoryPrepare(&load, why, sizeof(why)));

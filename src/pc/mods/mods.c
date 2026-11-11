@@ -126,8 +126,10 @@ typedef struct {
     MemoriesMod hooks;
     MemoriesModHost host;
     JsonDocument *manifest;
+    JsonDeferred fusions; /* "fusions", read from the file as it is used */
     const JsonValue *data;       /* the "data" array, applied when enabled */
-    const JsonValue *cards;      /* the "cards" array: cards the mod adds (src/pc/cards) */
+    JsonDeferred cards;          /* "cards", read from the file for Cards_Build and gone */
+    JsonDocument *cards_read;    /* while Cards_Build reads them */
     const JsonValue *models;     /* the "models" array: battle models the mod adds */
     char textures[PATH_MAX_];    /* a texture pack directory inside the mod, or empty */
     const JsonValue *assets;     /* named image replacements from mod.json, or NULL */
@@ -175,10 +177,14 @@ static int region_count;
  * are kept. A record is read when it is wanted, into the window of the
  * battle slot that loads it (Mods_ModelWindow) or for a native extra
  * (host_disc_read, at Mods_ModelSector). */
+#include "saved_text.inc"
 typedef struct {
     int mod;
-    const char *name;
+    char *name;
+    /* A save state holds this block and not the manifest: nothing here may
+     * point into one once the cards are built, when `base` becomes `base_card`. */
     const JsonValue *base;
+    int base_card, base_set;
     char *path;
     unsigned size, hash;
     int stale;      /* its file was found gone or changed: not read again until the next launch */
@@ -187,6 +193,7 @@ typedef struct {
 } ModModel;
 static ModModel *models;
 static int model_count, model_capacity;
+static int models_settled; /* Mods_ModelsSettle was called: the cards are built */
 static unsigned char *arenas[MODEL_ARENAS];
 /* The battle slots whose window holds a bigger model that has not been
  * parsed yet (Mods_ModelPending). */
@@ -2466,6 +2473,21 @@ static int read_model(int model, int first, int count, unsigned char *out)
 }
 
 int Mods_ModelCount(void) { return model_count; }
+int Mods_ModelBaseCard(int i, int *card)
+{
+    if (i < 0 || i >= model_count || !models[i].base_set) return 0;
+    *card = models[i].base_card;
+    return 1;
+}
+void Mods_ModelsSettle(int (*card)(const struct JsonValue *))
+{
+    for (int i = 0; i < model_count; i++) {
+        if (!models[i].base_set) models[i].base_card = card(models[i].base);
+        models[i].base_set = 1;
+        models[i].base = NULL;
+    }
+    models_settled = 1;
+}
 int Mods_Model(int i, const char **name, const JsonValue **base, int *mod)
 {
     if (i < 0 || i >= model_count || !models[i].path) return -1;
@@ -2766,7 +2788,9 @@ static void drop_overrides(int mod)
         for (int slot = 0; slot < MODEL_WINDOWS; slot++) if (window_model[slot] == i) window_model[slot] = -1;
         free(models[i].path);
         models[i].path = NULL;
+        models[i].base = NULL; /* base_card stays: it loads as that */
         if (disc_layout_frozen) kept++;
+        else free(models[i].name);
     }
     model_count = kept;
     publish_overrides();
@@ -3033,15 +3057,20 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
             break;
         }
     models[model_count].mod = index;
-    models[model_count].name = name;
-    models[model_count].base = Json_Member(entry, "base");
+    /* After the cards no card can be given this model, so its base asks nothing. */
+    models[model_count].base = models_settled ? NULL : Json_Member(entry, "base");
+    models[model_count].base_card = 0;
+    models[model_count].base_set = models_settled;
     models[model_count].size = (unsigned)info.st_size;
     models[model_count].hash = hash_bytes(2166136261u, image, (size_t)info.st_size);
     models[model_count].stale = 0;
     models[model_count].geometry = geometry;
     models[model_count].pages = (int)pages;
     unmap_file(image, (size_t)info.st_size);
-    if (!(models[model_count].path = strdup(path))) return 0;
+    if (!(models[model_count].name = saved_text(name)) || !(models[model_count].path = saved_text(path))) {
+        free(models[model_count].name);
+        return 0;
+    }
     model_count++;
     if (!layout_disc_files()) {
         note(mod, "virtual disc address space exhausted by the model windows");
@@ -3480,7 +3509,13 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
             Loading_Show(label, 0, 0);
         }
     }
-    mod->manifest = Json_ParseFile(path, error, sizeof(error));
+    {
+        static const char *const lists[] = {"fusions", "cards"};
+        JsonDeferred deferred[2];
+        mod->manifest = Json_ParseFileDeferring(path, lists, 2, deferred, error, sizeof(error));
+        mod->fusions = deferred[0];
+        mod->cards = deferred[1];
+    }
     root = Json_Root(mod->manifest);
     if (!root || Json_TypeOf(root) != JSON_OBJECT) {
         const char *slash = strrchr(directory, '/');
@@ -3586,10 +3621,17 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         mod->broken = 1;
         note(mod, "\"audio\" is not an object");
     }
-    mod->cards = Json_Member(root, "cards");
-    if (mod->cards && Json_TypeOf(mod->cards) != JSON_ARRAY) {
+    if (Json_Member(root, "cards") && Json_TypeOf(Json_Member(root, "cards")) != JSON_ARRAY) {
         mod->broken = 1;
         note(mod, "\"cards\" is not an array");
+    } else if (mod->cards.found) {
+        /* Refused here, as a mistake anywhere else in the file is. */
+        JsonDocument *cards = Json_ParseDeferred(path, &mod->cards, error, sizeof(error));
+        if (!cards) {
+            mod->broken = 1;
+            note(mod, "mod.json %s", error);
+        }
+        Json_Free(cards);
     }
     mod->models = Json_Member(root, "models");
     if (mod->models && Json_TypeOf(mod->models) != JSON_ARRAY) {
@@ -3604,7 +3646,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
         const JsonValue *entry = Json_At(mod->data, i);
         if (Json_Member(entry, "file") && Json_Member(entry, "replace")) mod->restart = 1;
     }
-    if (Json_Count(mod->cards) || Json_Count(mod->models)) mod->restart = 1;
+    if (mod->cards.filled || Json_Count(mod->models)) mod->restart = 1;
     {   /* So are the rule tables (src/pc/cards/tables.c), the starter decks
          * (src/pc/cards/starter.c) and a translation (src/pc/text): all are
          * read once, at startup. */
@@ -3618,6 +3660,7 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
             /* "text": "text.txt" is one file named as a string. */
             if (Json_Count(value) || *Json_String(value, "")) mod->restart = 1;
         }
+        if (mod->fusions.filled) mod->restart = 1;   /* not in the document (json.h) */
         if (Json_Member(root, "equip_bonus_default")) mod->restart = 1;   /* a number */
     }
     {   /* A roster need not be in the manifest at all: four folders beside it,
@@ -4603,6 +4646,24 @@ void Mods_SetEnabled(int mod, int enabled)
     activate(mod, enabled);
 }
 
+/* An active mod that needed one gone broken goes too, with the reason. */
+static void off_with_broken(void)
+{
+    int wanted[MODS_MAX], changed = 1;
+    char error[160];
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < mod_count; i++) wanted[i] = mods[i].enabled && !mods[i].broken;
+        for (int i = 0; i < mod_count; i++) {
+            if (!mods[i].active || Mods_Compatible(i, wanted, error, sizeof(error))) continue;
+            activate(i, 0);
+            mods[i].broken = 1;
+            note(&mods[i], "%s", error);
+            changed = 1;
+        }
+    }
+}
+
 void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const struct JsonValue *cards, void *context),
                      void *context)
 {
@@ -4611,9 +4672,35 @@ void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const 
      * where two replace one card the later one wins, and the copies take
      * their ids in that order. Cards_Build runs once, after the first load. */
     for (i = 0; i < loaded_count; i++) {
-        const Mod *mod = &mods[loaded[i]];
-        if (mod->active && Json_Count(mod->cards)) visit(mod->id, mod->directory, mod->cards, context);
+        Mod *mod = &mods[loaded[i]];
+        if (!mod->active || !mod->cards.filled) continue;
+        mod->cards_read = Mods_CardsDocument(loaded[i]);
+        if (mod->cards_read) {
+            visit(mod->id, mod->directory, Json_Root(mod->cards_read), context);
+            continue;
+        }
+        /* The file changed or went since the scan. Never active without its cards:
+         * the tables that name them are read after this. */
+        activate(loaded[i], 0);
+        mod->broken = 1;
+        note(mod, "cards: cannot read them from its mod.json");
+        off_with_broken();
     }
+}
+void Mods_CardsRelease(void)
+{
+    for (int i = 0; i < mod_count; i++) {
+        Json_Free(mods[i].cards_read);
+        mods[i].cards_read = NULL;
+    }
+}
+JsonDocument *Mods_CardsDocument(int index)
+{
+    char path[PATH_MAX_], error[128];
+    if (!at(index) || !mods[index].cards.found ||
+        snprintf(path, sizeof(path), "%s/mod.json", mods[index].directory) >= (int)sizeof(path))
+        return NULL;
+    return Json_ParseDeferred(path, &mods[index].cards, error, sizeof(error));
 }
 
 void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,
@@ -4626,15 +4713,44 @@ void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,
     }
 }
 
+/* The "default" the mod's own "settings" declare for `key`: `fallback` when
+ * the mod declares the key without one (or not at all). This is what the
+ * Mods window shows until the player changes the setting, so it is what the
+ * game must read too. A key declared twice refuses the whole mod
+ * (Mods_CheckManifest); were one to get here, the first entry that gives a
+ * "default" answers for both, as Mods_OptionValue does through here. One
+ * linear walk of the list: Json_At from the start for each entry would be
+ * quadratic, and this runs for every element of a card drawn. */
+static int declared_default(int mod, const char *key, int fallback)
+{
+    const JsonValue *spec;
+    for (spec = Json_At(Json_Member(Mods_Manifest(mod), "settings"), 0); spec; spec = Json_Next(spec)) {
+        const JsonValue *value = Json_Member(spec, "default");
+        if (value && !strcmp(key, Json_String(Json_Member(spec, "key"), ""))) return (int)Json_Number(value, 0);
+    }
+    return fallback;
+}
+
 int Mods_Setting(const char *id, const char *key, int fallback)
 {
     char name[256];
     const char *text;
-    if (by_id(id) < 0 || !key || !*key) return fallback;
+    int mod = by_id(id), stored;
+    if (mod < 0 || !key || !*key) return fallback;
     text = environment_name(name, sizeof(name), id, key) ? getenv(name) : NULL;
     if (text && *text) return (int)strtol(text, NULL, 0);
-    if (!setting_key(name, sizeof(name), id, key)) return fallback;
-    return Settings_GetNamed(name, fallback);
+    /* What the player stored, 0 included. The settings keep no "is it there"
+     * question, so ask twice with fallbacks no stored value equals: both come
+     * back as asked only when nothing is stored. */
+    if (setting_key(name, sizeof(name), id, key)) {
+        stored = Settings_GetNamed(name, INT_MIN);
+        if (stored != INT_MIN || Settings_GetNamed(name, INT_MAX) != INT_MAX) return stored;
+    }
+    /* Nothing stored, nothing in the environment: the "default" the mod
+     * declares for the key, and the caller's fallback for a key it declares
+     * none for (an undeclared knob of a code mod, or a declared one with no
+     * "default" -- a card entry's count_setting then keeps its "count"). */
+    return declared_default(mod, key, fallback);
 }
 
 void Mods_Note(const char *id, const char *format, ...)
@@ -4678,6 +4794,19 @@ void Mods_Reset(void)
     }
 }
 
+long Mods_EachFusion(const char *id, int (*each)(const JsonValue *, long, void *), void *context, char *error,
+                     size_t error_size)
+{
+    int index = by_id(id);
+    char path[PATH_MAX_];
+    if (index < 0 || !mods[index].fusions.found ||
+        snprintf(path, sizeof(path), "%s/mod.json", mods[index].directory) >= (int)sizeof(path))
+        return 0;
+    return Json_EachElement(path, &mods[index].fusions, each, context, error, error_size);
+}
+unsigned Mods_FusionsHash(int index) { return at(index) && mods[index].fusions.filled ? mods[index].fusions.hash : 0; }
+unsigned Mods_CardsHash(int index) { return at(index) && mods[index].cards.filled ? mods[index].cards.hash : 0; }
+long Mods_FusionsSize(int index) { return at(index) && mods[index].fusions.found ? mods[index].fusions.end - mods[index].fusions.start : 0; }
 const JsonValue *Mods_Manifest(int index) { return at(index) ? Json_Root(mods[index].manifest) : NULL; }
 const char *Mods_Metadata(int index, const char *key) { return Json_String(Json_Member(Mods_Manifest(index), key), ""); }
 const char *Mods_Directory(int index) { return at(index) ? mods[index].directory : ""; }

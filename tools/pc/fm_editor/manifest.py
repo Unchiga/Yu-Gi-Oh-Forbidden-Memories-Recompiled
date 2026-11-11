@@ -28,6 +28,27 @@ from .model import AddedCard, ModInfo, Project, StarterDeck, duelist_named, same
 from . import art, board_art, campaign_map, compat, fixed_decks, guardian_stars, packs as packmath, pools as poolmath, roster
 
 INFO_KEYS = ("id", "name", "version", "author", "description")
+
+# The switch the game gates a mod's whole "card_layout" on (card_layout.c,
+# full_bleed_of): a bool the mod declares. Without it the layout never applies,
+# so the Frames page declares it, on, with the first frame style.
+FULL_BLEED_KEY = "full_bleed"
+FULL_BLEED_SETTING = {"key": FULL_BLEED_KEY, "label": "Custom card frame", "type": "bool", "default": 1,
+                      "description": "Draw this mod's card frames and layout instead of the game's own."}
+
+
+def declares_full_bleed(project: Project) -> bool:
+    return any(isinstance(s, dict) and s.get("key") == FULL_BLEED_KEY for s in project.info.settings)
+
+
+def declare_full_bleed(project: Project) -> bool:
+    """Add the "full_bleed" setting, on by default, unless the mod declares
+    one already (whatever its default: that is the modder's to choose).
+    Returns whether it was added."""
+    if declares_full_bleed(project):
+        return False
+    project.info.settings = [*project.info.settings, dict(FULL_BLEED_SETTING)]
+    return True
 TABLE_KEYS = ("settings", "cards", "fusions", "equips", "rituals", "drops", "decks", "starter", "packs", "pack_shop",
               "duelists")
 REPLACE_EXTRA = ("art", "thumbnail", "title", "model", "effect", "exodia")

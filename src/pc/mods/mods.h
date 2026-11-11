@@ -100,7 +100,9 @@ void Mods_SetEnabled(int mod, int enabled);
 
 /* The "cards" array of every applied mod, with the directory its images are
  * named from, in load order (Mods_Loaded, below), for src/pc/cards (json.h
- * reads them). A data mod needs no code for them. */
+ * reads them). A data mod needs no code for them. Read from each mod.json for
+ * Cards_Build, which frees them as it ends (Mods_CardsRelease): a value is gone by
+ * then, and this is not to be called again. */
 struct JsonValue;
 void Mods_VisitCards(void (*visit)(const char *id, const char *directory, const struct JsonValue *cards, void *context),
                      void *context);
@@ -113,7 +115,12 @@ void Mods_VisitManifests(void (*visit)(const char *id, const char *directory,
 int Mods_LoadedCount(void);
 int Mods_Loaded(int index);
 /* One of a mod's settings (`mod.<id>.<key>`, or MEMORIES_MOD_<ID>_<KEY> for
- * the run), as a code mod's host->setting reads it. */
+ * the run), as the game reads it from a manifest. Until the player or the
+ * environment gives it a value, it reads as the "default" the mod's
+ * "settings" declare for it -- what the Mods window shows. `fallback`
+ * answers for a key the mod does not declare, or declares without a
+ * "default", and for no such mod. (A code mod's host->setting is mods.c's
+ * host_setting: it answers with the fallback the mod passes.) */
 int Mods_Setting(const char *id, const char *key, int fallback);
 /* One of a mod's files of `key` ("text", "font"; src/pc/text): entry `index`
  * of a name or a list of them, each a string or {"file": ..., "setting": ...}
@@ -226,6 +233,12 @@ unsigned Mods_DiscSignature(void);
  * model in slot `slot`'s window, 64x256 halfwords each, and how many; NULL
  * and 0 for none. */
 int Mods_ModelCount(void);
+/* A model's "base", once the cards can say what it names. Mods_ModelBaseCard: 0
+ * until then, when Mods_Model's `base` has it; from then on Mods_Model's `base` is
+ * NULL, and a model dropped since still answers (it loads as that). */
+int Mods_ModelBaseCard(int i, int *card);
+/* As Cards_Build ends: no block a save state holds keeps a manifest's value. */
+void Mods_ModelsSettle(int (*card)(const struct JsonValue *));
 int Mods_Model(int i, const char **name, const struct JsonValue **base, int *mod);
 int Mods_ModelSector(int i);
 int Mods_ModelRead(int lba, int sectors, void *out);
@@ -240,8 +253,22 @@ const unsigned char *Mods_ModelPages(int slot, int *count);
 int *Mods_ModelPendings(unsigned *size);
 void Mods_ModelParsed(int slot);
 
-/* Manager metadata and configuration. Borrowed strings live until exit. */
+/* Manager metadata and configuration. Borrowed strings live until exit. "fusions" and
+ * "cards" are empty lists in it: they stay in the mod.json (Mods_EachFusion,
+ * Mods_CardsDocument). */
 const struct JsonValue *Mods_Manifest(int mod);
+/* A mod's "fusions", which is not in its manifest: each entry in turn from the
+ * file, gone when `each` returns (json.h). The count, -1 on a mistake. */
+long Mods_EachFusion(const char *id, int (*each)(const struct JsonValue *, long, void *), void *context, char *error,
+                     size_t error_size);
+unsigned Mods_FusionsHash(int mod); /* 0 with none */
+/* "cards", also not in the manifest: read for Mods_VisitCards and kept until
+ * Mods_CardsRelease, as Cards_Build ends; or a document of them for the caller, which
+ * Json_Frees it. */
+unsigned Mods_CardsHash(int mod); /* 0 with none */
+struct JsonDocument *Mods_CardsDocument(int mod);
+void Mods_CardsRelease(void);
+long Mods_FusionsSize(int mod); /* bytes in the file, 0 for none */
 const char *Mods_Metadata(int mod, const char *key);
 const char *Mods_Directory(int mod);
 /* Where players put new mods (MEMORIES_MODS_DIR, else the user mods

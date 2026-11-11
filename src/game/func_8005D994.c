@@ -26,7 +26,7 @@ void func_8005D994(
     s32 x;
     s32 first;
 
-    s = Model_GetViewMetricsBuffer();
+    s = (u16 *)Model_GetViewMetricsBuffer();
     memset(a, 0, sizeof(a));
     a[3] = arg0 | 0x80;
     one = 1;

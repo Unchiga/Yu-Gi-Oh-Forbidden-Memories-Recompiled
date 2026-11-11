@@ -11,6 +11,8 @@
 #include "display_object.h"
 #ifdef MEMORIES_PC
 #include "pc/cards/tables.h"
+#include "pc/cards/cards.h"
+#include "pc/cards/build_deck_fold.h"
 #endif
 
 /* The Build Deck screen's three contiguous count helpers. They refresh the
@@ -23,6 +25,31 @@
    local, and not of the parameter, which is the same incoming register
    either way. */
 
+#ifdef MEMORIES_PC
+/* After a card moved between the chest and the deck: the entry's row is shown or not by what the player has of the
+   whole entry, the variants' rows never, the card on show is one the player has, and the list is sorted again. */
+void BuildDeck_FoldRow(BuildDeckTransitionState *state, s32 id)
+{
+    CardList *chest = &state->lists[0];
+    s32 head = BuildDeckFold_Head(id);
+    s32 i;
+
+    if (!BuildDeckFold_Active() || Cards_VariantCount(head) == 0) {
+        return;
+    }
+    for (i = 0; i < chest->row_count; i++) {
+        s32 row = (s16)chest->entries[i].id;
+        if (row == head) {
+            chest->entries[i].flags = BuildDeckFold_RowFlag(state->chest_card_quantities,
+                                                           state->deck_card_quantities, head, 1, 0x80);
+        } else if (BuildDeckFold_Head(row) == head) {
+            chest->entries[i].flags = 0;
+        }
+    }
+    BuildDeckFold_Settle(state, state->chest_card_quantities, state->deck_card_quantities, head);
+    func_80032C48(chest);
+}
+#endif
 void BuildDeck_RefreshCountDisplay(BuildDeckTransitionState *record) {
     DuelEffectChannel *p;
     D_801D5608[0].build_deck.chest = record->chest_total;
@@ -66,6 +93,9 @@ void BuildDeck_ReturnCardToChest(BuildDeckTransitionState *base, s32 index)
         base->chest_card_quantities[index] = next;
         base->chest_total++;
     }
+#ifdef MEMORIES_PC
+    BuildDeck_FoldRow(base, index);
+#endif
 }
 
 void BuildDeck_TakeCardFromChest(BuildDeckTransitionState *state, s32 id)
@@ -93,4 +123,7 @@ void BuildDeck_TakeCardFromChest(BuildDeckTransitionState *state, s32 id)
         state->chest_card_quantities[id] = count;
         state->chest_total -= 1;
     }
+#ifdef MEMORIES_PC
+    BuildDeck_FoldRow(state, id);
+#endif
 }
