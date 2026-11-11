@@ -986,7 +986,8 @@ below `run_module`'s frame with the byte before each native module call
 (`MEMORIES_MODEL_STACK_POISON`), so such a read takes the byte, and for one
 byte or the other differs from the interpreter. Every batch runs both over
 `--records gated`; a shape that differs under either is `keep` with the
-read in its note (84, beside 128), until its C writes what it reads.
+read in its note, until its C writes what it reads or rule 6 (below) keeps
+the local.
 Shape 783 (`variant783_entry.c`) was the second: the spray loop sorts a box
 at `screen[0]`, which only the particle branches' `RotTransPersN` fills, so
 the plain sweep differed in five battles (records 252, 279, 350, 577, 590, a
@@ -1035,8 +1036,14 @@ without writing its UVs, which every frame before the burst writes, and
 their spray reads `screen[0]`, which only the gathering frames and the
 burst's first frames (while `burst_level` is not zero) write. Records 301,
 189 and 113, one battle each, match with the rule under both poison bytes.
-Shapes 84, 128 and 783 stay `keep`: their reads have not been shown to take
-the same function's previous call.
+Shape 84's `flags` and shape 783's `quad` and `screen` take the rule too:
+783 has 769's two reads (one path submits `quad` without its UVs, and the
+spray reads `screen[0]`), and with the rule records 130 (84) and 252, 279,
+350, 577 and 590 (783) match the interpreter, plain and under both poison
+bytes. Shape 128 stays `keep`: what it reads unwritten (a `CVECTOR`'s fourth
+byte, a `POLY_FT4`'s corners) no call of its own writes, so storage per slot
+does not model it, and its table has 104 entries, past what its images
+share.
 
 **A frame past a page calls the Windows stack probe.** Shape 439's C
 (`variant456_sprays.c`, about 12 KB of arrays) makes the Windows compilers
