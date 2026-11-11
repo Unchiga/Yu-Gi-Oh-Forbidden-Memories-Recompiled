@@ -85,6 +85,18 @@ class SpanRules(unittest.TestCase):
         with self.assertRaises(SystemExit):
             model_gate.hashed(shape, "A", 0x404)
 
+    def test_a_span_may_end_inside_a_word(self):
+        """A table whose last entry ends two bytes into a word that differs per
+        record past it: the span stops at its last byte."""
+        shape = self.shape(0x402)
+        self.assertEqual(shape.common("A"), 0x400)
+        self.assertEqual(shape.common("A", 1), 0x402)
+        model_gate.hashed(shape, "A", 0x402)
+        with self.assertRaises(SystemExit):
+            model_gate.hashed(shape, "A", 0x403)
+        self.assertEqual(model_gate.problems([self.row(span="0x3F62")]), [])
+        self.assertTrue(model_gate.problems([self.row(span="0x5001")]))
+
     def test_printf_format_strings_are_found(self):
         """A format string from the slot's data handed to printf, directly or
         cast, is found by its symbol (native C passes it to the host's printf)."""

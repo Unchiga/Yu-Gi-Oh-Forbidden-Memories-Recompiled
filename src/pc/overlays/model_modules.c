@@ -177,7 +177,7 @@ static const ModelGateRow gate_rows[] = {
  * compared by its identifier word alone. */
 typedef struct {
     uint32_t words[IMAGE_WORDS];
-    uint32_t span; /* the words compared; 0: no verdict yet */
+    uint32_t span; /* the bytes compared, in words rounded up; 0: no verdict yet */
     const ModelGateRow *row; /* the native row they hash to, NULL: interpret */
     int outside_logged;      /* a call outside the row's commands was logged for these words */
     int stand_in;            /* the stand-in took the setup of the attack in progress: it owns its updates */
@@ -205,9 +205,9 @@ static const ModelGateRow *native_variant_row(uint32_t module, int slot, uint32_
     const ModelGateRow *found = NULL;
 
     if (verdict->span) {
-        for (i = 0; i < verdict->span / 4 && guest[i] == verdict->words[i]; i++) {
+        for (i = 0; i < (verdict->span + 3) / 4 && guest[i] == verdict->words[i]; i++) {
         }
-        if (i == verdict->span / 4) {
+        if (i == (verdict->span + 3) / 4) {
             return verdict->row;
         }
     }
@@ -232,7 +232,7 @@ static const ModelGateRow *native_variant_row(uint32_t module, int slot, uint32_
     verdict->row = found;
     verdict->outside_logged = 0;
     verdict->stand_in = 0; /* a new module: no attack of the old one goes on */
-    for (i = 0; i < verdict->span / 4; i++) {
+    for (i = 0; i < (verdict->span + 3) / 4; i++) {
         verdict->words[i] = guest[i];
     }
     LOG(LOG_MODS, "model variant module %u in slot %c: %s", (unsigned)identifier, slot ? 'B' : 'A',

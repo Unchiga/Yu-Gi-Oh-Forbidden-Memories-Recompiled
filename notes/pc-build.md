@@ -746,6 +746,20 @@ of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
 those 1,524 bytes runs the interpreter, and one that changes anything after
 them (the model's tables and textures) still runs the C.
 
+**A span may end inside a word.** The bytes right after a module's last
+table can differ per record, so the word that holds a table's last bytes may
+not be common to the images. The last entry ends at its stride (the C
+element's sizeof), so `model_gate_scan.py` stops the span at that byte (or
+past it, where a read takes more bytes than the member it starts at: the
+scan keeps each table read's width) and
+rounds it up to a whole word only when the images agree over the word;
+`check --disc` compares the images byte by byte (`Shape.common(slot, 1)`);
+and `model_modules.c` hashes `span` bytes and keeps the verdict's words
+rounded up, so a module that differs only past the span in that word is
+hashed again, and passes. Shape 60's command table (5 entries of `0x16` from
+`0xC44`) ends at `0xCB2`, where its slot B images start to differ: its span
+is `0xCB2`.
+
 **The command is an index too, and the caller chooses it.** The setup of a
 variant module is called with a word of the record `% 1000`
 (`model_control.c`, `model_load_step.c`), which a MODEL.MRG mod controls, and

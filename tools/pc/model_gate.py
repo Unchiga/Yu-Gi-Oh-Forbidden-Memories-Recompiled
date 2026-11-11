@@ -323,14 +323,16 @@ def header_text(rows: list[Row]) -> str:
 
 # --- the disc -----------------------------------------------------------------------
 
-def common_prefix(images: list[bytes]) -> int:
-    """How many leading bytes (a whole number of words) every image shares."""
+def common_prefix(images: list[bytes], unit: int = 4) -> int:
+    """How many leading bytes every image shares, in whole `unit`s: words for
+    the span a row starts from, bytes for how far a span may go (a table
+    whose last entry ends inside a word that differs per record past it)."""
     first = images[0]
     length = IMAGE_SIZE
     for image in images[1:]:
         at = 0
-        while at < length and first[at:at + 4] == image[at:at + 4]:
-            at += 4
+        while at < length and first[at:at + unit] == image[at:at + unit]:
+            at += unit
         length = at
     return length
 
@@ -349,8 +351,8 @@ class Shape:
         self.images = {"A": {}, "B": {}}     # sha256 of the whole image -> bytes
         self.records: set[tuple[int, int]] = set()
 
-    def common(self, slot: str) -> int:
-        return common_prefix(list(self.images[slot].values()))
+    def common(self, slot: str, unit: int = 4) -> int:
+        return common_prefix(list(self.images[slot].values()), unit)
 
 
 def read_shapes(disc_path: Path) -> dict[int, Shape]:
@@ -382,7 +384,7 @@ def hashed(shape: Shape, slot: str, span: int) -> str:
     digests = {hashlib.sha256(image[:span]).hexdigest() for image in shape.images[slot].values()}
     if len(digests) != 1:
         raise SystemExit(f"shape {shape.shape} slot {slot}: its images differ within the first 0x{span:X} bytes "
-                         f"(they agree to 0x{shape.common(slot):X}): the span is too long, or the shape is two")
+                         f"(they agree to 0x{shape.common(slot, 1):X}): the span is too long, or the shape is two")
     return digests.pop()
 
 
@@ -415,7 +417,7 @@ def boundaries(shapes: dict[int, Shape], rows: list[Row]) -> list[str]:
             continue
         shape = shapes[row.shape]
         for slot in "AB":
-            common = shape.common(slot)
+            common = shape.common(slot, 1)
             data_start = row.data_start
             lines.append(f"shape {row.shape} slot {slot}: {len(shape.images[slot])} distinct images, "
                          f"{len(shape.records)} (record, alternative) pairs, common prefix 0x{common:X}, "
@@ -442,8 +444,8 @@ def problems(rows: list[Row]) -> list[str]:
         except ValueError:
             bad.append(f"{where}: span {row['span']!r}")
             continue
-        if span % 4 or not 0 < span <= IMAGE_SIZE:
-            bad.append(f"{where}: span 0x{span:X} is not a word count inside the image")
+        if not 0 < span <= IMAGE_SIZE:
+            bad.append(f"{where}: span 0x{span:X} is not inside the image")
         try:
             row.sources
         except ValueError:
