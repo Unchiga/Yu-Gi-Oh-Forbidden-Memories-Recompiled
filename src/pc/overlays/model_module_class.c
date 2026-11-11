@@ -16,7 +16,7 @@ typedef struct {
 } SpanRow;
 
 static const SpanRow span_rows[] = {
-#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width) \
+#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
     {0, slot, identifier, span, sha256},
 #include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW

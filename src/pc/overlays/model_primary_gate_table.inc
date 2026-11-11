@@ -1,8 +1,10 @@
 /* Written by tools/pc/model_gate.py from config/pc/model_primary_gate.csv: do not edit.
  * One row for each primary module the decomp's C stands in for:
- * MODEL_PRIMARY_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus):
+ * MODEL_PRIMARY_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width,
+ * modulus):
  * entries is NO_TABLE for a C that takes no command index; otherwise the setup command
- * must be below it (taken modulo `modulus` when that is not 0), and an update's entry (at `field` in the work area) covered: with
+ * must be below it (taken modulo `modulus` when that is not 0), and an update's entry
+ * (at `field` in the work area) covered: with
  * index_width 0 a pointer to one of the `entries` of `stride` bytes from `table` (offsets
  * from the slot base), else the stored command itself, a u8, u16 or u32, below `entries`. */
 MODEL_PRIMARY_ROW(0, 38u, 0x148u, "9308f7495ef02658ce22a8dad1d92584191f7e9899b5ce7c818b5e832833143b", model_primary_38__func_8013A004, 0x3u, 0x118u, 0x10u, 0x0u, 0u, 0u) /* shape 38 */

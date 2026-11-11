@@ -22,7 +22,9 @@ word of its own):
     data_start   the decomp's data start for the shape (native rows)
     command_table  where the C indexes the slot's data by the command its
                  caller passes (a native row's `table:stride:count:field`
-                 or `table:stride:count:field:indexN`, or `none` when it
+                 or `table:stride:count:field:indexN`, either ending in
+                 `:modN` when the C picks the entry with command % N (a
+                 pointer row's only), or `none` when it
                  does not): the table's offset from the slot base, the entry
                  size, how many entries the hash covers, and the offset in
                  the work area of what the setup left for the updates. That
@@ -357,15 +359,14 @@ def address_sections(root: Path = ROOT) -> dict[str, dict[str, int]]:
 
 def header_text(rows: list[Row], kind: Kind = VARIANT) -> str:
     """The table the game is built with: MODEL_GATE_ROW for the variants,
-    MODEL_PRIMARY_ROW (the same, and the command's modulus) for the primaries."""
-    primary = kind.name == "primary"
+    MODEL_PRIMARY_ROW for the primaries, with the same fields."""
     lines = [f"/* Written by tools/pc/model_gate.py from {kind.table.relative_to(ROOT).as_posix()}: do not edit.\n",
              f" * One row for each {kind.name} module the decomp's C stands in for:\n",
-             f" * {kind.macro}(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width"
-             + (", modulus" if primary else "") + "):\n",
+             f" * {kind.macro}(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width,\n",
+             " * modulus):\n",
              " * entries is NO_TABLE for a C that takes no command index; otherwise the setup command\n",
-             " * must be below it" + (" (taken modulo `modulus` when that is not 0)" if primary else "")
-             + ", and an update's entry (at `field` in the work area) covered: with\n",
+             " * must be below it (taken modulo `modulus` when that is not 0), and an update's entry\n",
+             " * (at `field` in the work area) covered: with\n",
              " * index_width 0 a pointer to one of the `entries` of `stride` bytes from `table` (offsets\n",
              " * from the slot base), else the stored command itself, a u8, u16 or u32, below `entries`. */\n"]
     for row in sorted(rows, key=lambda row: row.shape):
@@ -375,8 +376,7 @@ def header_text(rows: list[Row], kind: Kind = VARIANT) -> str:
             table = row.command_table
             bound = (f"0x{table[2]:X}u, 0x{table[0]:X}u, 0x{table[1]:X}u, 0x{table[3]:X}u, {table[4]}u" if table
                      else f"0x{NO_TABLE:X}u, 0u, 0u, 0u, 0u")
-            if primary:
-                bound += f", {row.command_modulus}u"
+            bound += f", {row.command_modulus}u"
             lines.append(f'{kind.macro}({"AB".index(slot)}, {row.identifier(slot)}u, 0x{row.span:X}u, '
                          f'"{row.sha256(slot)}", {row.entry(slot)}, {bound}) /* shape {row.shape} */\n')
     return "".join(lines)
@@ -538,9 +538,11 @@ def problems(rows: list[Row]) -> list[str]:
         except ValueError:
             bad.append(f"{where}: command_table {row['command_table']!r} is not table:stride:count:field[:index8|index16|index32]")
             table = None
-        if row.command_modulus and row.KIND.name != "primary":
-            bad.append(f"{where}: `mod{row.command_modulus}` is for a primary row (config/pc/model_primary_gate.csv); "
-                       "the variants' header has no modulus")
+        if row.command_modulus and row["command_table"].split(":")[4:5] != [f"mod{row.command_modulus}"]:
+            # ModelGate_CommandCoveredModulo takes the modulus at the setup
+            # only: an index row's updates compare the stored command itself.
+            bad.append(f"{where}: `mod{row.command_modulus}` with an index: a modulus is for a pointer row "
+                       "(table:stride:count:field:modN)")
         if row["backend"] == "native":
             if row["command_table"] == "":
                 bad.append(f"{where}: a native row gives its command_table, or `none` when its C takes no command index")

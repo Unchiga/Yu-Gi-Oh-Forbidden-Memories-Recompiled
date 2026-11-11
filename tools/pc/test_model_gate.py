@@ -171,8 +171,8 @@ class SpanRules(unittest.TestCase):
         text = model_gate.header_text([self.row(), self.row(shape="500", command_table="none", sha256_a="c" * 64,
                                                             sha256_b="d" * 64, identifier_a="500",
                                                             identifier_b="650")])
-        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x1B74u, 0u)", text)
-        self.assertIn("0xFFFFFFFFu, 0u, 0u, 0u, 0u)", text)
+        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x1B74u, 0u, 0u)", text)
+        self.assertIn("0xFFFFFFFFu, 0u, 0u, 0u, 0u, 0u)", text)
 
     def test_a_command_table_may_bound_an_index_word(self):
         """`:indexN` says the work area keeps the command itself as a uN."""
@@ -183,6 +183,17 @@ class SpanRules(unittest.TestCase):
         self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:index64")]))
         self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:pointer")]))
         self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:index8:x")]))
+
+    def test_a_command_table_may_take_the_command_modulo(self):
+        """`:modN` (last) says the C picks entry command % N: a pointer row's,
+        never with an index (its updates compare the stored command itself)."""
+        row = self.row(command_table="0x3A68:0x44:18:0x20:mod100")
+        self.assertEqual((row.command_table, row.command_modulus), ((0x3A68, 0x44, 18, 0x20, 0), 100))
+        self.assertEqual(model_gate.problems([row]), [])
+        self.assertIn(", 100u)", model_gate.header_text([row]))
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:index8:mod100")]))
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:mod0")]))
+        self.assertTrue(model_gate.problems([self.row(command_table="0x3A68:0x44:18:0x20:mod100:index8")]))
 
     def test_a_command_table_is_well_formed(self):
         """No negative number (it would not compile in the table), a field inside a
@@ -198,7 +209,7 @@ class SpanRules(unittest.TestCase):
 
     def test_the_header_carries_the_index_width(self):
         text = model_gate.header_text([self.row(command_table="0x3A68:0x44:18:0x20:index16")])
-        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x20u, 2u)", text)
+        self.assertIn("0x12u, 0x3A68u, 0x44u, 0x20u, 2u, 0u)", text)
 
     def test_the_tables_the_command_indexes_are_found(self):
         """Each form the decomp's C picks a row with; a wrapper's #define puts
