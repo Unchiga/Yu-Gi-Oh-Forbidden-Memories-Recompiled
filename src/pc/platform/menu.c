@@ -369,6 +369,7 @@ typedef struct { uint32_t code; int missing; Glyph glyph; } ExtraGlyph;
 #define EXTRA_GLYPHS_MAX 4096
 static FT_Library font_library;
 static FT_Face font_face;
+static FT_Face emoji_face;
 static ExtraGlyph *extra_glyphs;
 static unsigned extra_mask, extra_count;
 
@@ -456,6 +457,8 @@ static void free_extra_glyphs(void)
     extra_glyphs = NULL;
     extra_mask = extra_count = 0;
     if (font_face) FT_Done_Face(font_face);
+    if (emoji_face) FT_Done_Face(emoji_face);
+    emoji_face = NULL;
     if (font_library) FT_Done_FreeType(font_library);
     font_face = NULL;
     font_library = NULL;
@@ -516,6 +519,27 @@ static void load_font(void)
 #endif
     font_face = face;
     font_library = library;
+#ifdef _WIN32
+    /* Windows' emoji outlines also cover symbols absent from the UI face.
+     * Render monochrome, matching the menu's coverage-based text renderer. */
+    {
+        const char *root = getenv("WINDIR");
+        char path[1024];
+        if (root && (size_t)snprintf(path, sizeof(path), "%s/Fonts/seguiemj.ttf", root) < sizeof(path) &&
+            !FT_New_Face(library, path, 0, &emoji_face)) {
+            if (FT_Set_Pixel_Sizes(emoji_face, 0, FONT_PX)) {
+                FT_Done_Face(emoji_face);
+                emoji_face = NULL;
+            }
+        }
+    }
+#endif
+}
+static FT_Face character_face(uint32_t character)
+{
+    if (!FT_Get_Char_Index(font_face, character) && emoji_face && FT_Get_Char_Index(emoji_face, character))
+        return emoji_face;
+    return font_face;
 }
 
 /* The glyph a character is drawn with: control characters (and DEL) take
@@ -550,8 +574,9 @@ static const Glyph *glyph_for(uint32_t character)
     }
     for (slot = (character * 2654435761u) & extra_mask; extra_glyphs[slot].code; slot = (slot + 1) & extra_mask) {}
     extra_glyphs[slot].code = character;
-    extra_glyphs[slot].missing = !FT_Get_Char_Index(font_face, (FT_ULong)character) ||
-                                 !render_glyph(font_face, (FT_ULong)character, &extra_glyphs[slot].glyph);
+    FT_Face face = character_face(character);
+    extra_glyphs[slot].missing = !FT_Get_Char_Index(face, (FT_ULong)character) ||
+                                 !render_glyph(face, (FT_ULong)character, &extra_glyphs[slot].glyph);
     extra_count++;
     return extra_glyphs[slot].missing ? unknown : &extra_glyphs[slot].glyph;
 }
@@ -768,10 +793,11 @@ static const Glyph *big_glyph_for(uint32_t character, int scale)
     big_count++;
     /* The face is the menu's: at the character's size for this one, then
      * back to the menu's for everything else. */
-    b->missing = FT_Set_Pixel_Sizes(font_face, 0, (FT_UInt)(13 * scale)) ||
-                 !FT_Get_Char_Index(font_face, (FT_ULong)character) ||
-                 !render_glyph(font_face, (FT_ULong)character, &b->glyph);
-    FT_Set_Pixel_Sizes(font_face, 0, FONT_PX);
+    FT_Face face = character_face(character);
+    b->missing = FT_Set_Pixel_Sizes(face, 0, (FT_UInt)(13 * scale)) ||
+                 !FT_Get_Char_Index(face, (FT_ULong)character) ||
+                 !render_glyph(face, (FT_ULong)character, &b->glyph);
+    FT_Set_Pixel_Sizes(face, 0, FONT_PX);
     return b->missing ? NULL : &b->glyph;
 }
 

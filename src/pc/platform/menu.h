@@ -34,14 +34,16 @@ typedef enum {
     MENU_EVENT_MOTION,      /* x, y */
     MENU_EVENT_WHEEL,       /* wheel: +1 up, -1 down; x, y */
     MENU_EVENT_LEAVE,       /* the pointer left the window */
-    MENU_EVENT_KEY_DOWN,    /* key */
+    MENU_EVENT_KEY_DOWN,    /* key; button ' ' when MENU_KEY_ENTER is the Space bar's */
     MENU_EVENT_KEY_UP,
     MENU_EVENT_TEXT
 } MenuEventType;
 
 typedef enum {
     MENU_KEY_OTHER, MENU_KEY_ESCAPE, MENU_KEY_F10, MENU_KEY_LEFT, MENU_KEY_RIGHT, MENU_KEY_UP, MENU_KEY_DOWN,
-    MENU_KEY_ENTER, MENU_KEY_TAB, MENU_KEY_BACKSPACE
+    MENU_KEY_ENTER, MENU_KEY_TAB, MENU_KEY_BACKSPACE,
+    MENU_KEY_DELETE, MENU_KEY_HOME, MENU_KEY_END, MENU_KEY_PAGE_UP, MENU_KEY_PAGE_DOWN,
+    MENU_KEY_A, MENU_KEY_C, MENU_KEY_V, MENU_KEY_X
 } MenuKey;
 
 typedef struct MenuEvent {
@@ -49,7 +51,9 @@ typedef struct MenuEvent {
     int x, y, button, wheel;
     MenuKey key;
     char text[32];
+    unsigned modifiers; /* MENU_MOD_*; appended to preserve existing field offsets */
 } MenuEvent;
+enum { MENU_MOD_SHIFT = 1, MENU_MOD_CTRL = 2 };
 
 /* A code mod may name these (Menu_SetItemEnabled), so each keeps its number
  * from release to release: new ones go at the end, retired ones stay

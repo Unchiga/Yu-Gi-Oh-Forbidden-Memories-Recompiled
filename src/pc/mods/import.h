@@ -97,4 +97,21 @@ int Mods_ImportRemoveTree(const char *path);
  * (which has none here, and where nothing but the tests runs this: the
  * button exists only on Android) stat follows a junction. */
 int Mods_ImportRemoveInstalled(const char *mods, const char *directory, char *why, size_t why_size);
+/* --- Modpacks (the Mods window's Modpack tab) --- */
+/* Unpacks the entry `name` of the .zip to the file `path`: 1, 0 when the
+ * .zip has no such file, -1 with why. */
+int Mods_ImportExtract(ModsImport *import, const char *name, const char *path, char *why, size_t why_size);
+/* A .zip written entry by entry (deflated, UTF-8 names): Create, Add..., then
+ * Finish (1; 0 with why, and the file removed), which frees it either way.
+ * Abandon makes the Finish to come remove it. Progress: *done grows by the
+ * bytes each Add reads (atomically, for another thread's bar), and a nonzero
+ * *cancel stops the Add under way ("Export stopped.", the .zip abandoned);
+ * either may be NULL. */
+typedef struct ModsZipOut ModsZipOut;
+ModsZipOut *Mods_ZipCreate(const char *path, char *why, size_t why_size);
+void Mods_ZipAbandon(ModsZipOut *zip);
+void Mods_ZipProgress(ModsZipOut *zip, long long *done, const int *cancel);
+int Mods_ZipAddFile(ModsZipOut *zip, const char *name, const char *source, char *why, size_t why_size);
+int Mods_ZipAddData(ModsZipOut *zip, const char *name, const void *data, size_t size, char *why, size_t why_size);
+int Mods_ZipFinish(ModsZipOut *zip, char *why, size_t why_size);
 #endif

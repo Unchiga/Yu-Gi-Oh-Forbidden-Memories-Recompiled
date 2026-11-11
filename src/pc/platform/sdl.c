@@ -395,14 +395,78 @@ static int picked_folder(char *path, size_t size, char *why, size_t why_size)
     snprintf(path, size, "%s", folder_pick.path);
     return 1;
 }
+/* The Modpack tab's Import modpack .zip... (ModsWindow_SetModpackPicker): the
+ * system's file dialog, answered on its own thread as the folder one is. */
+static struct {
+    SDL_AtomicInt done;
+    int result;
+    char path[1024], error[256];
+} zip_pick;
+static int zip_picking;
+static void SDLCALL zip_selected(void *userdata, const char *const *list, int filter)
+{
+    (void)userdata;
+    (void)filter;
+    if (!list) {
+        snprintf(zip_pick.error, sizeof(zip_pick.error), "%s", SDL_GetError());
+        zip_pick.result = -1;
+    } else if (list[0] && strlen(list[0]) < sizeof(zip_pick.path)) {
+        snprintf(zip_pick.path, sizeof(zip_pick.path), "%s", list[0]);
+        zip_pick.result = 1;
+    } else if (list[0]) {
+        snprintf(zip_pick.error, sizeof(zip_pick.error), "That file's name is too long.");
+        zip_pick.result = -1;
+    }
+    SDL_SetAtomicInt(&zip_pick.done, 1);
+}
+static int pick_zip(int kind, char *why, size_t why_size)
+{
+    static const SDL_DialogFileFilter zips[] = {{"Modpack (.zip)", "zip"}}, pngs[] = {{"Poster (.png)", "png"}};
+    SDL_Window *parent = mods_window ? mods_window : window;
+    (void)why;
+    (void)why_size;
+    if (zip_picking) return 0;
+    memset(&zip_pick, 0, sizeof(zip_pick));
+    zip_picking = 1;
+    if (kind == 2)
+        SDL_ShowSaveFileDialog(zip_selected, NULL, parent, zips, 1, ModsWindow_ExportSuggestion());
+    else
+        SDL_ShowOpenFileDialog(zip_selected, NULL, parent, kind == 1 ? pngs : zips, 1, NULL, false);
+    return 0;
+}
+static int picked_zip(char *path, size_t size, char *why, size_t why_size)
+{
+    if (!zip_picking || !SDL_GetAtomicInt(&zip_pick.done)) return 0;
+    zip_picking = 0;
+    if (zip_pick.result < 0) {
+        snprintf(why, why_size, "Could not open the file picker: %s", zip_pick.error);
+        return -2;
+    }
+    if (!zip_pick.result) return -1;
+    snprintf(path, size, "%s", zip_pick.path);
+    return 1;
+}
 #endif
 static int panel_overlay(void);
 static void open_panel(int kind);
+static int mods_read_clipboard(char *out, size_t capacity)
+{
+    char *text = SDL_GetClipboardText();
+    if (!text) return 0;
+    size_t n = strlen(text);
+    int ok = n < capacity;
+    if (ok) memcpy(out, text, n + 1);
+    SDL_free(text);
+    return ok;
+}
+static int mods_write_clipboard(const char *text) { return SDL_SetClipboardText(text); }
 void HERE(Platform_OpenMods)(void)
 {
     sigset_t previous;
+    ModsWindow_SetClipboard(mods_read_clipboard, mods_write_clipboard);
 #ifndef SDL_PLATFORM_ANDROID
     ModsWindow_SetFolderPicker(pick_folder, picked_folder);
+    ModsWindow_SetModpackPicker(pick_zip, picked_zip);
 #endif
     if (panel_overlay()) { open_panel(PANEL_MODS); return; }
     if (mods_window) { SDL_RaiseWindow(mods_window); return; }
@@ -2008,6 +2072,15 @@ static MenuKey menu_key(SDL_Keycode key)
     case SDLK_F10: return MENU_KEY_F10;
     case SDLK_TAB: return MENU_KEY_TAB;
     case SDLK_BACKSPACE: return MENU_KEY_BACKSPACE;
+    case SDLK_DELETE: return MENU_KEY_DELETE;
+    case SDLK_HOME: return MENU_KEY_HOME;
+    case SDLK_END: return MENU_KEY_END;
+    case SDLK_PAGEUP: return MENU_KEY_PAGE_UP;
+    case SDLK_PAGEDOWN: return MENU_KEY_PAGE_DOWN;
+    case SDLK_A: return MENU_KEY_A;
+    case SDLK_C: return MENU_KEY_C;
+    case SDLK_V: return MENU_KEY_V;
+    case SDLK_X: return MENU_KEY_X;
     case SDLK_LEFT: return MENU_KEY_LEFT;
     case SDLK_RIGHT: return MENU_KEY_RIGHT;
     case SDLK_UP: return MENU_KEY_UP;
@@ -2020,6 +2093,10 @@ static MenuKey menu_key(SDL_Keycode key)
 static void translate(const SDL_Event *event, MenuEvent *out)
 {
     memset(out, 0, sizeof(*out));
+    SDL_Keymod modifiers = (event->type == SDL_EVENT_KEY_DOWN || event->type == SDL_EVENT_KEY_UP)
+                          ? event->key.mod : SDL_GetModState();
+    out->modifiers = (modifiers & SDL_KMOD_SHIFT ? MENU_MOD_SHIFT : 0) |
+                     (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_GUI) ? MENU_MOD_CTRL : 0);
     switch (event->type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
         out->type = event->type == SDL_EVENT_MOUSE_BUTTON_DOWN ? MENU_EVENT_BUTTON_DOWN : MENU_EVENT_BUTTON_UP;
@@ -2048,6 +2125,8 @@ static void translate(const SDL_Event *event, MenuEvent *out)
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP:
         out->type = event->type == SDL_EVENT_KEY_DOWN ? MENU_EVENT_KEY_DOWN : MENU_EVENT_KEY_UP;
         out->key = menu_key(event->key.key);
+        /* Space is Enter to the menus; a text field tells them apart by this */
+        if (event->key.key == SDLK_SPACE) out->button = ' ';
         break;
     default: break;
     }
