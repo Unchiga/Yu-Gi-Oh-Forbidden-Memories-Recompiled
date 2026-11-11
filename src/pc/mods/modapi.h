@@ -81,7 +81,7 @@
  *      event change
  *  26  a card's "variant_permille" and "variant_label" (notes/more-cards.md)
  *      only; no host layout or event change
- *  27  text_capture, text_key: the keys typed, for a mod that has the player type
+ *  28  text_capture, text_key: the keys typed, for a mod that has the player type
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 
@@ -409,7 +409,7 @@ struct MemoriesModHost {
     int (*wheel)(const MemoriesModHost *);
     void (*take_wheel)(const MemoriesModHost *, int on);
 
-    /* --- API 27 ---
+    /* --- API 28 ---
      * Typed text, for a mod with a text field of its own (a password, a
      * name). text_capture(1) makes the keyboard the mod's, until
      * text_capture(0), the mod being turned off, or another mod taking it:

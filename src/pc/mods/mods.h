@@ -61,7 +61,7 @@ void Mods_SetMouse(void (*motion)(int *dx, int *dy, unsigned *buttons, int escap
  * notch is also a D-pad press (0 when a mod has taken the wheel). Without
  * these the host answers no pointer and no notches. */
 void Mods_SetPointer(int (*pointer)(int *x, int *y, unsigned *buttons), int (*wheel)(void), void (*take)(int on));
-/* The keyboard for host->text_capture and host->text_key (API 27): whether the
+/* The keyboard for host->text_capture and host->text_key (API 28): whether the
  * window keeps the keys typed for a mod, and the next of them (0 none; 8, 13
  * and 27 for Backspace, Enter and Escape, else printable ASCII). Without
  * these the host keeps nothing. */

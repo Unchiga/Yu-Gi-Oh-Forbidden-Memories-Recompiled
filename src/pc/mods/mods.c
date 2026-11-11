@@ -621,7 +621,7 @@ void Mods_SetPointer(int (*pointer)(int *x, int *y, unsigned *buttons), int (*wh
     wheel_read = wheel;
     wheel_take = take;
 }
-/* Typed text (API 27): the window's own (Mods_SetText), and the mod that took
+/* Typed text (API 28): the window's own (Mods_SetText), and the mod that took
  * the keyboard, which is given back when it is turned off. */
 static void (*text_capture_fn)(int);
 static int (*text_next_fn)(void);

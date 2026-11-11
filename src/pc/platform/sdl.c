@@ -159,7 +159,7 @@ static int escape_claimed, escape_pressed;
  * which then makes no D-pad press. */
 static volatile int wheel_notches;
 static volatile int wheel_taken;
-/* The keys typed for a mod that has a text field (mod API 27, Mods_SetText): kept in a ring while it has the
+/* The keys typed for a mod that has a text field (mod API 28, Mods_SetText): kept in a ring while it has the
  * keyboard (text_taken); none of those keys reaches the game's controls. */
 static volatile int text_taken;
 static int text_queue[64];
@@ -2940,7 +2940,7 @@ int Platform_WindowPointer(int *x, int *y, unsigned *buttons)
     return 1;
 }
 
-/* host->text_capture and host->text_key (mod API 27). */
+/* host->text_capture and host->text_key (mod API 28). */
 static void text_push(int key)
 {
     if (text_count >= (int)(sizeof text_queue / sizeof *text_queue)) return;
