@@ -173,6 +173,16 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_rank_art COMMAND memories_rank_art_test)
     set_tests_properties(pc_rank_art PROPERTIES SKIP_RETURN_CODE 77)
+    # Which MODEL.MRG control modules are a mod's MIPS, against the disc
+    # (MEMORIES_DISC; skipped without one).
+    add_executable(memories_model_module_class_test tests/pc/model_module_class_test.c
+        src/pc/overlays/model_module_class.c src/pc/guest/sha256.c)
+    target_include_directories(memories_model_module_class_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_model_module_class_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_model_module_class COMMAND memories_model_module_class_test)
+    set_tests_properties(pc_model_module_class PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(memories_deck_shop_test tests/pc/deck_shop_test.c src/pc/saves/deck_shop.c)
     add_executable(memories_entry_layout_test tests/pc/entry_layout_test.c src/pc/text/entry_layout.c)
     add_executable(memories_state_remap_test tests/pc/state_remap_test.c src/pc/guest/state_remap.c)

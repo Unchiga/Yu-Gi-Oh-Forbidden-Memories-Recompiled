@@ -109,7 +109,10 @@ typedef struct {
     char library[NAME_MAX_];     /* empty when the mod is data only */
     char status[STATUS_MAX];
     char warnings[STATUS_MAX];   /* what the manifest got wrong: shown again whenever status is reset */
-    const char *origin;          /* "shipped", "folder" or "installed", for the window */
+    int mips_modules;            /* its control modules the MIPS interpreter would run (check_model_modules) */
+    char mips_where[160];        /* and where they are, for its one warning */
+    int mips_more;               /* places past what mips_where holds */
+    const char *origin;         /* "shipped", "folder" or "installed", for the window */
     int restart;                 /* the manifest asks for a fresh process */
     int default_enabled;
     int enabled;                 /* the player's choice, from the settings */
@@ -2966,6 +2969,146 @@ static int map_arenas(void)
     return 1;
 }
 
+/* --- a mod's own MIPS in a model's control modules ------------------- */
+
+static int (*modules_mips)(const unsigned char *stages, char *detail, size_t size);
+static int (*read_sectors)(int lba, int sectors, void *out);
+
+void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size),
+                         int (*read)(int lba, int sectors, void *out))
+{
+    modules_mips = mips;
+    read_sectors = read;
+}
+
+/* A record's module stages (notes/modding.md, "The record"). */
+#define MODEL_MODULES_SECTOR 180
+#define MODEL_MODULES_SECTORS 44
+#define MODEL_MRG "\\DATA\\MODEL.MRG;1"
+#define MIPS_DETAIL 400   /* a module's line in the log, which say() keeps to 512 characters with its prefix */
+
+/* The card whose model a disc record is: the inverse of the record number
+ * notes/modding.md gives (cards 301-350, 651-700 and 721 have none). */
+static int record_card(int record)
+{
+    return record < 300 ? record + 1 : record < 600 ? record + 51 : record < 620 ? record + 101 : record + 102;
+}
+
+/* `count` modules at `where`, for the mod's one warning (mips_warning). */
+static void mips_found(Mod *mod, const char *where, int count)
+{
+    size_t length = strlen(mod->mips_where), more = strlen(where) + (length ? 2 : 0);
+    mod->mips_modules += count;
+    if (length + more < sizeof(mod->mips_where))
+        snprintf(mod->mips_where + length, sizeof(mod->mips_where) - length, "%s%s", length ? ", " : "", where);
+    else mod->mips_more = 1;
+}
+
+/* One line in the mod's status for all its modules, said each time it is
+ * applied (status goes back to its warnings first); the log has each module. */
+static void mips_warning(Mod *mod)
+{
+    if (!mod->mips_modules) return;
+    warn(mod, 0,
+         "%d attack module%s in %s%s %s MIPS code, which runs on an interpreter that a later version removes "
+         "(notes/modding.md, \"Attack code: C, not MIPS\")",
+         mod->mips_modules, mod->mips_modules == 1 ? "" : "s", mod->mips_where, mod->mips_more ? " and more" : "",
+         mod->mips_modules == 1 ? "is" : "are");
+}
+
+/* A "models" entry's file (`size` bytes, its model data `geometry` sectors
+ * for a bigger model, 0 for a record). */
+static void check_model_modules(Mod *mod, const char *name, const unsigned char *file, size_t size, int geometry)
+{
+    size_t at = (size_t)((geometry ? geometry : MODEL_STAGE0_SECTORS) + MODEL_MODULES_SECTOR - MODEL_STAGE0_SECTORS) *
+                SECTOR,
+           bytes = (size_t)MODEL_MODULES_SECTORS * SECTOR;
+    unsigned char *stages;
+    char detail[MIPS_DETAIL], where[NAME_MAX_ + 8];
+    int count;
+    if (!modules_mips || !(stages = calloc(1, bytes))) return;
+    if (at < size) memcpy(stages, file + at, size - at < bytes ? size - at : bytes); /* a shorter file reads as zeros */
+    count = modules_mips(stages, detail, sizeof(detail));
+    free(stages);
+    if (!count) return;
+    say("%s: model %s: %s", mod->id, name, detail);
+    snprintf(where, sizeof(where), "model %s", name);
+    mips_found(mod, where, count);
+}
+
+/* The records of MODEL.MRG whose module stages this mod's `data` replaced or
+ * patched, as the game reads them with every applied mod's changes. A named
+ * replacement covers its whole file; a raw sector counts only inside the
+ * disc's MODEL.MRG. */
+static void check_disc_models(Mod *mod, int index)
+{
+    int retail_lba, lba, records, retail_sectors, count = 0, listed = 0, mine = 0;
+    unsigned retail_size, size;
+    unsigned char *stages = NULL, *touched = NULL;
+    char detail[MIPS_DETAIL], where[96];
+    size_t length;
+    if (!modules_mips || !read_sectors) return;
+    for (int i = 0; i < region_count && !mine; i++) mine = regions[i].mod == index;
+    for (int i = 0; i < patch_count && !mine; i++) mine = patches[i].mod == index;
+    if (!mine || Memories_DiscOriginalFileInfo(MODEL_MRG, &retail_lba, &retail_size) ||
+        Memories_DiscFileInfo(MODEL_MRG, &lba, &size))
+        return;
+    records = (int)(size / ((unsigned)MODEL_RECORD_SECTORS * SECTOR));
+    retail_sectors = (int)((retail_size + SECTOR - 1) / SECTOR);
+    if (records <= 0 || !(touched = calloc((size_t)records, 1))) return;
+    for (int i = 0; i < region_count; i++) {
+        const Region *region = &regions[i];
+        long first, last;
+        if (region->mod != index) continue;
+        if (region->file >= 0) {
+            if (disc_files[region->file].retail_lba != retail_lba) continue;
+            first = 0;
+            last = (long)((region->image_size + SECTOR - 1) / SECTOR) - 1;
+        } else {
+            first = (long)region->lba - retail_lba;
+            last = first + region->sectors - 1;
+            if (first < 0) first = 0;
+            if (last >= retail_sectors) last = retail_sectors - 1;
+        }
+        for (int r = 0; r < records; r++) {
+            long low = (long)r * MODEL_RECORD_SECTORS + MODEL_MODULES_SECTOR, high = low + MODEL_MODULES_SECTORS - 1;
+            if (first <= high && last >= low) touched[r] = 1;
+        }
+    }
+    for (int i = 0; i < patch_count; i++) {
+        const Patch *patch = &patches[i];
+        long at;
+        if (patch->mod != index) continue;
+        if (patch->file >= 0) {
+            if (disc_files[patch->file].retail_lba != retail_lba) continue;
+            at = patch->lba;
+        } else if ((at = (long)patch->lba - retail_lba) >= retail_sectors) continue;
+        if (at >= 0 && at / MODEL_RECORD_SECTORS < records && at % MODEL_RECORD_SECTORS >= MODEL_MODULES_SECTOR &&
+            at % MODEL_RECORD_SECTORS < MODEL_MODULES_SECTOR + MODEL_MODULES_SECTORS)
+            touched[at / MODEL_RECORD_SECTORS] = 1;
+    }
+    length = (size_t)snprintf(where, sizeof(where), "MODEL.MRG card");
+    for (int r = 0; r < records; r++) {
+        int found;
+        if (!touched[r]) continue;
+        if (!stages && !(stages = malloc((size_t)MODEL_MODULES_SECTORS * SECTOR))) break;
+        if (read_sectors(lba + r * MODEL_RECORD_SECTORS + MODEL_MODULES_SECTOR, MODEL_MODULES_SECTORS, stages) !=
+            MODEL_MODULES_SECTORS)
+            continue;
+        if (!(found = modules_mips(stages, detail, sizeof(detail)))) continue;
+        say("%s: MODEL.MRG record %d (card %d): %s", mod->id, r, record_card(r), detail);
+        count += found;
+        if (listed < 4 && length < sizeof(where))
+            length += (size_t)snprintf(where + length, sizeof(where) - length, "%s %d", listed ? "," : "", record_card(r));
+        else if (listed == 4 && length < sizeof(where))
+            length += (size_t)snprintf(where + length, sizeof(where) - length, " and more");
+        listed++;
+    }
+    free(stages);
+    free(touched);
+    if (count) mips_found(mod, where, count);
+}
+
 static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
 {
     const char *name = Json_String(Json_Member(entry, "name"), NULL);
@@ -3066,6 +3209,7 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
     models[model_count].stale = 0;
     models[model_count].geometry = geometry;
     models[model_count].pages = (int)pages;
+    check_model_modules(mod, name, image, (size_t)info.st_size, geometry);
     unmap_file(image, (size_t)info.st_size);
     if (!(models[model_count].name = saved_text(name)) || !(models[model_count].path = saved_text(path))) {
         free(models[model_count].name);
@@ -3084,6 +3228,8 @@ static int apply_overrides(Mod *mod, int index)
 {
     int i, count = Json_Count(mod->data);
     const char *stream = NULL;
+    mod->mips_modules = mod->mips_more = 0; /* check_model_modules, check_disc_models */
+    mod->mips_where[0] = '\0';
     for (i = 0; i < count; i++) {
         const JsonValue *entry = Json_At(mod->data, i);
         const char *file = Json_String(Json_Member(entry, "file"), NULL);
@@ -3167,6 +3313,8 @@ static int apply_overrides(Mod *mod, int index)
     for (i = 0; i < Json_Count(mod->models); i++)
         if (!add_model(mod, index, Json_At(mod->models, i), i)) goto failed;
     publish_overrides();
+    check_disc_models(mod, index);
+    mips_warning(mod);
     if (region_count || patch_count) {
         say("%s: %d replaced regions, %d patched runs, sectors %d to %d",
             mod->id, region_count, patch_count, override_low, override_high);

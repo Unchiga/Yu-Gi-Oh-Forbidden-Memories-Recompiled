@@ -79,6 +79,15 @@ void Mods_Shutdown(void);
  * (libetc.c) so mods see the control client's bits and, while a recording
  * plays, the recording's (pc/debug/recorder.h). */
 extern unsigned short (*Mods_PadSource)(int port);
+/* What tells a mod's own MIPS in a model's control modules (notes/modding.md,
+ * "Attack code: C, not MIPS"): `mips`, how many of the six control modules in
+ * a MODEL.MRG record's module stages (44 sectors from its sector 180) are a
+ * mod's, with a line for each in `detail`; `read`, the disc's sectors as the
+ * game reads them, the mods' changes in. The game gives them before Mods_Load
+ * (pc/overlays/model_module_class.h, Menu_LoadMods); without them (the tests)
+ * the mods' models are not checked. */
+void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size),
+                         int (*read)(int lba, int sectors, void *out));
 /* The mods' rand seed (mod_libc.c), its size in *size: save states carry it. */
 void *Mods_RandSeed(unsigned *size);
 

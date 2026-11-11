@@ -701,7 +701,10 @@ of a model module with the module's identifier, its slot and what ran it
 `stand-in`; `slot=` is the active model, `D_8009AFA0`); with
 `MEMORIES_TRACE=mods` each slot logs once, when its module's code changes,
 whether it is the retail code of a native shape (`model variant module 418
-in slot A: retail code, native C`) or not. `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
+in slot A: retail code, native C`) or what else (`the disc's code, interpreted
+until the port has its C`, or a mod's: `the disc's code with other tables`,
+`changed code`, `code no disc module has`; `model_module_class.h`).
+`MEMORIES_TRACE_MIPS_PRINTF=1` prints the
 modules' own `printf` format strings.
 
 **The model modules in native C** (the gate, `src/pc/overlays/model_modules.c`).
@@ -745,6 +748,34 @@ the timing words of the attack's config entry (`+0x28..+0x3C` of the entry at
 of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
 those 1,524 bytes runs the interpreter, and one that changes anything after
 them (the model's tables and textures) still runs the C.
+
+**What the disc's modules are, for a mod's.** `update --disc` also writes
+`config/pc/model_retail.csv` (and `write` its table,
+`src/pc/overlays/model_retail_table.inc`):
+- `code` rows: each shape's code in each slot, the SHA-256 of its first
+  bytes. For a native row the first min(`data_start`, `span`) bytes; for
+  any other row its span, the code its images share (the row's own hash);
+- `primary` rows: the 20 primary modules that are not `return 2`.
+
+`check` holds the list to the table without the disc (one code row per slot
+of each shape, with the row's identifier and size, and a non-native row's
+own hash) and, with `--disc`, to the disc.
+`src/pc/overlays/model_module_class.c` uses it to tell a module from the
+disc's:
+- native C;
+- the disc's code of a shape the port still interprets, whatever data
+  follows it (the port's to port, not the mod's);
+- or a mod's MIPS:
+  - the code of a native shape with other bytes between `data_start` and
+    the span, which the C reads (`TABLES`);
+  - other code (`CODE`);
+  - a first word no disc module of the slot has (`NEW`). The mods' loader checks every module a mod brings
+(`models`) or changes (`MODEL.MRG` data over a record's sectors 180 to 223),
+and warns in the Mods window ([Attack code: C, not
+MIPS](modding.md#attack-code-c-not-mips)). The battle's verdict log says the
+same. `tests/pc/model_module_class_test.c` checks it against the disc
+(`MEMORIES_DISC`): no disc record has a mod's MIPS, and one byte changed past
+the span, in the tables, in the code or in the first word is told as such.
 
 **A span may end inside a word.** The bytes right after a module's last
 table can differ per record, so the word that holds a table's last bytes may

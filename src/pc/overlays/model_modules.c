@@ -9,6 +9,7 @@
 #include "pc/guest/mips.h"
 #include "pc/guest/sha256.h"
 #include "pc/overlays/model_gate_command.h"
+#include "pc/overlays/model_module_class.h"
 #include "pc/debug/log.h"
 
 /* Each MODEL.MRG record carries two small MIPS control modules that the
@@ -235,8 +236,14 @@ static const ModelGateRow *native_variant_row(uint32_t module, int slot, uint32_
     for (i = 0; i < (verdict->span + 3) / 4; i++) {
         verdict->words[i] = guest[i];
     }
-    LOG(LOG_MODS, "model variant module %u in slot %c: %s", (unsigned)identifier, slot ? 'B' : 'A',
-        found ? "retail code, native C" : span ? "changed code, interpreter" : "interpreter");
+    if (Log_Wanted(LOG_MODS)) {
+        /* What the interpreter runs, for a mod's author: the disc's module
+         * the port has no C for yet, or the mod's own code or tables
+         * (model_module_class.h). */
+        ModelModuleInfo info = ModelModule_Classify(guest, slot, 0);
+        LOG(LOG_MODS, "model variant module %u in slot %c: %s", (unsigned)identifier, slot ? 'B' : 'A',
+            found ? "retail code, native C" : ModelModule_ClassText(info.kind));
+    }
     return found;
 }
 

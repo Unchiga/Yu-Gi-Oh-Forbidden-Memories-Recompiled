@@ -34,6 +34,29 @@ class ModelGate(unittest.TestCase):
     def test_sources_and_address_sections(self):
         self.assertEqual(model_gate.check_sources(self.rows), [])
 
+    def test_retail_list_matches_table(self):
+        """config/pc/model_retail.csv: code rows for each native shape, images
+        for the rest, and its table is what it gives."""
+        retail = model_gate.load_retail()
+        self.assertEqual(model_gate.retail_problems(self.rows, retail), [])
+        text = model_gate.RETAIL_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertEqual(text, model_gate.retail_header_text(retail))
+        self.assertEqual(sum(entry["kind"] == "primary" for entry in retail), 20)
+
+    def test_retail_problems_names_a_missing_or_wrong_row(self):
+        retail = model_gate.load_retail()
+        native = next(row for row in self.rows if row["backend"] == "native")
+        other = next(row for row in self.rows if row["backend"] != "native")
+        without = [entry for entry in retail if not (entry["shape"] == str(native.shape) and entry["slot"] == "B")]
+        self.assertTrue(any(f"shape {native.shape} slot B has 0 code rows" in line
+                            for line in model_gate.retail_problems(self.rows, without)))
+        stale = [dict(entry, size="0x4") if entry["shape"] == str(native.shape) else entry for entry in retail]
+        self.assertTrue(any(f"shape {native.shape} slot A: its code row" in line
+                            for line in model_gate.retail_problems(self.rows, stale)))
+        rehashed = [dict(entry, sha256="0" * 64) if entry["shape"] == str(other.shape) else entry for entry in retail]
+        self.assertTrue(any(f"shape {other.shape} slot A: its code row's hash" in line
+                            for line in model_gate.retail_problems(self.rows, rehashed)))
+
     def test_every_native_slot_is_a_gated_module(self):
         modules = {name: (pattern, bank) for name, pattern, _, bank in build_config.MODULES}
         for row in model_gate.native_rows():
