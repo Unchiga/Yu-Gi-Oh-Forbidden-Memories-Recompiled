@@ -1132,7 +1132,11 @@ Shape 84's `flags` and shape 783's `quad` and `screen` take the rule too:
 783 has 769's two reads (one path submits `quad` without its UVs, and the
 spray reads `screen[0]`), and with the rule records 130 (84) and 252, 279,
 350, 577 and 590 (783) match the interpreter, plain and under both poison
-bytes. Shape 128 stays `keep`: what it reads unwritten (a `CVECTOR`'s fourth
+bytes. Shape 448's fan never names its `col[6][16]`: it reaches it as
+`(s32)&rot + 240..331`, where the MIPS frame keeps it, so native C would write
+over its own frame. A rule may also rewrite such uses (a fourth field): `col`
+takes storage per slot, `(s32)&rot` becomes `((s32)col - 240)`, and the
+storage's 32-bit address is what the casts need. Shape 128 stays `keep`: what it reads unwritten (a `CVECTOR`'s fourth
 byte, a `POLY_FT4`'s corners) no call of its own writes, so storage per slot
 does not model it, and its table has 104 entries, past what its images
 share.

@@ -356,6 +356,29 @@ class PortRules(unittest.TestCase):
             (root / path).write_text(port.stale_local_text(path, text).replace("\n", "\r\n"), newline="")
             self.assertEqual(port.stale_local_problems(listed, {"model_variant_169"}, root), [])
 
+    def test_a_stale_local_reached_through_another_address(self):
+        """Shape 448's col: the declaration takes the storage, every (s32)&rot
+        becomes ((s32)col - 240), and check fails a copy that keeps one."""
+        import tempfile
+        import model_gate_port as port
+        path = "src/native_overlays/model_variant/variant448_fan.c"
+        (declaration, storage, pointer, (old, new)), = port.STALE_LOCALS[path]
+        text = ('#include "../../types.h"\n\ns32 f(void)\n{\n' + declaration +
+                "    SVECTOR rot;\n    RotMatrix(&rot, 0);\n    u = t * 6 + (s32)&rot + 240;\n}\n")
+        ported = port.stale_local_text(path, text)
+        self.assertIn(storage, ported)
+        self.assertIn("u = t * 6 + ((s32)col - 240) + 240;", ported)
+        self.assertIn("RotMatrix(&rot, 0);", ported)
+        self.assertNotIn(old, ported)
+        listed = {"model_variant_448": [path]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / path).parent.mkdir(parents=True)
+            (root / path).write_text(ported)
+            self.assertEqual(port.stale_local_problems(listed, {"model_variant_448"}, root), [])
+            (root / path).write_text(ported + "    v = (s32)&rot + 256;\n")
+            self.assertEqual(len(port.stale_local_problems(listed, {"model_variant_448"}, root)), 1)
+
     def test_a_file_takes_each_of_its_stale_locals(self):
         import model_gate_port as port
         path = "src/native_overlays/model_variant/variant769_entry.c"
