@@ -404,8 +404,9 @@ def write_plan(plan: Plan, root: Path = ROOT) -> None:
         target.write_text(text, encoding="utf-8", newline="\n")
 
 
-# Rule 6: {file: ((the local's declaration, what takes its place, and the name
-# of a struct local whose uses become a pointer's), ...)}. Shape 169's trail
+# Rule 6: {file: ((the local's declaration, what takes its place, the name of
+# a struct local whose uses become a pointer's, and any (old, new) rewrites of
+# uses that reach the local through another's address), ...)}. Shape 169's trail
 # aims its ratan2 at vertices[0].vy/.vz, which only the waiting branch writes
 # (retail images wait 65 frames first). Shapes 89, 137 and 163 submit `quad` in
 # frames that do not write its colour, so the packet carries the colour of the
@@ -448,6 +449,14 @@ STALE_LOCALS = {
         "    u16 *flags = gModelFrenchVariant101Flags[Model_GetActiveSlotIndex() & 1];\n", None),),
     f"{NATIVE}/model_variant/variant783_entry.c": (
         _stale_quad("gModelVariant783"), _stale_screen("gModelVariant783")),
+    # Shape 448's fan never names `col`: it reaches it as (s32)&rot + 240..331,
+    # where the MIPS frame keeps it, which native C's frame does not. The
+    # storage takes it, and the uses address it from there: (s32)&rot + 240
+    # is col. A game unit's storage has a 32-bit address, as the casts need.
+    f"{NATIVE}/model_variant/variant448_fan.c": ((
+        "    u8 col[6][16];\n",
+        "    u8 (*col)[16] = gModelVariant448Col[Model_GetActiveSlotIndex() & 1];\n", None,
+        ("(s32)&rot", "((s32)col - 240)")),),
 }
 STALE_INCLUDE = '#include "pc/overlays/model_stale_locals.h"\n'
 
@@ -459,13 +468,19 @@ def stale_local_text(path: str, text: str) -> str:
     rules = STALE_LOCALS.get(path)
     if rules is None:
         return text
-    for declaration, replacement, pointer in rules:
+    for declaration, replacement, pointer, *uses in rules:
         if text.count(declaration) != 1:
             raise SystemExit(f"model_gate port: rule 6: {path} does not declare `{declaration.strip()}` once")
         text = text.replace(declaration, replacement)
         if pointer is not None:
             text = re.sub(rf"&{pointer}\b(?!\.)", pointer, text)
             text = re.sub(rf"(?<![\w.>]){pointer}\.", f"{pointer}->", text)
+        # A local the code reaches only through another's address (shape
+        # 448's col, as (s32)&rot + 240): its uses, written from the storage.
+        for old, new in uses:
+            if old not in text:
+                raise SystemExit(f"model_gate port: rule 6: {path} has no `{old}`")
+            text = text.replace(old, new)
     first = text.find("#include")
     end = text.index("\n", first) + 1 if first >= 0 else 0
     return text[:end] + STALE_INCLUDE + text[end:]
@@ -489,10 +504,14 @@ def stale_local_problems(listed: dict[str, list[str]], native_modules: set[str],
                     continue
                 seen.add(path)
                 text = (root / path).read_text(encoding="utf-8").replace("\r\n", "\n")
-                for declaration, replacement, _ in rules:
+                for declaration, replacement, _, *uses in rules:
                     if replacement not in text or STALE_INCLUDE not in text:
                         bad.append(f"{path}: `{declaration.strip()}` is read before the call writes it, and the C "
                                    f"lacks rule 6's storage (model_gate_port.py STALE_LOCALS): port the shape again")
+                    for old, _new in uses:
+                        if old in text:
+                            bad.append(f"{path}: `{old}` is still there, which rule 6 rewrites "
+                                       f"(model_gate_port.py STALE_LOCALS): port the shape again")
     return bad
 
 

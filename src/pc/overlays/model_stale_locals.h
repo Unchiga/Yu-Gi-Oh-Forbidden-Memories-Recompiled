@@ -10,6 +10,8 @@
 #include "types.h"
 #include "psyq/libgte.h"
 #include "psyq/libgpu.h"
+/* Model_GetActiveSlotIndex, which picks a slot's storage in every rule 6 file. */
+#include "game/model_graphics_state.h"
 
 /* Shape 169 (model_variant/variant169_entry.c): `vertices`, by
  * Model_GetActiveSlotIndex(). The trail's ratan2 reads vertices[0].vy/.vz,
@@ -52,5 +54,10 @@ extern u16 gModelFrenchVariant101Flags[2][96];
  * screen[0] on calls that do not write it. */
 extern POLY_FT4 gModelVariant783Quad[2];
 extern DVECTOR gModelVariant783Screen[2][128];
+
+/* Shape 448 (variant448_fan.c): `col`, which the code never names and reaches
+ * as (s32)&rot + 240..331, its place in the MIPS frame; written and read in the
+ * same call (the fan's colours), so storage per slot only gives it a place. */
+extern u8 gModelVariant448Col[2][6][16];
 
 #endif
