@@ -750,6 +750,23 @@ of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
 those 1,524 bytes runs the interpreter, and one that changes anything after
 them (the model's tables and textures) still runs the C.
 
+**A table picked with `command % 100`.** Shapes 72, 104, 118 to 121, 156
+and 164 pick their entry with `D_...[command % 100]`, and the hundreds digit
+is another attack's number. Their retail commands reach 100 to 303, which made
+the scan count 100 entries or more past what their images share, where only
+the entries below 100 are ever read. The `command_table` ends in `mod100`
+(after the four numbers, never with an `indexN`: the updates of an index row
+compare the stored command itself), the header's `modulus` field carries it
+(`MODEL_GATE_ROW` and `MODEL_PRIMARY_ROW` have the same fields), and
+`ModelGate_CommandCoveredModulo` covers a setup whose `command % 100` entry is
+in the table. Each row covers the entries its images share, which hold every
+entry retail picks (72 has 13 and uses all but 0, 2, 3 and 11; 119 has 12 and
+uses all but 5 to 7),
+and every covered entry's divisors are nonzero in every image, the unused ones
+too. Shape 72's entries keep its grid to 8 columns of its parts and at least
+2 rows (it divides by rows - 1), so at most 72 of its 192 points and 16 of its 24
+rows.
+
 **The primary modules in native C.** A record's primary module is `return 2`
 in all but ten records (8, 116, 141, 150, 167, 320, 344, 366, 607 and 615,
 models 8 to 715), and the disc calls only those ten's: the oracle's
@@ -758,7 +775,7 @@ battles over every record call no other. They are five shapes of upstream's
 two records), `effect` (39, five records), `primary62` (45), `primary63`
 (46) and `primary64` (47). `config/pc/model_primary_gate.csv` is their
 table, with the variants' columns, and `model_primary_gate_table.inc`
-(`MODEL_PRIMARY_ROW`, the variants' fields and a modulus) what the game is
+(`MODEL_PRIMARY_ROW`, `MODEL_GATE_ROW`'s fields) what the game is
 built with; `model_gate.py port --primary` copies their C, `update --disc`
 writes their rows from the disc (`read_primary_shapes`), `check` holds them
 as it holds the variants'. `model_modules.c` gates them as the variants, with

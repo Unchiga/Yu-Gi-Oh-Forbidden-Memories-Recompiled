@@ -158,7 +158,7 @@ static int native_variant(void *context, int command)
  * slot, which the build links under the module's prefix (GATED_MODULES). */
 typedef int (*ModelEntry)(void *context, int command);
 
-#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width) \
+#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
     extern int entry(void *context, int command);
 #include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
@@ -170,12 +170,12 @@ typedef struct {
     const char *sha256;
     ModelEntry entry;
     uint32_t entries, table, stride, field, index_width; /* the command bound: model_gate_command.h */
-    uint32_t modulus;    /* a primary's setup picks entry command % modulus (0: command) */
+    uint32_t modulus;    /* the setup picks entry command % modulus (0: command) */
 } ModelGateRow;
 
 static const ModelGateRow gate_rows[] = {
-#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width) \
-    {slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, 0},
+#define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
+    {slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus},
 #include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
     {0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0}};
