@@ -767,6 +767,17 @@ too. Shape 72's entries keep its grid to 8 columns of its parts and at least
 2 rows (it divides by rows - 1), so at most 72 of its 192 points and 16 of its 24
 rows.
 
+**Code the linker left behind.** Shapes 402 and 668 each have one image with
+a `c` file the others lack after their data: one slot B image of 402 has
+`variant552_strand`, one slot A image of 668 `variant685_rings`. Nothing in
+those images reaches it from outside it, at any of its addresses (no `j` or
+`jal` into it, no word holding one, no `addiu`/`ori` of one's low half after a
+`lui`), so the shared C stands in for
+every image: `model_gate_port.py`'s rule 7 takes the shortest layout when the
+others add only such files, and checks the disc for it. 402's setup also keeps
+its entry as `(T *)D_8013CD44 + command`, a form `command_sites` now counts
+(`COMMAND_CAST`), so `check` holds a row to it as to `D_...[command]`.
+
 **The primary modules in native C.** A record's primary module is `return 2`
 in all but ten records (8, 116, 141, 150, 167, 320, 344, 366, 607 and 615,
 models 8 to 715), and the disc calls only those ten's: the oracle's

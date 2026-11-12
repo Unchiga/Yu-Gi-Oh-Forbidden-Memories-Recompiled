@@ -734,6 +734,14 @@ src/native_overlays/model_variant_slot1/variant401_rays_slot1.c
 src/native_overlays/model_variant_slot1/variant401_spokes_slot1.c
 src/native_overlays/model_variant_slot1/variant401_rings_slot1.c
 src/native_overlays/model_variant_slot1/variant401_quad_slot1.c
+[model_variant_402]
+src/native_overlays/model_variant/variant402_entry.c
+src/native_overlays/model_variant/variant402_swarm.c
+src/native_overlays/model_variant/variant402_quads.c
+[model_variant_402_slot1]
+src/native_overlays/model_variant_slot1/variant402_entry_slot1.c
+src/native_overlays/model_variant_slot1/variant402_swarm_slot1.c
+src/native_overlays/model_variant_slot1/variant402_quads_slot1.c
 [model_variant_404]
 src/native_overlays/model_variant/variant404_entry.c
 src/native_overlays/model_variant/variant404_ribbons.c
@@ -1550,6 +1558,10 @@ src/native_overlays/model_variant_slot1/variant666_entry_slot1.c
 src/native_overlays/model_variant/variant667_entry.c
 [model_variant_667_slot1]
 src/native_overlays/model_variant_slot1/variant667_entry_slot1.c
+[model_variant_668]
+src/native_overlays/model_variant/variant668_entry.c
+[model_variant_668_slot1]
+src/native_overlays/model_variant_slot1/variant668_entry_slot1.c
 [model_variant_669]
 src/native_overlays/model_variant/variant669_entry.c
 [model_variant_669_slot1]

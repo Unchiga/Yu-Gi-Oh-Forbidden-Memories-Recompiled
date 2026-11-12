@@ -37,13 +37,16 @@ by these rules, which are the whole difference between the two trees:
      storage is a game unit's (src/pc/game/zzz_model_stale_locals.c), so it is
      in every save state as the game stack is. `model_gate.py check` fails a
      native row whose C lacks the rule.
+  7. A slot whose images have several layouts takes the shortest when every
+     other is it plus `c` files that no image of theirs can reach (no j/jal
+     to them, no word or lui/addiu pair building their address): code the
+     linker left behind (shared_layout).
 
 The module's file list (slot A, slot B) goes to config/pc/model_gate_sources.txt,
 which the build compiles: the names of the upstream files do not say which
 shape they belong to (shape 59 is french_model_variant/variant76_entry.c,
 shape 433 has two of header 450's). The layouts of a shape's images must name
-the same files, or the shape is refused (668 and 552 have an image with code
-after the data the others lack).
+the same files, but for rule 7, or the shape is refused.
 
 The resident functions the C calls by a name the port spells otherwise
 (upstream's Model_CopySlotPosition is the port's Model_CopySlotU16Values,
@@ -130,14 +133,19 @@ def layouts(upstream: Upstream, disc, kind=None) -> dict[int, dict[str, list[dic
         text = upstream.text(module["layout"])
         subsegments = [(int(at, 0), kind, path.strip()) for at, kind, path in SUBSEGMENT.findall(text)]
         files = tuple(path for at, kind, path in subsegments if kind == "c")
+        # Where each `c` file ends: the next subsegment, or the image's end.
+        offsets = sorted({at for at, _, _ in subsegments} | {image_size})
+        ends = [next(o for o in offsets if o > at) for at, kind, path in subsegments if kind == "c"]
         starts = tuple(at for at, kind, path in subsegments if kind == "c")
         data_start = min((at for at, kind, path in subsegments if kind in ("data", "bin") and at > 0), default=image_size)
         word = disc.module_word(module["sector_offset"])
         first_words[module["name"]] = word
         key = (files, starts, data_start)
         entry = by_word[word][slot].setdefault(key, {"files": list(files), "starts": list(starts),
-                                                     "data_start": data_start, "modules": []})
+                                                     "data_start": data_start, "modules": [], "sectors": [],
+                                                     "base": bases[slot], "ends": ends})
         entry["modules"].append(module["name"])
+        entry["sectors"].append(module["sector_offset"])
     return {word: {slot: list(found[slot].values()) for slot in "AB"} for word, found in by_word.items()}
 
 
@@ -151,6 +159,53 @@ class MergeDisc:
 
     def module_word(self, sector_offset: int) -> int:
         return struct.unpack_from("<I", self.disc._sector(self.disc.lba + sector_offset), 0)[0]
+
+    def references(self, sector_offset: int, base: int, ranges: list[tuple[int, int]], sectors: int = 10) -> bool:
+        """Whether the module image at `sector_offset` (loaded at `base`) can
+        reach an address of `ranges` ([low, high) each) from outside them: a
+        j or jal into one, a word holding one (any segment), or an addiu/ori
+        whose immediate is one's low half (the second half of a lui pair, how
+        MIPS code builds a pointer to call)."""
+        image = b"".join(self.disc._sector(self.disc.lba + sector_offset + n) for n in range(sectors))
+
+        def inside(address: int) -> bool:
+            return any(low <= address < high for low, high in ranges)
+
+        lows = {address & 0xFFFF for low, high in ranges for address in range(low, high, 4)}
+        for at, word in enumerate(struct.unpack_from("<%dI" % (len(image) // 4), image)):
+            if inside(base + 4 * at):
+                continue
+            if (word >> 26) in (0x02, 0x03) and inside((base & 0xF0000000) | ((word & 0x3FFFFFF) << 2)):
+                return True
+            if inside((word & 0x1FFFFFFF) | (base & 0xE0000000)):
+                return True
+            if (word >> 26) in (0x09, 0x0D) and word & 0xFFFF in lows:
+                return True
+        return False
+
+
+def shared_layout(options: list[dict], disc) -> dict | None:
+    """Rule 7: a slot whose images have several layouts takes the shortest when
+    every other is it plus `c` files after its data that no image of theirs
+    can reach from outside them, at any address of theirs
+    (MergeDisc.references): code the linker left behind, which the shared C
+    stands in for (shape 402's variant552_strand in one slot B image,
+    668's variant685_rings in one slot A image). None otherwise."""
+    shortest = min(options, key=lambda option: len(option["files"]))
+    count = len(shortest["files"])
+    for option in options:
+        if (option["files"][:count] != shortest["files"] or option["starts"][:count] != shortest["starts"]
+                or option["data_start"] != shortest["data_start"]):
+            return None
+        ranges = [(option["base"] + start, option["base"] + end)
+                  for start, end in zip(option["starts"][count:], option["ends"][count:])]
+        if any(low < option["base"] + option["data_start"] for low, _ in ranges):
+            return None   # extra code before the data: not left behind
+        if ranges and any(disc.references(sector, option["base"], ranges) for sector in option["sectors"]):
+            return None
+    merged = dict(shortest)
+    merged["modules"] = [name for option in options for name in option["modules"]]
+    return merged
 
 
 # --- copying -------------------------------------------------------------------------
@@ -227,11 +282,14 @@ class Plan:
 
 
 def plan_shape(upstream: Upstream, shape: int, found: dict[str, list[dict]], plan: Plan,
-               root: Path = ROOT) -> dict | None:
+               root: Path = ROOT, disc=None) -> dict | None:
     """Add a shape's files to the plan. Returns {"data_start", "files": {slot: [...]}} or None (refused)."""
     lists = {}
     for slot in "AB":
         options = found.get(slot, [])
+        if len(options) > 1 and disc is not None:
+            shared = shared_layout(options, disc)
+            options = [shared] if shared else options
         if len(options) != 1:
             plan.refused.append(f"shape {shape}: slot {slot} has {len(options)} layouts: "
                                 + "; ".join(f"{', '.join(PurePosixPath(p).name for p in o['files'])} "
@@ -479,7 +537,8 @@ def port(shapes: list[int], disc_path: Path, revision: str, jobs: int, root: Pat
     import model_gate
     kind = kind or model_gate.VARIANT
     upstream = Upstream(revision, root)
-    found = layouts(upstream, MergeDisc(disc_path), kind)
+    disc = MergeDisc(disc_path)
+    found = layouts(upstream, disc, kind)
     plan = Plan()
     ported = {}
     pairs = {row.shape: row.identifier("B") for row in model_gate.load_table(kind.table, kind)}
@@ -488,7 +547,7 @@ def port(shapes: list[int], disc_path: Path, revision: str, jobs: int, root: Pat
             plan.refused.append(f"shape {shape}: upstream has no US module with that first word, or the table no row")
             continue
         both = {"A": found[shape]["A"], "B": found.get(pairs[shape], {}).get("B", [])}
-        result = plan_shape(upstream, shape, both, plan, root)
+        result = plan_shape(upstream, shape, both, plan, root, disc)
         if result:
             ported[shape] = result
     for line in plan.refused:

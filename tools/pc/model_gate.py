@@ -584,6 +584,8 @@ def problems(rows: list[Row]) -> list[str]:
 COMMAND_MEMBER = r"(?:\(?\s*\w+\s*\)?\s*->\s*)?command\b"   # command, work->command, (work)->command
 COMMAND_INDEX = re.compile(r"\b(D_8013[0-9A-F]{4})\s*\[\s*" + COMMAND_MEMBER + r"[^\]]*\]")
 COMMAND_OFFSET = re.compile(r"\(\s*(D_8013[0-9A-F]{4})\s*\+\s*(0x[0-9A-Fa-f]+|\d+)\s*\)\s*\+\s*" + COMMAND_MEMBER)
+#   (T *)D_8013xxxx + command      (shape 402's setup)
+COMMAND_CAST = re.compile(r"\(\s*\w+\s*\*\s*\)\s*(D_8013[0-9A-F]{4})\s*\+\s*" + COMMAND_MEMBER)
 
 
 def command_sites(text: str, renamed: dict[str, str] | None = None, base: int = BASE["A"]) -> list[tuple[int, int]]:
@@ -594,7 +596,7 @@ def command_sites(text: str, renamed: dict[str, str] | None = None, base: int = 
     text = COMMENT.sub(lambda match: "\n" * match.group().count("\n"), text)
     aliases = {**(renamed or {}), **dict(ALIAS.findall(text))}
     found = []
-    for pattern, offset_group in ((COMMAND_INDEX, None), (COMMAND_OFFSET, 2)):
+    for pattern, offset_group in ((COMMAND_INDEX, None), (COMMAND_OFFSET, 2), (COMMAND_CAST, None)):
         for match in pattern.finditer(text):
             symbol = aliases.get(match.group(1), match.group(1))
             extra = int(match.group(offset_group), 0) if offset_group else 0
