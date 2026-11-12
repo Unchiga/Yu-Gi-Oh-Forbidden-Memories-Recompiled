@@ -197,9 +197,11 @@ int main(void)
             }
         }
     }
-    /* Each kind was met: the disc has native images, images the port still
-     * interprets, native shapes with tables, and primaries with code. */
-    expect(native > 0 && retail > 0 && tables > 0 && primaries > 0, "a kind of module was never met", -1);
+    /* Each kind was met: the disc has native images, native shapes with
+     * tables and primaries with code; and none the port still interprets,
+     * every shape of the disc being native (test_model_gate.py). */
+    expect(native > 0 && tables > 0 && primaries > 0, "a kind of module was never met", -1);
+    expect(retail == 0, "a module of the disc is one the port still interprets", -1);
     printf("model_module_class_test: %d records; %d native images (%d with tables), %d interpreted, %d primaries with "
            "code; %d failures\n", records, native, tables, retail, primaries, failures);
     fclose(disc);

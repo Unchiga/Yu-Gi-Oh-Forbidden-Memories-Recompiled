@@ -46,16 +46,28 @@ class ModelGate(unittest.TestCase):
     def test_retail_problems_names_a_missing_or_wrong_row(self):
         retail = model_gate.load_retail()
         native = next(row for row in self.rows if row["backend"] == "native")
-        other = next(row for row in self.rows if row["backend"] != "native")
+        # A row the port still interprets (none on the disc now): its code row is its own hash.
+        other = model_gate.Row(dict(native, backend="interpret", data_start="", note=""))
         without = [entry for entry in retail if not (entry["shape"] == str(native.shape) and entry["slot"] == "B")]
         self.assertTrue(any(f"shape {native.shape} slot B has 0 code rows" in line
                             for line in model_gate.retail_problems(self.rows, without)))
         stale = [dict(entry, size="0x4") if entry["shape"] == str(native.shape) else entry for entry in retail]
         self.assertTrue(any(f"shape {native.shape} slot A: its code row" in line
                             for line in model_gate.retail_problems(self.rows, stale)))
-        rehashed = [dict(entry, sha256="0" * 64) if entry["shape"] == str(other.shape) else entry for entry in retail]
+        own = [{"kind": "code", "slot": slot, "identifier": str(other.identifier(slot)), "shape": str(other.shape),
+                "size": f"0x{other.span:X}", "sha256": "0" * 64 if slot == "A" else other.sha256(slot), "records": ""}
+               for slot in "AB"]
         self.assertTrue(any(f"shape {other.shape} slot A: its code row's hash" in line
-                            for line in model_gate.retail_problems(self.rows, rehashed)))
+                            for line in model_gate.retail_problems([other], own)))
+
+    def test_the_disc_runs_no_module_on_the_interpreter(self):
+        """Every variant and primary shape of the disc is native: a shape left
+        on the interpreter (or kept) fails here, in CI, without the disc. The
+        oracle's sweep is the test with the disc (notes/pc-build.md). No row may
+        be `keep` or `interpret` any more: a new one needs this test changed."""
+        for table in (self.rows, model_gate.primary_rows()):
+            self.assertTrue(table)
+            self.assertEqual([row.shape for row in table if row["backend"] != "native"], [])
 
     def test_every_native_slot_is_a_gated_module(self):
         modules = {name: (pattern, bank) for name, pattern, _, bank in build_config.MODULES}

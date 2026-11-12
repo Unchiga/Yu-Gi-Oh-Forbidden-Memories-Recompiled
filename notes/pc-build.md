@@ -627,9 +627,9 @@ Retail module code reads stack words it never wrote, as on the console,
 where they hold what earlier code left at that depth. Variant module 128
 (record 330, slot A; 258 in slot B) sets only the colour bytes of the two
 `CVECTOR`s it hands `Model_QueueTintRequestForParts` (`0x8013B474`-`0x8013B4D4`:
-`lbu` of `sp+0x3BB` and `sp+0x3C3`), and the start colour's fourth byte is the
-tint pass's draw mode (`func_800528AC`, `Model_HasInsufficientBufferSpace`);
-it also reads the corners of a `POLY_FT4` that only `SetPolyFT4` touched
+`lbu` of `sp+0x3BB` and `sp+0x3C3`; `Model_QueueTintRequestForParts`
+overwrites the start colour's fourth byte with the draw mode, and nothing
+reads the end colour's, so neither shows); it also reads the corners of a `POLY_FT4` that only `SetPolyFT4` touched
 (`sp+0x80`/`0x82`, `0x8013C0AC`) for a `ratan2`. Those are the only reads
 whose values differed between the two histories below (an instrumented
 interpreter, 2026-11-02). The bridge forwards eight stack words to every
@@ -716,9 +716,8 @@ first word of the slot A image names one (418 is one; slot B's image of the
 same code is linked at `0x8017B000` and its first word is 568), and the disc
 has 324 of them, 183 on more than one image. A row has the shape, its
 `backend` (`native`; `interpret`, the default of a shape not ported yet;
-`keep`, a shape that must stay interpreted, with the reason in its note:
-shape 128 reads stack bytes it never wrote, which native C would take from
-the host's stack), its `span`, the SHA-256 of the first `span` bytes of each
+`keep`, a shape that must stay interpreted, with the reason in its note;
+none is left), its `span`, the SHA-256 of the first `span` bytes of each
 slot's image, and the images and identifiers it was written from, the
 decomp's `data_start` and, for a module made of the C of two headers, the
 `sources` (header numbers separated by `;`; empty: the shape's own).
@@ -1136,10 +1135,16 @@ bytes. Shape 448's fan never names its `col[6][16]`: it reaches it as
 `(s32)&rot + 240..331`, where the MIPS frame keeps it, so native C would write
 over its own frame. A rule may also rewrite such uses (a fourth field): `col`
 takes storage per slot, `(s32)&rot` becomes `((s32)col - 240)`, and the
-storage's 32-bit address is what the casts need. Shape 128 stays `keep`: what it reads unwritten (a `CVECTOR`'s fourth
-byte, a `POLY_FT4`'s corners) no call of its own writes, so storage per slot
-does not model it, and its table has 104 entries, past what its images
-share.
+storage's 32-bit address is what the casts need. Shape 128 reads what no call of its own writes, which on the PS1 is whatever
+other code left at that depth (the other slot's module, a palette pass): no
+value is the retail one. Its `quad` takes storage per slot that nothing
+writes, so the `ratan2` reads a defined zero (as 102's), which is what the
+interpreter read there too once no other module ran interpreted; its tint
+colours are declared zero, their fourth bytes unused (above). The oracle's
+poison passes show no host stack is read; they do not show the value is the
+PS1's, which none is. Its table is picked with `command % 100` (4 entries).
+`test_model_gate.py` fails, in CI, when a shape of the disc, variant or
+primary, is not native.
 
 **A frame past a page calls the Windows stack probe.** Shape 439's C
 (`variant456_sprays.c`, about 12 KB of arrays) makes the Windows compilers

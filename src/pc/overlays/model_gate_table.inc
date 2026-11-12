@@ -107,6 +107,8 @@ MODEL_GATE_ROW(0, 126u, 0x10ACu, "ac92b43dd8d2bbf1c99b289e4cc2b36cb056b8a9c4b1df
 MODEL_GATE_ROW(1, 256u, 0x10ACu, "0a45c0dc9519c0963f1b16baedb8d971fbb68bfe480fb9b26319e76deeb82b07", model_variant_126_slot1__func_8017B004, 0x4u, 0x1020u, 0x22u, 0x0u, 0u, 0u) /* shape 126 */
 MODEL_GATE_ROW(0, 127u, 0x3260u, "9f494f0f58b5ba56510dcfdeb9348cc52aa5a32b14cb2bb625b2e499719681e6", model_variant_127__func_8013B004, 0x65u, 0xEDCu, 0x5Au, 0x0u, 0u, 0u) /* shape 127 */
 MODEL_GATE_ROW(1, 257u, 0x3260u, "e98911b0a1d4f5bd2a652b07afd733bcd06050a13ff421d6a686275a9578ef53", model_variant_127_slot1__func_8017B004, 0x65u, 0xEDCu, 0x5Au, 0x0u, 0u, 0u) /* shape 127 */
+MODEL_GATE_ROW(0, 128u, 0x171Cu, "a9f29665308e43ee2acd039c8f1eed02fb56ef830f80f80135c832d6a965ac0b", model_variant_128__func_8013B004, 0x4u, 0x15C4u, 0x56u, 0x0u, 0u, 100u) /* shape 128 */
+MODEL_GATE_ROW(1, 258u, 0x171Cu, "a3de48763ad39b9e2e593fc5a24871b2c5238ff739dc53aa7706360c5bec5806", model_variant_128_slot1__func_8017B004, 0x4u, 0x15C4u, 0x56u, 0x0u, 0u, 100u) /* shape 128 */
 MODEL_GATE_ROW(0, 129u, 0x1030u, "3eb1db7b4b0b68c6abd8e7c1467ae7173078028551c8ab308dcf85342a1340c2", model_variant_129__func_8013B004, 0x1u, 0xFE8u, 0x46u, 0x0u, 0u, 0u) /* shape 129 */
 MODEL_GATE_ROW(1, 259u, 0x1030u, "7af0cd60b55f87d03b46409c7d3e969de1304759c780045a233f49121962bec4", model_variant_129_slot1__func_8017B004, 0x1u, 0xFE8u, 0x46u, 0x0u, 0u, 0u) /* shape 129 */
 MODEL_GATE_ROW(0, 130u, 0xBB4u, "a4a242c2bfca7798bbbaa152b68ec8a9c02438f96fc71ec6ee20a6ba4df95703", model_variant_130__func_8013B004, 0x2u, 0xB88u, 0x16u, 0x0u, 0u, 0u) /* shape 130 */

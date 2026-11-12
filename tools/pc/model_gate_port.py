@@ -453,6 +453,17 @@ STALE_LOCALS = {
     # where the MIPS frame keeps it, which native C's frame does not. The
     # storage takes it, and the uses address it from there: (s32)&rot + 240
     # is col. A game unit's storage has a 32-bit address, as the casts need.
+    # Shape 128 reads bytes no code of its own writes. quad's x0/y0 feed a
+    # ratan2: on the PS1 they hold whatever other code left at that depth (the
+    # other slot's module, a palette pass), so no value is the retail one; the
+    # storage defines them as zero, which the interpreter also read there once
+    # no other module ran interpreted. The tint colours' fourth bytes: the
+    # game overwrites the start's (Model_QueueTintRequestForParts, b3 = mode)
+    # and never reads the end's; zeroed so they come from no host stack.
+    f"{NATIVE}/model_variant/variant128_entry.c": (
+        _stale_quad("gModelVariant128"),
+        ("    ModelTintColor tint_start, tint_end;\n",
+         "    ModelTintColor tint_start = {0}, tint_end = {0};\n", None)),
     f"{NATIVE}/model_variant/variant448_fan.c": ((
         "    u8 col[6][16];\n",
         "    u8 (*col)[16] = gModelVariant448Col[Model_GetActiveSlotIndex() & 1];\n", None,

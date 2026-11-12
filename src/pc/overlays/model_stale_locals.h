@@ -60,4 +60,9 @@ extern DVECTOR gModelVariant783Screen[2][128];
  * same call (the fan's colours), so storage per slot only gives it a place. */
 extern u8 gModelVariant448Col[2][6][16];
 
+/* Shape 128 (variant128_entry.c): `quad`, whose x0/y0 a ratan2 reads and no
+ * call writes. On the PS1 they are what other code left at that stack depth;
+ * here they are zero (model_gate_port.py STALE_LOCALS). */
+extern POLY_FT4 gModelVariant128Quad[2];
+
 #endif
