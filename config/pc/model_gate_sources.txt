@@ -220,6 +220,10 @@ src/native_overlays/french_model_variant_slot1/variant143_entry_slot1.c
 src/native_overlays/model_variant/variant144_entry_usa.c
 [model_variant_127_slot1]
 src/native_overlays/model_variant_slot1/variant144_entry_usa_slot1.c
+[model_variant_128]
+src/native_overlays/model_variant/variant128_entry.c
+[model_variant_128_slot1]
+src/native_overlays/model_variant_slot1/variant128_entry_slot1.c
 [model_variant_129]
 src/native_overlays/model_variant/variant129_entry.c
 [model_variant_129_slot1]

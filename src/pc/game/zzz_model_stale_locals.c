@@ -41,3 +41,4 @@ u16 gModelFrenchVariant101Flags[2][96] = {{0}};
 POLY_FT4 gModelVariant783Quad[2] = {{0}};
 DVECTOR gModelVariant783Screen[2][128] = {{{0}}};
 u8 gModelVariant448Col[2][6][16] = {{{0}}};
+POLY_FT4 gModelVariant128Quad[2] = {{0}};

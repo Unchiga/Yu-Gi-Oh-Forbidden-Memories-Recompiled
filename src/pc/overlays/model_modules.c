@@ -65,7 +65,7 @@ static int model_mode(void)
 /* MEMORIES_MODEL_STACK_POISON=<byte> (tools/pc/model_oracle.py --poison, a
  * build with test hooks): the stack below run_module's frame is filled with
  * the byte before a native module runs, so a module's C that reads a local it
- * never wrote (shape 128's CVECTOR, 84's flags[]) takes the byte, where the
+ * never wrote (as 84's flags[] and 128's quad did, before rule 6) takes the byte, where the
  * interpreter takes what its own stack held. Run with two bytes, such a shape
  * differs from the interpreter for one of them; the scan does not see it. */
 static int stack_poison(void)
