@@ -799,8 +799,14 @@ def write_unit(unit: Unit, out: Path, renames: dict[str, str], stale: dict[str, 
     for n, path in enumerate(source.units):
         name = f"{prefix}_{n}.c"
         include = (copy_of[path.resolve()]).relative_to(out).as_posix()
-        (out / name).write_text(written(f'#include "{prefix}.h"\n#include "{include}"\n'), encoding="utf-8",
-                                newline="\n")
+        # The port's C, which the game builds with these casts: a few shapes
+        # keep a work-area pointer (guest memory) in a 32-bit integer, or
+        # address rule 6 storage so (shape 448), which build_mod.py's 64-bit
+        # flags would refuse as the mod's own mix-ups.
+        (out / name).write_text(written(f'#include "{prefix}.h"\n'
+                                        '#pragma GCC diagnostic ignored "-Wpointer-to-int-cast"\n'
+                                        '#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"\n'
+                                        f'#include "{include}"\n'), encoding="utf-8", newline="\n")
         unit.files.append(name)
     if used_stale or unit.consts:
         body = [f'#include "{prefix}.h"\n']

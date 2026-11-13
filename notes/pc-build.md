@@ -1033,7 +1033,15 @@ logged (`model_module ... sha256 H`) say where a default-mode side must have
 run `mod:<id>`, the trace's name for a mod's C: an `OVER_DISC` row before the
 disc's rows, the others after them. A mod's C anywhere else is an error.
 `--no-mod-c` runs the subject with `MEMORIES_MODEL_MOD_C=0` and expects no
-mod's C. `tools/pc/test_model_mod_c.py` (disc-gated) patches a shape-54
+mod's C. `--models NAME,...` battles models of the `--mod` mods' `models`:
+each fights as a disc card (cards 1, 2, ... in turn) that a shim mod of the
+oracle's own, written into each game's mods folder, gives it with
+`"replace"` and `"model"`; the checks then use the model file's module
+stages. `tools/pc/model_gate.py mod-migrate` prints the oracle command for
+the mod it made C for (notes/modding.md, "Moving a mod's attacks from MIPS
+to C"), and `tools/pc/test_model_migrate_all.py` runs every native shape's
+C so made against the interpreter, record by record.
+`tools/pc/test_model_mod_c.py` (disc-gated) patches a shape-54
 record from the disc, builds the port's own C for it into a mod and checks
 the three cases: the mod's C, the data without it (interpreted and warned),
 and `MEMORIES_MODEL_MOD_C=0`. Coverage:
