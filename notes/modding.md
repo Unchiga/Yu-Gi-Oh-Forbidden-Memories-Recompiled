@@ -853,11 +853,16 @@ control module it brings or changes:
   record keeps its modules (sectors 180 to 223).
 
 It compares each with the disc's modules (`config/pc/model_gate.csv` and
-`config/pc/model_retail.csv`). A mod with modules the interpreter would run
-shows one warning in the Mods window, such as `3 attack modules in model
+`config/pc/model_retail.csv`) and with the rows code mods registered for
+their own C ([below](#your-own-c-for-a-module-api-29)). This runs once
+every mod has started, and again whenever a mod is applied or removed, so a
+model pack and the code mod with C for its models count together in any
+order. A mod with modules the interpreter would run shows one warning in
+the Mods window, under its status, such as `3 attack modules in model
 pikachu, MODEL.MRG card 1, 40 are MIPS code, which runs on an interpreter
-that a later version removes`. `MEMORIES_TRACE=mods` logs each of those
-modules and what it is:
+that a later version removes`; the line also says how many a code mod's C
+runs (`4 attack modules run native C from mod pikachu-c`, not a warning).
+`MEMORIES_TRACE=mods` logs each of those modules and what it is:
 - `the disc's code with other tables, interpreted, bytes 0xB10-0xB60`: the
   code is the disc's, and the mod changed the data the decomp's C reads
   there (the tables it indexes by the attack, or divides by). Data past
@@ -866,6 +871,7 @@ modules and what it is:
 - `changed code, interpreted`: the code of a disc module, changed.
 - `code no disc module has, interpreted`: a first word no disc module of
   that slot has.
+- `native C from mod <id>`: a code mod's row covers it (not a warning).
 
 The records are read as the game will read them, with every mod applied
 before this one, so a mod that patches a record another mod changed is
@@ -884,14 +890,129 @@ with the disc's code, and loading does not see it.
   the mod's data.
 - A module with no entry (its second word 0, as in a model file shorter
   than a record). The stand-in runs it, as before.
+- A module an applied code mod's row covers: that mod's C runs it.
 
 **What to do with a warning.**
 - **Tables:** keep the disc's values in the bytes the log names, and put
   your own data past them, if the attack allows it.
-- **Code:** the way to run your own attack code natively is planned: a mod
-  API that lets a mod give the game its own C for a model's control
-  modules, and a tool that finds the disc module nearest yours and starts
-  you from the decomp's C for it. Until then the interpreter runs it.
+- **Code:** give the game C for the module: [Your own C for a module (API
+  29)](#your-own-c-for-a-module-api-29). A tool that finds the disc module
+  nearest yours and starts you from the decomp's C for it is planned.
+
+#### Your own C for a module (API 29)
+
+A code mod can give the game native C for a model's control module. The
+game then runs that C, not the module's MIPS, wherever the module's bytes
+hash to the row the mod registered. The C replaces the interpreter for that
+module, so the warning above goes away.
+
+**The row.** In `MemoriesModInit`, fill a `MemoriesModelModule`
+(`src/pc/mods/modapi.h`) and pass it to `host->model_module`:
+- `size`: `sizeof(MemoriesModelModule)`;
+- `kind`: `MEMORIES_MODEL_VARIANT` (the attack, 0x5000 bytes) or
+  `MEMORIES_MODEL_PRIMARY` (0x1000 bytes);
+- `slot`: `MEMORIES_MODEL_SLOT_A`, `_B`, or `_BOTH`;
+- `identifier`: the module's first word;
+- `span`: how many bytes from the slot base the hash covers, from 8 up to the
+  module's size;
+- `sha256`: the SHA-256 of those bytes, as 64 hex digits;
+- `entry`: your C, `int32_t entry(uint8_t *context, int32_t command)`. It is
+  called as the module would be: `context` is the work area the game hands
+  the module, and `command` is >= 0 for a setup and < 0 for an update. It
+  returns what the module returns.
+
+The host function returns a token for `model_module_remove`, or 0 when it
+refuses the row. The mod's status then says why: a `sha256` that is not 64
+hex digits, a span past the module, a bound outside the span, no entry.
+The game takes a copy of the row, so you need not keep the struct.
+
+**Which calls it takes.** With no flags the C takes every call to the
+module. With `MEMORIES_MODEL_BOUND` it takes only the commands a table
+covers, as the disc's rows do (`config/pc/model_gate.csv`, `command_table`):
+- `entries`, `table`, `stride`: a setup's command (taken `% modulus` when
+  `modulus` is not 0) must be below `entries`;
+- `field`, `index_width`: an update's entry, read at `field` of the work
+  area, must name one of those entries. With `index_width` 0 it is a pointer
+  to one of the `entries` entries of `stride` bytes at `table` (an offset
+  from the slot base). With 1, 2 or 4 it is the command itself, stored in
+  that many bytes.
+
+Any other call does not run this C. An attack your C set up finishes on
+your C, even if the mod is turned off before its last update.
+
+**Disc first.** For each slot, the game looks in this order:
+1. rows flagged `MEMORIES_MODEL_OVER_DISC`;
+2. the disc's own rows;
+3. the other mods' rows;
+4. the interpreter.
+
+So a row whose bytes are the disc's own (a record copied and left
+unchanged in its span) keeps the oracle-checked C of the port. With
+`OVER_DISC` the row goes first, and `MEMORIES_TRACE=mods` logs that it
+"stands over the disc's C for shape N". Among mods, the one applied last
+wins.
+
+**Both slots.** The two slots hold different images: slot B's code is
+relocated to 0x8017xxxx. You can register one row per slot, each with its
+own entry, identifier and hash, as the port does with its slot B wrapper
+(`src/native_overlays/model_variant_slot1`). Or you can register one entry
+for both with `MEMORIES_MODEL_SLOT_BOTH`. That C finds its slot with
+`host->model_module_base(host)`, which returns 0x8013A000, 0x8013B000,
+0x8017A000 or 0x8017B000 inside an entry and 0 outside one. Its data is then
+`(T *)(uintptr_t)(base + offset)`. Both slots' images must then hash the same
+over the span.
+
+**The record's data.** Past its code, a module's image holds the record's
+tables, which the C reads where the game loaded them. The rules for each
+kind of data:
+- **A name of the module's range** (`D_8013A000` to `D_8013FFFF`,
+  `D_8017A000` to `D_8017FFFF`), declared `extern`: the 32-bit and 64-bit
+  Windows and Linux games bind it to that address. `build_mod.py` accepts
+  it. The Android and macOS games do not bind these names yet, and
+  `build_mod.py` says so for `aarch64-translated`. Use `model_module_base`
+  there.
+- **`func_` names in those ranges** are never bound: that is MIPS code.
+- **A `const` copy** in your C is only right for bytes inside the hashed
+  span, which the hash keeps equal to the image.
+- **A pointer row's table** must be the image's (`extern`, or found from
+  `model_module_base`). The bound compares the work area's pointer with the
+  slot base plus `table`.
+
+**The game's functions.** Your C calls the game's functions by the names
+they are exported under (`exports.txt` beside the SDK). In a mod, `rand` and
+`srand` are the mods' own random numbers (`mod_libc.c`). The game's, which
+a module's MIPS calls, are `Memories_Rand` and `Memories_Srand`. The
+libgte functions `ccos` and `csin` are exported as `Psx_ccos` and
+`Psx_csin`. Frames match the interpreter's only with the game's.
+`tests/pc/mod_fixtures/model_c54` builds the port's own C for shape 54 into
+a mod this way, with a prefix header.
+
+**A module that is only C.** The game still needs the module in the record.
+It needs your identifier at +0 and a nonzero word at +4, because a module
+whose word at +4 is 0 is never called. Put `0x03E00008 0x24020002` there
+(`jr ra; li v0, 2`). With the mod off, an older game then runs a harmless
+return: there is no `return 2` shortcut for a variant, so the interpreter
+runs it. A primary that is `return 2` the game answers itself before any
+mod row without `OVER_DISC`. No game code reads the first word as anything
+but an identifier. Pick one no disc module has, at or above 0x10000, so
+the logs tell yours apart.
+
+**Checking it.**
+- `MEMORIES_TRACE=model` names the C that ran each call `mod:<id>`.
+- `MEMORIES_TRACE=mods` logs each row a mod registers
+  (`<id>: model_module variant slot A identifier N span S sha256 H`) and
+  each module the battle takes (`native C from mod <id>`).
+- `MEMORIES_MODEL_MOD_C=0` leaves every mod's rows out, so the disc's C and
+  the interpreter run as without the mods' C. Use it to tell your C from
+  your data.
+- `tools/pc/model_oracle.py --mod <your mod's folder>` runs battles with
+  your mod against the interpreter, frame for frame. It checks that
+  `mod:<id>` ran where your rows cover the record (notes/pc-build.md).
+
+**Versions.** Set `"min_api": 29` in `mod.json` and check
+`host->api >= 29` before calling these entries. If the models are in a data
+mod and the C is in a code mod, the data mod `requires` the code mod, so
+the C is there whenever the models are.
 
 ## Audio: songs, voices and sounds from files
 
