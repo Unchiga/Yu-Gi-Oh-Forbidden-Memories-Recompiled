@@ -935,13 +935,18 @@ covers, as the disc's rows do (`config/pc/model_gate.csv`, `command_table`):
   area, must name one of those entries. With `index_width` 0 it is a pointer
   to one of the `entries` entries of `stride` bytes at `table` (an offset
   from the slot base). With 1, 2 or 4 it is the command itself, stored in
-  that many bytes.
+  that many bytes. This side of the bound only matters for an attack your
+  C did not set up (one set up before your mod was on, or by the port).
 
 Any other call does not run this C: it gets the port's own handling of the
 module (today the interpreter; the sparks stand-in once the interpreter is
-removed). An attack your C set up finishes on your C, even if the mod is
-turned off before its last update. An attack something else set up
-finishes on what set it up, even if your mod is turned on during it.
+removed). An attack your C set up finishes on your C: its updates run your C
+whatever `field` holds, even if the mod is turned off before its last
+update. An attack something else set up finishes on what set it up, even if
+your mod is turned on during it. A loaded state ends that claim: the
+state's attack was not set up here, so its updates go by the bound and,
+past it, to the module's own code. That is why a module's own MIPS must be
+safe to run (below).
 
 **Disc first.** For each slot, the game looks in this order:
 1. rows flagged `MEMORIES_MODEL_OVER_DISC`;
@@ -1005,7 +1010,8 @@ that is safe to run:
   update to start the defender's dying animation, then 2. A variant that
   only returns 2 (`jr ra; li v0, 2`) never ends its attack, and the battle
   waits for ever. `tests/pc/mod_fixtures/model_both.c` gives the smallest
-  such module (13 words) and C that does the same.
+  such module (56 bytes: the identifier and 13 instructions) and C that does
+  the same.
 - **A primary** can be `0x03E00008 0x24020002` (`jr ra; li v0, 2`). The game
   answers such a primary itself, before any mod row without `OVER_DISC`, so
   its row needs that flag. No game code reads the first word as anything

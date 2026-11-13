@@ -92,16 +92,29 @@ def patched(disc: model_oracle.Disc, row: model_gate.Row, record: int, alternati
     for alternative in alternatives:
         for slot in "AB":
             image = bytearray(disc.variant(record, alternative, slot))
-            entries = [bytes(image[table + n * stride:table + (n + 1) * stride]) for n in range(count)]
-            used = sorted(commands.get((alternative, slot), ()))
+            original = [bytes(image[table + n * stride:table + (n + 1) * stride]) for n in range(count)]
+            # The entries the setups pick (a command past the table picks
+            # none: the port's own handling takes that attack).
+            used = sorted(command for command in commands.get((alternative, slot), ()) if 0 <= command < count)
             if not used:
-                sys.exit(f"test_model_mod_c: record {record} alternative {alternative} made no setup in slot {slot}")
-            for command in used:
-                picked = command % count
-                other = next((n for n in range(count) if entries[n] != entries[picked]), None)
+                sys.exit(f"test_model_mod_c: record {record} alternative {alternative} made no setup in slot {slot} "
+                         f"that picks an entry of the table")
+            # One permutation of the original entries in which every used
+            # entry holds other bytes than it did: swap each used entry with
+            # one whose bytes differ, unless that would give either of the
+            # two back its own bytes (a swap undoing an earlier one).
+            entries = list(original)
+            for picked in used:
+                if entries[picked] != original[picked]:
+                    continue
+                other = next((n for n in range(count) if entries[n] != original[picked] and
+                              (n not in used or entries[picked] != original[n])), None)
                 if other is None:
-                    sys.exit(f"test_model_mod_c: record {record}'s table entries are all the same")
+                    sys.exit(f"test_model_mod_c: record {record}'s table entries cannot all change")
                 entries[picked], entries[other] = entries[other], entries[picked]
+            changed = [n for n in used if entries[n] == original[n]]
+            if changed or sorted(entries) != sorted(original):
+                sys.exit(f"test_model_mod_c: entries {changed} kept their bytes, or the swaps are no permutation")
             image[table:table + count * stride] = b"".join(entries)
             at = stage_at(record, alternative, slot) + table
             patches.append({"at": at, "bytes": bytes(image[table:table + count * stride]).hex().upper()})
@@ -255,6 +268,7 @@ def main() -> int:
     expect(not any("MIPS code" in note for note in report.get("mod_notes", ())),
            "with the mod's C: no MIPS warning for the mod")
 
+    with_c = report
     report = oracle(arguments, "data-only", record, alternatives, data, [])
     print("\n".join(report["summary"]))
     expect(report["exit"] == 0, "without the code: identical (oracle exit 0)")
@@ -267,6 +281,10 @@ def main() -> int:
     expect(bool(digests(report)) and all(digests(report)) and
            not set(digests(report)) & set(digests(plain)),
            f"the patch changes the frames ({digests(plain)} unpatched, {digests(report)} patched)")
+    # The same patched data, run by the mod's C and by the module's MIPS: the same frames.
+    expect(bool(digests(with_c)) and digests(with_c) == digests(report),
+           f"the mod's C draws what the MIPS draws on the patched record ({digests(with_c)} with C, "
+           f"{digests(report)} without)")
 
     report = oracle(arguments, "mod-c-off", record, alternatives, code, ["--no-mod-c"])
     print("\n".join(report["summary"]))
