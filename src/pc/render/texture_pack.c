@@ -233,8 +233,10 @@ static void bank_trim(void)
 }
 
 /* The image of `file`, read now if it has not been (a failed one is kept,
- * so as not to be read again); NULL when out of memory. */
-static BankImage *bank_image(const char *file)
+ * so as not to be read again); NULL when out of memory. With `rgba`
+ * (width x height straight-alpha texels, copied), a new image is made from
+ * those instead of read: TexturePack_BankImageFromRgba. */
+static BankImage *bank_image_from(const char *file, const unsigned char *rgba, int width, int height)
 {
     BankImage *image, **more;
     int i;
@@ -247,9 +249,33 @@ static BankImage *bank_image(const char *file)
     if (!(image = calloc(1, sizeof(*image))) || !(image->file = strdup(file))) { free(image); return NULL; }
     image->key = ++bank_keys;
     image->released = ++bank_clock;
-    bank_read(image);
+    if (rgba) {
+        const size_t bytes = (size_t)width * (size_t)height * 4;
+        if ((image->level[0] = malloc(bytes))) {
+            memcpy(image->level[0], rgba, bytes);
+            image->width[0] = width;
+            image->height[0] = height;
+            image->levels = 1;
+            while (image->levels < BANK_LEVELS &&
+                   (image->width[image->levels - 1] > 1 || image->height[image->levels - 1] > 1))
+                if (!bank_halve(image, image->levels - 1)) break;
+        }
+    } else {
+        bank_read(image);
+    }
     bank_images[bank_image_count++] = image;
     return image;
+}
+
+static BankImage *bank_image(const char *file)
+{
+    return bank_image_from(file, NULL, 0, 0);
+}
+
+int TexturePack_BankImageFromRgba(const char *id, const unsigned char *rgba, int width, int height)
+{
+    if (!id || !*id || !rgba || width < 1 || height < 1 || width > 8192 || height > 8192) return 0;
+    return bank_image_from(id, rgba, width, height) != NULL;
 }
 
 static void bank_release(BankImage *image)

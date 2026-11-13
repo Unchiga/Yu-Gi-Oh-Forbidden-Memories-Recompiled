@@ -122,9 +122,18 @@ void Menu_Draw(MenuCanvas *canvas);
  * not UTF-8, is drawn as "?". */
 void Menu_DrawText(MenuCanvas *canvas, int x, int y, const char *text, uint32_t color);
 int Menu_TextWidth(const char *text);
+/* The `scale` of Menu_DrawTextScaled and Menu_TextWidthScaled is a whole number (the face at 13 pixels times it), or
+ * MENU_TEXT_PX(pixels): the face at exactly that size in pixels, any size (4 to 512), its glyphs rendered at it and
+ * spaced by their own advances. The mods' draw_text_px (API 30) is this. */
+#define MENU_TEXT_PX_FLAG 0x40000000
+#define MENU_TEXT_PX(pixels) (MENU_TEXT_PX_FLAG | (pixels))
 /* Auxiliary windows can fit their UI without changing the game menu scale. */
 void Menu_DrawTextScaled(MenuCanvas *canvas, int x, int y, const char *text, uint32_t color, int scale);
 int Menu_TextWidthScaled(const char *text, int scale);
+/* Text as a picture of its own (white on transparent, straight alpha 0xAARRGGBB), `px` pixels (4 to 512) with a margin
+ * round it; *middle_row the row of the line's vertical middle. Free the pixels with Menu_TextBitmapFree. 0 when it cannot be made. */
+int Menu_TextBitmap(const char *text, int px, uint32_t **pixels, int *width, int *height, int *middle_row);
+void Menu_TextBitmapFree(uint32_t *pixels);
 
 /* For code that cuts UTF-8 text to fit, so a cut never splits a character.
  * Menu_TextBack: where the character that ends at byte `at` starts.

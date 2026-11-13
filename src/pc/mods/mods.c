@@ -896,6 +896,14 @@ static int host_text_width(const MemoriesModHost *host, const char *text, int sc
     return owner(host) && overlay.width && text ? overlay.width(text, scale < 1 ? 1 : scale) : 0;
 }
 
+/* The overlay's text sizes travel as one int through the text and width functions the callers hand to
+ * Mods_DrawOverlay: a whole-number scale (13 pixels times it), or MENU_TEXT_PX(pixels) (menu.h). Where a size sets the
+ * room a text can take (the boxes below), a pixel size counts as the whole-number scale that holds it. */
+static int box_scale(int scale)
+{
+    return scale & MENU_TEXT_PX_FLAG ? ((scale & 0xFFFF) + 12) / 13 : scale;
+}
+
 /* Text at `alpha` (255 as draw_text draws it) into the view: drawn as ever,
  * then, below 255, mixed with what was under it, pixel by pixel, over the
  * box it can take. x and middle are the view's. */
@@ -908,9 +916,9 @@ static void raster_text(int x, int middle, const char *text, uint32_t rgb, int s
         overlay.text(canvas, x, middle, text, rgb & 0xFFFFFFu, scale);
         return;
     }
-    top = middle - 10 * scale;
-    w = overlay.width(text, scale) + 2 * scale;
-    h = 20 * scale;
+    top = middle - 10 * box_scale(scale);
+    w = overlay.width(text, scale) + 2 * box_scale(scale);
+    h = 20 * box_scale(scale);
     x0 = x < 0 ? 0 : x;
     y0 = top < 0 ? 0 : top;
     x1 = x + w > canvas->width ? canvas->width : x + w;
@@ -944,8 +952,9 @@ static void raster_text(int x, int middle, const char *text, uint32_t rgb, int s
 static void overlay_text(int x, int middle, const char *text, uint32_t rgb, int scale, unsigned alpha)
 {
     int box[4], width = overlay.width(text, scale);
+    const int room = box_scale(scale);
     OverlayCall *call;
-    call_box(box, x - 4 * scale, middle - 14 * scale, width + 12 * scale, 28 * scale);
+    call_box(box, x - 4 * room, middle - 14 * room, width + 12 * room, 28 * room);
     if ((call = list_call(CALL_TEXT, box))) {
         call->x = x;
         call->y = middle;
@@ -959,7 +968,7 @@ static void overlay_text(int x, int middle, const char *text, uint32_t rgb, int 
     }
     if (alpha) {
         int touched[4];
-        call_box(touched, x, middle - 10 * scale, width + (alpha < 255 ? 2 * scale : 0), 20 * scale);
+        call_box(touched, x, middle - 10 * room, width + (alpha < 255 ? 2 * room : 0), 20 * room);
         overlay_touch(touched);
     }
 }
@@ -975,6 +984,27 @@ static void host_draw_text_alpha(const MemoriesModHost *host, int x, int middle,
 {
     if (!owner(host) || !overlay.whole || !text) return;
     overlay_text(x, middle, text, rgb, scale < 1 ? 1 : scale, alpha > 255 ? 255 : alpha);
+}
+
+/* draw_text_px and text_width_px (API 30): the same, at a size in canvas pixels. */
+#define TEXT_PX_MIN 4
+#define TEXT_PX_MAX 512
+
+static int text_px(int px)
+{
+    return MENU_TEXT_PX(px < TEXT_PX_MIN ? TEXT_PX_MIN : px > TEXT_PX_MAX ? TEXT_PX_MAX : px);
+}
+
+static void host_draw_text_px(const MemoriesModHost *host, int x, int middle, const char *text, uint32_t rgb, int px,
+                              unsigned alpha)
+{
+    if (!owner(host) || !overlay.whole || !text) return;
+    overlay_text(x, middle, text, rgb, text_px(px), alpha > 255 ? 255 : alpha);
+}
+
+static int host_text_width_px(const MemoriesModHost *host, const char *text, int px)
+{
+    return owner(host) && overlay.width && text ? overlay.width(text, text_px(px)) : 0;
 }
 
 /* x / 255 for x up to 255 * 255, without the division: the overlay is
@@ -1186,8 +1216,8 @@ static const TextStamp *stamp_for(const char *text, uint32_t rgb, int scale,
     }
     if (slot->pixels) stamp_drop(slot);
     /* the box overlay_text gives a call: all a glyph can reach */
-    slot->width = width(text, scale) + 12 * scale;
-    slot->height = 28 * scale;
+    slot->width = width(text, scale) + 12 * box_scale(scale);
+    slot->height = 28 * box_scale(scale);
     slot->text = malloc(strlen(text) + 1);
     slot->pixels = calloc((size_t)slot->width * (size_t)slot->height, sizeof(*slot->pixels));
     if (!slot->text || !slot->pixels) {
@@ -1205,7 +1235,7 @@ static const TextStamp *stamp_for(const char *text, uint32_t rgb, int scale,
     canvas.stride = canvas.width = slot->width;
     canvas.height = slot->height;
     canvas.alpha = 1;
-    draw(&canvas, 4 * scale, 14 * scale, text, rgb, scale);
+    draw(&canvas, 4 * box_scale(scale), 14 * box_scale(scale), text, rgb, scale);
     slot->hash = pixels_hash(slot->pixels, (size_t)slot->width * (size_t)slot->height);
     return slot;
 }
@@ -1228,7 +1258,8 @@ static void overlay_to_sink(void (*draw)(MenuCanvas *, int, int, const char *, u
             const TextStamp *stamp = stamp_for(drawn.chars + call->text, call->rgb, call->w, draw, width);
             if (stamp)
                 overlay_sink->image(call->clip, stamp->pixels, stamp->width, stamp->height, stamp->hash,
-                                    call->x - 4 * call->w, call->y - 14 * call->w, stamp->width, stamp->height,
+                                    call->x - 4 * box_scale(call->w), call->y - 14 * box_scale(call->w), stamp->width,
+                                    stamp->height,
                                     call->alpha);
         }
     }
@@ -2320,6 +2351,8 @@ static void fill_host(Mod *mod)
     mod->host.pointer = host_pointer;
     mod->host.wheel = host_wheel;
     mod->host.take_wheel = host_take_wheel;
+    mod->host.draw_text_px = host_draw_text_px;
+    mod->host.text_width_px = host_text_width_px;
     mod->host.api = MEMORIES_MOD_API;
     mod->host.id = mod->id;
     mod->host.directory = mod->directory;

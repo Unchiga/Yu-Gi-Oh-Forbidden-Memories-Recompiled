@@ -115,6 +115,13 @@ int TexturePack_AddBankSprite(int bank, int page_x, int page_y, int depth, int c
 int TexturePack_AddBankSpriteCrop(int bank, int page_x, int page_y, int depth, int clut_x, int clut_y, int u, int v,
                                   int w, int h, const char *file, int source_x, int source_y, int source_w,
                                   int source_h);
+/* A picture made in memory for bank sprites, in place of a PNG file: `id` is
+ * what the sprites then name as their `file` (a name no file need have, and
+ * the same id is the same picture: it is made once and kept while a sprite
+ * shows it, so an id has to change with its pixels), `rgba` width x height
+ * straight-alpha texels (copied). Call it before the TexturePack_AddBankSprite
+ * that names `id`; returns 0 when it cannot be made. */
+int TexturePack_BankImageFromRgba(const char *id, const unsigned char *rgba, int width, int height);
 /* Read `file` ahead of its sprites, where a hitch is expected anyway. */
 void TexturePack_BankImagePreload(const char *file);
 /* The sprite (a negative entry) a draw starts in, or overlaps, 0 none. */
