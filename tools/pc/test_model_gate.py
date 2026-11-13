@@ -552,6 +552,17 @@ class OracleBackends(unittest.TestCase):
         self.assertIs(way(b"\0" + image[1:], "A", "variant", False, [late]), False)
         self.assertEqual(way(image, "A", "variant", False, [late, late[:6] + ("later",)]), "mod:later")
 
+    def test_a_return_two_primary_is_answered_before_a_late_row(self):
+        image = (0x12345).to_bytes(4, "little") + model_oracle.RETURN_TWO + bytes(0x1000 - 12)
+        digest = model_oracle.sha(image[:0x40])
+        late = ("primary", "A", 0x12345, 0x40, digest, False, "late")
+        early = ("primary", "A", 0x12345, 0x40, digest, True, "early")
+        way = model_oracle.expected_way
+        self.assertIs(way(image, "A", "primary", False, [late]), True)
+        self.assertEqual(way(image, "A", "primary", False, [late, early]), "mod:early")
+        # Not a variant: a variant has no `return 2` of the game's own.
+        self.assertEqual(way(image, "A", "variant", False, [late[:0] + ("variant",) + late[1:]]), "mod:late")
+
     def test_a_mod_s_patches_are_what_the_disc_reads(self):
         class Disc(model_oracle.Disc):
             def __init__(self):

@@ -112,6 +112,8 @@ MOD_NOTE = re.compile(r"(attack modules? .*(?:MIPS code|native C from mod)|model
                       r"MODEL\.MRG record \d+ \(card \d+\): .*|: native C from mod \S+)")
 STAMP = re.compile(r"\[t \d+ us frame (\d+) ")
 HASH = re.compile(r"(\d+) ([0-9a-f]{16})$")
+# A primary module's words at +4 that are `return 2` (jr ra; addiu v0, zero, 2).
+RETURN_TWO = struct.pack("<II", 0x03E00008, 0x24020002)
 
 
 def model_ids(header: Path = MODEL_HEADER) -> list[int]:
@@ -514,8 +516,12 @@ def expected_way(image: bytes, slot: str, kind: str, disc_native: bool, claims: 
     """What a default-mode side runs a slot's module with, for compare():
     "mod:<id>" where a code mod's row covers the image (an OVER_DISC row
     before the disc's rows, the others after them; of two, the one
-    registered later), else whether a disc row does (True: native C)."""
+    registered later), else whether a disc row does (True: native C). A
+    primary that is `return 2` the game answers itself after the disc's rows
+    and before the others (model_modules.c, return_two_row): native."""
     identifier = int.from_bytes(image[:4], "little")
+    if kind == "primary" and image[4:12] == RETURN_TWO:
+        disc_native = True
     def claimed(over: bool) -> str | None:
         found = None
         for claim_kind, claim_slot, claim_identifier, span, digest, claim_over, owner in claims:
