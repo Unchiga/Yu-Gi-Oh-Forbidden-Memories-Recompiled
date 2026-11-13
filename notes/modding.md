@@ -998,11 +998,17 @@ a mod this way, with a prefix header.
 **A module that is only C.** The game still needs the module in the record.
 It needs your identifier at +0 and a nonzero word at +4: for a module whose
 word at +4 is 0 the game runs the sparks stand-in and never looks at a
-mod's row. Put `0x03E00008 0x24020002` there (`jr ra; li v0, 2`). With
-the mod off, the port's own handling then runs a harmless return (today
-the interpreter; there is no `return 2` shortcut for a variant, so once the
-interpreter is removed it is the sparks stand-in). A primary that is
-`return 2` the game answers itself before any mod row without `OVER_DISC`. No game code reads the first word as anything
+mod's row. What follows is what the game runs with the mod off (today
+the interpreter; once it is removed, the sparks stand-in). Make it MIPS
+that is safe to run:
+- **A variant** must end its attack: return 0 from the setup, 3 from an
+  update to start the defender's dying animation, then 2. A variant that
+  only returns 2 (`jr ra; li v0, 2`) never ends its attack, and the battle
+  waits for ever. `tests/pc/mod_fixtures/model_both.c` gives the smallest
+  such module (13 words) and C that does the same.
+- **A primary** can be `0x03E00008 0x24020002` (`jr ra; li v0, 2`). The game
+  answers such a primary itself, before any mod row without `OVER_DISC`, so
+  its row needs that flag. No game code reads the first word as anything
 but an identifier. Pick one no disc module has, at or above 0x10000, so
 the logs tell yours apart.
 

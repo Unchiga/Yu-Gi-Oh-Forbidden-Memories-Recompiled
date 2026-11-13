@@ -539,7 +539,12 @@ def compare(subject: dict, reference: dict, holds_native: dict[str, bool] | None
     which slots hold a native row's code, `holds_native_primary` which hold a
     native primary row's; `native_allowed` whether each side (subject,
     reference) is in the mode that runs native C."""
-    verdict = {"battle": subject["battle"], "frames": [len(subject.get("hashes", ())), len(reference.get("hashes", ()))]}
+    verdict = {"battle": subject["battle"], "frames": [len(subject.get("hashes", ())), len(reference.get("hashes", ()))],
+               # Each side's frame hashes in one digest, to compare runs (test_model_mod_c.py).
+               "digests": [hashlib.sha256(side["hashes"].tobytes()).hexdigest()[:16] if side.get("hashes") else ""
+                           for side in (subject, reference)],
+               # The subject's setup commands ("variant A 3"): the entries the battle's attacks pick.
+               "setups": sorted({f"{kind} {slot} {command}" for _, kind, slot, _, command in subject.get("calls", ())})}
     errors = [f"{side['side']}: {side['error']}" for side in (subject, reference) if side.get("error")]
     errors += [f"{side['side']}: no frame hash for {side['hashes'].count(0)} of its {len(side['hashes'])} frames"
                for side in (subject, reference) if not side.get("error") and
