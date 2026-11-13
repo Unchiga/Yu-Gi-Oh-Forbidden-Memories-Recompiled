@@ -8,7 +8,10 @@
 #include "game/model_slot_properties.h"
 #include "pc/guest/mips.h"
 #include "pc/guest/sha256.h"
+#include "pc/mods/model_rows.h"
+#include "pc/mods/mods.h"
 #include "pc/overlays/model_gate_command.h"
+#include "pc/overlays/model_gate_row.h"
 #include "pc/overlays/model_module_class.h"
 #include "pc/debug/log.h"
 
@@ -40,7 +43,13 @@
  *   `spark`          the stand-in for every module (the resident spark burst,
  *                    called `native` before native C was planned).
  * Anything else is the default, as MEMORIES_DUEL_EFFECTS takes its values,
- * and says so once on stderr. */
+ * and says so once on stderr.
+ *
+ * Code mods may give C of their own for a module (mod API 29,
+ * src/pc/mods/model_rows.h): in the default mode a mod's row whose span hashes
+ * to the module runs it, after the disc's rows, or before them with
+ * MEMORIES_MODEL_OVER_DISC. MEMORIES_MODEL_MOD_C=0 leaves the mods' rows out
+ * (the disc's C still runs), to tell a mod's C from its data. */
 
 enum { MODE_DEFAULT, MODE_INTERPRETER, MODE_SPARK };
 
@@ -59,6 +68,17 @@ static int model_mode(void)
         }
     }
     return mode;
+}
+
+/* Whether the mods' rows may run (MEMORIES_MODEL_MOD_C, unset or 1: yes). */
+static int mod_c(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *setting = getenv("MEMORIES_MODEL_MOD_C");
+        enabled = !(setting && strcmp(setting, "0") == 0);
+    }
+    return enabled;
 }
 
 #ifdef MEMORIES_TEST_HOOKS
@@ -155,30 +175,19 @@ static int native_variant(void *context, int command)
 
 /* The variant modules the decomp's C stands in for: the table's native rows
  * (MODEL_GATE_ROW, model_gate_table.inc), each the entry of the C built for its
- * slot, which the build links under the module's prefix (GATED_MODULES). */
-typedef int (*ModelEntry)(void *context, int command);
-
+ * slot, which the build links under the module's prefix (GATED_MODULES). The
+ * row type (ModelGateRow) is shared with the mods' rows: model_gate_row.h. */
 #define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
     extern int entry(void *context, int command);
 #include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
 
-typedef struct {
-    int slot;
-    uint32_t identifier; /* the first word of the image */
-    uint32_t span;       /* the bytes from the slot base the hash covers */
-    const char *sha256;
-    ModelEntry entry;
-    uint32_t entries, table, stride, field, index_width; /* the command bound: model_gate_command.h */
-    uint32_t modulus;    /* the setup picks entry command % modulus (0: command) */
-} ModelGateRow;
-
 static const ModelGateRow gate_rows[] = {
 #define MODEL_GATE_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
-    {slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus},
+    MODEL_GATE_DISC_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus),
 #include "pc/overlays/model_gate_table.inc"
 #undef MODEL_GATE_ROW
-    {0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0}};
+    MODEL_GATE_DISC_ROW(0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0)};
 
 /* The primary modules the decomp's C stands in for (MODEL_PRIMARY_ROW,
  * model_primary_gate_table.inc, from config/pc/model_primary_gate.csv): the
@@ -191,10 +200,16 @@ static const ModelGateRow gate_rows[] = {
 
 static const ModelGateRow primary_gate_rows[] = {
 #define MODEL_PRIMARY_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus) \
-    {slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus},
+    MODEL_GATE_DISC_ROW(slot, identifier, span, sha256, entry, entries, table, stride, field, index_width, modulus),
 #include "pc/overlays/model_primary_gate_table.inc"
 #undef MODEL_PRIMARY_ROW
-    {0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0}};
+    MODEL_GATE_DISC_ROW(0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0)};
+
+/* A primary that is `return 2`, as a row: what native_row picks for one once
+ * mods have rows (with none, run_module answers it before any verdict, as it
+ * always has). */
+static const ModelGateRow return_two_row =
+    MODEL_GATE_DISC_ROW(0, 0, 12, NULL, native_primary, MODEL_GATE_NO_TABLE, 0, 0, 0, 0, 0);
 
 #define IMAGE_WORDS (0x5000u / 4)
 
@@ -203,16 +218,35 @@ static const ModelGateRow primary_gate_rows[] = {
  * catches every way a module arrives (a disc delivery, a mod's copy, a
  * state) since none has to say so. Word loops, not memcmp: in the translated
  * build each guest access is resolved. A module no row can stand in for is
- * compared by its identifier word alone. */
+ * compared by its identifier word alone. With mods' rows (mod API 29) the
+ * verdict also holds only while the rows and the applied mods are the ones it
+ * was taken with. */
 typedef struct {
     uint32_t words[IMAGE_WORDS];
     uint32_t span; /* the bytes compared, in words rounded up; 0: no verdict yet */
-    const ModelGateRow *row; /* the native row they hash to, NULL: interpret */
+    int found;               /* chosen holds the row they hash to; 0: interpret */
+    ModelGateRow chosen;     /* a copy: a mod's row may go while the verdict stands */
     int outside_logged;      /* a call outside the row's commands was logged for these words */
     int stand_in;            /* the stand-in took the setup of the attack in progress: it owns its updates */
+    unsigned rows_generation, mods_changes; /* ModelRows_Generation, Mods_Changes (0, 0 with no rows) */
+    /* A mod's C took the setup of the attack in progress (attack_row, its
+     * row): that attack's updates stay with that C whatever the verdict says
+     * now, until the next setup, a new module or a loaded state. */
+    int attack_claimed;
+    ModelGateRow attack_row;
+    unsigned state_loads;    /* ModelRows_StateLoads when attack_claimed was set */
 } ModelVerdict;
 
 static ModelVerdict verdicts[2], primary_verdicts[2]; /* [slot], for the variant and the primary module */
+
+/* What a verdict depends on beyond the slot's words: the mods' rows and
+ * which mods are applied, both 0 while no mod has a row. */
+static void rows_state(unsigned *generation, unsigned *changes)
+{
+    int rows = mod_c() && ModelRows_Count() > 0;
+    *generation = rows ? ModelRows_Generation() : 0;
+    *changes = rows ? Mods_Changes() : 0;
+}
 
 static int hex_equal(const uint8_t digest[32], const char *hex)
 {
@@ -230,15 +264,25 @@ static const ModelGateRow *native_row(int primary, uint32_t module, int slot, ui
     ModelVerdict *verdict = primary ? &primary_verdicts[slot] : &verdicts[slot];
     const uint32_t *guest = (const uint32_t *)(uintptr_t)module;
     const ModelGateRow *row;
-    uint32_t i, span = 0;
+    uint32_t i, span = 0, longest = 0, longest_after = 0;
     const ModelGateRow *found = NULL;
+    unsigned generation, changes;
+    int same = 0, mods;
 
+    rows_state(&generation, &changes);
+    mods = generation != 0;
     if (verdict->span) {
         for (i = 0; i < (verdict->span + 3) / 4 && guest[i] == verdict->words[i]; i++) {
         }
-        if (i == (verdict->span + 3) / 4) {
-            return verdict->row;
+        same = i == (verdict->span + 3) / 4;
+        if (same && verdict->rows_generation == generation && verdict->mods_changes == changes) {
+            return verdict->found ? &verdict->chosen : NULL;
         }
+    }
+    /* The order (notes/modding.md, "Your own C for a module (API 29)"): the
+     * mods' rows that ask to go first, the disc's rows, the mods' others. */
+    if (mods) {
+        found = ModelRows_Find(primary, slot, identifier, guest, 1, &longest);
     }
     for (row = primary ? primary_gate_rows : gate_rows; row->sha256; row++) {
         uint8_t digest[32];
@@ -248,19 +292,45 @@ static const ModelGateRow *native_row(int primary, uint32_t module, int slot, ui
         if (row->span > span) {
             span = row->span;
         }
+        if (found) {
+            continue;
+        }
         Sha256(guest, row->span, digest);
         if (hex_equal(digest, row->sha256)) {
             found = row;
             span = row->span;
-            break;
+            if (!mods) {
+                break;
+            }
         }
     }
+    if (mods && !found && primary && primary_returns_two(module)) {
+        found = &return_two_row;
+    }
+    if (mods && !found) {
+        found = ModelRows_Find(primary, slot, identifier, guest, 0, &longest_after);
+    }
     /* The verdict covers the identifier's longest span, so that the next call
-     * compares what it was taken from. */
+     * compares what it was taken from; with mods' rows, the longest of any
+     * row of the identifier, disc or mod. */
+    if (mods) {
+        if (longest > span) span = longest;
+        if (longest_after > span) span = longest_after;
+        if (found == &return_two_row && span < return_two_row.span) span = return_two_row.span;
+    }
     verdict->span = span ? span : 4;
-    verdict->row = found;
-    verdict->outside_logged = 0;
-    verdict->stand_in = 0; /* a new module: no attack of the old one goes on */
+    verdict->found = found != NULL;
+    if (found) {
+        verdict->chosen = *found;
+        verdict->chosen.sha256 = NULL; /* the registry's may not outlive this call */
+    }
+    verdict->rows_generation = generation;
+    verdict->mods_changes = changes;
+    if (!same) {
+        verdict->outside_logged = 0;
+        verdict->stand_in = 0; /* a new module: no attack of the old one goes on */
+        verdict->attack_claimed = 0;
+    }
     for (i = 0; i < (verdict->span + 3) / 4; i++) {
         verdict->words[i] = guest[i];
     }
@@ -268,11 +338,16 @@ static const ModelGateRow *native_row(int primary, uint32_t module, int slot, ui
         /* What the interpreter runs, for a mod's author: the disc's module
          * the port has no C for yet, or the mod's own code or tables
          * (model_module_class.h). */
-        ModelModuleInfo info = ModelModule_Classify(guest, slot, primary);
-        LOG(LOG_MODS, "model %s module %u in slot %c: %s", primary ? "primary" : "variant", (unsigned)identifier,
-            slot ? 'B' : 'A', found ? "retail code, native C" : ModelModule_ClassText(info.kind));
+        if (found && found->owner >= 0) {
+            LOG(LOG_MODS, "model %s module %u in slot %c: native C from mod %s", primary ? "primary" : "variant",
+                (unsigned)identifier, slot ? 'B' : 'A', Mods_Id(found->owner));
+        } else {
+            ModelModuleInfo info = ModelModule_Classify(guest, slot, primary);
+            LOG(LOG_MODS, "model %s module %u in slot %c: %s", primary ? "primary" : "variant", (unsigned)identifier,
+                slot ? 'B' : 'A', found ? "retail code, native C" : ModelModule_ClassText(info.kind));
+        }
     }
-    return found;
+    return found ? &verdict->chosen : NULL;
 }
 
 /* The work area's word that tells an update which entry the setup picked: a
@@ -295,15 +370,17 @@ static uint32_t read_entry_word(const void *context, const ModelGateRow *row)
  * make, is interpreted, and logged once for the code in the slot. So is an
  * update of an attack the stand-in took (verdict->stand_in). *field is the
  * work area's entry POINTER for a pointer row's setup that goes elsewhere
- * (else -1), for run_module to clear if the stand-in takes it. */
+ * (else -1), for run_module to clear if the stand-in takes it. *chosen is
+ * the row the verdict picked, whether or not it takes this call. */
 static ModelEntry native_entry(int primary, uint32_t module, int slot, uint32_t identifier, void *context,
-                               int command, int *field)
+                               int command, int *field, const ModelGateRow **chosen)
 {
     const ModelGateRow *row = native_row(primary, module, slot, identifier);
     ModelVerdict *verdict = primary ? &primary_verdicts[slot] : &verdicts[slot];
     const char *kind = primary ? "primary" : "variant";
     uint32_t entry_word = 0;
     *field = -1;
+    *chosen = row;
     if (!row) {
         return NULL;
     }
@@ -341,7 +418,8 @@ static ModelEntry native_entry(int primary, uint32_t module, int slot, uint32_t 
 
 /* module: the slot base (the identifier word; the entry is at +4). The
  * trace names the module by its slot and identifier, and what runs it:
- * "native" (the decomp's C), "interpreter" or "stand-in". */
+ * "native" (the decomp's C), "mod:<id>" (a mod's C, mod API 29),
+ * "interpreter" or "stand-in". */
 static int run_module(uint32_t module, int variant, void *context, int command)
 {
     static uint32_t failed[2][2]; /* [slot][variant]: identifier of a module that failed */
@@ -352,26 +430,68 @@ static int run_module(uint32_t module, int variant, void *context, int command)
     int interpret = mode != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
     int field = -1;
     ModelVerdict *verdict = variant ? &verdicts[slot] : &primary_verdicts[slot];
-    ModelEntry native = mode == MODE_DEFAULT && entry != 0
-                            ? !variant && primary_returns_two(module)
-                                  ? native_primary
-                                  : native_entry(!variant, module, slot, identifier, context, command, &field)
-                            : NULL;
+    const ModelGateRow *ran = NULL;
+    ModelEntry native = NULL;
+    char way[80];
 
-    /* A setup starts an attack: whoever takes it, the stand-in's claim on the
-     * slot's updates (set below) ends. */
-    if (command >= 0) {
-        verdict->stand_in = 0;
+    if (mode == MODE_DEFAULT && entry != 0) {
+        /* `return 2` is answered before any verdict while no mod has a row,
+         * as it always was; with rows, native_row orders it among them. */
+        if (!variant && primary_returns_two(module) && !(mod_c() && ModelRows_Count() > 0)) {
+            native = native_primary;
+        } else {
+            native = native_entry(!variant, module, slot, identifier, context, command, &field, &ran);
+        }
     }
 
+    /* A setup starts an attack: whoever takes it, the stand-in's claim on the
+     * slot's updates (set below) ends, and so does a mod's C's. An update of
+     * an attack a mod's C set up goes to that C, whatever the verdict says
+     * now (the mod turned off, another's row won): its work area is that C's,
+     * which neither the interpreter nor other C can read. */
+    if (command >= 0) {
+        verdict->stand_in = 0;
+        verdict->attack_claimed = 0;
+    } else if (verdict->attack_claimed) {
+        if (verdict->state_loads != ModelRows_StateLoads()) {
+            verdict->attack_claimed = 0; /* a loaded state: its attack is not this C's */
+        } else if (mode == MODE_DEFAULT && entry != 0 && native != verdict->attack_row.entry) {
+            native = verdict->attack_row.entry;
+            ran = &verdict->attack_row;
+            field = -1;
+        }
+    }
+    if (native && ran && ran->owner < 0) {
+        ran = NULL;   /* the disc's C */
+    } else if (!native) {
+        ran = NULL;
+    }
+    if (command >= 0 && ran) {
+        verdict->attack_claimed = 1;
+        verdict->attack_row = *ran;
+        verdict->state_loads = ModelRows_StateLoads();
+    }
+
+    if (ran) {
+        snprintf(way, sizeof(way), "mod:%s", Mods_Id(ran->owner));
+    }
     LOG(LOG_MODEL, "%s slot=%u command=%d module %u in %c: %s", variant ? "variant" : "primary",
         (unsigned)D_8009AFA0, command, (unsigned)identifier, slot ? 'B' : 'A',
-        native ? "native" : interpret ? "interpreter" : "stand-in");
+        ran ? way : native ? "native" : interpret ? "interpreter" : "stand-in");
     if (native) {
+        uint32_t previous;
+        int result;
 #ifdef MEMORIES_TEST_HOOKS
         if (stack_poison() >= 0) paint_stack(stack_poison());
 #endif
-        return native(context, command);
+        if (!ran) {
+            return native(context, command);
+        }
+        previous = ModelRows_Running();
+        ModelRows_SetRunning(module);
+        result = native(context, command);
+        ModelRows_SetRunning(previous);
+        return result;
     }
     if (interpret) {
         uint32_t args[2], result;
