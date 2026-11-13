@@ -611,6 +611,24 @@ class ModMigrate(unittest.TestCase):
         self.assertIn("extern const s16 D_8013C200[12 / sizeof(const s16[3])][3];", out)
         self.assertIsNone(model_migrate.declare_const(out, "D_8013C300", 4))
 
+    def test_a_models_file_stages_where_the_game_reads_them(self):
+        """A record's module stages start at sector 180; a bigger model's
+        after its own model data (its sectors less the record's other 180
+        and its texture pages), as mods.c's check_model_modules reads them."""
+        import model_migrate
+        import tempfile
+        sector = 2048
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            for sectors, pages, data in ((276, 0, 96), (276 + 30 + 2 * 16, 2, 126), (300, 0, 120)):
+                image = bytearray(sectors * sector)
+                at = (data + 84) * sector
+                image[at:at + 4] = b"MARK"
+                (folder / "m.mrg").write_bytes(bytes(image))
+                site = model_migrate.model_site(folder, {"name": "m", "file": "m.mrg", "texture_pages": pages})
+                self.assertEqual(site.stages[:4], b"MARK", (sectors, pages))
+                self.assertEqual(len(site.stages), 44 * sector)
+
     def test_record_ranges(self):
         import model_migrate
         self.assertEqual(model_migrate.ranges([7, 1, 2, 3, 9, 10]), "1-3,7,9-10")

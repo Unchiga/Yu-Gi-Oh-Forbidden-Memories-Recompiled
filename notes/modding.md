@@ -1089,7 +1089,8 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
      under the names a mod gets them by (`rand` as `Memories_Rand`), and
      prototypes the Android build needs.
    - `<prefix>_<n>.c`: one unit for each C file of the module, compiled
-     unoptimized (`#pragma clang optimize off`), as the game compiles the
+     unoptimized (`#pragma clang optimize off`, or GCC's `optimize ("O0")`),
+     as the game compiles the
      port's C: the decomp's C counts on MIPS's wrapping arithmetic, and at
      `-O2` some shapes draw other frames than the interpreter.
    - `<prefix>_data.c`: the module's own storage for the locals the
@@ -1099,7 +1100,11 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
      its first word, the shape's span, the SHA-256 of your bytes and the
      shape's command bound, and a `MemoriesModInit` that registers them. If
      your mod has its own `MemoriesModInit`, it gets
-     `MemoriesModelRows_Register(host)` instead: call it from yours.
+     `MemoriesModelRows_Register(host)` instead (declared in `model_rows.h`):
+     call it from yours once `host->api >= 29`.
+   - For a mod that replaces `MODEL.MRG` or raw sectors of it (not
+     `patch`), the report gives no oracle command: `model_oracle.py` reads
+     only patches.
    - `model_c/migrate.json`: the report, for tools.
 
    `mod.json` gains `"library"` and `"min_api": 29` when it lacks them. Run

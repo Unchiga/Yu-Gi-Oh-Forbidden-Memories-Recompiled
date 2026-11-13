@@ -12,7 +12,11 @@ data is kept.
   tables   a MODEL.MRG patch of shape 54's command table (as
            test_model_mod_c.py's): the tool makes the shape's C, and the
            oracle runs it against the interpreter on the patched record;
-  const    a MODEL.MRG patch of a const the port's C defines (a scale
+  replace  the same bytes as a raw replacement of the record's module
+           sectors, in a mod with its own MemoriesModInit: the same C, rows
+           registered through MemoriesModelRows_Register, and no oracle
+           command (the oracle reads MODEL.MRG patches only); a build;
+  const   a MODEL.MRG patch of a const the port's C defines (a scale
            vector, picked at run time so that the interpreter draws other
            frames with it): the generated C has the mod's bytes and draws
            what the interpreter draws; given the disc's bytes instead (the
@@ -55,7 +59,7 @@ BUILD = "python tools/pc/build_mod.py {mod} --target i386"
 ORACLE_RECORDS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --records {records}"
 ORACLE_MODELS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --models {models}"
 PLAIN = "python tools/pc/model_oracle.py --disc {disc} --records {records}"
-CASES = ("class", "tables", "const", "code", "models")
+CASES = ("class", "tables", "replace", "const", "code", "models")
 
 
 class Test:
@@ -267,6 +271,52 @@ def case_models(test: Test, disc: model_oracle.Disc) -> None:
     test.expect(found["exit"] == 0, "models: identical to the interpreter (oracle exit 0)")
     test.expect(ways(found) == {tag} and all(v["battle"].startswith("model:") for v in found.get("verdicts", ())),
                 f"models: the model fought, and the subject ran {tag} and nothing else ({sorted(ways(found))})")
+
+
+OWN_INIT = """/* The mod's own entry, which registers mod-migrate's rows itself. */
+#include "pc/mods/modapi.h"
+#include "model_rows.h"
+
+int MemoriesModInit(const MemoriesModHost *host, MemoriesMod *mod)
+{
+    if (host->api < 29) return 0;
+    mod->api = 29;
+    return MemoriesModelRows_Register(host);
+}
+"""
+
+
+def case_replace(test: Test, disc: model_oracle.Disc) -> None:
+    """The tables patch as a raw replacement of the record's 44 module
+    sectors (an "lba" entry with "sectors"), in a mod with a MemoriesModInit
+    of its own: the same modules and C as the patch, the rows registered by
+    MemoriesModelRows_Register, and no oracle command (the oracle reads
+    MODEL.MRG patches only)."""
+    row, record, alternatives, plain, patches = shape54(test, disc)
+    stages = bytearray(disc.read(record, model_migrate.MODULES_SECTOR, model_migrate.MODULES_SECTORS))
+    first = (record * 0x114 + model_migrate.MODULES_SECTOR) * model_oracle.SECTOR
+    for run in patches:
+        piece = bytes.fromhex(run["bytes"])
+        stages[run["at"] - first:run["at"] - first + len(piece)] = piece
+    lba = model_migrate.Disc(test.arguments.disc).lba + record * 0x114 + model_migrate.MODULES_SECTOR
+    mod = mod_folder(test.arguments.out / "mods" / "migrate-replace", "migrate-replace",
+                     {"library": "migrate-replace", "min_api": 29,
+                      "data": [{"lba": lba, "sectors": model_migrate.MODULES_SECTORS, "replace": "stages.bin"}]})
+    (mod / "stages.bin").write_bytes(bytes(stages))
+    (mod / "main.c").write_text(OWN_INIT, encoding="utf-8")
+    result, report = test.migrate(mod, "replace-migrate")
+    made = modules(report, "generate")
+    test.expect(result.returncode == 0 and len(made) == 2 * len(alternatives) and
+                all(m["class"] == "TABLES" and m["shape"] == 54 for m in made),
+                f"replace: the replaced sectors' modules are the patch's, TABLES of shape 54 "
+                f"({[(m['where'], m['class'], m['action']) for m in report['modules']]})")
+    test.expect(report.get("init") == "MemoriesModelRows_Register" and (mod / "model_rows.h").is_file() and
+                "int MemoriesModInit" not in (mod / "model_rows.c").read_text(),
+                "replace: with the mod's own MemoriesModInit, model_rows.c gives MemoriesModelRows_Register "
+                "(model_rows.h) and no MemoriesModInit")
+    test.expect(report.get("verify") == [BUILD.format(mod=rel(mod))] and "cannot check" in report.get("oracle", ""),
+                f"replace: no oracle command, and the report says why ({report.get('verify')}, {report.get('oracle')!r})")
+    test.expect(test.build(mod, "replace-build"), "replace: the mod (its main.c calling the rows) builds")
 
 
 # --- const ------------------------------------------------------------------------------

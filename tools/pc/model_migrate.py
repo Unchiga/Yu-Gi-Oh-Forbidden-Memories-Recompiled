@@ -539,7 +539,8 @@ def map_bytes(module: Module, disc_image: bytes) -> None:
 def describe_code(module: Module) -> str:
     functions: dict[str, list[int]] = {}
     for at in module.code:
-        functions.setdefault(module.source.function_at(at) or "before the first function", []).append(at)
+        found = module.source.function_at(at)
+        functions.setdefault(f"at or after {found}" if found else "before the first function", []).append(at)
     parts = [f"{name} ({len(offsets)} byte{'s' if len(offsets) != 1 else ''} at 0x{offsets[0]:X}"
              f"{f'-0x{offsets[-1]:X}' if len(offsets) > 1 else ''})" for name, offsets in functions.items()]
     if module.unmapped:
@@ -897,6 +898,12 @@ int MemoriesModInit(const MemoriesModHost *host, MemoriesMod *mod)
 }
 """)
     (out / "model_rows.c").write_text(written("".join(lines)), encoding="utf-8", newline="\n")
+    (out / "model_rows.h").write_text(written(
+        "/* model_rows.c's rows, for a mod with a MemoriesModInit of its own, which calls\n"
+        " * this (host->api >= 29 first): 1 when the game took every row. */\n"
+        "#ifndef MODEL_ROWS_H\n#define MODEL_ROWS_H\n#include \"pc/mods/modapi.h\"\n"
+        "int MemoriesModelRows_Register(const MemoriesModHost *host);\n#endif\n"), encoding="utf-8",
+        newline="\n")
     return len(rows)
 
 
@@ -1025,6 +1032,11 @@ def migrate(folder: Path, disc_path: Path, records: list[int], over_disc: bool, 
     generated_records = sorted({record for record, _ in places if record is not None})
     generated_models = sorted({model for _, model in places if model})
     verify = verify_commands(folder, disc_path, generated_records, generated_models)
+    # model_oracle.py applies a mod's MODEL.MRG patches only: a replacement
+    # (of the file, or of raw sectors) it cannot battle, so no check command.
+    unchecked = disc.replaced is not None or bool(disc.raw)
+    if unchecked and verify:
+        verify = verify[:1]
     # Each const the port's C defines, against the disc's bytes where its
     # name puts it: a plain copy (the same bytes) is one the C can be given
     # the mod's bytes for.
@@ -1038,7 +1050,9 @@ def migrate(folder: Path, disc_path: Path, records: list[int], over_disc: bool, 
                 consts["other"].append(f"shape {module.row.shape} slot {module.slot} {symbol.name}")
     report = {"mod": mod_id, "folder": str(folder), "out": str(out), "modules": [], "units": len(units), "rows": rows,
               "init": "MemoriesModInit" if init else "MemoriesModelRows_Register", "manifest": changed,
-              "verify": verify, "records": generated_records, "models": generated_models, "consts": consts}
+              "verify": verify, "records": generated_records, "models": generated_models, "consts": consts,
+              "oracle": "" if not unchecked else "model_oracle.py reads only patches of MODEL.MRG, not this mod's "
+                                                 "replacement: it cannot check this C against the interpreter"}
     for module in modules:
         entry = module_report(module)
         entry["same_bytes"] = [where for where, _, _ in duplicates.get(id(module), [])]
@@ -1098,6 +1112,8 @@ def print_report(report: dict, modules: list[Module], duplicates: dict[int, list
               "(host->api >= 29)")
     if report["manifest"]:
         print(f"mod.json: added {', '.join(report['manifest'])}")
+    if report.get("oracle"):
+        print("    " + report["oracle"])
     if report["verify"]:
         print("check it, the mod's C against the interpreter:")
         for command in report["verify"]:
