@@ -581,6 +581,40 @@ class OracleBackends(unittest.TestCase):
             disc.patch({"data": [{"file": "\\DATA\\WA_MRG.MRG;1", "patch": []}]}, "m")
         self.assertEqual(model_oracle.mod_variable("3d-monsters"), "MEMORIES_MOD_3D_MONSTERS")
 
+    def test_a_model_battle_reads_the_models_images(self):
+        """--models: the battle's images are the model's stages, not a record's."""
+        disc = model_oracle.Disc.__new__(model_oracle.Disc)
+        stages = bytes(range(256)) * (44 * 2048 // 256)
+        disc.models = {"pikachu": stages}
+        battle = model_oracle.Battle(0, 1, "tie", "pikachu", 1)
+        self.assertEqual(battle.key, "model:pikachu/1/tie")
+        self.assertEqual(disc.battle_variant(battle, "B"), stages[30 * 2048:40 * 2048])
+        self.assertEqual(disc.battle_primary(battle, "B"), stages[42 * 2048:44 * 2048])
+        self.assertEqual(battle.properties()[:2], (1).to_bytes(2, "little"))
+
+
+class ModMigrate(unittest.TestCase):
+    """model_gate.py mod-migrate's text work (tools/pc/model_migrate.py);
+    tools/pc/test_model_migrate.py runs it on the disc."""
+
+    def test_a_const_definition_becomes_a_declaration(self):
+        import model_migrate
+        text = ("#include \"a.h\"\n"
+                "static const VECTOR D_8013C188 = {4096, /* x; */ 4096, 4096, 0};\n"
+                "const s16 D_8013C200[][3] = {{1, 2, 3}, {4, 5, 6}};\n"
+                "s32 f(void) { return D_8013C188.vx; }\n")
+        out = model_migrate.declare_const(text, "D_8013C188", 16)
+        self.assertIn("extern const VECTOR D_8013C188;", out)
+        self.assertNotIn("4096", out)
+        self.assertIn("return D_8013C188.vx;", out)
+        out = model_migrate.declare_const(out, "D_8013C200", 12)
+        self.assertIn("extern const s16 D_8013C200[12 / sizeof(const s16[3])][3];", out)
+        self.assertIsNone(model_migrate.declare_const(out, "D_8013C300", 4))
+
+    def test_record_ranges(self):
+        import model_migrate
+        self.assertEqual(model_migrate.ranges([7, 1, 2, 3, 9, 10]), "1-3,7,9-10")
+
 
 if __name__ == "__main__":
     unittest.main()
