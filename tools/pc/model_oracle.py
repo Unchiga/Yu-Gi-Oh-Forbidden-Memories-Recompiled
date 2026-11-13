@@ -191,7 +191,7 @@ class Battle(NamedTuple):
     alternative: int
     outcome: str
     model: str = ""     # a mod's model (--models): `record` is then the record whose card fights as it
-    card: int = 0       # the card that names that model (the shim mod's)
+    card: int = 0       # what D_800EF658 holds for it: a card id, or a mod model's id (Disc.model_id)
 
     @property
     def key(self) -> str:
@@ -219,6 +219,7 @@ class Disc:
             raise SystemExit(f"{path}: MODEL.MRG is {size} bytes, not {RECORDS} records")
         self.patches: dict[int, int] = {}   # MODEL.MRG offset: byte, the --mod mods' "data" patches
         self.models: dict[str, bytes] = {}  # a --mod mod's model: its 44 module sectors (model_migrate.model_site)
+        self.model_order: list[str] = []    # every model of the --mod mods, in their order
 
     def patch(self, manifest: dict, where: str) -> None:
         """A mod's "data" patches of MODEL.MRG, applied to what read() gives,
@@ -231,6 +232,7 @@ class Disc:
             if site is None:
                 raise SystemExit(f"--mod {where}: model {entry.get('name')} has no file")
             self.models[site.model] = site.stages   # a later mod's model of one name wins, as in the game
+            self.model_order.append(site.model)
         for entry in manifest.get("data", []):
             name = str(entry.get("file", "")).upper().replace("/", "\\")
             if name not in ("\\DATA\\MODEL.MRG;1", "\\DATA\\MODEL.MRG") or "replace" in entry or "patch" not in entry:
@@ -287,6 +289,14 @@ class Disc:
         at = (VARIANT_SECTORS * (2 * battle.alternative + (slot == "B"))) * SECTOR
         return self.models[battle.model][at:at + VARIANT_SECTORS * SECTOR]
 
+    def model_id(self, name: str) -> int:
+        """What a card that names model `name` has as its model, which the
+        battle reads in D_800EF658: CARDS_MODEL_MOD_FIRST (0x8000, src/pc/cards/
+        cards.h) plus one plus the model's place among every mod's models
+        (the --mod mods load in the order given: a later model of one name
+        is the one named)."""
+        return 0x8001 + len(self.model_order) - 1 - self.model_order[::-1].index(name)
+
     def battle_primary(self, battle: "Battle", slot: str) -> bytes:
         if not battle.model:
             return self.primary(battle.record, slot)
@@ -311,12 +321,11 @@ class Side:
     its frame count starts again."""
 
     def __init__(self, name: str, executable: Path | None, env: dict[str, str], out: Path, disc: Path,
-                 chunk: int, cap: int, mods: list[tuple[Path, str]] | None = None, shim: dict | None = None):
+                 chunk: int, cap: int, mods: list[tuple[Path, str]] | None = None):
         self.name, self.executable, self.env = name, executable, env
         self.out = out.resolve()   # the game runs elsewhere: MEMORIES_FRAME_HASHES must be absolute
         self.disc, self.chunk, self.cap = disc, chunk, cap
         self.mods = mods or []     # (folder, id): copied into each game's own mods folder and turned on
-        self.shim = shim           # --models: the manifest of the mod whose cards name the models
         self.games = 0
         self.lock = threading.Lock()
 
@@ -331,11 +340,6 @@ class Side:
         for directory, identifier in self.mods:
             shutil.copytree(directory, folder / "mods" / directory.name)
             env[mod_variable(identifier)] = "1"
-        if self.shim:
-            (folder / "mods" / self.shim["id"]).mkdir()
-            text = json.dumps(self.shim, indent=1) + "\n"
-            (folder / "mods" / self.shim["id"] / "mod.json").write_text(text, encoding="utf-8")
-            env[mod_variable(self.shim["id"])] = "1"
         game = Game(self.executable, out=folder, mods_dir=folder / "mods", env=env, command_timeout=120)
         game.goto("debug")
         game.save("base.state")
@@ -745,8 +749,8 @@ def main() -> int:
                         help="a mod's folder, on for both sides, copied into each game's own mods folder "
                              "(repeatable; its \"data\" may only patch MODEL.MRG)")
     parser.add_argument("--models", help="models of the --mod mods (\"models\" in mod.json), by name and "
-                                         "comma-separated: each fights as a disc card a shim mod gives it "
-                                         "(\"replace\" with \"model\"), its own modules in both slots. With "
+                                         "comma-separated: each fights by its model id, as a card that names it "
+                                         "would, its own modules in both slots. With "
                                          "--models and no --records, only the models are battled")
     parser.add_argument("--no-mod-c", action="store_true",
                         help="the subject runs with MEMORIES_MODEL_MOD_C=0: no mod's C is expected")
@@ -764,25 +768,20 @@ def main() -> int:
         disc.patch(manifest, str(directory))
         mods.append((directory, str(manifest["id"])))
     alternatives = [int(a) for a in arguments.alternatives.split(",")]
-    records = [] if arguments.models and not arguments.records else         parse_record_selection(arguments.records, disc, alternatives)
+    if arguments.models and not arguments.records:
+        records = []
+    else:
+        records = parse_record_selection(arguments.records, disc, alternatives)
     models = [name.strip() for name in (arguments.models or "").split(",") if name.strip()]
     for name in models:
         if name not in disc.models:
             parser.error(f"--models: no --mod mod has a model named {name!r}")
-    # The shim: a card of the disc for each model, in record order (each a
-    # monster), which names the model; the battle pokes that card. It loads
-    # after the mods, whose models it names.
-    shim = None
-    if models:
-        shim = {"id": "oracle-models", "name": "model_oracle.py --models", "version": "1.0.0", "min_api": 21,
-                "enabled": False, "after": [identifier for _, identifier in mods],
-                "cards": [{"replace": record_card(n), "model": name} for n, name in enumerate(models)]}
     outcomes = [o.strip() for o in arguments.outcomes.split(",")]
     for outcome in outcomes:
         if outcome not in OUTCOMES:
             parser.error(f"--outcomes: {outcome}? ({', '.join(OUTCOMES)})")
     battles = [Battle(r, a, o) for r in records for a in alternatives for o in outcomes]
-    battles += [Battle(n, a, o, name, record_card(n)) for n, name in enumerate(models)
+    battles += [Battle(0, a, o, name, disc.model_id(name)) for name in models
                 for a in alternatives for o in outcomes]
     if arguments.out:
         out = arguments.out.resolve()
@@ -803,9 +802,9 @@ def main() -> int:
     if arguments.no_mod_c:
         subject_env["MEMORIES_MODEL_MOD_C"] = "0"
     sides = {"subject": Side("subject", subject_exe, subject_env, out / "subject", disc.path,
-                             arguments.chunk, arguments.cap, mods, shim),
+                             arguments.chunk, arguments.cap, mods),
              "reference": Side("reference", reference_exe, side_env(arguments.reference_mode), out / "reference",
-                               disc.path, arguments.chunk, arguments.cap, mods, shim)}
+                               disc.path, arguments.chunk, arguments.cap, mods)}
     reference_battles = battles[::-1] if arguments.reverse_reference else battles
     reference_size = arguments.shard + 1 if arguments.reverse_reference else arguments.shard
     tasks = [("subject", f"shard{n:03}", part) for n, part in enumerate(shards(battles, arguments.shard))]
@@ -866,7 +865,7 @@ def main() -> int:
     lines = []
     by_record: dict[str, list[dict]] = {}
     for battle, verdict in zip(battles, verdicts):
-        by_record.setdefault(f"model {battle.model} (as card {battle.card})" if battle.model else
+        by_record.setdefault(f"model {battle.model} (model id 0x{battle.card:X})" if battle.model else
                              f"record {battle.record} (card {record_card(battle.record)})", []).append(verdict)
     for record, found in by_record.items():
         modules = sorted({m for v in found for m in v.get("modules", ())})

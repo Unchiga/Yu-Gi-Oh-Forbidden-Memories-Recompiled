@@ -209,7 +209,8 @@ def shape54(test: Test, disc: model_oracle.Disc):
         return test._shape54
     row = next(r for r in model_gate.native_rows() if r.shape == test_model_mod_c.SHAPE)
     record, alternatives = test_model_mod_c.find_record(disc, row)
-    plain = test.oracle(PLAIN.format(disc=rel(test.arguments.disc), records=record), "unpatched")
+    plain = test.oracle(PLAIN.format(disc=rel(test.arguments.disc), records=record), "unpatched",
+                        ["--alternatives", ",".join(map(str, alternatives))])
     test.expect(plain["exit"] == 0, "the unpatched record: identical (oracle exit 0)")
     patches, rows = test_model_mod_c.patched(disc, row, record, alternatives, test_model_mod_c.setup_commands(plain))
     test._shape54 = (row, record, alternatives, plain, patches)
@@ -231,7 +232,7 @@ def case_tables(test: Test, disc: model_oracle.Disc) -> None:
     test.expect(report.get("verify") == [BUILD.format(mod=rel(mod)), want],
                 f"tables: the tool's check commands are the guide's ({report.get('verify')})")
     test.expect(test.build(mod, "tables-build"), "tables: the mod builds")
-    found = test.oracle(want, "tables-oracle")
+    found = test.oracle(want, "tables-oracle", ["--alternatives", ",".join(map(str, alternatives))])
     tag = "mod:migrate-tables"
     test.expect(found["exit"] == 0, "tables: identical to the interpreter (oracle exit 0)")
     test.expect(ways(found) == {tag}, f"tables: the subject ran {tag} and nothing else ({sorted(ways(found))})")

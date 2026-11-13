@@ -1128,8 +1128,7 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
 
    Every battle must be identical, and the trace must name your C
    (`mod:my-mod`) in the slots your rows cover (the oracle checks both). A
-   model fights as a card of the disc that a mod of the oracle's own gives
-   it (`{"replace": 1, "model": "pikachu"}`), in its own folder.
+   model fights by its model id, as a card that names it would.
 
 `tools/pc/test_model_migrate.py` runs these commands on mods it makes from
 the disc: a table, a const, code and a model.

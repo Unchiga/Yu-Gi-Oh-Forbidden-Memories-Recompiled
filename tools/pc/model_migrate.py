@@ -1091,8 +1091,8 @@ def print_report(report: dict, modules: list[Module], duplicates: dict[int, list
     if quiet:
         print(f"{quiet} more are the disc's, which its C runs already")
     hand = [m for m in modules if m.action == "hand"]
-    print(f"generated: {report['units']} module copies, {report['rows']} rows in model_rows.c "
-          f"({report['init']}); by hand: {len(hand)}")
+    print((f"generated: {report['units']} module copies, {report['rows']} rows in model_rows.c ({report['init']})"
+           if report["units"] else "generated: nothing") + f"; by hand: {len(hand)}")
     if report["init"] != "MemoriesModInit":
         print("    the mod has its own MemoriesModInit: call MemoriesModelRows_Register(host) from it "
               "(host->api >= 29)")
