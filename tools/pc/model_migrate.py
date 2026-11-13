@@ -799,11 +799,16 @@ def write_unit(unit: Unit, out: Path, renames: dict[str, str], stale: dict[str, 
     for n, path in enumerate(source.units):
         name = f"{prefix}_{n}.c"
         include = (copy_of[path.resolve()]).relative_to(out).as_posix()
-        # The port's C, which the game builds with these casts: a few shapes
-        # keep a work-area pointer (guest memory) in a 32-bit integer, or
-        # address rule 6 storage so (shape 448), which build_mod.py's 64-bit
-        # flags would refuse as the mod's own mix-ups.
+        # The port's C as the game builds it: unoptimized (the game's units are
+        # -O0 -fwrapv -fno-strict-aliasing: the decomp's C counts on MIPS's
+        # wrapping arithmetic, and shape 109 draws other frames at -O2), and
+        # with its casts: a few shapes keep a work-area pointer (guest
+        # memory) in a 32-bit integer, or address rule 6 storage so (shape
+        # 448), which build_mod.py's 64-bit flags would refuse as the mod's
+        # own mix-ups.
         (out / name).write_text(written(f'#include "{prefix}.h"\n'
+                                        "#if defined(__clang__)\n#pragma clang optimize off\n"
+                                        '#elif defined(__GNUC__)\n#pragma GCC optimize ("O0")\n#endif\n'
                                         '#pragma GCC diagnostic ignored "-Wpointer-to-int-cast"\n'
                                         '#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"\n'
                                         f'#include "{include}"\n'), encoding="utf-8", newline="\n")

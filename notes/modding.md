@@ -1088,7 +1088,10 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
      two shapes in one mod do not clash. It also holds the game's functions
      under the names a mod gets them by (`rand` as `Memories_Rand`), and
      prototypes the Android build needs.
-   - `<prefix>_<n>.c`: one unit for each C file of the module.
+   - `<prefix>_<n>.c`: one unit for each C file of the module, compiled
+     unoptimized (`#pragma clang optimize off`), as the game compiles the
+     port's C: the decomp's C counts on MIPS's wrapping arithmetic, and at
+     `-O2` some shapes draw other frames than the interpreter.
    - `<prefix>_data.c`: the module's own storage for the locals the
      disc's code reads before it writes them (rule 6), and the consts with
      your bytes. This storage is your mod's, never the port's.
