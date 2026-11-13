@@ -1,9 +1,9 @@
 yfm-recording 1
-build 81b78a7b
+build 006937bc
 start boot
-F build: 81b78a7b (commit v0.3.1-preview.1-171-g1ae1780e83)
+F build: 006937bc (commit v0.3.1-preview.1-343-g36d499c135)
 F os: Windows 10.0 build 26300, 64-bit
-F settings: master_volume=100 music_volume=100 sfx_volume=100 stream_volume=100 scale=4 fullscreen=0 borderless=0 scaling=0 aspect=0 filter=0 vsync=0 speed=100 fps=0 show_menu_fullscreen=0 pause_on_focus_loss=0 mute_on_focus_loss=0 hide_cursor=1 show_hud=0 menu_scale=0 window_x=-1 window_y=-1 audio_interpolation=0 internal_scale=1 deck_slots=1 brightness=100 contrast=100 saturation=100 gamma=100 crt=0 reduce_flashes=0 xbr=0 hd_text=0 fusion_helper=0 msaa=0 opponent_name=0 pgxp=0 card_drops=1 free_duel_progress=0 check_for_updates=1 update_prereleases=0 rank_meter=0 library_all_cards=0 cheat_life_points=8000 cheat_show_hand=0 cheat_free_spending=0 card_passwords=0 jp_buttons=0 card_browse=0 language=0 confirm_quit=1 touch_controls=0 offer_crash_reports=1 screen_rotation=0 hd_fast=2 touch_opacity=0 touch_style=0
+F settings: master_volume=100 music_volume=100 sfx_volume=100 stream_volume=100 scale=4 fullscreen=0 borderless=0 scaling=0 aspect=0 filter=0 vsync=0 speed=100 fps=0 show_menu_fullscreen=0 pause_on_focus_loss=0 mute_on_focus_loss=0 hide_cursor=1 show_hud=0 menu_scale=0 window_x=-1 window_y=-1 audio_interpolation=0 internal_scale=1 deck_slots=1 brightness=100 contrast=100 saturation=100 gamma=100 crt=0 reduce_flashes=0 xbr=0 hd_text=0 fusion_helper=0 msaa=0 opponent_name=0 pgxp=0 card_drops=1 free_duel_progress=0 check_for_updates=1 update_prereleases=0 rank_meter=0 library_all_cards=0 cheat_life_points=8000 cheat_show_hand=0 cheat_free_spending=0 card_passwords=0 jp_buttons=0 card_browse=0 language=0 confirm_quit=1 touch_controls=0 offer_crash_reports=1 screen_rotation=0 hd_fast=2 touch_opacity=0 touch_style=0 duel_hud_edges=0 library_fold_variants=1 build_deck_fold_variants=1
 F mods: none
 F clock: virtual
 I 1 0000 0000 0000 0000 0
@@ -129,17 +129,17 @@ H 461 461 efbded70f304a73f
 H 465 465 80de0682b3e76d69
 H 469 469 de033135e7182867
 H 473 473 982030a2dc7d3e7b
-H 477 477 ff5a9c5591a69b33
+H 477 477 2c3b58c7f0b62fcf
 I 479 2000 2000 0000 0000 0
-H 481 481 3fe2788bc41533ba
+H 481 481 47a61ad869da1fac
 I 485 0000 0000 0000 0000 0
-H 485 485 94c82b0afd808f88
-H 489 489 390998c07c116afd
-H 493 493 2f5a91e3b1c03070
-H 497 497 0140d7c2dd092d07
-H 501 501 1542e076b83b997a
-H 505 505 8d1743263d2b1332
-H 509 509 5bd683daa921d78d
+H 485 485 bb3e06b0979ea964
+H 489 489 46286476de9f80d6
+H 493 493 12e7cc1fa061e965
+H 497 497 65fb1d40f09e3b04
+H 501 501 72d1dde8ce21adfb
+H 505 505 d7987b58cde65f20
+H 509 509 682db443418a208a
 H 513 513 2351256ae7864206
 H 517 517 f8bf2b915887b72a
 H 521 521 b2383df640b72c2f
