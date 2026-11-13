@@ -873,9 +873,9 @@ runs (`4 attack modules run native C from mod pikachu-c`, not a warning).
   that slot has.
 - `native C from mod <id>`: a code mod's row covers it (not a warning).
 
-The records are read as the game will read them, with every mod applied
-before this one, so a mod that patches a record another mod changed is
-told of that record's modules too. The battle logs the same for the module
+The records are read as the game will read them, with every applied mod's
+changes, so a mod that patches a record another mod changed is told of
+that record's modules too. The battle logs the same for the module
 in each slot when it first runs.
 It also logs an attack whose command (a word of the record) picks an entry
 past the ones the disc's table has: the interpreter runs that attack even
