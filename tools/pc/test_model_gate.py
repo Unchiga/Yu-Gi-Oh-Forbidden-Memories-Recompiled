@@ -505,6 +505,71 @@ class OracleBackends(unittest.TestCase):
         self.assertIsNone(model_oracle.native_row(Disc(image), 0, 0, "A"))
         self.assertEqual(row["backend"], "native")   # and the one table row there is has no image here
 
+    # --mod: a code mod's rows (mod API 29), the trace's mod:<id>.
+
+    def test_a_mod_s_c_where_its_row_covers_is_a_match(self):
+        verdict = self.verdict(side("subject", "mod:pikachu-c"), side("reference", "interpreter"),
+                               {"A": "mod:pikachu-c", "B": False})
+        self.assertEqual(verdict["status"], "identical")
+
+    def test_native_or_interpreter_where_a_mod_row_covers_is_an_error(self):
+        for ways in ("native", "interpreter"):
+            verdict = self.verdict(side("subject", ways), side("reference", "interpreter"),
+                                   {"A": "mod:pikachu-c", "B": False})
+            self.assertEqual(verdict["status"], "error")
+            self.assertIn("pikachu-c's row runs as its C", verdict["why"])
+
+    def test_another_mod_s_c_is_an_error(self):
+        verdict = self.verdict(side("subject", "mod:other"), side("reference", "interpreter"),
+                               {"A": "mod:pikachu-c", "B": False})
+        self.assertEqual(verdict["status"], "error")
+
+    def test_a_mod_s_c_where_no_row_covers_is_an_error(self):
+        verdict = self.verdict(side("subject", "native", "mod:pikachu-c"), side("reference", "interpreter"))
+        self.assertEqual(verdict["status"], "error")
+        self.assertIn("slot B ran a mod's C (mod:pikachu-c) where no mod row covers its module", verdict["why"])
+
+    def test_a_reference_in_interpreter_mode_never_runs_a_mod_s_c(self):
+        verdict = self.verdict(side("subject", "mod:pikachu-c"), side("reference", "mod:pikachu-c"),
+                               {"A": "mod:pikachu-c", "B": False})
+        self.assertEqual(verdict["status"], "error")
+        self.assertIn("reference: slot A ran a mod's C", verdict["why"])
+
+    def test_the_expected_way_follows_the_game_s_order(self):
+        image = (0x12345).to_bytes(4, "little") + bytes(range(252)) * 4
+        digest = model_oracle.sha(image[:0x40])
+        late = ("variant", "A", 0x12345, 0x40, digest, False, "late")
+        early = ("variant", "A", 0x12345, 0x40, digest, True, "early")
+        way = model_oracle.expected_way
+        self.assertIs(way(image, "A", "variant", False, []), False)
+        self.assertEqual(way(image, "A", "variant", False, [late]), "mod:late")
+        # The disc's row before a row without OVER_DISC; one with it before the disc's.
+        self.assertIs(way(image, "A", "variant", True, [late]), True)
+        self.assertEqual(way(image, "A", "variant", True, [late, early]), "mod:early")
+        # Not for another slot, kind, identifier or bytes; of two, the later registered.
+        self.assertIs(way(image, "B", "variant", False, [late]), False)
+        self.assertIs(way(image, "A", "primary", False, [late]), False)
+        self.assertIs(way(b"\0" + image[1:], "A", "variant", False, [late]), False)
+        self.assertEqual(way(image, "A", "variant", False, [late, late[:6] + ("later",)]), "mod:later")
+
+    def test_a_mod_s_patches_are_what_the_disc_reads(self):
+        class Disc(model_oracle.Disc):
+            def __init__(self):
+                self.patches, self.lock, self.lba = {}, __import__("threading").Lock(), 0
+
+            def _sector(self, lba):
+                return bytes(model_oracle.SECTOR)
+
+        disc = Disc()
+        disc.patch({"data": [{"file": "\\DATA\\MODEL.MRG;1", "patch": [{"at": "0x800", "bytes": "AB01"}]}]}, "m")
+        self.assertEqual(disc.read(0, 1, 1)[:3], b"\xab\x01\x00")
+        self.assertEqual(disc.read(0, 0, 1), bytes(model_oracle.SECTOR))
+        with self.assertRaises(SystemExit):
+            disc.patch({"data": [{"file": "\\DATA\\MODEL.MRG;1", "replace": "x.bin"}]}, "m")
+        with self.assertRaises(SystemExit):
+            disc.patch({"data": [{"file": "\\DATA\\WA_MRG.MRG;1", "patch": []}]}, "m")
+        self.assertEqual(model_oracle.mod_variable("3d-monsters"), "MEMORIES_MOD_3D_MONSTERS")
+
 
 if __name__ == "__main__":
     unittest.main()
