@@ -68,6 +68,11 @@ int ModelRows_Add(int owner, const MemoriesModelModule *from, char *why, size_t 
     }
     memset(&row, 0, sizeof(row));
     memcpy(&row, from, copied);
+    if (row.flags & ~(MEMORIES_MODEL_BOUND | MEMORIES_MODEL_OVER_DISC)) {
+        snprintf(text, sizeof(text), "flags 0x%X has bits this game does not know (MEMORIES_MODEL_BOUND, _OVER_DISC)",
+                 (unsigned)row.flags);
+        return refuse(why, size, text);
+    }
     if (row.kind > MEMORIES_MODEL_PRIMARY) return refuse(why, size, "kind is not MEMORIES_MODEL_VARIANT or _PRIMARY");
     if (row.slot > MEMORIES_MODEL_SLOT_BOTH) return refuse(why, size, "slot is not MEMORIES_MODEL_SLOT_A, _B or _BOTH");
     if (!row.entry) return refuse(why, size, "no entry");

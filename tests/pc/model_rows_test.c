@@ -88,6 +88,9 @@ int main(void)
     row.size = 8;
     EXPECT(refused(row, "size"));
     row = row_for(0, 0, 0x100, first);
+    row.flags = MEMORIES_MODEL_OVER_DISC | 0x10u;   /* a flag of a later game */
+    EXPECT(refused(row, "flags 0x12 has bits"));
+    row = row_for(0, 0, 0x100, first);
     row.flags = MEMORIES_MODEL_BOUND;
     row.entries = 4, row.table = 0xF0, row.stride = 8;   /* 0xF0 + 32 > 0x100 */
     EXPECT(refused(row, "inside the span"));

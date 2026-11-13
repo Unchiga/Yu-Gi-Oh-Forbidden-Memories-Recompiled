@@ -14,7 +14,9 @@
 #include "pc/mods/modapi.h"
 #include "pc/overlays/model_gate_row.h"
 
-#define MODEL_ROWS_MAX 4096
+/* Rows for all mods together (a SLOT_BOTH registration is two): about 2 MB
+ * of static storage, room for four rows of each model of a pack of 4,000. */
+#define MODEL_ROWS_MAX 16384
 
 /* A token (both rows of a SLOT_BOTH registration share it), or 0 with the
  * reason in `why`. */
