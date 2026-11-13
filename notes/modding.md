@@ -937,14 +937,22 @@ covers, as the disc's rows do (`config/pc/model_gate.csv`, `command_table`):
   from the slot base). With 1, 2 or 4 it is the command itself, stored in
   that many bytes.
 
-Any other call does not run this C. An attack your C set up finishes on
-your C, even if the mod is turned off before its last update.
+Any other call does not run this C: it gets the port's own handling of the
+module (today the interpreter; the sparks stand-in once the interpreter is
+removed). An attack your C set up finishes on your C, even if the mod is
+turned off before its last update. An attack something else set up
+finishes on what set it up, even if your mod is turned on during it.
 
 **Disc first.** For each slot, the game looks in this order:
 1. rows flagged `MEMORIES_MODEL_OVER_DISC`;
-2. the disc's own rows;
+2. the disc's own rows (and a primary that is `return 2`, which the game
+   answers itself);
 3. the other mods' rows;
-4. the interpreter.
+4. the port's own handling of the module (today the interpreter; the sparks
+   stand-in once the interpreter is removed).
+
+Unknown `flags` bits are refused, as are more than 16,384 rows registered
+by all mods together (`MODEL_ROWS_MAX`; a `SLOT_BOTH` row counts twice).
 
 So a row whose bytes are the disc's own (a record copied and left
 unchanged in its span) keeps the oracle-checked C of the port. With
@@ -988,12 +996,13 @@ libgte functions `ccos` and `csin` are exported as `Psx_ccos` and
 a mod this way, with a prefix header.
 
 **A module that is only C.** The game still needs the module in the record.
-It needs your identifier at +0 and a nonzero word at +4, because a module
-whose word at +4 is 0 is never called. Put `0x03E00008 0x24020002` there
-(`jr ra; li v0, 2`). With the mod off, an older game then runs a harmless
-return: there is no `return 2` shortcut for a variant, so the interpreter
-runs it. A primary that is `return 2` the game answers itself before any
-mod row without `OVER_DISC`. No game code reads the first word as anything
+It needs your identifier at +0 and a nonzero word at +4: for a module whose
+word at +4 is 0 the game runs the sparks stand-in and never looks at a
+mod's row. Put `0x03E00008 0x24020002` there (`jr ra; li v0, 2`). With
+the mod off, the port's own handling then runs a harmless return (today
+the interpreter; there is no `return 2` shortcut for a variant, so once the
+interpreter is removed it is the sparks stand-in). A primary that is
+`return 2` the game answers itself before any mod row without `OVER_DISC`. No game code reads the first word as anything
 but an identifier. Pick one no disc module has, at or above 0x10000, so
 the logs tell yours apart.
 
@@ -1003,7 +1012,7 @@ the logs tell yours apart.
   (`<id>: model_module variant slot A identifier N span S sha256 H`) and
   each module the battle takes (`native C from mod <id>`).
 - `MEMORIES_MODEL_MOD_C=0` leaves every mod's rows out, so the disc's C and
-  the interpreter run as without the mods' C. Use it to tell your C from
+  the port's own handling run as without the mods' C. Use it to tell your C from
   your data.
 - `tools/pc/model_oracle.py --mod <your mod's folder>` runs battles with
   your mod against the interpreter, frame for frame. It checks that

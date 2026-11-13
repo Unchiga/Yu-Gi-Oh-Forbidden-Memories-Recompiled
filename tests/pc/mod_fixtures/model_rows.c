@@ -41,5 +41,8 @@ int MemoriesModInit(const MemoriesModHost *host, MemoriesMod *mod)
     host->set_setting(host, "token", token);
     host->set_setting(host, "base_outside", host->model_module_base(host) == 0);
     host->set_setting(host, "module_data", (uintptr_t)D_8013FFF0 == 0x8013FFF0u);
+    /* The same in the trace (MEMORIES_TRACE=mods), for a game's own run. */
+    host->log(host, "token %d, module_data %d, D_8013FFF0 at 0x%08lX", token,
+              (uintptr_t)D_8013FFF0 == 0x8013FFF0u, (unsigned long)(uintptr_t)D_8013FFF0);
     return strcmp(host->id, "rows-refused") != 0;
 }
