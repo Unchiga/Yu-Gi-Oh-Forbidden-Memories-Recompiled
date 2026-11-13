@@ -183,6 +183,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pc_model_module_class COMMAND memories_model_module_class_test)
     set_tests_properties(pc_model_module_class PROPERTIES SKIP_RETURN_CODE 77)
+    # The control-module rows code mods register (mod API 29, src/pc/mods/model_rows.c).
+    add_executable(memories_model_rows_test tests/pc/model_rows_test.c src/pc/mods/model_rows.c src/pc/guest/sha256.c)
+    target_include_directories(memories_model_rows_test PRIVATE src)
+    if(NOT MSVC)
+        target_compile_options(memories_model_rows_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pc_model_rows COMMAND memories_model_rows_test)
     add_executable(memories_deck_shop_test tests/pc/deck_shop_test.c src/pc/saves/deck_shop.c)
     add_executable(memories_entry_layout_test tests/pc/entry_layout_test.c src/pc/text/entry_layout.c)
     add_executable(memories_state_remap_test tests/pc/state_remap_test.c src/pc/guest/state_remap.c)
@@ -506,7 +513,7 @@ if(BUILD_TESTING)
     # mod_libc.c lends mods the indirect-branch thunks (src/pc/guest/branch_thunks.c).
     add_executable(memories_mods_test tests/pc/mods_test.c src/pc/platform/loading.c src/pc/mods/mods.c src/pc/mods/events.c src/pc/mods/hooks.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/mod_libc.c
         src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c src/pc/mod_packets.c
-        src/pc/platform/paths.c src/pc/platform/settings.c)
+        src/pc/mods/model_rows.c src/pc/guest/sha256.c src/pc/platform/paths.c src/pc/platform/settings.c)
     target_include_directories(memories_mods_test PRIVATE src)
     # The mod C library hands mods the maths functions and reads the monotonic
     # clock, which on Windows (clock_gettime) comes from the threads library;
@@ -520,7 +527,7 @@ if(BUILD_TESTING)
     add_test(NAME pc_mods COMMAND memories_mods_test)
     set(MOD_TEST_SOURCES src/pc/platform/loading.c src/pc/mods/mods.c src/pc/mods/manager.c src/pc/mods/overlap.c src/pc/mods/events.c src/pc/mods/hooks.c
         src/pc/mods/mod_libc.c src/pc/mods/object_loader.c src/pc/mods/json.c src/pc/guest/branch_thunks.c src/pc/mod_packets.c
-        src/pc/platform/paths.c src/pc/platform/settings.c)
+        src/pc/mods/model_rows.c src/pc/guest/sha256.c src/pc/platform/paths.c src/pc/platform/settings.c)
     add_executable(memories_mods_signature_test tests/pc/mods_signature_test.c ${MOD_TEST_SOURCES})
     target_include_directories(memories_mods_signature_test PRIVATE src)
     target_link_libraries(memories_mods_signature_test PRIVATE m Threads::Threads PNG::PNG)
