@@ -5,6 +5,7 @@ import argparse
 import subprocess
 
 from build_arm64 import CHECKED_LIBC, HOST_LIBC, exclude_defined_storage
+from build_mod import module_pins
 from build_mod_arm64 import mod_pins
 from guest_test_compile import run_fixture
 from llvm_guest import ROOT, normalize, process, toolchain, translate
@@ -130,6 +131,47 @@ define i32 @read_card_attack() {{
     assert f"@{stats} = external global [1024 x i32]" in translated
 
 
+def check_module_data_pins():
+    # A model module's data name (mod API 29) the mod only declares reads the
+    # record where the game loaded it: pinned to its own address, as the
+    # game's data is, whether or not the game pins it. One the mod defines
+    # (a const copy of bytes inside the hashed span) stays the mod's own,
+    # even where the game's table pins that name.
+    table, own, pinned = "D_8013FFF0", "D_8013BAE4", "D_8013C6D4"
+    unit = f"""
+@{table} = external global [0 x i8], align 1
+@{own} = internal constant [4 x i32] [i32 1, i32 2, i32 3, i32 4], align 4
+@{pinned} = external global [0 x i8], align 1
+define i8 @read_table() {{
+  %value = load i8, ptr @{table}, align 1
+  ret i8 %value
+}}
+define i32 @read_own() {{
+  %value = load i32, ptr @{own}, align 4
+  ret i32 %value
+}}
+define i8 @read_pinned() {{
+  %value = load i8, ptr @{pinned}, align 1
+  ret i8 %value
+}}
+"""
+    game = {own: 0x8013BAE4, pinned: 0x8013C6D4, "retail_global": 0x80010000}
+    pins = module_pins(unit, game)
+    assert pins[table] == 0x8013FFF0 and pins[pinned] == 0x8013C6D4
+    assert own not in pins and pins["retail_global"] == 0x80010000
+    assert module_pins("define void @f() {\n  ret void\n}\n", game) is game
+    translated = process(
+        "translate",
+        unit,
+        pins=pins,
+        registration="MemoriesModRegisterUnit_test",
+        mod_unit=True,
+    )
+    assert f"@{table} =" not in translated and f"inttoptr i64 {0x8013FFF0}" in translated
+    assert f"@{pinned} =" not in translated and f"inttoptr i64 {0x8013C6D4}" in translated
+    assert f"@{own} = internal constant" in translated
+
+
 def run_case(case, args):
     out = ROOT / "tmp/translated-game-ir" / case
     out.mkdir(parents=True, exist_ok=True)
@@ -202,6 +244,7 @@ def main():
     if args.case in ("all", "ir"):
         check_pc_defined_storage_pins()
         check_mod_pc_storage_imports()
+        check_module_data_pins()
     for case in ("ir", "game-unit") if args.case == "all" else (args.case,):
         run_case(case, args)
 

@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from build_config import MACOS_MINIMUM
+from build_mod import module_pins
 from guest_build import (
     CHECKED_LIBC,
     HOST_LIBC,
@@ -108,7 +109,11 @@ def compile_units(sources, folder, compiler, sdk, flags, aliases, signatures, pi
             },
         )
         text = process(
-            "translate", text, pins=pins, registration=routine, mod_unit=True
+            "translate",
+            text,
+            pins=module_pins(text, pins),
+            registration=routine,
+            mod_unit=True,
         )
         ir = folder / f"{index}.ll"
         ir.write_text(text)

@@ -1028,8 +1028,8 @@ def translate_unit(command, source, obj, index):
                       drop_definitions=[], export_functions=[])
     entry = check_signatures(guest_pass("inspect", text)["signatures"], context["signatures"], source)
     text = guest_pass("normalize", text, renames=context["runtime"], drop_definitions=[], export_functions=[])
-    text = guest_pass("translate", text, pins=context["pins"], registration=f"MemoriesModRegisterUnit_{index}",
-                      mod_unit=True)
+    text = guest_pass("translate", text, pins=module_pins(text, context["pins"]),
+                      registration=f"MemoriesModRegisterUnit_{index}", mod_unit=True)
     ir = obj[:-2] + ".ll"
     with open(ir, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
@@ -1218,6 +1218,32 @@ def module_data(name):
     return 0x8013A000 <= address < 0x80140000 or 0x8017A000 <= address < 0x80180000
 
 
+# A global of a unit's LLVM IR: its name and what follows "=" (the linkage
+# first: "external" for a declaration).
+IR_GLOBAL = re.compile(r'^@"?([\w.$]+)"? = (\S+)', re.M)
+
+
+def module_pins(text, pins):
+    """The pins a translated unit (aarch64-translated here, macOS in
+    build_mod_arm64.py) goes through the guest pass with: `pins` (the
+    game's pinned data), plus each module-range data name (module_data) the
+    unit declares and does not define, pinned to its address as the game's
+    own data is, so the C reads the record where the game loaded it. A
+    module-range name the unit defines is left out, even one the game pins:
+    the pass replaces every global of a pinned name, a definition too, and
+    the mod's own copy must stay its own."""
+    declared, defined = set(), set()
+    for name, linkage in IR_GLOBAL.findall(text):
+        if module_data(name):
+            (declared if linkage == "external" else defined).add(name)
+    if not declared and not defined:
+        return pins
+    pins = {name: address for name, address in pins.items() if name not in defined}
+    for name in declared:
+        pins.setdefault(name, int(name[2:], 16))
+    return pins
+
+
 def check(output, games, undefined=None, target="i386"):
     """What the object leaves undefined must be there on every game build
     of its target. Returns whether any build (or list) was there to check
@@ -1226,15 +1252,16 @@ def check(output, games, undefined=None, target="i386"):
         undefined = undefined_names(output)
     bound = {name for name in undefined if module_data(name)}
     if bound and target == TRANSLATED:
-        # Not bound there yet: the translated game reaches guest data through
-        # pins the guest pass emits, which it does not make for these.
+        # The guest pass pins every module-range name a unit declares
+        # (module_pins), so the object has none left undefined; one that is
+        # would reach no data, since the translated game binds none by name.
         exports = set()
         for build in games:
             exports |= provided(build, target) or set()
         missing = sorted(bound - exports)
         if missing:
-            sys.exit(f"build_mod: {output}: the {TRANSLATED} game does not bind a model module's data by its "
-                     f"address yet: {' '.join(missing)}")
+            sys.exit(f"build_mod: {output}: the {TRANSLATED} object leaves a model module's data undefined, which "
+                     f"the guest pass should have pinned to its address: {' '.join(missing)}")
     undefined = set(undefined) - bound
     for bad, why in (("_GLOBAL_OFFSET_TABLE_", "it is position-independent"),
                      ("__stack_chk_fail", "it uses the stack protector"),

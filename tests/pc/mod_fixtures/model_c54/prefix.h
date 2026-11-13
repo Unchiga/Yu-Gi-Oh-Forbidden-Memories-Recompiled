@@ -11,4 +11,9 @@
 #define srand Memories_Srand
 #define ccos Psx_ccos
 #define csin Psx_csin
+/* libgte.h declares these without a prototype, which the translated build
+ * (aarch64-translated) reads as variadic and refuses against the game's
+ * definitions; declared first, the later () declarations keep these. */
+void PopMatrix(void);
+void PushMatrix(void);
 #endif
