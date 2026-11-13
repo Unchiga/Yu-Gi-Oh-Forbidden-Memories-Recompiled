@@ -115,6 +115,8 @@ def comparing(first):
 
 
 class FakeDisc:
+    battle_variant, battle_primary = oracle.Disc.battle_variant, oracle.Disc.battle_primary
+
     def variant(self, record, alternative, slot):
         return f"{record % 2} {alternative} {slot}".encode()   # records 0 and 2 share their images
 
