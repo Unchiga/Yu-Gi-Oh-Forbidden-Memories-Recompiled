@@ -839,8 +839,10 @@ void Menu_LoadSettingsWithoutMods(void)
 
 void Menu_LoadMods(void)
 {
-    /* Which mods' models still need the MIPS interpreter (model_module_class.h). */
-    Mods_SetModuleCheck(ModelModule_StagesMips, Memories_DiscReadSectorsUntracked);
+    /* Which mods' models still need the MIPS interpreter, and which a code
+     * mod's C runs (model_module_class.h, mod API 29). */
+    ModelModule_SetModRows(Memories_ModelModRowOwner);
+    Mods_SetModuleCheck(ModelModule_StagesMips, Memories_DiscReadSectorsUntracked, ModelModule_DiscShape);
     Mods_Load(); /* the mods the settings say are applied, once they are read */
 }
 

@@ -86,11 +86,15 @@ static int shape_of(int primary, int slot, uint32_t identifier)
     return 0;
 }
 
+static ModelModuleModRows mod_rows;
+
+void ModelModule_SetModRows(ModelModuleModRows find) { mod_rows = find; }
+
 ModelModuleInfo ModelModule_Classify(const void *image, int slot, int primary)
 {
     const uint32_t *words = image;
     int kind = primary ? RETAIL_PRIMARY : RETAIL_CODE;
-    ModelModuleInfo info = {MODEL_MODULE_NEW, 0, 0, 0, 0};
+    ModelModuleInfo info = {MODEL_MODULE_NEW, 0, 0, 0, 0, NULL};
     Digests cache;
     cache.image = image;
     cache.count = 0;
@@ -99,18 +103,29 @@ ModelModuleInfo ModelModule_Classify(const void *image, int slot, int primary)
         info.kind = MODEL_MODULE_EMPTY;
         return info;
     }
+    info.shape = shape_of(primary, slot, info.identifier);
+    /* The order the game runs them in (model_modules.c): a mod's row that
+     * goes first, the disc's, a mod's other rows. */
+    if (mod_rows && (info.owner = mod_rows(image, slot, primary, 1)) != NULL) {
+        info.kind = MODEL_MODULE_MOD;
+        return info;
+    }
     /* The disc's other primaries: `return 2`, which the port answers itself. */
     if (primary && words[1] == RETURN_TWO_0 && words[2] == RETURN_TWO_1) {
         info.kind = MODEL_MODULE_NATIVE;
+        info.shape = 0;
         return info;
     }
-    info.shape = shape_of(primary, slot, info.identifier);
     for (const SpanRow *row = span_rows; row->sha256; row++) {
         if (row->primary == primary && row->slot == slot && row->identifier == info.identifier &&
             hex_equal(digest_of(&cache, row->span), row->sha256)) {
             info.kind = MODEL_MODULE_NATIVE;
             return info;
         }
+    }
+    if (mod_rows && (info.owner = mod_rows(image, slot, primary, 0)) != NULL) {
+        info.kind = MODEL_MODULE_MOD;
+        return info;
     }
     /* The shape's code with other bytes after it: a native shape's tables,
      * which its C reads (the mod's), or the data of a shape the port still
@@ -147,21 +162,47 @@ const char *ModelModule_ClassText(ModelModuleClass kind)
     case MODEL_MODULE_TABLES: return "the disc's code with other tables, interpreted";
     case MODEL_MODULE_CODE: return "changed code, interpreted";
     case MODEL_MODULE_NEW: return "code no disc module has, interpreted";
+    case MODEL_MODULE_MOD: return "native C from a code mod";
     }
     return "?";
 }
 
-int ModelModule_StagesMips(const unsigned char *stages, char *detail, size_t size)
+int ModelModule_DiscShape(int primary, int slot, uint32_t identifier, uint32_t span, const char *sha256)
+{
+    for (const SpanRow *row = span_rows; row->sha256; row++) {
+        if (row->primary == primary && row->slot == slot && row->identifier == identifier && row->span == span &&
+            !strcmp(row->sha256, sha256)) {
+            int shape = shape_of(primary, slot, identifier);
+            return shape ? shape : (int)identifier;
+        }
+    }
+    return 0;
+}
+
+int ModelModule_StagesMips(const unsigned char *stages, char *detail, size_t size, int *mod_native,
+                           const char **mod_owner)
 {
     static const char *const names[6] = {"stance 0 slot A", "stance 0 slot B", "stance 1 slot A",
                                          "stance 1 slot B", "primary slot A", "primary slot B"};
     size_t length = 0;
     int count = 0;
     if (detail && size) detail[0] = '\0';
+    if (mod_native) *mod_native = 0;
+    if (mod_owner) *mod_owner = NULL;
     for (int i = 0; i < 6; i++) {
         int primary = i >= 4;
         const unsigned char *image = stages + (primary ? 40 + 2 * (i - 4) : 10 * i) * 2048;
         ModelModuleInfo info = ModelModule_Classify(image, primary ? i - 4 : i & 1, primary);
+        if (info.kind == MODEL_MODULE_MOD) {
+            if (mod_native) ++*mod_native;
+            if (mod_owner && !*mod_owner) *mod_owner = info.owner;
+            if (detail && length < size) {
+                int wrote = snprintf(detail + length, size - length, "%s%s (first word %u): native C from mod %s",
+                                     length ? "; " : "", names[i], (unsigned)info.identifier, info.owner);
+                if (wrote > 0) length += (size_t)wrote;
+            }
+            continue;
+        }
         if (!ModelModule_IsModsMips(info.kind)) continue;
         count++;
         if (detail && length < size) {

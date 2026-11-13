@@ -525,6 +525,18 @@ static int run_module(uint32_t module, int variant, void *context, int command)
     return variant ? native_variant(context, command) : native_primary(context, command);
 }
 
+/* The classifier's view of the mods' rows (model_module_class.h): what
+ * native_row would pick from them for an image, by the same rules. */
+const char *Memories_ModelModRowOwner(const void *image, int slot, int primary, int over_disc)
+{
+    const ModelGateRow *row;
+    if (!mod_c() || ModelRows_Count() == 0) {
+        return NULL;
+    }
+    row = ModelRows_Find(primary, slot, *(const uint32_t *)image, image, over_disc, NULL);
+    return row ? Mods_Id(row->owner) : NULL;
+}
+
 int Memories_ModelPrimaryControlA(void *context, int command) { return run_module(0x8013A000u, 0, context, command); }
 int Memories_ModelVariantControlA(void *context, int command) { return run_module(0x8013B000u, 1, context, command); }
 int Memories_ModelPrimaryControlB(void *context, int command) { return run_module(0x8017A000u, 0, context, command); }
