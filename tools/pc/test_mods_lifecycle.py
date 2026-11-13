@@ -37,6 +37,8 @@ def main():
     build_mod.compile_object(["tests/pc/mod_fixtures/no_api.c"], str(no_api), str(OUT / "obj-no-api"))
     overlay = OUT / "overlay.o"
     build_mod.compile_object(["tests/pc/mod_fixtures/overlay.c"], str(overlay), str(OUT / "obj-overlay"))
+    model_rows = OUT / "model_rows.o"   # a code mod's control-module rows (mod API 29)
+    build_mod.compile_object(["tests/pc/mod_fixtures/model_rows.c"], str(model_rows), str(OUT / "obj-model-rows"))
     for target in ("linux", "windows") if args.target == "both" else (args.target,):
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Isrc"]
         environment = dict(os.environ, TMPDIR=str(OUT))
@@ -61,7 +63,7 @@ def main():
                 launch = ["wine", str(program)]
                 environment.update(WINEPREFIX=str(ROOT / "tmp/pc/wine-prefix"), WINEDLLOVERRIDES="mscoree,mshtml=", WINEDEBUG="-all")
         subprocess.run(compile_cmd, check=True)
-        subprocess.run([*launch, str(fixture), str(no_api)], env=environment, check=True, timeout=60)
+        subprocess.run([*launch, str(fixture), str(no_api), str(model_rows)], env=environment, check=True, timeout=60)
         print(f"mods lifecycle: {target} passed")
         # The overlay drawn again in part: the same program with the overlay
         # test in place of the lifecycle's.
