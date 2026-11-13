@@ -3216,16 +3216,18 @@ static void check_disc_models(Mod *mod, int index)
  * what is applied or the mods' rows changed since the last time: a mod's
  * models are told with the C any applied mod gives for them, whichever
  * started first (a model pack and the code mod with its C). Runs once the
- * mods have started (Mods_Load) and after each live change (activate). */
-static int notes_held;          /* Mods_Load runs: once, at its end */
-static int notes_done;
-static unsigned notes_changes, notes_rows;
+ * mods have started (Mods_Load), and after a live change (activate) or a set
+ * of them (Mods_Apply, Mods_HoldModuleNotes) that could change a note: one
+ * with mods' rows registered, or of a mod with models, data or a note. */
+static int notes_held;          /* Mods_Load or Mods_Apply runs: once, at its end */
+static int notes_done, notes_dirty;
+static unsigned notes_rows;
 
 static void refresh_module_notes(void)
 {
-    if (notes_held || (notes_done && notes_changes == change_count && notes_rows == ModelRows_Generation())) return;
+    if (notes_held || (notes_done && !notes_dirty && notes_rows == ModelRows_Generation())) return;
     notes_done = 1;
-    notes_changes = change_count;
+    notes_dirty = 0;
     notes_rows = ModelRows_Generation();
     for (int i = 0; i < mod_count; i++) {
         Mod *mod = &mods[i];
@@ -3237,6 +3239,15 @@ static void refresh_module_notes(void)
             check_disc_models(mod, i);
         }
         module_note(mod);
+    }
+}
+
+void Mods_HoldModuleNotes(int hold)
+{
+    if (hold) {
+        notes_held++;
+    } else if (notes_held > 0 && !--notes_held) {
+        refresh_module_notes();
     }
 }
 
@@ -4576,9 +4587,17 @@ static void activate_once(int index, int on);
 /* Function hooks follow what is applied, however activation ended. */
 static void activate(int index, int on)
 {
+    const Mod *mod = &mods[index];
+    unsigned before = change_count;
     activate_once(index, on);
     Hooks_Relink();
-    refresh_module_notes();   /* held while Mods_Load runs */
+    /* The notes change only with the mods' rows, a model, data that may
+     * patch MODEL.MRG, or a note to take away. Held while Mods_Load and
+     * Mods_Apply run. */
+    if (change_count != before &&
+        (ModelRows_Count() || Json_Count(mod->models) || Json_Count(mod->data) || mod->modules[0]))
+        notes_dirty = 1;
+    refresh_module_notes();
 }
 
 static void activate_once(int index, int on)
@@ -4776,7 +4795,7 @@ void Mods_Load(void)
     char path[PATH_MAX_];
     int i, enabled[MODS_MAX], order[MODS_MAX], count, first = !scanned;
     char error[160];
-    notes_held = 1;   /* the module notes once every mod has started (refresh_module_notes) */
+    Mods_HoldModuleNotes(1);   /* the module notes once every mod has started (refresh_module_notes) */
     if (!scanned) {
         const char *named = getenv("MEMORIES_MODS_DIR");
         scanned = 1;
@@ -4902,8 +4921,7 @@ void Mods_Load(void)
         loaded_count = 0;
         for (i = 0; i < count; i++) if (mods[order[i]].active) loaded[loaded_count++] = order[i];
     }
-    notes_held = 0;
-    refresh_module_notes();
+    Mods_HoldModuleNotes(0);
 }
 
 int Mods_LoadedCount(void) { return loaded_count; }
@@ -5112,7 +5130,6 @@ void Mods_DrawFrame(void)
 void Mods_Reset(void)
 {
     int i;
-    ModelRows_StateLoaded(); /* an attack a mod's C set up is not the state's (model_modules.c) */
     if (shut_down) return;
     for (i = 0; i < mod_count; i++) {
         if (mods[i].active && mods[i].initialized && mods[i].hooks.reset) mods[i].hooks.reset();

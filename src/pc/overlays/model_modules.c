@@ -229,13 +229,31 @@ typedef struct {
     int outside_logged;      /* a call outside the row's commands was logged for these words */
     int stand_in;            /* the stand-in took the setup of the attack in progress: it owns its updates */
     unsigned rows_generation, mods_changes; /* ModelRows_Generation, Mods_Changes (0, 0 with no rows) */
-    /* A mod's C took the setup of the attack in progress (attack_row, its
-     * row): that attack's updates stay with that C whatever the verdict says
-     * now, until the next setup, a new module or a loaded state. */
-    int attack_claimed;
+    /* What took the setup of the attack in progress, until the next setup, a
+     * new module or a loaded state: C (attack_row, a copy of its row) or the
+     * interpreter, and the verdict's choice then (setup_*). The words can
+     * stay while the choice changes (a mod applied or removed, a row added):
+     * that attack's updates then stay with what set it up, whose work area
+     * it is, as an attack the stand-in took stays with the stand-in. A mod's
+     * C also keeps updates its bound would not take. */
+    int setup;
     ModelGateRow attack_row;
-    unsigned state_loads;    /* ModelRows_StateLoads when attack_claimed was set */
+    int setup_found, setup_owner, setup_token;
+    ModelEntry setup_entry;
+    unsigned state_loads;    /* ModelRows_StateLoads at the setup */
 } ModelVerdict;
+
+enum { SETUP_NONE, SETUP_C, SETUP_INTERPRETER };
+
+/* Whether the verdict's choice now is the one the setup was taken with. */
+static int setup_choice(const ModelVerdict *verdict, const ModelGateRow *row)
+{
+    if (!row) {
+        return !verdict->setup_found;
+    }
+    return verdict->setup_found && verdict->setup_entry == row->entry && verdict->setup_owner == row->owner &&
+           verdict->setup_token == row->token;
+}
 
 static ModelVerdict verdicts[2], primary_verdicts[2]; /* [slot], for the variant and the primary module */
 
@@ -329,7 +347,7 @@ static const ModelGateRow *native_row(int primary, uint32_t module, int slot, ui
     if (!same) {
         verdict->outside_logged = 0;
         verdict->stand_in = 0; /* a new module: no attack of the old one goes on */
-        verdict->attack_claimed = 0;
+        verdict->setup = SETUP_NONE;
     }
     for (i = 0; i < (verdict->span + 3) / 4; i++) {
         verdict->words[i] = guest[i];
@@ -371,9 +389,11 @@ static uint32_t read_entry_word(const void *context, const ModelGateRow *row)
  * update of an attack the stand-in took (verdict->stand_in). *field is the
  * work area's entry POINTER for a pointer row's setup that goes elsewhere
  * (else -1), for run_module to clear if the stand-in takes it. *chosen is
- * the row the verdict picked, whether or not it takes this call. */
+ * the row the verdict picked, whether or not it takes this call; *ran the
+ * row whose entry is returned. An update of an attack set up under another
+ * choice goes to what set it up (verdict->setup). */
 static ModelEntry native_entry(int primary, uint32_t module, int slot, uint32_t identifier, void *context,
-                               int command, int *field, const ModelGateRow **chosen)
+                               int command, int *field, const ModelGateRow **chosen, const ModelGateRow **ran)
 {
     const ModelGateRow *row = native_row(primary, module, slot, identifier);
     ModelVerdict *verdict = primary ? &primary_verdicts[slot] : &verdicts[slot];
@@ -381,6 +401,18 @@ static ModelEntry native_entry(int primary, uint32_t module, int slot, uint32_t 
     uint32_t entry_word = 0;
     *field = -1;
     *chosen = row;
+    *ran = NULL;
+    if (command < 0 && verdict->setup != SETUP_NONE && verdict->state_loads != ModelRows_StateLoads()) {
+        verdict->setup = SETUP_NONE; /* a loaded state: its attack is not the one set up here */
+    }
+    if (command < 0 && verdict->setup == SETUP_C &&
+        (verdict->attack_row.owner >= 0 || !setup_choice(verdict, row))) {
+        *ran = &verdict->attack_row;
+        return verdict->attack_row.entry;
+    }
+    if (command < 0 && verdict->setup == SETUP_INTERPRETER && !setup_choice(verdict, row)) {
+        return NULL; /* the interpreter's work area: no C takes it */
+    }
     if (!row) {
         return NULL;
     }
@@ -413,6 +445,7 @@ static ModelEntry native_entry(int primary, uint32_t module, int slot, uint32_t 
         }
         return NULL;
     }
+    *ran = row;
     return row->entry;
 }
 
@@ -430,46 +463,44 @@ static int run_module(uint32_t module, int variant, void *context, int command)
     int interpret = mode != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
     int field = -1;
     ModelVerdict *verdict = variant ? &verdicts[slot] : &primary_verdicts[slot];
-    const ModelGateRow *ran = NULL;
+    const ModelGateRow *chosen = NULL, *ran = NULL;
     ModelEntry native = NULL;
+    int choosing = mode == MODE_DEFAULT && entry != 0;
     char way[80];
 
-    if (mode == MODE_DEFAULT && entry != 0) {
+    if (choosing) {
         /* `return 2` is answered before any verdict while no mod has a row,
          * as it always was; with rows, native_row orders it among them. */
         if (!variant && primary_returns_two(module) && !(mod_c() && ModelRows_Count() > 0)) {
             native = native_primary;
+            chosen = ran = &return_two_row;
         } else {
-            native = native_entry(!variant, module, slot, identifier, context, command, &field, &ran);
+            native = native_entry(!variant, module, slot, identifier, context, command, &field, &chosen, &ran);
         }
     }
 
     /* A setup starts an attack: whoever takes it, the stand-in's claim on the
-     * slot's updates (set below) ends, and so does a mod's C's. An update of
-     * an attack a mod's C set up goes to that C, whatever the verdict says
-     * now (the mod turned off, another's row won): its work area is that C's,
-     * which neither the interpreter nor other C can read. */
+     * slot's updates (set below) ends, and what takes it now is what its
+     * updates stay with should the choice change under the same words
+     * (native_entry): C (a mod's even past its bound) or the interpreter. */
     if (command >= 0) {
         verdict->stand_in = 0;
-        verdict->attack_claimed = 0;
-    } else if (verdict->attack_claimed) {
-        if (verdict->state_loads != ModelRows_StateLoads()) {
-            verdict->attack_claimed = 0; /* a loaded state: its attack is not this C's */
-        } else if (mode == MODE_DEFAULT && entry != 0 && native != verdict->attack_row.entry) {
-            native = verdict->attack_row.entry;
-            ran = &verdict->attack_row;
-            field = -1;
+        verdict->setup = SETUP_NONE;
+        if (choosing) {
+            verdict->setup = native ? SETUP_C : SETUP_INTERPRETER;
+            if (native) {
+                verdict->attack_row = *ran;
+                verdict->attack_row.sha256 = NULL;
+            }
+            verdict->setup_found = chosen != NULL;
+            verdict->setup_entry = chosen ? chosen->entry : NULL;
+            verdict->setup_owner = chosen ? chosen->owner : -1;
+            verdict->setup_token = chosen ? chosen->token : 0;
+            verdict->state_loads = ModelRows_StateLoads();
         }
     }
-    if (native && ran && ran->owner < 0) {
-        ran = NULL;   /* the disc's C */
-    } else if (!native) {
-        ran = NULL;
-    }
-    if (command >= 0 && ran) {
-        verdict->attack_claimed = 1;
-        verdict->attack_row = *ran;
-        verdict->state_loads = ModelRows_StateLoads();
+    if (!native || (ran && ran->owner < 0)) {
+        ran = NULL;   /* the interpreter, the stand-in or the disc's C */
     }
 
     if (ran) {
