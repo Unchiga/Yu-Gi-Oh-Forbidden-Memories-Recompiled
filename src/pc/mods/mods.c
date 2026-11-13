@@ -3089,11 +3089,14 @@ static void module_note(Mod *mod)
                  "(notes/modding.md, \"Attack code: C, not MIPS\")",
                  mod->mips_modules, mod->mips_modules == 1 ? "" : "s", mod->mips_where,
                  mod->mips_more ? " and more" : "", mod->mips_modules == 1 ? "is" : "are");
-    if (mod->native_modules)
-        snprintf(text, sizeof(text), "%s%s%d attack module%s run%s native C from mod %s%s", mips, mips[0] ? "; " : "",
-                 mod->native_modules, mod->native_modules == 1 ? "" : "s", mod->native_modules == 1 ? "s" : "",
-                 mod->native_owner, mod->native_more ? " and others" : "");
-    else
+    if (mod->native_modules) {
+        /* Both parts may not fit: the note is then cut, as the window trims it anyway. */
+        if (snprintf(text, sizeof(text), "%s%s%d attack module%s run%s native C from mod %s%s", mips,
+                     mips[0] ? "; " : "", mod->native_modules, mod->native_modules == 1 ? "" : "s",
+                     mod->native_modules == 1 ? "s" : "", mod->native_owner,
+                     mod->native_more ? " and others" : "") >= (int)sizeof(text))
+            text[sizeof(text) - 1] = '\0';
+    } else
         snprintf(text, sizeof(text), "%s", mips);
     Menu_TextTrim(text);
     if (mips[0] && strcmp(mips, mod->mips_said))
