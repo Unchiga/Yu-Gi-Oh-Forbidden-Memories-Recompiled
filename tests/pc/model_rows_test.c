@@ -101,7 +101,8 @@ int main(void)
     EXPECT(refused(row, "index_width"));
     row.index_width = 0, row.stride = 0;
     EXPECT(refused(row, "inside the span"));
-    row.stride = 8, row.field = 0xFFE;
+    /* Past the slot's 0x5000-byte work area (field + 4 bytes). */
+    row.stride = 8, row.field = 0x4FFE;
     EXPECT(refused(row, "field"));
     EXPECT(ModelRows_Count() == 0 && ModelRows_Generation() == 0);
 
@@ -115,6 +116,16 @@ int main(void)
            found->owner == 0 && found->token == token && longest == 0x100);
     ModelRows_Remove(0, token);
     EXPECT(ModelRows_Count() == 0 && !ModelRows_Find(0, 0, 0x12345u, image, 0, NULL));
+    /* A field past 0x1000, as 70 of the disc's native rows have (the
+     * furthest at 0x4A64), up to the work area's last word. */
+    for (unsigned n = 0; n < 2; n++) {
+        row.field = n ? 0x4FFCu : 0x4A64u;
+        token = ModelRows_Add(0, &row, why, sizeof(why));
+        found = ModelRows_Find(0, 0, 0x12345u, image, 0, NULL);
+        EXPECT(token > 0 && found && found->field == row.field);
+        ModelRows_Remove(0, token);
+    }
+    EXPECT(ModelRows_Count() == 0);
 
     /* An uppercase sha256 is accepted and found; the stored one is lowercase. */
     row = row_for(0, 0, 0x200, first);

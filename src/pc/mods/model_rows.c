@@ -28,7 +28,13 @@ static unsigned state_loads;
 
 #define VARIANT_BYTES 0x5000u
 #define PRIMARY_BYTES 0x1000u
-#define WORK_AREA_BYTES 0x1000u
+/* Where an update's entry may be read in the work area (`context`): the
+ * work area is the slot's module data argument, 0x80135000 (slot 0) or
+ * 0x80175000 (slot 1), up to the primary module at 0x8013A000 / 0x8017A000
+ * (notes/high-memory-load-addresses.md: D_8001001C, D_80010020, D_8001000C,
+ * D_80010010), so 0x5000 bytes. 70 of the native shapes read their entry past
+ * 0x1000, the furthest at 0x4A64 (shape 446). */
+#define WORK_AREA_BYTES 0x5000u
 
 static int refuse(char *why, size_t size, const char *text)
 {
@@ -98,7 +104,7 @@ int ModelRows_Add(int owner, const MemoriesModelModule *from, char *why, size_t 
             (!row.stride || (uint64_t)row.table + (uint64_t)row.entries * row.stride > (uint64_t)row.span))
             return refuse(why, size, "the bound's table (table + entries * stride, stride above 0) is not inside the span");
         if ((uint64_t)row.field + width > WORK_AREA_BYTES)
-            return refuse(why, size, "the bound's field is past the work area's first 0x1000 bytes");
+            return refuse(why, size, "the bound's field is past the work area (0x5000 bytes)");
     } else {
         row.entries = MODEL_GATE_NO_TABLE;
         row.table = row.stride = row.field = row.index_width = row.modulus = 0;
