@@ -32,6 +32,7 @@
 #include "manifest_code.h"
 #include "events.h"
 #include "hooks.h"
+#include "model_rows.h"
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
 #include "pc/platform/platform.h"
@@ -669,6 +670,56 @@ static int host_provide(const MemoriesModHost *host, const char *name, void *poi
 { return owner(host) ? Mods_Provide((int)(owner(host) - mods), name, pointer) : 0; }
 static void *host_find(const MemoriesModHost *host, const char *qualified)
 { return owner(host) ? Mods_Find(qualified) : NULL; }
+
+/* --- a model's control modules as a mod's C (API 29) ------------------ */
+
+static int (*module_disc_shape)(int primary, int slot, uint32_t identifier, uint32_t span, const char *sha256);
+
+static int host_model_module(const MemoriesModHost *host, const MemoriesModelModule *row)
+{
+    Mod *mod = owner(host);
+    char why[160];
+    int token, index;
+    if (!mod) return 0;
+    index = (int)(mod - mods);
+    token = ModelRows_Add(index, row, why, sizeof(why));
+    if (!token) {
+        say("%s: model_module refused: %s", mod->id, why);
+        warn(mod, 1, "model_module: %s", why);
+        return 0;
+    }
+    /* What it claims, one line a slot: tools/pc/model_oracle.py --mod reads
+     * these to know where the mod's C is to run. */
+    for (int slot = 0; slot < 2; slot++) {
+        int shape;
+        const char *kind = row->kind == MEMORIES_MODEL_PRIMARY ? "primary" : "variant";
+        char sha256[65];
+        if (row->slot != MEMORIES_MODEL_SLOT_BOTH && (int)row->slot != slot) continue;
+        for (int i = 0; i < 64; i++) sha256[i] = (char)tolower((unsigned char)row->sha256[i]);
+        sha256[64] = '\0';
+        say("%s: model_module %s slot %c identifier %u span %u sha256 %s%s token %d", mod->id, kind, slot ? 'B' : 'A',
+            (unsigned)row->identifier, (unsigned)row->span, sha256,
+            row->flags & MEMORIES_MODEL_OVER_DISC ? " over the disc" : "", token);
+        /* The disc's own bytes: its C runs unless the row says otherwise. */
+        shape = module_disc_shape ? module_disc_shape(row->kind == MEMORIES_MODEL_PRIMARY, slot, row->identifier,
+                                                      row->span, sha256)
+                                  : 0;
+        if (shape > 0) {
+            if (row->flags & MEMORIES_MODEL_OVER_DISC)
+                say("%s: model_module %s slot %c identifier %u stands over the disc's C for shape %d", mod->id, kind,
+                    slot ? 'B' : 'A', (unsigned)row->identifier, shape);
+            else
+                say("%s: model_module %s slot %c identifier %u is the disc's code for shape %d, whose own C runs "
+                    "first (MEMORIES_MODEL_OVER_DISC puts this one before it)", mod->id, kind, slot ? 'B' : 'A',
+                    (unsigned)row->identifier, shape);
+        }
+    }
+    return token;
+}
+static void host_model_module_remove(const MemoriesModHost *host, int token)
+{ if (owner(host)) ModelRows_Remove((int)(owner(host) - mods), token); }
+static uint32_t host_model_module_base(const MemoriesModHost *host)
+{ return owner(host) ? ModelRows_Running() : 0; }
 
 /* --- drawing over the picture ------------------------------------------ */
 
@@ -2339,6 +2390,9 @@ static void fill_host(Mod *mod)
     mod->host.pad = host_pad;
     mod->host.now_us = host_now_us;
     mod->host.map_fixed = host_map_fixed;
+    mod->host.model_module = host_model_module;
+    mod->host.model_module_remove = host_model_module_remove;
+    mod->host.model_module_base = host_model_module_base;
 }
 
 /* --- data overrides -------------------------------------------------- */
@@ -3427,10 +3481,37 @@ int Mods_PrintExports(void)
 
 /* --- loading --------------------------------------------------------- */
 
+/* A data name of a model control module's range (D_8013Axxx to D_8013Fxxx,
+ * D_8017Axxx to D_8017Fxxx): the record's own data where the disc loaded it,
+ * which a mod's C for the module reads as the port's own does (mod API 29).
+ * Its address, or 0. Never a func_ name: that is MIPS. */
+static uint32_t module_data_address(const char *name)
+{
+    uint32_t address = 0;
+    if (strncmp(name, "D_801", 5) || (name[5] != '3' && name[5] != '7') || strlen(name) != 10) return 0;
+    for (int i = 2; i < 10; i++) {
+        char c = name[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) return 0;
+        address = address << 4 | (uint32_t)(c <= '9' ? c - '0' : c - 'A' + 10);
+    }
+    if ((address >= 0x8013A000u && address < 0x80140000u) || (address >= 0x8017A000u && address < 0x80180000u))
+        return address;
+    return 0;
+}
+
 static void *resolve(const char *name, void *context)
 {
+    void *found;
     (void)context;
-    return Mods_Lookup(name);
+    found = Mods_Lookup(name);
+#ifndef MEMORIES_TRANSLATED
+    /* Guest memory is at its retail addresses in these games (fixed memory). */
+    if (!found && name) {
+        uint32_t address = module_data_address(name);
+        if (address) found = (void *)(uintptr_t)address;
+    }
+#endif
+    return found;
 }
 
 /* The mod's functions, for crash and hang reports: "3d-monsters:draw_frame". */
@@ -3553,6 +3634,7 @@ static int load_library(Mod *mod)
     if (!entry(&mod->host, &mod->hooks)) {
         memset(&mod->hooks, 0, sizeof(mod->hooks));
         Mods_ClearHooks((int)(mod - mods));
+        ModelRows_Clear((int)(mod - mods));
         note(mod, "refused to start");
         return 0;
     }
@@ -3562,6 +3644,7 @@ static int load_library(Mod *mod)
         else note(mod, "was built for mod API %u; this game has %u", mod->hooks.api, MEMORIES_MOD_API);
         memset(&mod->hooks, 0, sizeof(mod->hooks));
         Mods_ClearHooks((int)(mod - mods));
+        ModelRows_Clear((int)(mod - mods));
         return 0;
     }
     if (mod->hooks.name && *mod->hooks.name && !mod->name[0]) {
@@ -4743,7 +4826,10 @@ void Mods_Shutdown(void)
      * frame and reset hooks stop: the process is on its way out, and a hook
      * may free what the callbacks use. The caller stops the clock first. */
     shut_down = 1;
-    for (i = 0; i < mod_count; i++) Mods_ClearHooks(i);
+    for (i = 0; i < mod_count; i++) {
+        Mods_ClearHooks(i);
+        ModelRows_Clear(i);
+    }
     for (i = 0; i < mod_count; i++) {
         if (mods[i].initialized && mods[i].hooks.shutdown) mods[i].hooks.shutdown();
     }
@@ -4936,6 +5022,7 @@ void Mods_DrawFrame(void)
 void Mods_Reset(void)
 {
     int i;
+    ModelRows_StateLoaded(); /* an attack a mod's C set up is not the state's (model_modules.c) */
     if (shut_down) return;
     for (i = 0; i < mod_count; i++) {
         if (mods[i].active && mods[i].initialized && mods[i].hooks.reset) mods[i].hooks.reset();
