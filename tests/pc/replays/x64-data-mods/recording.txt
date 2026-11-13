@@ -1,9 +1,9 @@
 yfm-recording 1
-build decb960a
+build 006937bc
 start boot
-F build: decb960a (commit v0.2.0-181-gdfa4ec5e85-dirty)
+F build: 006937bc (commit v0.3.1-preview.1-343-g36d499c135)
 F os: Windows 10.0 build 26300, 64-bit
-F settings: master_volume=100 music_volume=100 sfx_volume=100 stream_volume=100 scale=4 fullscreen=0 borderless=0 scaling=0 aspect=0 filter=0 vsync=0 speed=100 fps=0 show_menu_fullscreen=0 pause_on_focus_loss=0 mute_on_focus_loss=0 hide_cursor=1 show_hud=0 menu_scale=0 window_x=-1 window_y=-1 audio_interpolation=0 internal_scale=1 deck_slots=1 brightness=100 contrast=100 saturation=100 gamma=100 crt=0 reduce_flashes=0 xbr=0 hd_text=0 fusion_helper=0 msaa=0 opponent_name=0 pgxp=0 card_drops=1 free_duel_progress=0 check_for_updates=1 update_prereleases=0 rank_meter=0 library_all_cards=0 cheat_life_points=8000 cheat_show_hand=0 cheat_free_spending=0 card_passwords=0 jp_buttons=0 card_browse=0 language=0 confirm_quit=1
+F settings: master_volume=100 music_volume=100 sfx_volume=100 stream_volume=100 scale=4 fullscreen=0 borderless=0 scaling=0 aspect=0 filter=0 vsync=0 speed=100 fps=0 show_menu_fullscreen=0 pause_on_focus_loss=0 mute_on_focus_loss=0 hide_cursor=1 show_hud=0 menu_scale=0 window_x=-1 window_y=-1 audio_interpolation=0 internal_scale=1 deck_slots=1 brightness=100 contrast=100 saturation=100 gamma=100 crt=0 reduce_flashes=0 xbr=0 hd_text=0 fusion_helper=0 msaa=0 opponent_name=0 pgxp=0 card_drops=1 free_duel_progress=0 check_for_updates=1 update_prereleases=0 rank_meter=0 library_all_cards=0 cheat_life_points=8000 cheat_show_hand=0 cheat_free_spending=0 card_passwords=0 jp_buttons=0 card_browse=0 language=0 confirm_quit=1 touch_controls=0 offer_crash_reports=1 screen_rotation=0 hd_fast=2 touch_opacity=0 touch_style=0 duel_hud_edges=0 library_fold_variants=1 build_deck_fold_variants=1
 F mods: example-cards x64-gate-textures
 F clock: virtual
 I 1 0000 0000 0000 0000 0
@@ -187,20 +187,20 @@ H 1609 701 f8a0247fc21b5b4e
 H 1613 705 9c0f3407f9c62ee0
 H 1617 709 a05c341693f731a2
 I 1621 2000 2000 0000 0000 0
-H 1621 713 31ab99e09eba2066
-H 1625 717 87ee4c4c041ae680
+H 1621 713 3d3539c8917d2a2e
+H 1625 717 5ba1ab44e75ad60c
 I 1627 0000 0000 0000 0000 0
-H 1629 721 42da7b1c78fe3e61
+H 1629 721 775db08ca70b9955
 I 1633 2000 2000 0000 0000 0
-H 1633 725 0a2959be362a86d2
-H 1637 729 143874e840552895
+H 1633 725 8644d09813150b08
+H 1637 729 a341f23781e82724
 I 1639 0000 0000 0000 0000 0
-H 1641 733 4f66a6bb67a1efdb
-H 1645 737 31739258df451814
-H 1649 741 d870643d728cecd2
-H 1653 745 0645a078b4406f09
-H 1657 749 7412b73e25353c5a
-H 1661 753 bfb3aa65287a8d79
+H 1641 733 d5db41620d398f53
+H 1645 737 9b3a43c92408fa58
+H 1649 741 f3c7d3e6d783912e
+H 1653 745 f7fc57d955d4a2e8
+H 1657 749 8d494f14238d1b1b
+H 1661 753 c66cd244403d2199
 H 1665 757 de3d62698d4be5b0
 H 1669 761 89533fe38b06ce02
 H 1673 765 63fea03d413b40df
