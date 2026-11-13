@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "pc/overlays/model_claim.h"
+#include "pc/overlays/model_gate_command.h"
 
 static int failures;
 #define EXPECT(condition)                                                        \
@@ -82,6 +83,21 @@ int main(void)
     EXPECT(call(&claim, &over_row, 0, 1) == MODEL_RUN_CLAIMED_C);
     /* Removed again: the choice is the setup's, the bound decides. */
     EXPECT(call(&claim, &disc_row, 0, 0) == MODEL_RUN_CHOICE);
+
+    /* A `return 2` primary (native_primary, the disc's): its setup taken with
+     * no rows, then an OVER_DISC row for it comes mid-attack; and the other
+     * way, the mod's row's C took the setup and the rows go. Each attack
+     * stays with what set it up. */
+    {
+        ModelGateRow two = MODEL_GATE_DISC_ROW(0, 0, 12, NULL, disc_entry, MODEL_GATE_NO_TABLE, 0, 0, 0, 0, 0);
+        memset(&claim, 0, sizeof(claim));
+        EXPECT(call(&claim, &two, 1, 1) == MODEL_RUN_CHOICE);
+        EXPECT(call(&claim, &two, 0, 1) == MODEL_RUN_CHOICE);
+        EXPECT(call(&claim, &over_row, 0, 1) == MODEL_RUN_CLAIMED_C && claim.owner == -1);
+        memset(&claim, 0, sizeof(claim));
+        EXPECT(call(&claim, &over_row, 1, 1) == MODEL_RUN_CHOICE);
+        EXPECT(call(&claim, &two, 0, 1) == MODEL_RUN_CLAIMED_C && claim.owner == 5);
+    }
 
     /* The stand-in's claim: every update, whatever the choice, until a setup. */
     memset(&claim, 0, sizeof(claim));

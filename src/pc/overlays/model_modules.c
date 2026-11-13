@@ -234,6 +234,10 @@ typedef struct {
      * of the row whose C took it. */
     ModelClaim claim;
     ModelGateRow attack_row;
+    /* A primary's slot: the first three words of the `return 2` module the
+     * claim was last kept for (return_two_entry), which takes no verdict. */
+    int two_seen;
+    uint32_t two_words[3];
 } ModelVerdict;
 
 static ModelVerdict verdicts[2], primary_verdicts[2]; /* [slot], for the variant and the primary module */
@@ -255,6 +259,23 @@ static int hex_equal(const uint8_t digest[32], const char *hex)
         snprintf(text + 2 * i, 3, "%02x", digest[i]);
     }
     return strcmp(text, hex) == 0;
+}
+
+/* Whether `module` is the `return 2` primary whose words two_words holds. */
+static int same_two_words(const ModelVerdict *verdict, uint32_t module)
+{
+    const uint32_t *guest = (const uint32_t *)(uintptr_t)module;
+    return verdict->two_seen && guest[0] == verdict->two_words[0] && guest[1] == verdict->two_words[1] &&
+           guest[2] == verdict->two_words[2];
+}
+
+static void note_two_words(ModelVerdict *verdict, uint32_t module)
+{
+    const uint32_t *guest = (const uint32_t *)(uintptr_t)module;
+    verdict->two_seen = 1;
+    verdict->two_words[0] = guest[0];
+    verdict->two_words[1] = guest[1];
+    verdict->two_words[2] = guest[2];
 }
 
 /* The native row for the variant (or primary) module in a slot, NULL to interpret it. */
@@ -327,7 +348,17 @@ static const ModelGateRow *native_row(int primary, uint32_t module, int slot, ui
     verdict->mods_changes = changes;
     if (!same) {
         verdict->outside_logged = 0;
-        ModelClaim_NewWords(&verdict->claim); /* a new module: no attack of the old one goes on */
+        /* A new module: no attack of the old one goes on. But words that
+         * are the `return 2` module return_two_entry kept the claim for are
+         * that module still: the verdict is new only because rows came. */
+        if (!(primary && same_two_words(verdict, module))) {
+            ModelClaim_NewWords(&verdict->claim);
+        }
+    }
+    if (primary && primary_returns_two(module)) {
+        note_two_words(verdict, module); /* the claim's words if rows go while its attack runs */
+    } else if (!same) {
+        verdict->two_seen = 0;
     }
     for (i = 0; i < (verdict->span + 3) / 4; i++) {
         verdict->words[i] = guest[i];
@@ -431,6 +462,37 @@ static ModelEntry native_entry(int primary, uint32_t module, int slot, uint32_t 
     return row->entry;
 }
 
+/* A primary that is `return 2` while no mod has a row: answered before any
+ * verdict is taken or logged, as before mod rows. Its words are kept apart
+ * (two_words, not the verdict's) and the call still goes through the claim,
+ * so an attack set up on either path keeps its updates when a mod's row
+ * for the module comes or goes in the middle of it (native_row keeps the
+ * claim for these words). */
+static ModelEntry return_two_entry(uint32_t module, int slot, int command, const ModelGateRow **chosen,
+                                   const ModelGateRow **ran)
+{
+    ModelVerdict *verdict = &primary_verdicts[slot];
+    if (!same_two_words(verdict, module)) {
+        note_two_words(verdict, module);
+        ModelClaim_NewWords(&verdict->claim); /* a new module: no attack of the old one goes on */
+    }
+    *chosen = &return_two_row;
+    *ran = NULL;
+    switch (ModelClaim_Decide(&verdict->claim, ModelClaim_Choice(&return_two_row), command >= 0,
+                              ModelRows_StateLoads())) {
+    case MODEL_RUN_CLAIMED_C:
+        *ran = &verdict->attack_row;
+        return verdict->attack_row.entry;
+    case MODEL_RUN_PORT:
+    case MODEL_RUN_STAND_IN:
+        return NULL;
+    case MODEL_RUN_CHOICE:
+        break;
+    }
+    *ran = &return_two_row;
+    return native_primary;
+}
+
 /* module: the slot base (the identifier word; the entry is at +4). The
  * trace names the module by its slot and identifier, and what runs it:
  * "native" (the decomp's C), "mod:<id>" (a mod's C, mod API 29),
@@ -454,12 +516,11 @@ static int run_module(uint32_t module, int variant, void *context, int command)
         /* `return 2` is answered before any verdict while no mod has a row,
          * as it always was; with rows, native_row orders it among them. */
         if (!variant && primary_returns_two(module) && !(mod_c() && ModelRows_Count() > 0)) {
-            native = native_primary;
-            chosen = ran = &return_two_row;
+            native = return_two_entry(module, slot, command, &chosen, &ran);
         } else {
             native = native_entry(!variant, module, slot, identifier, context, command, &field, &chosen, &ran);
-            decided = 1;
         }
+        decided = 1;
     }
 
     /* A setup starts an attack: whoever takes it, the stand-in's claim on the
