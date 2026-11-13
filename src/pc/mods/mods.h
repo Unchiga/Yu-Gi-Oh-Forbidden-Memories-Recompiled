@@ -104,6 +104,10 @@ void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, 
  * count. */
 const char *Mods_ModuleNote(int mod);
 int Mods_ModuleMips(int mod);
+/* Holds the module notes' check while a set of changes is made (Mods_Apply):
+ * it runs once, when the last hold is let go (0), if anything it reads
+ * changed. Holds nest. */
+void Mods_HoldModuleNotes(int hold);
 /* The mods' rand seed (mod_libc.c), its size in *size: save states carry it. */
 void *Mods_RandSeed(unsigned *size);
 
