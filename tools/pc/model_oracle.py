@@ -338,7 +338,10 @@ class Side:
         env = {**self.env, "MEMORIES_DISC": str(self.disc), "MEMORIES_TRACE": "model,mods" if self.mods else "model",
                "MEMORIES_FRAME_HASHES": str(folder / "hashes.txt")}
         for directory, identifier in self.mods:
-            shutil.copytree(directory, folder / "mods" / directory.name)
+            # Without its sources, which the game never reads (a mod that
+            # model_gate.py mod-migrate wrote C for has megabytes of them).
+            shutil.copytree(directory, folder / "mods" / directory.name,
+                            ignore=shutil.ignore_patterns("*.c", "*.h", "*.inc", "model_c"))
             env[mod_variable(identifier)] = "1"
         game = Game(self.executable, out=folder, mods_dir=folder / "mods", env=env, command_timeout=120)
         game.goto("debug")
