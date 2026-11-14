@@ -184,6 +184,9 @@ if(BUILD_TESTING)
     add_executable(memories_symbols_test tests/pc/symbols_test.c src/pc/debug/symbols.c src/pc/compat/fs.c)
     if(WIN32)
         target_link_libraries(memories_control_net_test PRIVATE ws2_32)
+    else()
+        # Symbols_Module's dladdr: in libc since glibc 2.34, in libdl before.
+        target_link_libraries(memories_symbols_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     foreach(target memories_deck_shop_test memories_entry_layout_test memories_state_remap_test
             memories_state_io_test memories_control_protocol_test memories_control_net_test memories_symbols_test

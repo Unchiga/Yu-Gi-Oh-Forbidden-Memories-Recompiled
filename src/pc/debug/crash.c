@@ -109,9 +109,11 @@ static void symbol_line(int index, uintptr_t address)
     const char *name = Symbols_Lookup(address, &offset);
     char text[256];
     int length;
+    char module[96];
 #ifdef _WIN32
-    char module[64];
     if (!name && Win32_ModuleName(address, module, sizeof(module), &offset)) name = module;
+#else
+    if (!name && Symbols_Module(address, module, sizeof(module), &offset)) name = module;
 #endif
 #if defined(_WIN32) && defined(__x86_64__)
     if (name) length = snprintf(text, sizeof(text), "  #%d 0x" ADDRESS " %s+0x%" PRIxPTR "\n", index, address, name,
@@ -155,6 +157,11 @@ static void walk(uintptr_t eip, uintptr_t ebp)
     int crossed = 0;
 #endif
     symbol_line(depth++, eip);
+#if defined(__aarch64__)
+    /* A call through a null pointer leaves PC at 0 and its caller in LR
+     * only (the callee never ran to push a frame record): name the caller. */
+    if (!eip && fault_lr) symbol_line(depth++, fault_lr);
+#endif
     while (depth < 32 && valid_frame(ebp)) {
         const uintptr_t *frame = (const uintptr_t *)ebp;
         uintptr_t next = frame[0], return_address = frame[1];
