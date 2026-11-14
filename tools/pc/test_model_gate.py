@@ -581,6 +581,19 @@ class OracleBackends(unittest.TestCase):
             disc.patch({"data": [{"file": "\\DATA\\WA_MRG.MRG;1", "patch": []}]}, "m")
         self.assertEqual(model_oracle.mod_variable("3d-monsters"), "MEMORIES_MOD_3D_MONSTERS")
 
+    def test_mods_in_the_games_load_order(self):
+        """--mod mods are taken in the game's load order: folder names byte
+        by byte, then the lowest priority whose requires/after are placed;
+        a model's id is its place among the mods' models in that order."""
+        mods = [(Path("z-pack"), {"id": "z", "models": [{"name": "a"}]}),
+                (Path("b-pack"), {"id": "b", "after": ["z"]}),
+                (Path("a-pack"), {"id": "a", "priority": 5}),
+                (Path("C-pack"), {"id": "c"})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(mods)], ["c", "z", "b", "a"])
+        disc = model_oracle.Disc.__new__(model_oracle.Disc)
+        disc.model_order = ["one", "two", "one"]
+        self.assertEqual((disc.model_id("two"), disc.model_id("one")), (0x8002, 0x8003))
+
     def test_a_model_battle_reads_the_models_images(self):
         """--models: the battle's images are the model's stages, not a record's."""
         disc = model_oracle.Disc.__new__(model_oracle.Disc)

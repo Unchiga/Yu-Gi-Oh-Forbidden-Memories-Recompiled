@@ -293,8 +293,8 @@ class Disc:
         """What a card that names model `name` has as its model, which the
         battle reads in D_800EF658: CARDS_MODEL_MOD_FIRST (0x8000, src/pc/cards/
         cards.h) plus one plus the model's place among every mod's models
-        (the --mod mods load in the order given: a later model of one name
-        is the one named)."""
+        (the --mod mods in the game's load order, load_order: a later model
+        of one name is the one named)."""
         return 0x8001 + len(self.model_order) - 1 - self.model_order[::-1].index(name)
 
     def battle_primary(self, battle: "Battle", slot: str) -> bytes:
@@ -548,6 +548,31 @@ def backend_errors(side: dict, expected: dict[str, bool | str], native_allowed: 
     return errors
 
 
+def load_order(mods: list[tuple[Path, dict]]) -> list[tuple[Path, dict]]:
+    """The mods in the order the game loads them (src/pc/mods/mods.c scan,
+    manager.c order_ranked): their folders by name, byte by byte, then
+    repeatedly the first with the lowest "priority" (0 by default) whose
+    "requires" and "after" name no mod of these still to place."""
+    pending = sorted(mods, key=lambda mod: mod[0].name.encode("utf-8"))
+    placed: list[tuple[Path, dict]] = []
+    while pending:
+        ids = {str(manifest.get("id")) for _, manifest in pending}
+        best = None
+        for mod in pending:
+            manifest = mod[1]
+            names = [str(item if isinstance(item, str) else item.get("id", "")) if isinstance(item, (str, dict))
+                     else "" for key in ("requires", "after") for item in (manifest.get(key) or [])]
+            if any(name.split()[0] in ids and name.split()[0] != str(manifest.get("id")) for name in names if name):
+                continue
+            if best is None or float(manifest.get("priority", 0) or 0) < float(best[1].get("priority", 0) or 0):
+                best = mod
+        if best is None:   # a cycle: the game refuses it; keep the name order
+            best = pending[0]
+        placed.append(best)
+        pending.remove(best)
+    return placed
+
+
 def mod_variable(identifier: str) -> str:
     """The variable that turns a mod on (mods.c, environment_choice)."""
     return "MEMORIES_MOD_" + re.sub(r"[^A-Z0-9]", "_", identifier.upper())
@@ -762,12 +787,17 @@ def main() -> int:
         parser.error("no disc image: --disc or MEMORIES_DISC")
     disc = Disc(Path(arguments.disc).resolve())
     mods = []
+    found = []
     for directory in arguments.mod:
         directory = directory.resolve()
         try:
-            manifest = json.loads((directory / "mod.json").read_text(encoding="utf-8"))
+            manifest = json.loads((directory / "mod.json").read_text(encoding="utf-8-sig"))
         except (OSError, ValueError) as error:
             parser.error(f"--mod {directory}: {error}")
+        found.append((directory, manifest))
+    # In the game's load order, which places the mods' data and models (a
+    # model's id is its place among every mod's models).
+    for directory, manifest in load_order(found):
         disc.patch(manifest, str(directory))
         mods.append((directory, str(manifest["id"])))
     alternatives = [int(a) for a in arguments.alternatives.split(",")]
