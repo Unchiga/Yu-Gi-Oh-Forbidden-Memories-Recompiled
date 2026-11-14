@@ -4,4 +4,13 @@
  * binds the module range's D_ names to their address). */
 #include "prefix.h"
 #define func_8013B004 model_c54_slot_a
+/* Unoptimized, as the game builds the port's C (-O0 -fwrapv): build_mod.py
+ * compiles a mod at -O2, and the decomp's C keeps some of the MIPS code's
+ * frame (shape 109 writes a fourth entry of a three-entry local array, which
+ * at -O0 lands in the next local as on the PS1, and at -O2 does not). */
+#if defined(__clang__)
+#pragma clang optimize off
+#elif defined(__GNUC__)
+#pragma GCC optimize ("O0")
+#endif
 #include "native_overlays/model_variant/variant54_entry.c"

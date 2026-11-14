@@ -996,7 +996,13 @@ they are exported under (`exports.txt` beside the SDK). In a mod, `rand` and
 `srand` are the mods' own random numbers (`mod_libc.c`). The game's, which
 a module's MIPS calls, are `Memories_Rand` and `Memories_Srand`. The
 libgte functions `ccos` and `csin` are exported as `Psx_ccos` and
-`Psx_csin`. Frames match the interpreter's only with the game's.
+`Psx_csin`. Frames match the interpreter's only with the game's. Build the
+port's C unoptimized, as the game does (`-O0 -fwrapv`): `#pragma clang
+optimize off` before it (GCC: `#pragma GCC optimize ("O0")`), since
+`build_mod.py` compiles a mod at `-O2`. The decomp's C keeps some of the
+MIPS code's behaviour that only `-O0` keeps too: shape 109 writes a fourth
+entry of a three-entry local array, which lands in the next local as on the
+PS1 at `-O0`, and at `-O2` draws other frames (or, with `-fwrapv`, crashes).
 `tests/pc/mod_fixtures/model_c54` builds the port's own C for shape 54 into
 a mod this way, with a prefix header.
 
