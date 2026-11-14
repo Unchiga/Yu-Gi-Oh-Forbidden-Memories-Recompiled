@@ -12,6 +12,9 @@ data is kept.
   tables   a MODEL.MRG patch of shape 54's command table (as
            test_model_mod_c.py's): the tool makes the shape's C, and the
            oracle runs it against the interpreter on the patched record;
+  data     the command table entry the attack picks zeroed (divisors among
+           its words): to port by hand, naming the words, no C, mod-row
+           prints no row; --accept-data makes the C and warns;
   replace  the same bytes as a raw replacement of the record's module
            sectors, in a mod with its own MemoriesModInit: the same C, rows
            registered through MemoriesModelRows_Register, and no oracle
@@ -24,7 +27,8 @@ data is kept.
   code     a patch of shape 54's code: the tool says to port it by hand,
            names the function, and writes no C;
   models   a "models" file (record 83 with the tables patch): the tool's
-           check command battles it (model_oracle.py --models).
+           check command battles it (model_oracle.py --models), and mod-row
+           prints the same rows.
 
 The commands each case runs are the ones notes/modding.md gives ("Moving a
 mod's attacks from MIPS to C"), which the test checks word for word.
@@ -59,7 +63,7 @@ BUILD = "python tools/pc/build_mod.py {mod} --target i386"
 ORACLE_RECORDS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --records {records}"
 ORACLE_MODELS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --models {models}"
 PLAIN = "python tools/pc/model_oracle.py --disc {disc} --records {records}"
-CASES = ("class", "tables", "replace", "const", "code", "models")
+CASES = ("class", "tables", "data", "replace", "const", "code", "models")
 
 
 class Test:
@@ -271,6 +275,50 @@ def case_models(test: Test, disc: model_oracle.Disc) -> None:
     test.expect(found["exit"] == 0, "models: identical to the interpreter (oracle exit 0)")
     test.expect(ways(found) == {tag} and all(v["battle"].startswith("model:") for v in found.get("verdicts", ())),
                 f"models: the model fought, and the subject ran {tag} and nothing else ({sorted(ways(found))})")
+    # mod-row on the model file: the same analysis, and the rows mod-migrate registered.
+    rows = test.run(f"python tools/pc/model_gate.py mod-row {rel(mod / 'models' / 'pikachu.mrg')} "
+                    f"--disc {rel(test.arguments.disc)}", name="models-mod-row")
+    sha = {m["sha256"] for m in made}
+    test.expect(rows.returncode == 0 and all(digest in rows.stdout for digest in sha) and
+                rows.stdout.count("sizeof(MemoriesModelModule)") == len(sha),
+                f"models: mod-row prints the rows of the modules mod-migrate made C for, and no other "
+                f"(exit {rows.returncode})")
+
+
+def case_data(test: Test, disc: model_oracle.Disc) -> None:
+    """Shape 54's command table entry the attack picks zeroed (its divisors
+    among them): not one of the disc's entries, so the C would divide by
+    what it holds unchecked; the tool says to port it by hand and writes no
+    C, mod-row prints no row; --accept-data makes the C and warns."""
+    row, record, alternatives, plain, patches = shape54(test, disc)
+    table, stride, count, _, _ = row.command_table
+    commands = sorted(command for command in test_model_mod_c.setup_commands(plain).get((alternatives[0], "A"), ())
+                      if 0 <= command < count)
+    at = test_model_mod_c.stage_at(record, alternatives[0], "A") + table + commands[0] * stride
+    zero = {"data": [{"file": "\\DATA\\MODEL.MRG;1", "patch": [{"at": at, "bytes": "00" * stride}]}]}
+    mod = mod_folder(test.arguments.out / "mods" / "migrate-data", "migrate-data", zero)
+    result, report = test.migrate(mod, "data-migrate")
+    hand = modules(report, "hand")
+    test.expect(result.returncode == 1 and len(hand) == 1 and hand[0]["hashed_words"] and
+                "--accept-data" in hand[0]["why"] and not modules(report, "generate"),
+                f"data: a zeroed table entry is to port by hand, naming its words "
+                f"({[(m['where'], m['action'], m.get('hashed_words')) for m in hand]})")
+    test.expect(not list(mod.glob("*.c")), "data: no C is written for it")
+    stages = model_oracle.Disc.read(disc, record, model_migrate.MODULES_SECTOR, model_migrate.MODULES_SECTORS)
+    image = bytearray(stages)
+    offset = (at - (record * 0x114 + model_migrate.MODULES_SECTOR) * model_oracle.SECTOR)
+    image[offset:offset + stride] = bytes(stride)
+    (mod / "stages.bin").write_bytes(bytes(image))
+    rows = test.run(f"python tools/pc/model_gate.py mod-row {rel(mod / 'stages.bin')} --disc {rel(test.arguments.disc)}",
+                    name="data-mod-row")
+    test.expect(rows.returncode == 1 and "port by hand" in rows.stdout and
+                rows.stdout.count("sizeof(MemoriesModelModule)") == 0,
+                f"data: mod-row says to port it by hand and prints no row for it (exit {rows.returncode})")
+    (mod / "stages.bin").unlink()
+    result = test.run(MIGRATE.format(mod=rel(mod), disc=rel(test.arguments.disc)), ["--accept-data"], "data-accept")
+    report = json.loads((mod / model_migrate.COPIES / "migrate.json").read_text(encoding="utf-8"))
+    test.expect(result.returncode == 0 and len(modules(report, "generate")) == 1 and "!! --accept-data" in result.stdout,
+                "data: with --accept-data the C is made, and the report warns")
 
 
 OWN_INIT = """/* The mod's own entry, which registers mod-migrate's rows itself. */

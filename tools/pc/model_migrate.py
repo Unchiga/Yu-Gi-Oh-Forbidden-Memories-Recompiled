@@ -91,6 +91,7 @@ RENAMES = ROOT / "config/pc/host_symbol_renames.txt"
 STALE_HEADER = SRC / "pc/overlays/model_stale_locals.h"
 WRITTEN = "/* Written by tools/pc/model_gate.py mod-migrate"
 COPIES = "model_c"
+GAME_FLAGS_MARKER = "memories-build: game-flags"   # build_mod.py's (GAME_FLAGS_MARKER)
 
 SECTOR = 2048
 RECORD_SECTORS = 0x114
@@ -479,7 +480,8 @@ class Module:
         self.code: list[int] = []                   # (a) offsets
         self.consts: dict[str, bytes] = {}          # (b) slot A name: the mod's bytes
         self.unmapped: list[str] = []               # (b) consts whose bytes are not the disc's (not a plain copy)
-        self.data = 0                               # (c) bytes inside the span
+        self.data = 0                               # (c) bytes inside the span the C stands
+        self.hashed: list[int] = []                 # bytes inside the span the C does not stand (port by hand)
         self.past = 0                               # bytes past the span
         self.action = ""                            # "generate", "hand" or "none"
         self.why = ""
@@ -513,12 +515,26 @@ def nearest(module: Module, tables: Tables, disc: Disc) -> tuple[model_gate.Row,
 
 
 def map_bytes(module: Module, disc_image: bytes) -> None:
+    """Each byte that differs from the disc's module of the shape. Past the
+    data start but inside the span are the words a native row's span was
+    widened over (model_gate.py: the command table, and the words the C
+    divides by or indexes with): the C stands only where the row's checks
+    hold whatever the mod put there. They do for the command table's
+    entries when each is one of the disc's own entries (reordered or
+    repeated: every value the C reads is one the disc has; the bound picks
+    the entry). Any other change there is to port by hand (`hashed`)."""
     row, source = module.row, module.source
+    table = row.command_table
+    first, last = (table[0], table[0] + table[1] * table[2]) if table else (0, 0)
+    changed_entries: dict[int, list[int]] = {}
     for at in differing(module.image, disc_image):
         if at >= row.span:
             module.past += 1
         elif row.data_start is not None and at >= row.data_start:
-            module.data += 1
+            if first <= at < last:
+                changed_entries.setdefault((at - first) // table[1], []).append(at)
+            else:
+                module.hashed.append(at)
         else:
             symbol = source.const_at(at)
             if symbol is None:
@@ -534,6 +550,20 @@ def map_bytes(module: Module, disc_image: bytes) -> None:
                 module.code.append(at)
                 continue
             module.consts[name] = module.image[start:start + symbol.size]
+    if changed_entries:
+        stride = table[1]
+        disc_entries = {disc_image[first + n * stride:first + (n + 1) * stride] for n in range(table[2])}
+        for n, offsets in sorted(changed_entries.items()):
+            if module.image[first + n * stride:first + (n + 1) * stride] in disc_entries:
+                module.data += len(offsets)
+            else:
+                module.hashed += offsets
+    module.hashed.sort()
+
+
+def describe_words(offsets: list[int]) -> str:
+    words = sorted({at & ~3 for at in offsets})
+    return ", ".join(f"0x{at:X}" for at in words[:8]) + (f" and {len(words) - 8} more" if len(words) > 8 else "")
 
 
 def describe_code(module: Module) -> str:
@@ -548,7 +578,8 @@ def describe_code(module: Module) -> str:
     return "; ".join(parts)
 
 
-def plan(modules: list[Module], tables: Tables, disc: Disc, over_disc: bool, work: Path, jobs: int) -> None:
+def plan(modules: list[Module], tables: Tables, disc: Disc, over_disc: bool, work: Path, jobs: int,
+         accept_data: bool = False) -> None:
     """Each module's source shape, byte map and action."""
     sources: dict[tuple[bool, int, str], Source] = {}
     for module in modules:
@@ -588,8 +619,17 @@ def plan(modules: list[Module], tables: Tables, disc: Disc, over_disc: bool, wor
         map_bytes(module, module.disc_image)
         if module.code:
             module.action, module.why = "hand", "the code differs: " + describe_code(module)
+        elif module.hashed and not accept_data:
+            module.action, module.why = "hand", (
+                f"words inside the hashed span changed ({describe_words(module.hashed)}): the span covers words "
+                "the C divides by or indexes with (config/pc/model_gate.csv's note for shape "
+                f"{module.row.shape}), which its checks do not hold; port by hand, or --accept-data")
         else:
             module.action = "generate"
+            if module.hashed:
+                module.why = (f"--accept-data: words inside the hashed span changed "
+                              f"({describe_words(module.hashed)}), which the C divides by or indexes with "
+                              "unchecked: a zero divisor or a larger count crashes the game")
 
 
 # --- the C it writes -------------------------------------------------------------------
@@ -807,9 +847,13 @@ def write_unit(unit: Unit, out: Path, renames: dict[str, str], stale: dict[str, 
         # memory) in a 32-bit integer, or address rule 6 storage so (shape
         # 448), which build_mod.py's 64-bit flags would refuse as the mod's
         # own mix-ups.
-        (out / name).write_text(written(f'#include "{prefix}.h"\n'
+        (out / name).write_text(written(f"/* {GAME_FLAGS_MARKER}: build_mod.py builds this unit -O0 -fwrapv "
+                                        "-fno-strict-aliasing, as the game builds the port's C. */\n"
+                                        f'#include "{prefix}.h"\n'
                                         "#if defined(__clang__)\n#pragma clang optimize off\n"
-                                        '#elif defined(__GNUC__)\n#pragma GCC optimize ("O0")\n#endif\n'
+                                        '#elif defined(__GNUC__)\n'
+                                        '#pragma GCC optimize ("O0", "wrapv", "no-strict-aliasing")\n'
+                                        "#endif\n"
                                         '#pragma GCC diagnostic ignored "-Wpointer-to-int-cast"\n'
                                         '#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"\n'
                                         f'#include "{include}"\n'), encoding="utf-8", newline="\n")
@@ -939,6 +983,7 @@ def module_report(module: Module) -> dict:
              "why": module.why, "unit": module.unit}
     if module.row:
         found.update(code_bytes=len(module.code), consts=sorted(module.consts), data_bytes=module.data,
+                     hashed_words=sorted({f"0x{at & ~3:X}" for at in module.hashed}),
                      past_span=module.past, span=module.row.span, data_start=module.row.data_start,
                      sha256=sha(module.image[:module.row.span]))
     return found
@@ -953,7 +998,11 @@ def summary_line(module: Module) -> str:
         parts = []
         if module.data:
             parts.append(f"{module.data} bytes of data the C reads from the record "
-                         f"(0x{module.row.data_start:X}-0x{module.row.span:X})")
+                         f"(0x{module.row.data_start:X}-0x{module.row.span:X}; inside the span, only the command "
+                         "table's entries, each one of the disc's own)")
+        if module.hashed:
+            parts.append(f"{len(module.hashed)} bytes inside the hashed span the C does not check "
+                         f"({describe_words(module.hashed)})")
         if module.consts:
             parts.append(f"the const{'s' if len(module.consts) > 1 else ''} {', '.join(sorted(module.consts))}, "
                          "which the C defines: it gets the mod's bytes")
@@ -963,7 +1012,9 @@ def summary_line(module: Module) -> str:
             parts.append(f"{module.past} bytes past the span, which the C reads from the record")
         text += "; differs from the disc's: " + ("; ".join(parts) if parts else "nothing")
     if module.action == "generate":
-        text += f"\n    -> C: {module.unit} (from {module.source.label()})"
+        text += f"\n    -> C: {module.unit or 'what mod-migrate makes'} (from {module.source.label()})"
+        if module.why:
+            text += f"\n    !! {module.why}"
     elif module.action == "hand":
         text += f"\n    -> port by hand: {module.why}"
     else:
@@ -972,7 +1023,7 @@ def summary_line(module: Module) -> str:
 
 
 def migrate(folder: Path, disc_path: Path, records: list[int], over_disc: bool, into: Path | None,
-            jobs: int, quiet: bool = False) -> dict:
+            jobs: int, quiet: bool = False, accept_data: bool = False) -> dict:
     manifest_path = folder / "mod.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     mod_id = str(manifest.get("id") or folder.name)
@@ -996,7 +1047,7 @@ def migrate(folder: Path, disc_path: Path, records: list[int], over_disc: bool, 
             seen[key] = module
             modules.append(module)
     with tempfile.TemporaryDirectory(prefix="mod-migrate-") as work:
-        plan(modules, tables, disc, over_disc, Path(work), jobs)
+        plan(modules, tables, disc, over_disc, Path(work), jobs, accept_data)
     clean(out)
     units: dict[tuple, Unit] = {}
     counts: dict[tuple, int] = {}
@@ -1122,31 +1173,58 @@ def print_report(report: dict, modules: list[Module], duplicates: dict[int, list
 
 # --- mod-row ---------------------------------------------------------------------------
 
-def mod_row(path: Path, over_disc: bool) -> int:
-    """The rows for a model file's (or a record's) modules whose first word
-    is a native shape's: what model_rows.c registers for them."""
+def model_entry(path: Path) -> tuple[Path, dict]:
+    """(the folder its "file" is relative to, the "models" entry) of the mod
+    whose mod.json names `path` among its models (its texture_pages with
+    it), or the file alone."""
+    for folder in list(path.resolve().parents)[:4]:
+        manifest = folder / "mod.json"
+        if not manifest.is_file():
+            continue
+        try:
+            entries = json.loads(manifest.read_text(encoding="utf-8-sig")).get("models", []) or []
+        except (OSError, ValueError):
+            continue
+        for entry in entries:
+            if (folder / str(entry.get("file", ""))).resolve() == path.resolve():
+                return folder, entry
+    return path.parent, {"file": path.name, "name": path.stem}
+
+
+def mod_row(path: Path, over_disc: bool, disc_path: Path, force: bool, texture_pages: int | None,
+            accept_data: bool, jobs: int) -> int:
+    """The rows for a model file's (or a record's 44 module sectors')
+    modules, after the analysis mod-migrate makes: each stage's verdict,
+    and the row only for a module mod-migrate would make C for (with
+    --force, for any module of a native shape). Exit 1 when one is to port
+    by hand and --force is not given."""
     tables = Tables()
-    size = path.stat().st_size
-    entry = {"file": path.name, "name": path.stem}
-    if size == MODULES_SECTORS * SECTOR:   # the 44 sectors alone
+    if path.stat().st_size == MODULES_SECTORS * SECTOR:   # the 44 sectors alone
         site = Site(path.name, path.read_bytes())
     else:
-        site = model_site(path.parent, entry)
-    for stage, (name, primary, slot, _, _) in enumerate(STAGES):
-        image = site.image(stage)
-        info = classify(image, slot, primary, tables)
-        rows = tables.rows_for(primary, slot, info["identifier"])
-        if not rows or info["kind"] == "EMPTY":
-            print(f"/* {name}: {CLASS_TEXT[info['kind']]}, first word {info['identifier']}: no native shape */")
+        folder, entry = model_entry(path)
+        if texture_pages is not None:
+            entry = dict(entry, texture_pages=texture_pages)
+        site = model_site(folder, entry)
+    disc = Disc(disc_path)
+    modules = [Module(site, stage, classify(site.image(stage), slot, primary, tables), site.image(stage))
+               for stage, (_, primary, slot, _, _) in enumerate(STAGES)]
+    with tempfile.TemporaryDirectory(prefix="mod-row-") as work:
+        plan(modules, tables, disc, over_disc, Path(work), jobs, accept_data)
+    hand = False
+    for module in modules:
+        name = STAGES[module.stage][0]
+        print(f"/* {summary_line(module).replace('*/', '* /')} */")
+        if module.action == "hand":
+            hand = True
+        if module.row is None or (module.action != "generate" and not force):
             continue
-        module = Module(site, stage, info, image)
-        module.row = rows[0]
         fields = row_fields(module, over_disc)
         bound = ", ".join(f"0x{value:X}u" for value in fields["bound"])
-        print(f"/* {name}: shape {module.row.shape}, {CLASS_TEXT[info['kind']]} */\n"
-              f"{{sizeof(MemoriesModelModule), {fields['kind']}, {fields['slot']}, {fields['flags']}, "
-              f"{fields['identifier']}u, 0x{fields['span']:X}u, \"{fields['sha256']}\", entry, {bound}}}")
-    return 0
+        print(f"{{sizeof(MemoriesModelModule), {fields['kind']}, {fields['slot']}, {fields['flags']}, "
+              f"{fields['identifier']}u, 0x{fields['span']:X}u, \"{fields['sha256']}\", entry, {bound}}}"
+              + (f" /* --force: {name} is {module.action}, not generate */" if module.action != "generate" else ""))
+    return 1 if hand and not force else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1161,12 +1239,19 @@ def main(argv: list[str] | None = None) -> int:
                                           "(\"34,100-119\" or \"all\")")
     parser.add_argument("--over-disc", action="store_true",
                         help="C for the disc's own modules too, and every row MEMORIES_MODEL_OVER_DISC")
+    parser.add_argument("--accept-data", action="store_true",
+                        help="make C even for a module whose words inside the hashed span changed past what the C "
+                             "checks (a divisor, a count): the C then runs unchecked on them, at the mod's risk")
+    parser.add_argument("--force", action="store_true", help="mod-row: print the row of a module to port by hand too")
+    parser.add_argument("--texture-pages", type=int,
+                        help="mod-row: the model's texture pages (default: its mod.json entry's, else 0)")
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     arguments = parser.parse_args(argv)
-    if arguments.command == "mod-row":
-        return mod_row(arguments.target, arguments.over_disc)
     if not arguments.disc or not Path(arguments.disc).is_file():
-        parser.error("mod-migrate needs the disc: --disc or MEMORIES_DISC")
+        parser.error(f"{arguments.command} needs the disc: --disc or MEMORIES_DISC")
+    if arguments.command == "mod-row":
+        return mod_row(arguments.target, arguments.over_disc, Path(arguments.disc), arguments.force,
+                       arguments.texture_pages, arguments.accept_data, arguments.jobs)
     if not (arguments.target / "mod.json").is_file():
         parser.error(f"{arguments.target}: no mod.json")
     records: list[int] = []
@@ -1174,7 +1259,7 @@ def main(argv: list[str] | None = None) -> int:
         import model_oracle
         records = model_oracle.parse_records(arguments.records)
     report = migrate(arguments.target, Path(arguments.disc), records, arguments.over_disc, arguments.into,
-                     arguments.jobs)
+                     arguments.jobs, accept_data=arguments.accept_data)
     return 1 if any(module["action"] == "hand" for module in report["modules"]) else 0
 
 

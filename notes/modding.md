@@ -988,7 +988,8 @@ kind of data:
   Windows and Linux games bind it to that address, and `build_mod.py` pins
   it to that address for the Android and macOS games
   (`aarch64-translated`, `macos`), as their own data is. A name of the
-  range your C defines stays your C's own on every game.
+  range your C defines (in any of its units) stays your C's own on every
+  game.
 - **`func_` names in those ranges** are never bound: that is MIPS code.
 - **A `const` copy** in your C is only right for bytes inside the hashed
   span, which the hash keeps equal to the image.
@@ -1066,7 +1067,20 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
    what it did:
    - **The disc's tables changed** (`the disc's code with other tables`):
      the disc's shape with that first word is the source. Its C reads the
-     tables from the record, so it runs your bytes as it is.
+     tables from the record, so it runs your bytes as it is, with one limit.
+     The hash of a disc row covers some data past the code on purpose
+     (`config/pc/model_gate.csv`'s note says which): the command table, and
+     words the C divides by or indexes with, which native C cannot survive
+     as the interpreter does (a zero divisor stops the game; a larger count
+     writes past the C's arrays). Inside that span the tool makes C only
+     where the row's own checks still hold: the command table's entries,
+     when each is one of the disc's own entries for the shape (reordered or
+     repeated: the attack picks an entry, and every value it reads is one
+     the disc has). Any other change there (`words inside the hashed span`,
+     named in the report) is to port by hand. `--accept-data` makes the C
+     anyway and warns: that C then divides by and indexes with your words
+     unchecked, at your mod's risk. Data past the span is the record's own,
+     and the C reads whatever you put there.
    - **A const the port's C keeps its own copy of changed** (in `changed
      code`, the bytes of a `const` such as `D_8013BAE4`, a scale vector):
      the C it makes defines that const with your bytes.
@@ -1088,11 +1102,16 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
      two shapes in one mod do not clash. It also holds the game's functions
      under the names a mod gets them by (`rand` as `Memories_Rand`), and
      prototypes the Android build needs.
-   - `<prefix>_<n>.c`: one unit for each C file of the module, compiled
-     unoptimized (`#pragma clang optimize off`, or GCC's `optimize ("O0")`),
-     as the game compiles the
-     port's C: the decomp's C counts on MIPS's wrapping arithmetic, and at
-     `-O2` some shapes draw other frames than the interpreter.
+   - `<prefix>_<n>.c`: one unit for each C file of the module. Its first
+     lines name `memories-build: game-flags`, for which `build_mod.py`
+     compiles it with the game's own flags for the port's C, `-O0 -fwrapv
+     -fno-strict-aliasing`, not a mod's `-O2` (and, should another builder
+     miss the marker, `#pragma clang optimize off` or GCC's `optimize`
+     with the same three). The decomp's C keeps some of the MIPS code's
+     frame: shape 109 writes a fourth entry of a three-entry local array,
+     which lands in the next local only at `-O0`. C you port by hand from
+     the port's C needs the same: put that marker in the first lines of
+     your unit.
    - `<prefix>_data.c`: the module's own storage for the locals the
      disc's code reads before it writes them (rule 6), and the consts with
      your bytes. This storage is your mod's, never the port's.
@@ -1117,7 +1136,9 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
    python tools/pc/build_mod.py mods/my-mod --target i386
    ```
 
-   Without `--target` it builds the 64-bit Windows and Android objects too.
+   Without `--target`, and with clang (the one-click build's, or
+   llvm-mingw), it builds the 64-bit Windows and Android objects too; with
+   GCC it builds the i386 object only.
 4. **Check it against the interpreter.** The report ends with the command
    for your mod. For records of `MODEL.MRG` it is like:
 
@@ -1136,11 +1157,16 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
    model fights by its model id, as a card that names it would.
 
 `tools/pc/test_model_migrate.py` runs these commands on mods it makes from
-the disc: a table, a const, code and a model.
+the disc: a table, a table word it refuses, a raw replacement, a const,
+code and a model.
 
-`python tools/pc/model_gate.py mod-row mods/my-mod/models/pikachu.mrg`
-prints the rows for a model file's modules whose first word is a disc
-shape's, without making any C.
+`python tools/pc/model_gate.py mod-row mods/my-mod/models/pikachu.mrg --disc
+game/rpg-yfm.bin` makes the same analysis for one model file (or a
+record's 44 module sectors) without writing any C: each stage's verdict,
+and the row of each module `mod-migrate` would make C for. It exits with 1
+when one is to port by hand; `--force` prints that one's row too. A bigger
+model's texture pages come from its `models` entry when its mod's
+`mod.json` names the file, else `--texture-pages N`.
 
 ## Audio: songs, voices and sounds from files
 
