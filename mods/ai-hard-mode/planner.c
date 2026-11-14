@@ -181,10 +181,27 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
             move.walled = walled;
             if (!e.id || (dead & (1u << j))) continue;
             if (e.id < 0) {
-                /* A declared risk policy, never a peek at the hidden card. */
-                if (!s->o->blind_risk || a.attack < 3000 - s->o->blind_risk * 20) continue;
+                /* A declared risk policy on what anyone can see, the card's
+                   position, never a peek at the hidden card. Either way the
+                   attacker is left in attack position (exposed). */
+                if (!s->o->blind_risk) continue;
                 move.uncertain = 1;
-                move.gain = 100 + s->o->blind_risk * 3;
+                if ((e.flags & HM_DEFENSE) && s->o->blind_defense) {
+                    /* A failed attack on a defender costs the difference in
+                       LP, not the attacker. The card is taken as the unseen
+                       1800 DEF, beaten as often as the ATK covers twice
+                       that, and worth an 1800 monster; a higher risk
+                       setting weighs that removal more. The attacker may be
+                       up to 1000 ATK below the attack-position threshold,
+                       so a lower setting still means fewer such attacks. */
+                    int odds = min(100, a.attack * 100 / (2 * HM_UNSEEN));
+                    if (a.attack < 2000 - s->o->blind_risk * 20) continue;
+                    move.gain = odds * (HM_UNSEEN + 400) / 100 * s->o->blind_risk / 50 -
+                        max(0, HM_UNSEEN - a.attack) - exposed(s->b, a, dead);
+                } else {
+                    if (a.attack < 3000 - s->o->blind_risk * 20) continue;
+                    move.gain = 100 + s->o->blind_risk * 3 - exposed(s->b, a, dead);
+                }
             } else {
                 diff = a.attack + Hm_StarBonus(a.star, e.star) -
                     ((e.flags & HM_DEFENSE) ? e.defense : e.attack) + attack_edge(s->b, a, j);
@@ -313,12 +330,12 @@ static int spell(const HmBoard *b, const HmOptions *o, const HmRules *r,
         static const int burn[] = {50, 100, 200, 500, 1000};
         amount = burn[id - 343];
         /* Known reflection is actionable information, hidden traps are not. */
-        for (i = 0; i < 5; i++) if (b->enemy_back[i].effect == 687) return 0;
+        for (i = 0; i < 5; i++) if (b->enemy_back[i].id > 0 && b->enemy_back[i].effect == 687) return 0;
         return amount * 4 + (amount >= b->enemy_lp ? HM_WIN : 0);
     }
     if (id >= 338 && id <= 342) {
         static const int heal[] = {200, 500, 1000, 2000, 5000};
-        for (i = 0; i < 5; i++) if (b->enemy_back[i].effect == 688) return 0;
+        for (i = 0; i < 5; i++) if (b->enemy_back[i].id > 0 && b->enemy_back[i].effect == 688) return 0;
         amount = max(0, min(heal[id - 338], b->max_lp - b->lp));
         return amount * (b->lp < 2500 ? 3 : 1);
     }
