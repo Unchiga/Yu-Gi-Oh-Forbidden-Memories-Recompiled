@@ -28,13 +28,19 @@ static unsigned state_loads;
 
 #define VARIANT_BYTES 0x5000u
 #define PRIMARY_BYTES 0x1000u
-/* Where an update's entry may be read in the work area (`context`): the
- * work area is the slot's module data argument, 0x80135000 (slot 0) or
- * 0x80175000 (slot 1), up to the primary module at 0x8013A000 / 0x8017A000
- * (notes/high-memory-load-addresses.md: D_8001001C, D_80010020, D_8001000C,
- * D_80010010), so 0x5000 bytes. 70 of the native shapes read their entry past
- * 0x1000, the furthest at 0x4A64 (shape 446). */
-#define WORK_AREA_BYTES 0x5000u
+/* Where an update's entry may be read in the work area (`context`), which
+ * each kind is handed as its argument (src/game/model_control.c,
+ * model_load_step.c; notes/high-memory-load-addresses.md):
+ * - a primary gets the slot's +0xDE8 word, D_8001001C or D_80010020:
+ *   0x80135000 or 0x80175000, up to the variant's at 0x80136000 or 0x80176000,
+ *   0x1000 bytes (the disc's primary rows read their entry at 0);
+ * - a variant gets the +0xDEC word, D_80010024 or D_80010028: 0x80136000 or
+ *   0x80176000, up to the variant module itself at 0x8013B000 or 0x8017B000,
+ *   0x5000 bytes. 70 of the native variant shapes read their entry past
+ *   0x1000, the furthest at 0x4A64 (shape 446: past 0x4000, over the primary
+ *   module's place, which its records' `return 2` primaries leave unused). */
+#define PRIMARY_WORK_BYTES 0x1000u
+#define VARIANT_WORK_BYTES 0x5000u
 
 static int refuse(char *why, size_t size, const char *text)
 {
@@ -103,8 +109,15 @@ int ModelRows_Add(int owner, const MemoriesModelModule *from, char *why, size_t 
         if (!row.index_width &&
             (!row.stride || (uint64_t)row.table + (uint64_t)row.entries * row.stride > (uint64_t)row.span))
             return refuse(why, size, "the bound's table (table + entries * stride, stride above 0) is not inside the span");
-        if ((uint64_t)row.field + width > WORK_AREA_BYTES)
-            return refuse(why, size, "the bound's field is past the work area (0x5000 bytes)");
+        if ((uint64_t)row.field + width >
+            (row.kind == MEMORIES_MODEL_PRIMARY ? PRIMARY_WORK_BYTES : VARIANT_WORK_BYTES))
+            return refuse(why, size, row.kind == MEMORIES_MODEL_PRIMARY
+                                         ? "the bound's field is past a primary's work area (0x1000 bytes)"
+                                         : "the bound's field is past a variant's work area (0x5000 bytes)");
+        /* The setup stores the entry there as MIPS does (sw, sh), aligned to
+         * its size; model_modules.c reads it back the same way. */
+        if (width > 1 && row.field % width)
+            return refuse(why, size, "the bound's field is not aligned to its entry's size (4 for a pointer)");
     } else {
         row.entries = MODEL_GATE_NO_TABLE;
         row.table = row.stride = row.field = row.index_width = row.modulus = 0;

@@ -139,7 +139,9 @@ typedef struct {
      * `field` of the work area, must be one of them: index_width 0 a pointer to
      * one of the `entries` entries of `stride` bytes at `table` (an offset from
      * the slot base), 1, 2 or 4 the command itself stored in that many bytes.
-     * Any other call does not run this C. */
+     * `field` lies in the module's work area (below 0x1000 for a primary,
+     * 0x5000 for a variant), aligned to what is stored there (4 for a
+     * pointer). Any other call does not run this C. */
     uint32_t entries, table, stride, field, index_width, modulus;
 } MemoriesModelModule;
 

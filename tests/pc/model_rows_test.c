@@ -116,13 +116,36 @@ int main(void)
            found->owner == 0 && found->token == token && longest == 0x100);
     ModelRows_Remove(0, token);
     EXPECT(ModelRows_Count() == 0 && !ModelRows_Find(0, 0, 0x12345u, image, 0, NULL));
-    /* A field past 0x1000, as 70 of the disc's native rows have (the
-     * furthest at 0x4A64), up to the work area's last word. */
+    /* A variant's field past 0x1000, as 70 of the disc's native rows have
+     * (the furthest at 0x4A64), up to its work area's last word. */
     for (unsigned n = 0; n < 2; n++) {
         row.field = n ? 0x4FFCu : 0x4A64u;
         token = ModelRows_Add(0, &row, why, sizeof(why));
         found = ModelRows_Find(0, 0, 0x12345u, image, 0, NULL);
         EXPECT(token > 0 && found && found->field == row.field);
+        ModelRows_Remove(0, token);
+    }
+    EXPECT(ModelRows_Count() == 0);
+    /* A pointer, or a stored u16 or u32, at a field not aligned to it. */
+    row.field = 0x4A66;
+    EXPECT(refused(row, "aligned"));
+    row.index_width = 2, row.field = 0x11;
+    EXPECT(refused(row, "aligned"));
+    row.index_width = 1;
+    token = ModelRows_Add(0, &row, why, sizeof(why));
+    EXPECT(token > 0);
+    ModelRows_Remove(0, token);
+    row.index_width = 0, row.field = 0x10;
+    /* A primary's work area is 0x1000 bytes: its field below that. */
+    {
+        MemoriesModelModule primary = row_for(1, 0, 0x100, first);
+        primary.flags = MEMORIES_MODEL_BOUND;
+        primary.entries = 4, primary.table = 0xE0, primary.stride = 8;
+        primary.field = 0x1000;
+        EXPECT(refused(primary, "primary's work area"));
+        primary.field = 0xFFC;
+        token = ModelRows_Add(0, &primary, why, sizeof(why));
+        EXPECT(token > 0);
         ModelRows_Remove(0, token);
     }
     EXPECT(ModelRows_Count() == 0);

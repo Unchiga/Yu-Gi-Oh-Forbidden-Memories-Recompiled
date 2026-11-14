@@ -937,6 +937,9 @@ covers, as the disc's rows do (`config/pc/model_gate.csv`, `command_table`):
   from the slot base). With 1, 2 or 4 it is the command itself, stored in
   that many bytes. This side of the bound only matters for an attack your
   C did not set up (one set up before your mod was on, or by the port).
+  `field` lies in the work area the module is handed: below 0x1000 for a
+  primary, 0x5000 for a variant (the disc's reach 0x4A64), and is aligned
+  to what is stored there (4 bytes for a pointer, as MIPS's `sw` stores it).
 
 Any other call does not run this C: it gets the port's own handling of the
 module (today the interpreter; the sparks stand-in once the interpreter is
