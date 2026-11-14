@@ -475,6 +475,11 @@ static ModelEntry return_two_entry(uint32_t module, int slot, int command, const
     if (!same_two_words(verdict, module)) {
         note_two_words(verdict, module);
         ModelClaim_NewWords(&verdict->claim); /* a new module: no attack of the old one goes on */
+        /* And the verdict's words are no longer the slot's: the module the
+         * verdict was taken for, if it comes back, is new words again
+         * (native_row compares the slot with verdict->words), so its claim
+         * starts anew rather than inheriting this module's. */
+        verdict->span = 0;
     }
     *chosen = &return_two_row;
     *ran = NULL;
