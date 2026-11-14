@@ -896,8 +896,10 @@ with the disc's code, and loading does not see it.
 - **Tables:** keep the disc's values in the bytes the log names, and put
   your own data past them, if the attack allows it.
 - **Code:** give the game C for the module: [Your own C for a module (API
-  29)](#your-own-c-for-a-module-api-29). A tool that finds the disc module
-  nearest yours and starts you from the decomp's C for it is planned.
+  29)](#your-own-c-for-a-module-api-29). `model_gate.py mod-migrate` starts
+  you from the port's C for the disc's shape your module comes from, and
+  makes all of it for a module whose changes the C reads anyway ([Moving a
+  mod's attacks from MIPS to C](#moving-a-mods-attacks-from-mips-to-c)).
 
 #### Your own C for a module (API 29)
 
@@ -983,10 +985,11 @@ tables, which the C reads where the game loaded them. The rules for each
 kind of data:
 - **A name of the module's range** (`D_8013A000` to `D_8013FFFF`,
   `D_8017A000` to `D_8017FFFF`), declared `extern`: the 32-bit and 64-bit
-  Windows and Linux games bind it to that address. `build_mod.py` accepts
-  it. The Android and macOS games do not bind these names yet, and
-  `build_mod.py` says so for `aarch64-translated`. Use `model_module_base`
-  there.
+  Windows and Linux games bind it to that address, and `build_mod.py` pins
+  it to that address for the Android and macOS games
+  (`aarch64-translated`, `macos`), as their own data is. A name of the
+  range your C defines (in any of its units) stays your C's own on every
+  game.
 - **`func_` names in those ranges** are never bound: that is MIPS code.
 - **A `const` copy** in your C is only right for bytes inside the hashed
   span, which the hash keeps equal to the image.
@@ -1043,6 +1046,135 @@ the logs tell yours apart.
 `host->api >= 29` before calling these entries. If the models are in a data
 mod and the C is in a code mod, the data mod `requires` the code mod, so
 the C is there whenever the models are.
+
+#### Moving a mod's attacks from MIPS to C
+
+`tools/pc/model_gate.py mod-migrate` does most of the above for a mod whose
+models come from the disc's. It runs in a clone of this repository, with the
+disc: the port's C it starts from (`src/native_overlays`) is not in the
+SDK. Four steps, here for a mod in `mods/my-mod`:
+
+1. **Make the C.**
+
+   ```
+   python tools/pc/model_gate.py mod-migrate mods/my-mod --disc game/rpg-yfm.bin
+   ```
+
+   It reads every control module your mod brings or changes: those of its
+   `models` files and of the `MODEL.MRG` records its `data` replaces or
+   patches (sectors 180 to 223), the same ones the Mods window warns about.
+   For each it prints what the module is, as the game classifies it, and
+   what it did:
+   - **The disc's tables changed** (`the disc's code with other tables`):
+     the disc's shape with that first word is the source. Its C reads the
+     tables from the record, so it runs your bytes as it is, with one limit.
+     The hash of a disc row covers some data past the code on purpose
+     (`config/pc/model_gate.csv`'s note says which): the command table, and
+     words the C may divide by or index with, which native C cannot survive
+     as the interpreter does (a zero divisor stops the game; a larger count
+     writes past the C's arrays). Inside that span the tool makes C only
+     where the row's own checks still hold: the command table's entries,
+     when each is one of the disc's own entries for the shape (reordered or
+     repeated: the attack picks an entry, and every value it reads is one
+     the disc has). A change to any other word of the span (`words outside
+     the command table but inside the hashed span`, named in the report) is
+     not checked, because the span also covers words the C does not divide
+     by or index with, such as a texture rectangle's header (shape 54's
+     `GsIMAGE`s, which only the page and CLUT packing reads), and the tool
+     cannot tell them apart yet. A mod that changes such words, a texture
+     rectangle inside an attack module for one, gets `port by hand`. The way
+     forward is `--accept-data`: it makes the C anyway and warns that the C
+     may divide by, index with or otherwise depend on your words, which it
+     did not check. Then run the oracle, as the
+     next step describes (`model_oracle.py --mod ... --records` or
+     `--models`), and check that the C and the MIPS draw alike. Data past
+     the span is the record's own, and the C reads whatever you put there.
+   - **A const the port's C keeps its own copy of changed** (in `changed
+     code`, the bytes of a `const` such as `D_8013BAE4`, a scale vector):
+     the C it makes defines that const with your bytes.
+   - **The code changed**: the report names the functions with bytes of
+     their own (`func_8013B2A0 (4 bytes at 0x2A4-0x2A7)`) and makes no C:
+     the C would be the disc's, not yours. Port those functions by hand,
+     starting from the shape's C (`src/native_overlays/...`, named in the
+     report), and register them as [above](#your-own-c-for-a-module-api-29).
+   - **The disc's module, or one without entry:** nothing to do.
+   - **A first word no disc module has:** no source; port it by hand.
+
+   It exits with 1 when any module needs porting by hand.
+2. **What it wrote, beside your `mod.json`:**
+   - `model_c/<prefix>/`: the shape's files from `src/native_overlays`
+     (slot A's C, slot B's wrapper, their headers), with their includes made
+     relative to the copy. `<prefix>` names the module copy, such as
+     `mm_v54a` for shape 54 in slot A.
+   - `<prefix>.h`: everything the module's C defines, under the prefix, so
+     two shapes in one mod do not clash. It also holds the game's functions
+     under the names a mod gets them by (`rand` as `Memories_Rand`), and
+     prototypes the Android build needs.
+   - `<prefix>_<n>.c`: one unit for each C file of the module. Its first
+     lines name `memories-build: game-flags`, for which `build_mod.py`
+     compiles it with the game's own flags for the port's C, `-O0 -fwrapv
+     -fno-strict-aliasing`, not a mod's `-O2` (and, should another builder
+     miss the marker, `#pragma clang optimize off` or GCC's `optimize`
+     with the same three). The decomp's C keeps some of the MIPS code's
+     frame: shape 109 writes a fourth entry of a three-entry local array,
+     which lands in the next local only at `-O0`. C you port by hand from
+     the port's C needs the same: put that marker in the first lines of
+     your unit.
+   - `<prefix>_data.c`: the module's own storage for the locals the
+     disc's code reads before it writes them (rule 6), and the consts with
+     your bytes. This storage is your mod's, never the port's.
+   - `model_rows.c`: one `MemoriesModelModule` row for each module, with
+     its first word, the shape's span, the SHA-256 of your bytes and the
+     shape's command bound, and a `MemoriesModInit` that registers them. If
+     your mod has its own `MemoriesModInit`, it gets
+     `MemoriesModelRows_Register(host)` instead (declared in `model_rows.h`):
+     call it from yours once `host->api >= 29`.
+   - For a mod that replaces `MODEL.MRG` or raw sectors of it (not
+     `patch`), the report gives no oracle command: `model_oracle.py` reads
+     only patches.
+   - `model_c/migrate.json`: the report, for tools.
+
+   `mod.json` gains `"library"` and `"min_api": 29` when it lacks them. Run
+   it again after any change to your modules: it removes what it wrote
+   before (every file that starts with its `Written by` line). The files are
+   yours to read, but edit only your own: the next run writes them again.
+3. **Build it.**
+
+   ```
+   python tools/pc/build_mod.py mods/my-mod --target i386
+   ```
+
+   Without `--target`, and with clang (the one-click build's, or
+   llvm-mingw), it builds the 64-bit Windows and Android objects too; with
+   GCC it builds the i386 object only.
+4. **Check it against the interpreter.** The report ends with the command
+   for your mod. For records of `MODEL.MRG` it is like:
+
+   ```
+   python tools/pc/model_oracle.py --disc game/rpg-yfm.bin --mod mods/my-mod --records 83
+   ```
+
+   and for a model of your `models`:
+
+   ```
+   python tools/pc/model_oracle.py --disc game/rpg-yfm.bin --mod mods/my-mod --models pikachu
+   ```
+
+   Every battle must be identical, and the trace must name your C
+   (`mod:my-mod`) in the slots your rows cover (the oracle checks both). A
+   model fights by its model id, as a card that names it would.
+
+`tools/pc/test_model_migrate.py` runs these commands on mods it makes from
+the disc: a table, a table word it refuses, a raw replacement, a const,
+code and a model.
+
+`python tools/pc/model_gate.py mod-row mods/my-mod/models/pikachu.mrg --disc
+game/rpg-yfm.bin` makes the same analysis for one model file (or a
+record's 44 module sectors) without writing any C: each stage's verdict,
+and the row of each module `mod-migrate` would make C for. It exits with 1
+when one is to port by hand; `--force` prints that one's row too. A bigger
+model's texture pages come from its `models` entry when its mod's
+`mod.json` names the file, else `--texture-pages N`.
 
 ## Audio: songs, voices and sounds from files
 

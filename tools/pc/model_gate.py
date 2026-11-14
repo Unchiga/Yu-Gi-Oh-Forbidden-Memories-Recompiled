@@ -69,6 +69,13 @@ native row's span is written from the disc by `update`, never by hand.
     python tools/pc/model_gate.py update --disc game/rpg-yfm.bin  # rewrite the table from the disc
     python tools/pc/model_gate.py write                  # rewrite src/pc/overlays/model_gate_table.inc
     python tools/pc/model_gate.py port 418 433 --disc game/rpg-yfm.bin   # copy shapes' C from upstream
+    python tools/pc/model_gate.py mod-migrate mods/my-mod --disc game/rpg-yfm.bin   # a mod's modules to C
+    python tools/pc/model_gate.py mod-row mods/my-mod/models/pikachu.mrg   # a model's rows (mod API 29)
+
+mod-migrate and mod-row are tools/pc/model_migrate.py's: a mod's own control
+modules (its "models" and its MODEL.MRG data) run as the port's C for the
+disc shape they come from, in the mod (notes/modding.md, "Moving a mod's
+attacks from MIPS to C").
 
 To port a shape: `port` copies the decomp's C by rule (model_gate_port.py; the
 slot B wrappers go to src/native_overlays/model_variant_slot1) and sets the
@@ -855,9 +862,13 @@ def header_problems(rows: list[Row], kind: Kind) -> list[str]:
 
 
 def main() -> int:
+    if sys.argv[1:2] in (["mod-migrate"], ["mod-row"]):
+        # A mod's modules moved to the port's C (mod API 29): model_migrate.py.
+        import model_migrate
+        return model_migrate.main(sys.argv[1:])
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("check", "update", "write", "port"))
+    parser.add_argument("command", choices=("check", "update", "write", "port", "mod-migrate", "mod-row"))
     parser.add_argument("shapes", nargs="*", type=int, help="port: the shapes to copy from upstream")
     parser.add_argument("--disc", type=Path, default=os.environ.get("MEMORIES_DISC"),
                         help="the disc image (default: MEMORIES_DISC)")

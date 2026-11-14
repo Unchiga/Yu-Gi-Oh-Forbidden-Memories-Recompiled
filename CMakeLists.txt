@@ -1314,6 +1314,17 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME pc_model_oracle_check
             COMMAND "${Python3_EXECUTABLE}" tests/pc/model_oracle_test.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # model_gate.py mod-migrate's classifier (tools/pc/model_migrate.py)
+        # says what the game's says of the disc's modules, changed here
+        # (MEMORIES_DISC; skipped without it).
+        if(TARGET memories_model_module_class_test)
+            add_test(NAME pc_model_migrate_class
+                COMMAND "${Python3_EXECUTABLE}" tools/pc/test_model_migrate.py --only class
+                        --classifier "$<TARGET_FILE:memories_model_module_class_test>"
+                        --out "${CMAKE_CURRENT_BINARY_DIR}/model-migrate-class"
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+            set_tests_properties(pc_model_migrate_class PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
         # Native units that name files reach compat/fs.h (notes/pc-build.md).
         add_test(NAME pc_utf8_paths
             COMMAND "${Python3_EXECUTABLE}" tools/pc/check_utf8_paths.py

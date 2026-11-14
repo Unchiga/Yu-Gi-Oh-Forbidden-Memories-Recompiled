@@ -149,15 +149,44 @@ static void mod_rows(void)
     free(stages);
 }
 
-int main(void)
+/* --classify FILE: each module of FILE (a byte 1 for a primary, else 0, a
+ * byte for the slot, then the image, 0x1000 or 0x5000 bytes) as the game
+ * classifies it, one line each: "kind identifier shape code_size span", kind
+ * as ModelModuleClass numbers it. tools/pc/test_model_migrate.py holds
+ * model_migrate.py's classify() to these lines. */
+static int classify_file(const char *path)
+{
+    static unsigned char image[MODEL_MODULE_VARIANT_SIZE];
+    FILE *file = fopen(path, "rb");
+    int kind, slot;
+    if (!file) {
+        fprintf(stderr, "model_module_class_test: cannot read %s\n", path);
+        return 1;
+    }
+    ModelModule_SetModRows(NULL);
+    while ((kind = fgetc(file)) != EOF && (slot = fgetc(file)) != EOF) {
+        size_t size = kind ? MODEL_MODULE_PRIMARY_SIZE : MODEL_MODULE_VARIANT_SIZE;
+        ModelModuleInfo info;
+        if (fread(image, 1, size, file) != size) break;
+        info = ModelModule_Classify(image, slot, kind);
+        printf("%d %u %d %u %u\n", (int)info.kind, (unsigned)info.identifier, info.shape, (unsigned)info.code_size,
+               (unsigned)info.span);
+    }
+    fclose(file);
+    return 0;
+}
+
+int main(int argc, char **argv)
 {
     static const char *const path[] = {"DATA", "MODEL.MRG;1"};
     const char *name = getenv("MEMORIES_DISC");
-    unsigned char *stages = malloc((size_t)MODEL_MODULE_STAGES_SECTORS * SECTOR);
+    unsigned char *stages;
     long lba;
     uint32_t size;
     int records, native = 0, retail = 0, tables = 0, primaries = 0, ordered = 0;
     char detail[1024];
+    if (argc == 3 && !strcmp(argv[1], "--classify")) return classify_file(argv[2]);
+    stages = malloc((size_t)MODEL_MODULE_STAGES_SECTORS * SECTOR);
     mod_rows();
     if (failures) {
         fprintf(stderr, "model_module_class_test: %d failures without the disc\n", failures);

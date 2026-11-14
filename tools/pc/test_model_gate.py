@@ -581,6 +581,90 @@ class OracleBackends(unittest.TestCase):
             disc.patch({"data": [{"file": "\\DATA\\WA_MRG.MRG;1", "patch": []}]}, "m")
         self.assertEqual(model_oracle.mod_variable("3d-monsters"), "MEMORIES_MOD_3D_MONSTERS")
 
+    def test_mods_in_the_games_load_order(self):
+        """--mod mods are taken in the game's load order: folder names byte
+        by byte, then the lowest priority whose requires/after are placed;
+        a model's id is its place among the mods' models in that order."""
+        mods = [(Path("z-pack"), {"id": "z", "models": [{"name": "a"}]}),
+                (Path("b-pack"), {"id": "b", "after": ["z"]}),
+                (Path("a-pack"), {"id": "a", "priority": 5}),
+                (Path("C-pack"), {"id": "c"})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(mods)], ["c", "z", "b", "a"])
+        # The rank is Settings_GetNamed("mod.<id>.order", (int)priority): the
+        # priority as Json_Number reads it (a whole number, a bool or a string
+        # holding one), else 0, and never an error. A fraction is no priority
+        # the game accepts (its parser refuses the manifest): the oracle cuts
+        # it, and the last two cases are the oracle's own.
+        self.assertEqual([model_oracle.mod_rank({"priority": value}) for value in
+                          (2.0, 5, -3, "0x10", " -3 ", "7", True, "high", "1.5", "", None, [1], {}, 2.9, -2.9)],
+                         [2, 5, -3, 16, -3, 7, 1, 0, 0, 0, 0, 0, 0, 2, -2])
+        ranked = [(Path("a-pack"), {"id": "a", "priority": "high"}), (Path("b-pack"), {"id": "b", "priority": -1}),
+                  (Path("c-pack"), {"id": "c", "priority": 1})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(ranked)], ["b", "a", "c"])
+        # A requires/after entry names a mod by its exact string (or an object's
+        # "id"), as require_id does: "z 1.0" is no mod, and a mod naming
+        # itself waits on itself (the game refuses that cycle).
+        names = [(Path("a-pack"), {"id": "a", "requires": ["z 1.0"]}), (Path("z-pack"), {"id": "z", "priority": 1}),
+                 (Path("m-pack"), {"id": "m", "after": [{"id": "z"}], "priority": -9})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(names)], ["a", "z", "m"])
+        own = [(Path("a-pack"), {"id": "a", "requires": ["a"]}), (Path("b-pack"), {"id": "b", "priority": 3})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(own)], ["b", "a"])
+        disc = model_oracle.Disc.__new__(model_oracle.Disc)
+        disc.model_order = ["one", "two", "one"]
+        self.assertEqual((disc.model_id("two"), disc.model_id("one")), (0x8002, 0x8003))
+
+    def test_a_model_battle_reads_the_models_images(self):
+        """--models: the battle's images are the model's stages, not a record's."""
+        disc = model_oracle.Disc.__new__(model_oracle.Disc)
+        stages = bytes(range(256)) * (44 * 2048 // 256)
+        disc.models = {"pikachu": stages}
+        battle = model_oracle.Battle(0, 1, "tie", "pikachu", 1)
+        self.assertEqual(battle.key, "model:pikachu/1/tie")
+        self.assertEqual(disc.battle_variant(battle, "B"), stages[30 * 2048:40 * 2048])
+        self.assertEqual(disc.battle_primary(battle, "B"), stages[42 * 2048:44 * 2048])
+        self.assertEqual(battle.properties()[:2], (1).to_bytes(2, "little"))
+
+
+class ModMigrate(unittest.TestCase):
+    """model_gate.py mod-migrate's text work (tools/pc/model_migrate.py);
+    tools/pc/test_model_migrate.py runs it on the disc."""
+
+    def test_a_const_definition_becomes_a_declaration(self):
+        import model_migrate
+        text = ("#include \"a.h\"\n"
+                "static const VECTOR D_8013C188 = {4096, /* x; */ 4096, 4096, 0};\n"
+                "const s16 D_8013C200[][3] = {{1, 2, 3}, {4, 5, 6}};\n"
+                "s32 f(void) { return D_8013C188.vx; }\n")
+        out = model_migrate.declare_const(text, "D_8013C188", 16)
+        self.assertIn("extern const VECTOR D_8013C188;", out)
+        self.assertNotIn("4096", out)
+        self.assertIn("return D_8013C188.vx;", out)
+        out = model_migrate.declare_const(out, "D_8013C200", 12)
+        self.assertIn("extern const s16 D_8013C200[12 / sizeof(const s16[3])][3];", out)
+        self.assertIsNone(model_migrate.declare_const(out, "D_8013C300", 4))
+
+    def test_a_models_file_stages_where_the_game_reads_them(self):
+        """A record's module stages start at sector 180; a bigger model's
+        after its own model data (its sectors less the record's other 180
+        and its texture pages), as mods.c's check_model_modules reads them."""
+        import model_migrate
+        import tempfile
+        sector = 2048
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            for sectors, pages, data in ((276, 0, 96), (276 + 30 + 2 * 16, 2, 126), (300, 0, 120)):
+                image = bytearray(sectors * sector)
+                at = (data + 84) * sector
+                image[at:at + 4] = b"MARK"
+                (folder / "m.mrg").write_bytes(bytes(image))
+                site = model_migrate.model_site(folder, {"name": "m", "file": "m.mrg", "texture_pages": pages})
+                self.assertEqual(site.stages[:4], b"MARK", (sectors, pages))
+                self.assertEqual(len(site.stages), 44 * sector)
+
+    def test_record_ranges(self):
+        import model_migrate
+        self.assertEqual(model_migrate.ranges([7, 1, 2, 3, 9, 10]), "1-3,7,9-10")
+
 
 if __name__ == "__main__":
     unittest.main()

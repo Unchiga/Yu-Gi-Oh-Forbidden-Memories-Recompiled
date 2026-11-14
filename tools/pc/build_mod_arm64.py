@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from build_config import MACOS_MINIMUM
+from build_mod import module_definitions, module_pins, unit_flags
 from guest_build import (
     CHECKED_LIBC,
     HOST_LIBC,
@@ -89,12 +90,19 @@ def compile_units(sources, folder, compiler, sdk, flags, aliases, signatures, pi
     """Compile original C at O0, lower guest accesses, then generate O2 objects."""
     objects, routines = [], []
     has_entry = False
+    # Every unit to IR first (a unit that asks for the game's flags gets
+    # them, build_mod.unit_flags), and the module-range names any of them
+    # defines: one unit's own copy is never pinned in another (module_pins).
+    defined = set()
     for index, source in enumerate(sources):
         raw = folder / f"{index}.raw.ll"
         subprocess.run(
-            [compiler, *flags, "-S", "-emit-llvm", str(source), "-o", str(raw)],
+            [compiler, *flags, *unit_flags(str(source)), "-S", "-emit-llvm", str(source), "-o", str(raw)],
             check=True,
         )
+        defined |= module_definitions(raw.read_text())
+    for index, source in enumerate(sources):
+        raw = folder / f"{index}.raw.ll"
         routine = f"MemoriesModRegisterUnit_{index}"
         text = normalize(raw.read_text(), aliases)
         has_entry = validate_imports(text, signatures) or has_entry
@@ -108,7 +116,11 @@ def compile_units(sources, folder, compiler, sdk, flags, aliases, signatures, pi
             },
         )
         text = process(
-            "translate", text, pins=pins, registration=routine, mod_unit=True
+            "translate",
+            text,
+            pins=module_pins(text, pins, defined),
+            registration=routine,
+            mod_unit=True,
         )
         ir = folder / f"{index}.ll"
         ir.write_text(text)
