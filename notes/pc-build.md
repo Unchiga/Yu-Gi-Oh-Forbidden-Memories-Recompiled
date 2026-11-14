@@ -1023,7 +1023,20 @@ is as much an error as a gated shape that ran interpreted, so a gate that
 silently stopped matching cannot pass as "identical". The summary counts the
 battle slots by backend (`backends ...: subject interpreter 65, native 65`),
 and `--records gated` selects the records that have a native image
-(`tools/pc/test_model_gate.py` holds the check's cases). Coverage:
+(`tools/pc/test_model_gate.py` holds the check's cases). **A code mod's own C
+(mod API 29, notes/modding.md):** `--mod DIR` (repeatable) runs both sides
+with that mod on, copied into each game's own mods folder (never the
+build's `mods/`), and the trace widened to `model,mods`. The images the
+checks use are then the disc's with the mods' `data` patches of MODEL.MRG
+(the only data `--mod` reads; anything else is refused). The rows the mods
+logged (`model_module ... sha256 H`) say where a default-mode side must have
+run `mod:<id>`, the trace's name for a mod's C: an `OVER_DISC` row before the
+disc's rows, the others after them. A mod's C anywhere else is an error.
+`--no-mod-c` runs the subject with `MEMORIES_MODEL_MOD_C=0` and expects no
+mod's C. `tools/pc/test_model_mod_c.py` (disc-gated) patches a shape-54
+record from the disc, builds the port's own C for it into a mod and checks
+the three cases: the mod's C, the data without it (interpreted and warned),
+and `MEMORIES_MODEL_MOD_C=0`. Coverage:
 the script steps a VBlank at a time while the two models load and peeks
 each slot's 0x5000 bytes once its transfer has landed (the slot's load step,
 `field_E14`, past 0) and before step 9, the first that can call the module;

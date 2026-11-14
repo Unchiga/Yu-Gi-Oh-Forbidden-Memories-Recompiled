@@ -81,6 +81,12 @@
  *      event change
  *  26  a card's "variant_permille" and "variant_label" (notes/more-cards.md)
  *      only; no host layout or event change
+ *  27  (held for the manifest-only feature of PR #486)
+ *  28  (held for text_capture and text_key, PR #487)
+ *  29  model_module, model_module_remove, model_module_base: native C a code
+ *      mod gives for a battle model's control modules (MemoriesModelModule),
+ *      run instead of those modules' MIPS where the module's bytes hash to
+ *      it (notes/modding.md, "Your own C for a module (API 29)")
  * A data mod declares its required version with min_api in mod.json. */
 #include "mod_types.h"
 
@@ -95,6 +101,49 @@ typedef struct MemoriesModHost MemoriesModHost;
 #define MEMORIES_HUD_FUSION_HELPER 1u
 #define MEMORIES_HUD_RANK 2u
 #define MEMORIES_HUD_FREE_DUEL_PROGRESS 4u
+
+/* API 29: a battle model's control module run as the mod's own C
+ * (host->model_module). The game calls a module through the word at +4 of its
+ * slot (the primary at 0x8013A000 / 0x8017A000, 0x1000 bytes; the variant at
+ * 0x8013B000 / 0x8017B000, 0x5000 bytes). Where the slot holds a module whose
+ * first `span` bytes hash to `sha256`, `entry` runs instead of those bytes:
+ * the same call, with `context` the work area the game hands the module and
+ * `command` its command (>= 0 a setup, < 0 an update), returning what the
+ * module returns. A call this C does not take runs the port's own handling
+ * of the module. */
+typedef int32_t (*MemoriesModelEntry)(uint8_t *context, int32_t command);
+
+#define MEMORIES_MODEL_VARIANT 0u
+#define MEMORIES_MODEL_PRIMARY 1u
+#define MEMORIES_MODEL_SLOT_A 0u     /* 0x8013A000 / 0x8013B000 */
+#define MEMORIES_MODEL_SLOT_B 1u     /* 0x8017A000 / 0x8017B000 */
+#define MEMORIES_MODEL_SLOT_BOTH 2u  /* one entry for both: it finds its data with model_module_base */
+/* flags */
+#define MEMORIES_MODEL_BOUND 1u      /* entries..modulus below hold; without it the C takes every command */
+#define MEMORIES_MODEL_OVER_DISC 2u  /* consulted before the disc's own C (by default after it) */
+/* The slot B address of a slot A one: the slots are 0x40000 apart, primary and variant alike. */
+#define MEMORIES_MODEL_SLOT_DISTANCE 0x40000u
+
+typedef struct {
+    uint32_t size;          /* sizeof(MemoriesModelModule): the fields this mod knows */
+    uint32_t kind;          /* MEMORIES_MODEL_VARIANT or MEMORIES_MODEL_PRIMARY */
+    uint32_t slot;          /* MEMORIES_MODEL_SLOT_A, _B or _BOTH */
+    uint32_t flags;         /* MEMORIES_MODEL_BOUND, MEMORIES_MODEL_OVER_DISC */
+    uint32_t identifier;    /* the image's first word */
+    uint32_t span;          /* the bytes from the slot base the hash covers: 8 to 0x1000 (primary) or 0x5000 (variant) */
+    char sha256[65];        /* SHA-256 of those bytes, 64 hex digits (either case) and a '\0' */
+    MemoriesModelEntry entry;
+    /* With MEMORIES_MODEL_BOUND, which calls the C may take
+     * (src/pc/overlays/model_gate_command.h): a setup's command, % modulus when
+     * modulus is not 0, must be below `entries`; an update's entry, read at
+     * `field` of the work area, must be one of them: index_width 0 a pointer to
+     * one of the `entries` entries of `stride` bytes at `table` (an offset from
+     * the slot base), 1, 2 or 4 the command itself stored in that many bytes.
+     * `field` lies in the module's work area (below 0x1000 for a primary,
+     * 0x5000 for a variant), aligned to what is stored there (4 for a
+     * pointer). Any other call does not run this C. */
+    uint32_t entries, table, stride, field, index_width, modulus;
+} MemoriesModelModule;
 
 
 typedef struct {
@@ -407,6 +456,22 @@ struct MemoriesModHost {
      * wheel the mod has taken still counts. */
     int (*wheel)(const MemoriesModHost *);
     void (*take_wheel)(const MemoriesModHost *, int on);
+
+    /* --- API 29 ---
+     * Native C for a model's control module (MemoriesModelModule): a token,
+     * or 0 when the row is refused (the mod's status says why: a sha256 that
+     * is not 64 hex digits, a span past the module, a bound outside the span,
+     * no entry). Register in MemoriesModInit. A row runs only while its mod is
+     * applied; removing the mod leaves it registered but unused, and a failed
+     * init discards it, as with hooks. An attack the C set up finishes on it
+     * even if the mod is turned off before its last update. With SLOT_BOTH a
+     * row is two, one for each slot, sharing one entry and one token. */
+    int (*model_module)(const MemoriesModHost *, const MemoriesModelModule *row);
+    void (*model_module_remove)(const MemoriesModHost *, int token);
+    /* Inside an entry: the slot base of the module it runs for (0x8013A000,
+     * 0x8013B000, 0x8017A000 or 0x8017B000), so C registered for both slots
+     * finds its data: (T *)(uintptr_t)(base + offset). 0 outside an entry. */
+    uint32_t (*model_module_base)(const MemoriesModHost *);
 };
 
 /* The symbol a mod's object defines, and its type. */

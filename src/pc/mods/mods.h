@@ -85,9 +85,29 @@ extern unsigned short (*Mods_PadSource)(int port);
  * mod's, with a line for each in `detail`; `read`, the disc's sectors as the
  * game reads them, the mods' changes in. The game gives them before Mods_Load
  * (pc/overlays/model_module_class.h, Menu_LoadMods); without them (the tests)
- * the mods' models are not checked. */
-void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size),
-                         int (*read)(int lba, int sectors, void *out));
+ * the mods' models are not checked. `mips` also says how many a code mod's C
+ * runs (mod API 29) and whose; `disc_shape`, the shape whose disc row a mod's
+ * row repeats (0 for none), for the log.
+ *
+ * The check runs once every mod has started and again after each change to
+ * what is applied or to the mods' rows, so a model's modules are told with
+ * the C any applied mod gives for them: the result is the mod's module note
+ * (Mods_ModuleNote), never its status. */
+void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size, int *mod_native,
+                                     const char **mod_owner),
+                         int (*read)(int lba, int sectors, void *out),
+                         int (*disc_shape)(int primary, int slot, uint32_t identifier, uint32_t span,
+                                           const char *sha256));
+/* An applied mod's line on its models' control modules: how many are MIPS
+ * code (a warning: notes/modding.md, "Attack code: C, not MIPS") and how
+ * many a code mod's C runs; "" for none. Mods_ModuleMips is the first
+ * count. */
+const char *Mods_ModuleNote(int mod);
+int Mods_ModuleMips(int mod);
+/* Holds the module notes' check while a set of changes is made (Mods_Apply):
+ * it runs once, when the last hold is let go (0), if anything it reads
+ * changed. Holds nest. */
+void Mods_HoldModuleNotes(int hold);
 /* The mods' rand seed (mod_libc.c), its size in *size: save states carry it. */
 void *Mods_RandSeed(unsigned *size);
 

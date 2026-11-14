@@ -109,6 +109,46 @@ static ModelModuleClass changed(const unsigned char *image, size_t size, uint32_
     return ModelModule_Classify(copy, slot, primary).kind;
 }
 
+/* A code mod's rows (mod API 29), as the game's finder gives them: "late"
+ * covers any module with first word 0x00ABCDEF after the disc's rows,
+ * "early" whatever `early_word` names before them. */
+static uint32_t early_word;
+static const char *finder(const void *image, int slot, int primary, int over_disc)
+{
+    uint32_t first = word(image);
+    (void)slot;
+    (void)primary;
+    if (over_disc) return early_word && first == early_word ? "early" : NULL;
+    return first == 0x00ABCDEFu ? "late" : NULL;
+}
+
+/* The classifier with a finder, and without one as before. */
+static void mod_rows(void)
+{
+    unsigned char *stages = calloc(MODEL_MODULE_STAGES_SECTORS, SECTOR);
+    char detail[512];
+    const char *owner = (const char *)1;
+    int native = -1;
+    if (!stages) return;
+    stages[0] = 0xEF, stages[1] = 0xCD, stages[2] = 0xAB; /* stance 0 slot A: first word 0x00ABCDEF */
+    stages[4] = 0x08, stages[7] = 0x03;                   /* +4: jr ra */
+    expect(ModelModule_Classify(stages, 0, 0).kind == MODEL_MODULE_NEW, "no finder: a new first word is not NEW", -1);
+    expect(ModelModule_StagesMips(stages, detail, sizeof(detail), &native, &owner) == 1 && native == 0 && !owner,
+           "no finder: a new module is not the mod's MIPS", -1);
+    ModelModule_SetModRows(finder);
+    {
+        ModelModuleInfo info = ModelModule_Classify(stages, 0, 0);
+        expect(info.kind == MODEL_MODULE_MOD && info.owner && !strcmp(info.owner, "late"),
+               "a module a mod's row covers is not MOD", -1);
+    }
+    expect(ModelModule_StagesMips(stages, detail, sizeof(detail), &native, &owner) == 0 && native == 1 && owner &&
+               !strcmp(owner, "late") && strstr(detail, "native C from mod late"),
+           "a module a mod's row covers is counted as MIPS", -1);
+    expect(!ModelModule_IsModsMips(MODEL_MODULE_MOD), "MOD is the mod's MIPS", -1);
+    ModelModule_SetModRows(NULL);
+    free(stages);
+}
+
 int main(void)
 {
     static const char *const path[] = {"DATA", "MODEL.MRG;1"};
@@ -116,8 +156,14 @@ int main(void)
     unsigned char *stages = malloc((size_t)MODEL_MODULE_STAGES_SECTORS * SECTOR);
     long lba;
     uint32_t size;
-    int records, native = 0, retail = 0, tables = 0, primaries = 0;
+    int records, native = 0, retail = 0, tables = 0, primaries = 0, ordered = 0;
     char detail[1024];
+    mod_rows();
+    if (failures) {
+        fprintf(stderr, "model_module_class_test: %d failures without the disc\n", failures);
+        free(stages);
+        return 1;
+    }
     if (!name || !*name || !(disc = fopen(name, "rb"))) {
         printf("model_module_class_test: no disc (MEMORIES_DISC), skipped\n");
         free(stages);
@@ -135,7 +181,7 @@ int main(void)
                 return 1;
             }
         /* The disc is no mod: none of its modules is a mod's MIPS. */
-        expect(ModelModule_StagesMips(stages, detail, sizeof(detail)) == 0, detail, record);
+        expect(ModelModule_StagesMips(stages, detail, sizeof(detail), NULL, NULL) == 0, detail, record);
         for (int i = 0; i < 6; i++) {
             int primary = i >= 4, slot = primary ? i - 4 : i & 1;
             const unsigned char *image = stages + (primary ? 40 + 2 * (i - 4) : 10 * i) * SECTOR;
@@ -171,6 +217,21 @@ int main(void)
                 native++;
                 expect(row && code, "a native image has no span or code row", record);
                 if (!row || !code) continue;
+                /* A mod's row over the disc's: after the disc's rows it never
+                 * wins; before them (OVER_DISC) it does. */
+                if (!ordered++) {
+                    ModelModuleInfo got;
+                    early_word = 0;
+                    ModelModule_SetModRows(finder);
+                    expect(ModelModule_Classify(image, slot, primary).kind == MODEL_MODULE_NATIVE,
+                           "a late mod row stands over the disc's C", record);
+                    early_word = info.identifier;
+                    got = ModelModule_Classify(image, slot, primary);
+                    expect(got.kind == MODEL_MODULE_MOD && !strcmp(got.owner, "early"),
+                           "an OVER_DISC mod row does not stand over the disc's C", record);
+                    ModelModule_SetModRows(NULL);
+                    early_word = 0;
+                }
                 /* Past the span: the record's own data, still native. */
                 if (row->span < bytes)
                     expect(changed(image, bytes, row->span, slot, primary) == MODEL_MODULE_NATIVE, "a byte past the span", record);

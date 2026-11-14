@@ -133,10 +133,13 @@ static void preview_probe(MemoriesModEvent *event) { (void)event; }
 /* The game's check of a mod's model modules (Mods_SetModuleCheck), as the
  * stubbed disc reads: a module counts when any of its bytes is not zero, and
  * the sectors are read as the game would, with the mods' changes in. */
-static int module_check_mips(const unsigned char *stages, char *detail, size_t size)
+static int module_check_mips(const unsigned char *stages, char *detail, size_t size, int *mod_native,
+                             const char **mod_owner)
 {
     static const int first[6] = {0, 10, 20, 30, 40, 42}, sectors[6] = {10, 10, 10, 10, 2, 2};
     int count = 0;
+    *mod_native = 0;
+    *mod_owner = NULL;
     for (int i = 0; i < 6; i++)
         for (size_t at = 0; at < (size_t)sectors[i] * 2048; at++)
             if (stages[(size_t)first[i] * 2048 + at]) {
@@ -270,7 +273,7 @@ int main(void)
                "  \"data\": [ { \"file\": \"\\\\DATA\\\\MODEL.MRG;1\","
                "               \"patch\": [ { \"at\": \"0xE6800\", \"bytes\": \"01\" },"
                "                            { \"at\": \"0x119000\", \"bytes\": \"01\" } ] } ] }");
-    Mods_SetModuleCheck(module_check_mips, module_check_read);
+    Mods_SetModuleCheck(module_check_mips, module_check_read, NULL);
 
     snprintf(settings, sizeof(settings), "%s/settings.txt", root);
     write_text("settings.txt", "hand_camera=1\nmod.replacer=1\n");
@@ -288,10 +291,12 @@ int main(void)
     sounds = find("sounds");
     assert(Mods_Count() == 13);
     /* Only the record whose modules the mod patched is the mod's MIPS, said
-     * once in its status; a mod that does not touch MODEL.MRG is not. */
+     * once in its module note (never its status); a mod that does not touch
+     * MODEL.MRG has none. */
     assert(Mods_Active(find("modeler")) &&
-           strstr(Mods_Status(find("modeler")), "1 attack module in MODEL.MRG card 2 is MIPS code"));
-    assert(!strstr(Mods_Status(patcher), "attack module") && !strstr(Mods_Status(replacer), "attack module"));
+           strstr(Mods_ModuleNote(find("modeler")), "1 attack module in MODEL.MRG card 2 is MIPS code") &&
+           Mods_ModuleMips(find("modeler")) == 1 && !strstr(Mods_Status(find("modeler")), "attack module"));
+    assert(!Mods_ModuleNote(patcher)[0] && !Mods_ModuleNote(replacer)[0] && !Mods_ModuleMips(patcher));
     assert(!Mods_Active(find("xa-named")) && strstr(Mods_Status(find("xa-named")), "MASTER.XA") &&
            strstr(Mods_Status(find("xa-named")), "\"audio\""));
     assert(!Mods_Active(find("xa-raw")) && strstr(Mods_Status(find("xa-raw")), "MASTER.XA"));

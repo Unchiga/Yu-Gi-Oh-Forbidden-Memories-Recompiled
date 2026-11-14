@@ -32,6 +32,7 @@
 #include "manifest_code.h"
 #include "events.h"
 #include "hooks.h"
+#include "model_rows.h"
 #include "pc/platform/paths.h"
 #include "pc/platform/settings.h"
 #include "pc/platform/platform.h"
@@ -112,6 +113,11 @@ typedef struct {
     int mips_modules;            /* its control modules the MIPS interpreter would run (check_model_modules) */
     char mips_where[160];        /* and where they are, for its one warning */
     int mips_more;               /* places past what mips_where holds */
+    int native_modules;          /* its control modules a code mod's C runs (mod API 29) */
+    char native_owner[ID_MAX];   /* the first one's mod */
+    int native_more;             /* another mod's C runs others */
+    char modules[STATUS_MAX];    /* its module note (Mods_ModuleNote) */
+    char mips_said[STATUS_MAX];  /* the MIPS warning last said on stderr */
     const char *origin;         /* "shipped", "folder" or "installed", for the window */
     int restart;                 /* the manifest asks for a fresh process */
     int default_enabled;
@@ -669,6 +675,56 @@ static int host_provide(const MemoriesModHost *host, const char *name, void *poi
 { return owner(host) ? Mods_Provide((int)(owner(host) - mods), name, pointer) : 0; }
 static void *host_find(const MemoriesModHost *host, const char *qualified)
 { return owner(host) ? Mods_Find(qualified) : NULL; }
+
+/* --- a model's control modules as a mod's C (API 29) ------------------ */
+
+static int (*module_disc_shape)(int primary, int slot, uint32_t identifier, uint32_t span, const char *sha256);
+
+static int host_model_module(const MemoriesModHost *host, const MemoriesModelModule *row)
+{
+    Mod *mod = owner(host);
+    char why[160];
+    int token, index;
+    if (!mod) return 0;
+    index = (int)(mod - mods);
+    token = ModelRows_Add(index, row, why, sizeof(why));
+    if (!token) {
+        say("%s: model_module refused: %s", mod->id, why);
+        warn(mod, 1, "model_module: %s", why);
+        return 0;
+    }
+    /* What it claims, one line a slot: tools/pc/model_oracle.py --mod reads
+     * these to know where the mod's C is to run. */
+    for (int slot = 0; slot < 2; slot++) {
+        int shape;
+        const char *kind = row->kind == MEMORIES_MODEL_PRIMARY ? "primary" : "variant";
+        char sha256[65];
+        if (row->slot != MEMORIES_MODEL_SLOT_BOTH && (int)row->slot != slot) continue;
+        for (int i = 0; i < 64; i++) sha256[i] = (char)tolower((unsigned char)row->sha256[i]);
+        sha256[64] = '\0';
+        say("%s: model_module %s slot %c identifier %u span %u sha256 %s%s token %d", mod->id, kind, slot ? 'B' : 'A',
+            (unsigned)row->identifier, (unsigned)row->span, sha256,
+            row->flags & MEMORIES_MODEL_OVER_DISC ? " over the disc" : "", token);
+        /* The disc's own bytes: its C runs unless the row says otherwise. */
+        shape = module_disc_shape ? module_disc_shape(row->kind == MEMORIES_MODEL_PRIMARY, slot, row->identifier,
+                                                      row->span, sha256)
+                                  : 0;
+        if (shape > 0) {
+            if (row->flags & MEMORIES_MODEL_OVER_DISC)
+                say("%s: model_module %s slot %c identifier %u stands over the disc's C for shape %d", mod->id, kind,
+                    slot ? 'B' : 'A', (unsigned)row->identifier, shape);
+            else
+                say("%s: model_module %s slot %c identifier %u is the disc's code for shape %d, whose own C runs "
+                    "first (MEMORIES_MODEL_OVER_DISC puts this one before it)", mod->id, kind, slot ? 'B' : 'A',
+                    (unsigned)row->identifier, shape);
+        }
+    }
+    return token;
+}
+static void host_model_module_remove(const MemoriesModHost *host, int token)
+{ if (owner(host)) ModelRows_Remove((int)(owner(host) - mods), token); }
+static uint32_t host_model_module_base(const MemoriesModHost *host)
+{ return owner(host) ? ModelRows_Running() : 0; }
 
 /* --- drawing over the picture ------------------------------------------ */
 
@@ -2339,6 +2395,9 @@ static void fill_host(Mod *mod)
     mod->host.pad = host_pad;
     mod->host.now_us = host_now_us;
     mod->host.map_fixed = host_map_fixed;
+    mod->host.model_module = host_model_module;
+    mod->host.model_module_remove = host_model_module_remove;
+    mod->host.model_module_base = host_model_module_base;
 }
 
 /* --- data overrides -------------------------------------------------- */
@@ -2971,14 +3030,19 @@ static int map_arenas(void)
 
 /* --- a mod's own MIPS in a model's control modules ------------------- */
 
-static int (*modules_mips)(const unsigned char *stages, char *detail, size_t size);
+static int (*modules_mips)(const unsigned char *stages, char *detail, size_t size, int *mod_native,
+                           const char **mod_owner);
 static int (*read_sectors)(int lba, int sectors, void *out);
 
-void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size),
-                         int (*read)(int lba, int sectors, void *out))
+void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size, int *mod_native,
+                                     const char **mod_owner),
+                         int (*read)(int lba, int sectors, void *out),
+                         int (*disc_shape)(int primary, int slot, uint32_t identifier, uint32_t span,
+                                           const char *sha256))
 {
     modules_mips = mips;
     read_sectors = read;
+    module_disc_shape = disc_shape;
 }
 
 /* A record's module stages (notes/modding.md, "The record"). */
@@ -3004,35 +3068,73 @@ static void mips_found(Mod *mod, const char *where, int count)
     else mod->mips_more = 1;
 }
 
-/* One line in the mod's status for all its modules, said each time it is
- * applied (status goes back to its warnings first); the log has each module. */
-static void mips_warning(Mod *mod)
+/* `count` modules a code mod's C runs, `owner`'s, for the mod's note. */
+static void native_found(Mod *mod, const char *owner, int count)
 {
-    if (!mod->mips_modules) return;
-    warn(mod, 0,
-         "%d attack module%s in %s%s %s MIPS code, which runs on an interpreter that a later version removes "
-         "(notes/modding.md, \"Attack code: C, not MIPS\")",
-         mod->mips_modules, mod->mips_modules == 1 ? "" : "s", mod->mips_where, mod->mips_more ? " and more" : "",
-         mod->mips_modules == 1 ? "is" : "are");
+    if (!count) return;
+    if (!mod->native_modules) copy_text(mod->native_owner, sizeof(mod->native_owner), owner ? owner : "?");
+    else if (owner && strcmp(owner, mod->native_owner)) mod->native_more = 1;
+    mod->native_modules += count;
 }
 
-/* A "models" entry's file (`size` bytes, its model data `geometry` sectors
- * for a bigger model, 0 for a record). */
-static void check_model_modules(Mod *mod, const char *name, const unsigned char *file, size_t size, int geometry)
+/* The mod's module note (Mods_ModuleNote) from what the check found: one
+ * line for all its modules; the log has each module. The MIPS part is also
+ * said on stderr as a warning, once each time it changes. */
+static void module_note(Mod *mod)
 {
-    size_t at = (size_t)((geometry ? geometry : MODEL_STAGE0_SECTORS) + MODEL_MODULES_SECTOR - MODEL_STAGE0_SECTORS) *
-                SECTOR,
+    char mips[STATUS_MAX] = "", text[STATUS_MAX] = "";
+    if (mod->mips_modules)
+        snprintf(mips, sizeof(mips),
+                 "%d attack module%s in %s%s %s MIPS code, which runs on an interpreter that a later version removes "
+                 "(notes/modding.md, \"Attack code: C, not MIPS\")",
+                 mod->mips_modules, mod->mips_modules == 1 ? "" : "s", mod->mips_where,
+                 mod->mips_more ? " and more" : "", mod->mips_modules == 1 ? "is" : "are");
+    if (mod->native_modules) {
+        /* Both parts may not fit: the note is then cut, as the window trims it anyway. */
+        if (snprintf(text, sizeof(text), "%s%s%d attack module%s run%s native C from mod %s%s", mips,
+                     mips[0] ? "; " : "", mod->native_modules, mod->native_modules == 1 ? "" : "s",
+                     mod->native_modules == 1 ? "s" : "", mod->native_owner,
+                     mod->native_more ? " and others" : "") >= (int)sizeof(text))
+            text[sizeof(text) - 1] = '\0';
+    } else
+        snprintf(text, sizeof(text), "%s", mips);
+    Menu_TextTrim(text);
+    if (mips[0] && strcmp(mips, mod->mips_said))
+        fprintf(stderr, "memories-pc: mod %s: warning: %s\n", mod->id, mips);
+    copy_text(mod->mips_said, sizeof(mod->mips_said), mips);
+    copy_text(mod->modules, sizeof(mod->modules), text);
+}
+
+/* A "models" entry's file (its model data `geometry` sectors for a bigger
+ * model, 0 for a record), read again from where add_model found it: its
+ * module stages only. A file gone since is not checked. */
+static void check_model_modules(Mod *mod, const ModModel *model)
+{
+    size_t at = (size_t)((model->geometry ? model->geometry : MODEL_STAGE0_SECTORS) + MODEL_MODULES_SECTOR -
+                         MODEL_STAGE0_SECTORS) * SECTOR,
            bytes = (size_t)MODEL_MODULES_SECTORS * SECTOR;
     unsigned char *stages;
     char detail[MIPS_DETAIL], where[NAME_MAX_ + 8];
-    int count;
-    if (!modules_mips || !(stages = calloc(1, bytes))) return;
-    if (at < size) memcpy(stages, file + at, size - at < bytes ? size - at : bytes); /* a shorter file reads as zeros */
-    count = modules_mips(stages, detail, sizeof(detail));
+    const char *owner = NULL;
+    int count, native = 0;
+    FILE *file;
+    if (!modules_mips || model->stale || !(file = fopen(model->path, "rb"))) return;
+    if (!(stages = calloc(1, bytes))) {
+        fclose(file);
+        return;
+    }
+    if (fseek(file, (long)at, SEEK_SET) == 0) {
+        size_t got = fread(stages, 1, bytes, file);
+        (void)got; /* a shorter file reads as zeros */
+    }
+    fclose(file);
+    count = modules_mips(stages, detail, sizeof(detail), &native, &owner);
     free(stages);
+    if (!count && !native) return;
+    say("%s: model %s: %s", mod->id, model->name, detail);
+    native_found(mod, owner, native);
     if (!count) return;
-    say("%s: model %s: %s", mod->id, name, detail);
-    snprintf(where, sizeof(where), "model %s", name);
+    snprintf(where, sizeof(where), "model %s", model->name);
     mips_found(mod, where, count);
 }
 
@@ -3089,14 +3191,18 @@ static void check_disc_models(Mod *mod, int index)
     }
     length = (size_t)snprintf(where, sizeof(where), "MODEL.MRG card");
     for (int r = 0; r < records; r++) {
-        int found;
+        int found, native = 0;
+        const char *owner = NULL;
         if (!touched[r]) continue;
         if (!stages && !(stages = malloc((size_t)MODEL_MODULES_SECTORS * SECTOR))) break;
         if (read_sectors(lba + r * MODEL_RECORD_SECTORS + MODEL_MODULES_SECTOR, MODEL_MODULES_SECTORS, stages) !=
             MODEL_MODULES_SECTORS)
             continue;
-        if (!(found = modules_mips(stages, detail, sizeof(detail)))) continue;
+        found = modules_mips(stages, detail, sizeof(detail), &native, &owner);
+        if (!found && !native) continue;
         say("%s: MODEL.MRG record %d (card %d): %s", mod->id, r, record_card(r), detail);
+        native_found(mod, owner, native);
+        if (!found) continue;
         count += found;
         if (listed < 4 && length < sizeof(where))
             length += (size_t)snprintf(where + length, sizeof(where) - length, "%s %d", listed ? "," : "", record_card(r));
@@ -3107,6 +3213,57 @@ static void check_disc_models(Mod *mod, int index)
     free(stages);
     free(touched);
     if (count) mips_found(mod, where, count);
+}
+
+/* The module notes of every mod (Mods_ModuleNote), worked out again when
+ * what is applied or the mods' rows changed since the last time: a mod's
+ * models are told with the C any applied mod gives for them, whichever
+ * started first (a model pack and the code mod with its C). Runs once the
+ * mods have started (Mods_Load), and after a live change (activate) or a set
+ * of them (Mods_Apply, Mods_HoldModuleNotes) that could change a note: one
+ * with mods' rows registered, or of a mod with models, data or a note. */
+static int notes_held;          /* Mods_Load or Mods_Apply runs: once, at its end */
+static int notes_done, notes_dirty;
+static unsigned notes_rows;
+
+static void refresh_module_notes(void)
+{
+    if (notes_held || (notes_done && !notes_dirty && notes_rows == ModelRows_Generation())) return;
+    notes_done = 1;
+    notes_dirty = 0;
+    notes_rows = ModelRows_Generation();
+    for (int i = 0; i < mod_count; i++) {
+        Mod *mod = &mods[i];
+        mod->mips_modules = mod->mips_more = mod->native_modules = mod->native_more = 0;
+        mod->mips_where[0] = mod->native_owner[0] = '\0';
+        if (mod->active && modules_mips) {
+            for (int m = 0; m < model_count; m++)
+                if (models[m].mod == i) check_model_modules(mod, &models[m]);
+            check_disc_models(mod, i);
+        }
+        module_note(mod);
+    }
+}
+
+void Mods_HoldModuleNotes(int hold)
+{
+    if (hold) {
+        notes_held++;
+    } else if (notes_held > 0 && !--notes_held) {
+        refresh_module_notes();
+    }
+}
+
+const char *Mods_ModuleNote(int index)
+{
+    refresh_module_notes();
+    return index >= 0 && index < mod_count ? mods[index].modules : "";
+}
+
+int Mods_ModuleMips(int index)
+{
+    refresh_module_notes();
+    return index >= 0 && index < mod_count ? mods[index].mips_modules : 0;
 }
 
 static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
@@ -3209,7 +3366,6 @@ static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
     models[model_count].stale = 0;
     models[model_count].geometry = geometry;
     models[model_count].pages = (int)pages;
-    check_model_modules(mod, name, image, (size_t)info.st_size, geometry);
     unmap_file(image, (size_t)info.st_size);
     if (!(models[model_count].name = saved_text(name)) || !(models[model_count].path = saved_text(path))) {
         free(models[model_count].name);
@@ -3228,8 +3384,6 @@ static int apply_overrides(Mod *mod, int index)
 {
     int i, count = Json_Count(mod->data);
     const char *stream = NULL;
-    mod->mips_modules = mod->mips_more = 0; /* check_model_modules, check_disc_models */
-    mod->mips_where[0] = '\0';
     for (i = 0; i < count; i++) {
         const JsonValue *entry = Json_At(mod->data, i);
         const char *file = Json_String(Json_Member(entry, "file"), NULL);
@@ -3313,8 +3467,8 @@ static int apply_overrides(Mod *mod, int index)
     for (i = 0; i < Json_Count(mod->models); i++)
         if (!add_model(mod, index, Json_At(mod->models, i), i)) goto failed;
     publish_overrides();
-    check_disc_models(mod, index);
-    mips_warning(mod);
+    /* Its models' control modules are checked once every mod has started
+     * (refresh_module_notes): a code mod may give C for them. */
     if (region_count || patch_count) {
         say("%s: %d replaced regions, %d patched runs, sectors %d to %d",
             mod->id, region_count, patch_count, override_low, override_high);
@@ -3427,10 +3581,37 @@ int Mods_PrintExports(void)
 
 /* --- loading --------------------------------------------------------- */
 
+/* A data name of a model control module's range (D_8013Axxx to D_8013Fxxx,
+ * D_8017Axxx to D_8017Fxxx): the record's own data where the disc loaded it,
+ * which a mod's C for the module reads as the port's own does (mod API 29).
+ * Its address, or 0. Never a func_ name: that is MIPS. */
+static uint32_t module_data_address(const char *name)
+{
+    uint32_t address = 0;
+    if (strncmp(name, "D_801", 5) || (name[5] != '3' && name[5] != '7') || strlen(name) != 10) return 0;
+    for (int i = 2; i < 10; i++) {
+        char c = name[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) return 0;
+        address = address << 4 | (uint32_t)(c <= '9' ? c - '0' : c - 'A' + 10);
+    }
+    if ((address >= 0x8013A000u && address < 0x80140000u) || (address >= 0x8017A000u && address < 0x80180000u))
+        return address;
+    return 0;
+}
+
 static void *resolve(const char *name, void *context)
 {
+    void *found;
     (void)context;
-    return Mods_Lookup(name);
+    found = Mods_Lookup(name);
+#ifndef MEMORIES_TRANSLATED
+    /* Guest memory is at its retail addresses in these games (fixed memory). */
+    if (!found && name) {
+        uint32_t address = module_data_address(name);
+        if (address) found = (void *)(uintptr_t)address;
+    }
+#endif
+    return found;
 }
 
 /* The mod's functions, for crash and hang reports: "3d-monsters:draw_frame". */
@@ -3553,6 +3734,7 @@ static int load_library(Mod *mod)
     if (!entry(&mod->host, &mod->hooks)) {
         memset(&mod->hooks, 0, sizeof(mod->hooks));
         Mods_ClearHooks((int)(mod - mods));
+        ModelRows_Clear((int)(mod - mods));
         note(mod, "refused to start");
         return 0;
     }
@@ -3562,6 +3744,7 @@ static int load_library(Mod *mod)
         else note(mod, "was built for mod API %u; this game has %u", mod->hooks.api, MEMORIES_MOD_API);
         memset(&mod->hooks, 0, sizeof(mod->hooks));
         Mods_ClearHooks((int)(mod - mods));
+        ModelRows_Clear((int)(mod - mods));
         return 0;
     }
     if (mod->hooks.name && *mod->hooks.name && !mod->name[0]) {
@@ -4407,8 +4590,17 @@ static void activate_once(int index, int on);
 /* Function hooks follow what is applied, however activation ended. */
 static void activate(int index, int on)
 {
+    const Mod *mod = &mods[index];
+    unsigned before = change_count;
     activate_once(index, on);
     Hooks_Relink();
+    /* The notes change only with the mods' rows, a model, data that may
+     * patch MODEL.MRG, or a note to take away. Held while Mods_Load and
+     * Mods_Apply run. */
+    if (change_count != before &&
+        (ModelRows_Count() || Json_Count(mod->models) || Json_Count(mod->data) || mod->modules[0]))
+        notes_dirty = 1;
+    refresh_module_notes();
 }
 
 static void activate_once(int index, int on)
@@ -4606,6 +4798,7 @@ void Mods_Load(void)
     char path[PATH_MAX_];
     int i, enabled[MODS_MAX], order[MODS_MAX], count, first = !scanned;
     char error[160];
+    Mods_HoldModuleNotes(1);   /* the module notes once every mod has started (refresh_module_notes) */
     if (!scanned) {
         const char *named = getenv("MEMORIES_MODS_DIR");
         scanned = 1;
@@ -4731,6 +4924,7 @@ void Mods_Load(void)
         loaded_count = 0;
         for (i = 0; i < count; i++) if (mods[order[i]].active) loaded[loaded_count++] = order[i];
     }
+    Mods_HoldModuleNotes(0);
 }
 
 int Mods_LoadedCount(void) { return loaded_count; }
@@ -4743,7 +4937,10 @@ void Mods_Shutdown(void)
      * frame and reset hooks stop: the process is on its way out, and a hook
      * may free what the callbacks use. The caller stops the clock first. */
     shut_down = 1;
-    for (i = 0; i < mod_count; i++) Mods_ClearHooks(i);
+    for (i = 0; i < mod_count; i++) {
+        Mods_ClearHooks(i);
+        ModelRows_Clear(i);
+    }
     for (i = 0; i < mod_count; i++) {
         if (mods[i].initialized && mods[i].hooks.shutdown) mods[i].hooks.shutdown();
     }

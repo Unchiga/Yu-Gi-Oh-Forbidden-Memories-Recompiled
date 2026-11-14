@@ -45,6 +45,12 @@ does not know (with the key it most likely meant), `enabled`/`restart` that are
 not booleans, another folder with the same id, a replacement larger than the
 file it replaces, and texture pack entries that were left out, counted, with
 the first file named.
+Under the status, an applied mod's module note says how many of its models'
+control modules are MIPS code (a warning: [Attack code: C, not
+MIPS](modding.md#attack-code-c-not-mips)) and how many a code mod's own C runs
+(mod API 29, not a warning). The note is worked out once every mod has started
+and again after each change to what is applied. A MIPS note counts as a
+warning for the "with warnings" filter and the row's Warning label.
 **Open mods folder** shows the folder new mods go in (`MEMORIES_MODS_DIR`, else
 the user `mods` folder, created if missing) in the system file manager. A mods
 folder the player chose (`mods-folder.txt`, [Mods](modding.md#your-own-mods-folder))

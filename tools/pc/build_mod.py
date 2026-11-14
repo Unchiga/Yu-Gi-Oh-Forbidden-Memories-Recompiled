@@ -1202,12 +1202,40 @@ def undefined_names(output):
     return undefined
 
 
+# A data name of a model control module's range (D_8013Axxx to D_8013Fxxx,
+# D_8017Axxx to D_8017Fxxx): a record's own data where the game loaded it,
+# which a mod's C for the module (mod API 29) reads as the port's does. A
+# fixed-memory game binds any such name to its address (mods.c, resolve), so
+# it needs no export; func_ names in the ranges are MIPS and never bound.
+MODULE_DATA = re.compile(r"^D_801[37][A-F][0-9A-F]{3}$")
+
+
+def module_data(name):
+    """Whether the game binds `name` by its address (MODULE_DATA, in range)."""
+    if not MODULE_DATA.match(name):
+        return False
+    address = int(name[2:], 16)
+    return 0x8013A000 <= address < 0x80140000 or 0x8017A000 <= address < 0x80180000
+
+
 def check(output, games, undefined=None, target="i386"):
     """What the object leaves undefined must be there on every game build
     of its target. Returns whether any build (or list) was there to check
     against."""
     if undefined is None:
         undefined = undefined_names(output)
+    bound = {name for name in undefined if module_data(name)}
+    if bound and target == TRANSLATED:
+        # Not bound there yet: the translated game reaches guest data through
+        # pins the guest pass emits, which it does not make for these.
+        exports = set()
+        for build in games:
+            exports |= provided(build, target) or set()
+        missing = sorted(bound - exports)
+        if missing:
+            sys.exit(f"build_mod: {output}: the {TRANSLATED} game does not bind a model module's data by its "
+                     f"address yet: {' '.join(missing)}")
+    undefined = set(undefined) - bound
     for bad, why in (("_GLOBAL_OFFSET_TABLE_", "it is position-independent"),
                      ("__stack_chk_fail", "it uses the stack protector"),
                      ("__stack_chk_fail_local", "it uses the stack protector")):

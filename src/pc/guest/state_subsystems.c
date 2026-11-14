@@ -9,6 +9,7 @@
 #include "pc/platform/paths.h"
 #include "pc/mods/mods.h"
 #include "pc/mods/events.h"
+#include "pc/mods/model_rows.h"
 #include "image.h"
 #include "retail_image.h"
 #include "mips.h"
@@ -202,6 +203,9 @@ void Memories_StateSubsystems(MemoriesState *state)
 #endif
     unsigned signature = Mods_Signature();
     MemoriesStateField mod_set = {&signature, sizeof(signature)};
+    /* An attack a model module's C set up is not the loaded state's
+     * (model_modules.c): both backends' loads come through here. */
+    if (Memories_StateLoading(state)) ModelRows_StateLoaded();
     MemoriesStateField gpu[2], gte[1];
     LanguageChunk language;
     MemoriesStateField language_field = {&language, sizeof(language)};

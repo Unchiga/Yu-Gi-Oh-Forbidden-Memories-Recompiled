@@ -322,7 +322,7 @@ static int visible(int mod)
         return 0;
     if (filter == 2 && wanted[mod])
         return 0;
-    if (filter == 3 && !Mods_Status(mod)[0])
+    if (filter == 3 && !Mods_Status(mod)[0] && !Mods_ModuleMips(mod))
         return 0;
     return contains(Mods_Name(mod), query) || contains(Mods_Id(mod), query) ||
            contains(Mods_Metadata(mod, "author"), query);
@@ -706,6 +706,9 @@ static int body(MenuCanvas *c, int w, int y)
                  DIM);
         if (Mods_Status(selected)[0])
             y = wrap(c, 0, y + 16 * unit, w, Mods_Status(selected), Mods_Failed(selected) ? RED : WARN);
+        /* Its models' control modules: MIPS code (a warning) or a code mod's C. */
+        if (Mods_ModuleNote(selected)[0])
+            y = wrap(c, 0, y + 16 * unit, w, Mods_ModuleNote(selected), Mods_ModuleMips(selected) ? WARN : DIM);
     } else if (tab == 1) {
         if (!counts[selected])
             return wrap(c, 0, y, w, "This mod does not declare configurable settings.", DIM);
@@ -828,7 +831,7 @@ static void draw_list(MenuCanvas *c, const Layout *l)
         text(c, row.x + 44 * unit, row.y + lift + 18 * unit, w, Mods_Name(mod), TEXT);
         snprintf(line, sizeof(line), "%s%s%s",
                  Mods_Failed(mod)      ? "Error"
-                 : Mods_Status(mod)[0] ? "Warning"
+                 : Mods_Status(mod)[0] || Mods_ModuleMips(mod) ? "Warning"
                  : Mods_Active(mod)    ? "Active"
                                        : "Inactive",
                  wanted[mod] != Mods_Active(mod) ? " / pending" : "", Mods_RequiresRestart(mod) ? " / restart" : "");

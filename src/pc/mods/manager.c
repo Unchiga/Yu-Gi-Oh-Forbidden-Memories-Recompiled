@@ -174,7 +174,20 @@ static int newest_first(int *out)
     }
     return count;
 }
+static int apply_set(const int *enabled, char *error, size_t size);
+
+/* The models' module notes are worked out once, after the whole set
+ * (Mods_HoldModuleNotes), not after each mod. */
 int Mods_Apply(const int *enabled, char *error, size_t size)
+{
+    int applied;
+    Mods_HoldModuleNotes(1);
+    applied = apply_set(enabled, error, size);
+    Mods_HoldModuleNotes(0);
+    return applied;
+}
+
+static int apply_set(const int *enabled, char *error, size_t size)
 {
     int old[MODS_MAX], stored[MODS_MAX], order[MODS_MAX], newest[MODS_MAX], i, n;
     if (!Mods_Validate(enabled, error, size))
