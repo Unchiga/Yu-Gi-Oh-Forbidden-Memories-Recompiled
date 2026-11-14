@@ -26,6 +26,8 @@ s32 gDuel_adwCardStats[1024];
 static DuelCardDisplayObject objects[10];
 static int spawned, released, original_calls, hidden_lookups, observed_visibility, observed_mode;
 static int deck_mode, hidden_mode, custom_window = 20, retail_hand = 1;
+/* -1: the host has no stored value, so the mod's own default applies. */
+static int blind_defense = -1;
 static int terrain_override, terrain_points, star_points;
 static int ai_card, ai_value;
 static int edge_calls;
@@ -99,6 +101,7 @@ static int fake_setting(const MemoriesModHost *h, const char *key, int fallback)
     if (!strcmp(key,"hidden_cards")) return hidden_mode;
     if (!strcmp(key,"deck_window")) return custom_window;
     if (!strcmp(key,"hand_planning")) return retail_hand;
+    if (!strcmp(key,"blind_defense") && blind_defense >= 0) return blind_defense;
     return fallback;
 }
 static int fake_hook(const MemoriesModHost *h, void *fn, void *replacement, void **previous)
@@ -163,6 +166,12 @@ int main(void)
     gDuel_aActiveCards[17].card_id = 500;
     initialize(D_801A8000); assert(!gDuel_aActiveCards[17].card_id);
     D_800E9FF0[1].hand[4] = -1; assert(window() == 4);
+
+    /* "Attack face-down defenders" is read, on unless set off. */
+    o = options(); assert(o.blind_defense == 1);
+    blind_defense = 0; o = options(); assert(o.blind_defense == 0);
+    blind_defense = 1; o = options(); assert(o.blind_defense == 1);
+    blind_defense = -1;
 
     reset(); hidden_mode = 1;
     gDuel_aActiveCards[56] = (AiActiveCard){999,9999,9999,HM_DOWN,0,8,9,0};

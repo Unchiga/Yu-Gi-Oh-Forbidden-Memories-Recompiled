@@ -29,6 +29,7 @@ typedef struct {
 typedef struct {
     int hand, fusion, guardian, attacks, defense, spells, effective;
     int materials, budget, blind_risk, material_cost, trades;
+    int blind_defense; /* weigh a face-down defender by what a failed attack costs */
 } HmOptions;
 typedef struct {
     HmCard (*card)(int id);

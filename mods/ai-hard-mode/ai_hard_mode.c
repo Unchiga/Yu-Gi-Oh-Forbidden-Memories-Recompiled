@@ -64,6 +64,7 @@ static HmOptions options(void)
     o.blind_risk = setting("blind_risk", 50, 0, 100);
     o.material_cost = setting("material_cost", 150, 0, 1000);
     o.trades = setting("equal_trades", 1, 0, 1);
+    o.blind_defense = setting("blind_defense", 1, 0, 1);
     return o;
 }
 static int actual_hand(int side)

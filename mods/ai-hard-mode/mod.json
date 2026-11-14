@@ -135,6 +135,13 @@
       "description": "Willingness to attack unknown monsters. Zero avoids blind attacks."
     },
     {
+      "key": "blind_defense",
+      "label": "Attack face-down defenders",
+      "type": "bool",
+      "default": 1,
+      "description": "Weaker monsters may attack a face-down monster in defense, where a failed attack costs only the difference. Off treats it like a face-down monster in attack."
+    },
+    {
       "key": "material_cost",
       "label": "Material preservation",
       "type": "int",

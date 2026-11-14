@@ -29,7 +29,7 @@ static int custom_matchup(int a, int d) { return a == 11 && d == 3 ? 1000 : a ==
 static const HmRules rules = {card, fusion, equip, terrain, ritual};
 static HmOptions opts(void)
 {
-    HmOptions o = {1,1,1,1,1,1,1,4,6000,50,150,1};
+    HmOptions o = {1,1,1,1,1,1,1,4,6000,50,150,1,1};
     return o;
 }
 static HmBoard empty(void)
@@ -178,6 +178,61 @@ static void tactical_cases(void)
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
     o.blind_risk = 100;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 56 && d.score < HM_WIN);
+    b.enemy[0].flags |= HM_DEFENSE; o.blind_risk = 0;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
+
+    /* Face-down monsters, by their position alone. In attack position an
+       1800 attacker stays below the 2000 the default risk asks for; in
+       defense a failed attack costs only the difference, so it goes, unless
+       the option is off; a 1000 attacker would mostly bounce, and does not. */
+    b = empty(); o = opts(); b.own[0] = monster(3,1800,1000); b.own[0].zone = 1;
+    b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN,0,0};
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 0);
+    b.enemy[0].flags |= HM_DEFENSE;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 56);
+    o.blind_defense = 0;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
+    o = opts(); b.own[0] = monster(3,1000,1000);
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
+    /* A cautious risk setting still raises the bar: 1800 at 10. */
+    o.blind_risk = 10; b.own[0] = monster(3,1700,1000);
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
+    b.own[0].attack = 1800;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 56);
+    o = opts();
+    /* The defender's price, term by term (default risk): a 1500 goes, a
+       1300 does not (the 500 LP a failed attack may cost decides); at risk
+       30 the 1500 does not either (the removal weighs less); and an 1800
+       that a visible 2600 would punish left in attack stays back. */
+    b.own[0] = monster(3,1500,1000);
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 56);
+    b.own[0].attack = 1300;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
+    o.blind_risk = 30; b.own[0].attack = 1500;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 0);
+    o = opts(); b.own[0] = monster(3,1800,2700); b.enemy[1] = monster(20,2600,500);
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] != 56);
+    /* Whatever a hidden defender hides, the price is the same. */
+    {
+        HmBoard leaked;
+        HmDecision seen;
+        b = empty(); b.own[0] = monster(3,1500,1000); b.own[0].zone = 1;
+        b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN | HM_DEFENSE,0,0};
+        d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 56);
+        for (i = 0; i < 2; i++) {
+            leaked = b; leaked.enemy[0].attack = 3000; leaked.enemy[0].defense = i ? 4000 : 100;
+            leaked.enemy[0].star = 3; leaked.enemy[0].type = 4;
+            seen = Hm_PlanField(&leaked,&o,&rules,0);
+            assert(seen.result == d.result && !memcmp(seen.selection, d.selection, 12));
+        }
+    }
+    /* A 2000 attacker no longer hits a face-down attacker blind when a
+       visible 2600 would punish it left in attack position. */
+    b = empty(); b.own[0] = monster(3,2000,2500); b.own[0].zone = 1;
+    b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN,0,0};
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 56);
+    b.enemy[1] = monster(20,2600,500);
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] != 56);
 }
 
 static void spell_cases(void)
@@ -367,6 +422,31 @@ static void bounded_fixtures(void)
             }
         }
         assert(!memcmp(&b,&saved,sizeof(b)));
+        /* Only a hidden card's position counts: whatever it hides (here
+           stats, star, type and a trap's identity left in the record)
+           changes no decision. */
+        {
+            HmBoard hidden = b, leaked; HmDecision x, y;
+            hidden.back[0] = rnd() % 2 ? magic(343 + rnd() % 5, 20) : magic(338 + rnd() % 5, 20);
+            hidden.lp = 1000;
+            for (i = 0; i < 5; i++) {
+                if (rnd() % 2) hidden.enemy[i] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN | (rnd() % 2 ? HM_DEFENSE : 0),0,0};
+                if (rnd() % 2) hidden.enemy_back[i] = (HmCard){-1,0,21,0,0,0,0,HM_DOWN,0,0};
+            }
+            leaked = hidden;
+            for (i = 0; i < 5; i++) {
+                if (leaked.enemy[i].id < 0) {
+                    leaked.enemy[i].attack = rnd() % 4000; leaked.enemy[i].defense = rnd() % 4000;
+                    leaked.enemy[i].star = 1 + rnd() % 10; leaked.enemy[i].type = rnd() % 20;
+                    leaked.enemy[i].effect = rnd() % 700; leaked.enemy[i].worth = rnd() % 900;
+                }
+                if (leaked.enemy_back[i].id < 0) leaked.enemy_back[i].effect = 687 + rnd() % 2;
+            }
+            x = Hm_PlanField(&hidden,&o,&rules,0); y = Hm_PlanField(&leaked,&o,&rules,0);
+            assert(x.result == y.result && !memcmp(x.selection, y.selection, 12));
+            x = Hm_PlanHand(&hidden,&o,&rules); y = Hm_PlanHand(&leaked,&o,&rules);
+            assert(x.result == y.result && !memcmp(x.selection, y.selection, 12));
+        }
     }
 }
 
