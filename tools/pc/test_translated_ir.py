@@ -160,6 +160,9 @@ define i8 @read_pinned() {{
     assert pins[table] == 0x8013FFF0 and pins[pinned] == 0x8013C6D4
     assert own not in pins and pins["retail_global"] == 0x80010000
     assert module_pins("define void @f() {\n  ret void\n}\n", game) is game
+    # A name another of the mod's units defines is the mod's there too.
+    pins_elsewhere = module_pins(unit, game, {table})
+    assert table not in pins_elsewhere and pins_elsewhere[pinned] == 0x8013C6D4
     translated = process(
         "translate",
         unit,
