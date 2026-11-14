@@ -590,6 +590,25 @@ class OracleBackends(unittest.TestCase):
                 (Path("a-pack"), {"id": "a", "priority": 5}),
                 (Path("C-pack"), {"id": "c"})]
         self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(mods)], ["c", "z", "b", "a"])
+        # The rank is Settings_GetNamed("mod.<id>.order", (int)priority): the
+        # priority as Json_Number reads it (a whole number, a bool or a string
+        # holding one), else 0, and never an error. A fraction is no priority
+        # the game accepts (its parser refuses the manifest): the oracle cuts
+        # it, and the last two cases are the oracle's own.
+        self.assertEqual([model_oracle.mod_rank({"priority": value}) for value in
+                          (2.0, 5, -3, "0x10", " -3 ", "7", True, "high", "1.5", "", None, [1], {}, 2.9, -2.9)],
+                         [2, 5, -3, 16, -3, 7, 1, 0, 0, 0, 0, 0, 0, 2, -2])
+        ranked = [(Path("a-pack"), {"id": "a", "priority": "high"}), (Path("b-pack"), {"id": "b", "priority": -1}),
+                  (Path("c-pack"), {"id": "c", "priority": 1})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(ranked)], ["b", "a", "c"])
+        # A requires/after entry names a mod by its exact string (or an object's
+        # "id"), as require_id does: "z 1.0" is no mod, and a mod naming
+        # itself waits on itself (the game refuses that cycle).
+        names = [(Path("a-pack"), {"id": "a", "requires": ["z 1.0"]}), (Path("z-pack"), {"id": "z", "priority": 1}),
+                 (Path("m-pack"), {"id": "m", "after": [{"id": "z"}], "priority": -9})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(names)], ["a", "z", "m"])
+        own = [(Path("a-pack"), {"id": "a", "requires": ["a"]}), (Path("b-pack"), {"id": "b", "priority": 3})]
+        self.assertEqual([mod[1]["id"] for mod in model_oracle.load_order(own)], ["b", "a"])
         disc = model_oracle.Disc.__new__(model_oracle.Disc)
         disc.model_order = ["one", "two", "one"]
         self.assertEqual((disc.model_id("two"), disc.model_id("one")), (0x8002, 0x8003))

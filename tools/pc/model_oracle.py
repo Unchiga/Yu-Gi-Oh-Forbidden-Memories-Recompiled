@@ -548,11 +548,40 @@ def backend_errors(side: dict, expected: dict[str, bool | str], native_allowed: 
     return errors
 
 
+WHOLE_NUMBER = re.compile(r"^\s*[+-]?(?:0[xX][0-9a-fA-F]+|[0-9]+)\s*$", re.ASCII)
+
+
+def json_number(value, fallback: int = 0) -> int:
+    """Json_Number (src/pc/mods/json.c): a number, a bool, or a string that
+    holds a whole one ("0x" hexadecimal, else decimal); anything else is the
+    fallback. The game's parser refuses a number that is not whole and a
+    manifest that holds one never loads; a fraction is cut here (the oracle
+    is lenient), where the game would not have the mod at all."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value == value and abs(value) != float("inf") else fallback
+    if isinstance(value, str) and WHOLE_NUMBER.match(value):
+        return int(value.strip(), 16 if re.match(r"^[+-]?0[xX]", value.strip()) else 10)
+    return fallback
+
+
+def mod_rank(manifest: dict) -> int:
+    """The rank the game orders a mod by: Settings_GetNamed("mod.<id>.order",
+    (int)priority). Here the default only: a saved "mod.<id>.order" is not
+    consulted. The cast to int wraps."""
+    return (json_number(manifest.get("priority")) + 2 ** 31) % 2 ** 32 - 2 ** 31
+
+
 def load_order(mods: list[tuple[Path, dict]]) -> list[tuple[Path, dict]]:
     """The mods in the order the game loads them (src/pc/mods/mods.c scan,
     manager.c order_ranked): their folders by name, byte by byte, then
-    repeatedly the first with the lowest "priority" (0 by default) whose
-    "requires" and "after" name no mod of these still to place."""
+    repeatedly the first with the lowest rank (mod_rank) that no mod of these
+    still to place blocks. A "requires" or "after" entry blocks by its exact
+    string (an object's "id" when it is not one), as require_id does, and a
+    mod that names itself is blocked for good: a cycle."""
     pending = sorted(mods, key=lambda mod: mod[0].name.encode("utf-8"))
     placed: list[tuple[Path, dict]] = []
     while pending:
@@ -560,11 +589,18 @@ def load_order(mods: list[tuple[Path, dict]]) -> list[tuple[Path, dict]]:
         best = None
         for mod in pending:
             manifest = mod[1]
-            names = [str(item if isinstance(item, str) else item.get("id", "")) if isinstance(item, (str, dict))
-                     else "" for key in ("requires", "after") for item in (manifest.get(key) or [])]
-            if any(name.split()[0] in ids and name.split()[0] != str(manifest.get("id")) for name in names if name):
+            names = []
+            for key in ("requires", "after"):
+                entries = manifest.get(key)
+                for item in entries if isinstance(entries, list) else ():
+                    if isinstance(item, str):
+                        names.append(item)
+                    else:
+                        name = item.get("id") if isinstance(item, dict) else None
+                        names.append(name if isinstance(name, str) else "")
+            if any(name in ids for name in names):
                 continue
-            if best is None or float(manifest.get("priority", 0) or 0) < float(best[1].get("priority", 0) or 0):
+            if best is None or mod_rank(manifest) < mod_rank(best[1]):
                 best = mod
         if best is None:   # a cycle: the game refuses it; keep the name order
             best = pending[0]
