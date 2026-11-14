@@ -72,28 +72,59 @@ static int attack_edge(const HmBoard *b, HmCard c, int e)
     return c.zone >= 1 && c.zone <= 5 ? b->edge[c.zone - 1][e][(b->enemy[e].flags & HM_DEFENSE) != 0] : 0;
 }
 
-int Hm_ChooseStar(const HmBoard *b, HmCard c, int pinned)
+/* The retail field script's twenty walls, sent to defense before any attack. */
+static int wall(int id)
 {
-    int choice, best = -0x3fffffff, answer = 0, i;
+    static const int ids[] = {72, 362, 366, 2, 40, 83, 88, 121, 156, 170,
+                              255, 274, 277, 369, 416, 418, 449, 468, 497, 518, 0};
+    int i;
+    for (i = 0; ids[i]; i++) if (ids[i] == id) return 1;
+    return 0;
+}
+/* A wall by its stats: at least twice as much DEF as ATK (or one of those
+ * twenty). Left in attack after a fight it wins only by a star or an edge,
+ * or after a direct attack, it is the opponent's free hit, so with
+ * situational defense it attacks only in a sequence that wins the duel, or
+ * while Swords holds the opponent through its next turn. */
+static int holds(HmCard c)
+{
+    return c.defense > c.attack && (wall(c.effect) || c.defense >= 2 * c.attack);
+}
+static int wall_held(const HmBoard *b, const HmOptions *o, HmCard c)
+{
+    return o->defense && !b->enemy_pinned && holds(c);
+}
+
+/* Each star is scored by the plan it leads to, in the field planner's
+ * terms: hold (the safer stance's loss), or win a fight (what it removes
+ * and deals) and stay in attack through the opponent's turn. A star that
+ * only helps an attack the monster will not make does not decide: a wall
+ * fights only to win the duel. */
+int Hm_ChooseStar(const HmBoard *b, const HmOptions *o, HmCard c, int pinned)
+{
+    int choice, best = -0x3fffffff, answer = 0, i, wall_only = wall_held(b, o, c);
     for (choice = 0; choice < 2; choice++) {
         HmCard current = c;
-        int score = 0;
+        int up, down, score;
         /* A card with one star (no second, or the same twice) has no choice. */
         if (choice && (!c.star2 || c.star2 == c.star)) break;
         current.star = choice ? c.star2 : c.star;
-        score -= min(safety(b, current, 0), safety(b, current, 1));
+        up = safety(b, current, 0); down = safety(b, current, 1);
+        score = -min(up, down);
         if (!pinned) for (i = 0; i < 5; i++) if (b->enemy[i].id > 0) {
             HmCard e = b->enemy[i];
+            int defends = (e.flags & HM_DEFENSE) != 0;
             int diff = c.attack + Hm_StarBonus(current.star, e.star) -
-                ((e.flags & HM_DEFENSE) ? e.defense : e.attack) + attack_edge(b, c, i);
-            if (diff > 0) score = max(score, 2000 + diff + value(e) / 2);
+                (defends ? e.defense : e.attack) + attack_edge(b, c, i);
+            if (diff > 0 && (!wall_only || (!defends && diff >= b->enemy_lp)))
+                score = max(score, (defends ? 0 : diff * 4) + value(e) + 400 - up);
         }
         if (score > best) { best = score; answer = choice; }
     }
     return answer;
 }
 
-typedef struct { int a, t, damage, removed, lost, gain, uncertain; } Attack;
+typedef struct { int a, t, damage, removed, lost, gain, uncertain, walled; } Attack;
 typedef struct {
     const HmBoard *b;
     const HmOptions *o;
@@ -134,17 +165,20 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
     for (j = 0; j < 5; j++) if (s->b->enemy[j].id && !(dead & (1u << j))) targets++;
     for (i = 0; i < 5; i++) {
         HmCard a = s->b->own[i];
+        int walled;
         if (!monster(a) || (a.flags & HM_USED) || (used & (1u << i))) continue;
+        walled = wall_held(s->b, s->o, a);
         if (!targets) {
             /* A 0 ATK attack changes nothing and would tie any sequence. */
             if (a.attack > 0)
-                out[n++] = (Attack){i, -1, a.attack, 0, 0, a.attack * 4 - exposed(s->b, a, dead), 0};
+                out[n++] = (Attack){i, -1, a.attack, 0, 0, a.attack * 4 - exposed(s->b, a, dead), 0, walled};
             continue;
         }
         for (j = 0; j < 5; j++) {
             HmCard e = s->b->enemy[j];
-            Attack move = {i, j, 0, 0, 0, 0, 0};
+            Attack move = {i, j, 0, 0, 0, 0, 0, 0};
             int diff;
+            move.walled = walled;
             if (!e.id || (dead & (1u << j))) continue;
             if (e.id < 0) {
                 /* A declared risk policy, never a peek at the hidden card. */
@@ -178,7 +212,7 @@ static int attack_options(AttackSearch *s, unsigned used, unsigned dead, Attack 
 }
 
 static void attack_search(AttackSearch *s, unsigned used, unsigned dead,
-                          int damage, int score, int depth, Attack first)
+                          int damage, int score, int depth, Attack first, int walled)
 {
     Attack moves[25];
     int n, i;
@@ -189,12 +223,14 @@ static void attack_search(AttackSearch *s, unsigned used, unsigned dead,
     if (depth) n = min(n, 3);
     for (i = 0; i < n; i++) {
         Attack m = moves[i], root = depth ? first : m;
-        int next_damage = damage + m.damage;
+        int next_damage = damage + m.damage, wins = next_damage >= s->b->enemy_lp;
         int next_score = score + m.gain;
-        int ranked = next_score + (next_damage >= s->b->enemy_lp ? HM_WIN : 0);
-        if (ranked > s->best.score || (ranked == s->best.score && ranked > 0 &&
+        int ranked = next_score + (wins ? HM_WIN : 0);
+        /* A wall's attack counts only in a sequence that wins the duel. */
+        if ((wins || !(walled || m.walled)) && (ranked > s->best.score ||
+            (ranked == s->best.score && ranked > 0 &&
             s->best.selection[9] && s->b->own[root.a].attack <
-            s->b->own[s->best.selection[9]-1].attack)) {
+            s->b->own[s->best.selection[9]-1].attack))) {
             s->best.score = ranked;
             s->best.result = 2;
             s->best.selection[9] = (unsigned char)(root.a + 1);
@@ -202,7 +238,7 @@ static void attack_search(AttackSearch *s, unsigned used, unsigned dead,
         }
         if (!m.uncertain && depth < 4 && next_damage < s->b->enemy_lp)
             attack_search(s, used | (1u << m.a), dead | (m.t < 0 ? 0 : 1u << m.t),
-                          next_damage, next_score, depth + 1, root);
+                          next_damage, next_score, depth + 1, root, walled || m.walled);
     }
 }
 
@@ -210,19 +246,11 @@ static HmDecision attacks(const HmBoard *b, const HmOptions *o)
 {
     AttackSearch s = {b, o, {{0}, 0, 0, 0}, 0};
     Attack first = {0};
-    if (!b->pinned) attack_search(&s, 0, 0, 0, 0, 0, first);
+    if (!b->pinned) attack_search(&s, 0, 0, 0, 0, 0, first, 0);
     s.best.nodes = s.nodes;
     return s.best;
 }
 
-static int wall(int id)
-{
-    static const int ids[] = {72, 362, 366, 2, 40, 83, 88, 121, 156, 170,
-                              255, 274, 277, 369, 416, 418, 449, 468, 497, 518, 0};
-    int i;
-    for (i = 0; ids[i]; i++) if (ids[i] == id) return 1;
-    return 0;
-}
 static int stays(int id)
 {
     return id == 380 || id == 374 || id == 67 || id == 713 || id == 217 ||
@@ -375,10 +403,6 @@ HmDecision Hm_PlanField(const HmBoard *b, const HmOptions *o, const HmRules *r,
         if ((slot >= 6 && !o->spells) || (!is_attack && slot <= 5 && !o->defense)) return *retail;
         if (is_attack && !o->attacks) { best = *retail; best.score = 1; }
     }
-    if (!o->defense && !retail) for (i = 0; i < 5; i++)
-        if (b->own[i].id && !(b->own[i].flags & HM_USED) && wall(b->own[i].effect)) {
-            best.result = 2; best.selection[9] = i + 1; best.selection[11] = 1; return best;
-        }
     if (o->attacks) best = attacks(b, o);
     lead = o->attacks ? best.score : 0;
     if (o->spells) for (i = 0; i < 5; i++) if (b->back[i].id && !(b->back[i].flags & HM_USED)) {
@@ -394,8 +418,21 @@ HmDecision Hm_PlanField(const HmBoard *b, const HmOptions *o, const HmRules *r,
             best = a;
         }
     }
+    /* Without situational defense the retail order holds: a back-row card
+       first, then its walls to defense before any attack (also when the
+       planner played no card where the script would have). */
+    if (!o->defense && !(best.result && best.selection[9] >= 6)) for (i = 0; i < 5; i++)
+        if (b->own[i].id && !(b->own[i].flags & HM_USED) && wall(b->own[i].effect)) {
+            a = (HmDecision){{0}, 2, 0, best.nodes};
+            a.selection[9] = i + 1; a.selection[11] = 1;
+            return a;
+        }
     if (best.result) return best;
-    if (retail && !o->defense) { best.result = 3; return best; }
+    /* With attack planning, no attack worth making leaves the retail
+       script's last rule: every unused monster to defense but the eight
+       that stay (below). Without it, the retail attacks that would come
+       first are unknown here, so the field phase ends. */
+    if (retail && !o->defense && !o->attacks) { best.result = 3; return best; }
     for (i = 0; i < 5; i++) if (b->own[i].id && !(b->own[i].flags & HM_USED)) {
         HmCard c = b->own[i];
         int down = safety(b, c, 1), up = safety(b, c, 0);
@@ -439,7 +476,7 @@ static void consider_monster(HandSearch *s, HmCard card, int count, int field)
     /* Field snapshots contain the selected star; output byte 7 is instead
      * an index into the card's original pair. Re-establish that pair. */
     card.star = identity.star; card.star2 = identity.star2;
-    choice = s->o->guardian ? Hm_ChooseStar(s->b, card, s->b->pinned) : 0;
+    choice = s->o->guardian ? Hm_ChooseStar(s->b, s->o, card, s->b->pinned) : 0;
     if (choice) card.star = card.star2;
     for (i = 0; i < 5; i++) if (s->b->enemy[i].id > 0 && !s->b->pinned) {
         HmCard e = s->b->enemy[i];
@@ -539,7 +576,7 @@ HmDecision Hm_PlanHand(const HmBoard *b, const HmOptions *o, const HmRules *r)
                     equipped.attack = clamp(equipped.attack + bonus);
                     equipped.defense = clamp(equipped.defense + bonus);
                     equipped.star = identity.star; equipped.star2 = identity.star2;
-                    s.best.selection[7] = Hm_ChooseStar(b, equipped, b->pinned);
+                    s.best.selection[7] = Hm_ChooseStar(b, o, equipped, b->pinned);
                 }
             }
         }

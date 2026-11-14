@@ -223,7 +223,7 @@ static void find_card(void) { search(2, 2, 3); }
 static void match_type(void) { search(3, 2, 4); }
 static void defense_stopper(void) { search(4, 0, 1); }
 
-static void retail_star(HmBoard *b)
+static void retail_star(HmBoard *b, const HmOptions *o)
 {
     int i, dest = D_800EAE88[6], id = 0;
     HmCard c;
@@ -239,7 +239,7 @@ static void retail_star(HmBoard *b)
         }
     }
     c = card_info(id);
-    if (c.id && c.type < 20) D_800EAE88[7] = Hm_ChooseStar(b, c, b->pinned);
+    if (c.id && c.type < 20) D_800EAE88[7] = Hm_ChooseStar(b, o, c, b->pinned);
 }
 
 static s32 run(void)
@@ -260,7 +260,7 @@ static s32 run(void)
     }
     b = board(&o);
     if (hand && !o.hand) {
-        if (o.guardian) retail_star(&b);
+        if (o.guardian) retail_star(&b, &o);
         memcpy(retail.selection, D_800EAE88, 12);
         d = retail;
     } else {
