@@ -48,7 +48,7 @@ typedef struct {
 extern int (*Hm_StarMatchup)(int attacker, int defender);
 int Hm_StarBonus(int a, int b);
 int Hm_KeepValue(HmCard card);
-int Hm_ChooseStar(const HmBoard *, HmCard, int pinned);
+int Hm_ChooseStar(const HmBoard *, const HmOptions *, HmCard, int pinned);
 HmDecision Hm_PlanHand(const HmBoard *, const HmOptions *, const HmRules *);
 HmDecision Hm_PlanField(const HmBoard *, const HmOptions *, const HmRules *,
                         const HmDecision *retail);

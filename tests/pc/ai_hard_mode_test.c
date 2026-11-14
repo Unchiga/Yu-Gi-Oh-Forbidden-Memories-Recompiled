@@ -50,7 +50,7 @@ static HmCard magic(int id, int type)
 
 static void tactical_cases(void)
 {
-    HmBoard b = empty(); HmOptions o = opts(); HmDecision d;
+    HmBoard b = empty(); HmOptions o = opts(); HmDecision d; int i;
     b.own[0] = monster(2, 800, 2000); b.enemy_lp = 500;
     d = Hm_PlanField(&b,&o,&rules,0);
     assert(d.selection[9] == 1 && d.selection[10] == 58 && d.score >= HM_WIN);
@@ -71,7 +71,7 @@ static void tactical_cases(void)
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[11] == 1);
 
     b = empty(); b.enemy[0] = monster(20,2100,1000); b.enemy[0].star = 3;
-    assert(Hm_ChooseStar(&b,monster(10,1800,1000),0) == 1);
+    assert(Hm_ChooseStar(&b,&o,monster(10,1800,1000),0) == 1);
     assert(Hm_StarBonus(2,3) == 500 && Hm_StarBonus(3,2) == -500);
     assert(Hm_StarBonus(6,1) == 500 && Hm_StarBonus(10,7) == 500);
     assert(Hm_StarBonus(6,7) == 0 && Hm_StarBonus(0,1) == 0);
@@ -84,7 +84,7 @@ static void tactical_cases(void)
     {
         HmCard c = monster(10,1800,1000);
         c.star = 2; c.star2 = 11;
-        assert(Hm_ChooseStar(&b,c,0) == 1);
+        assert(Hm_ChooseStar(&b,&o,c,0) == 1);
     }
     Hm_StarMatchup = 0;
 
@@ -104,7 +104,7 @@ static void tactical_cases(void)
        still attacks an empty field, and a wall still makes a lethal hit. */
     b.own[1] = (HmCard){0}; b.own[0] = monster(2,500,3500);
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 0 && d.selection[11] == 1);
-    b.own[0] = monster(2,1500,1800);
+    b.own[0] = monster(3,1500,1800);
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 58);
     b.own[0] = monster(2,400,2200); b.enemy_lp = 300;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 58 && d.score > HM_WIN / 2);
@@ -114,6 +114,64 @@ static void tactical_cases(void)
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 0 && d.selection[11] == 1);
     b.own[1] = monster(6,1000,2500); b.own[1].flags = HM_USED;
     d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 56);
+
+    /* Millennium Shield beats a DEF 100 defender only by its star (0 + 500):
+       it does not take it out so the others can attack directly, and stay
+       the opponent's free hit, unless that wins the duel or Swords holds the
+       opponent through its next turn. A 0/3000 off the original script's
+       list is a wall by its stats alike. */
+    for (i = 0; i < 2; i++) {
+        b = empty(); o = opts();
+        b.own[0] = monster(i ? 5 : 362,0,3000); b.own[0].star = 9;
+        b.own[1] = monster(3,2700,0); b.own[2] = monster(4,2300,1900);
+        b.enemy[0] = monster(20,900,100); b.enemy[0].star = 10; b.enemy[0].flags = HM_DEFENSE;
+        b.enemy[1] = monster(21,2600,2500); b.enemy[1].star = 8; b.enemy[1].flags = HM_DEFENSE;
+        d = Hm_PlanField(&b,&o,&rules,0); assert(d.result == 2 && d.selection[9] != 1);
+        b.own[1].flags = b.own[2].flags = HM_USED;
+        d = Hm_PlanField(&b,&o,&rules,0);
+        assert(d.selection[9] == 1 && !d.selection[10] && d.selection[11] == 1);
+        b.own[1].flags = b.own[2].flags = 0; b.enemy_pinned = 1;
+        d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && d.selection[10] == 56);
+        b.enemy_pinned = 0; b.enemy_lp = 2300;
+        d = Hm_PlanField(&b,&o,&rules,0);
+        assert(d.selection[9] == 1 && d.selection[10] == 56 && d.score >= HM_WIN);
+    }
+    /* No free direct damage either: an 1800/3600 that nothing seen or
+       unseen beats stays a wall, unless the hit wins the duel. */
+    b = empty(); b.own[0] = monster(5,1800,3600);
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[9] == 1 && !d.selection[10] && d.selection[11] == 1);
+    b.enemy_lp = 1800;
+    d = Hm_PlanField(&b,&o,&rules,0); assert(d.selection[10] == 58 && d.score >= HM_WIN);
+    /* Nor is a wall's star chosen for a fight it will not make: this 800/1700
+       takes Mercury, which holds against the Neptune 1500, not Mars, which
+       would only beat the Jupiter defender. */
+    b = empty();
+    b.enemy[0] = monster(20,1500,500); b.enemy[0].star = 6;
+    b.enemy[1] = monster(21,1700,1100); b.enemy[1].star = 2; b.enemy[1].flags = HM_DEFENSE;
+    {
+        HmCard c = monster(30,800,1700);
+        c.star = 1; c.star2 = 7;
+        assert(Hm_ChooseStar(&b,&o,c,0) == 1);
+        c.star = 7; b.own[0] = c; b.own[0].zone = 1;
+        d = Hm_PlanField(&b,&o,&rules,0);
+        assert(d.selection[9] == 1 && !d.selection[10] && d.selection[11] == 1);
+    }
+
+    /* A star is chosen for the plan it leads to: this 1800/2200 is not
+       worth sending at the 0/300 (the 2600 hits back), so it defends, and
+       its first star holds against the 2600 where the second, which only
+       helps that attack, does not. */
+    b = empty();
+    b.enemy[0] = monster(20,2600,1000); b.enemy[0].star = 2;
+    b.enemy[1] = monster(21,0,300); b.enemy[1].star = 5; b.enemy[1].flags = HM_DEFENSE;
+    {
+        HmCard c = monster(10,1800,2200);
+        c.star = 1; c.star2 = 4;
+        assert(Hm_ChooseStar(&b,&o,c,0) == 0);
+        b.own[0] = c; b.own[0].zone = 1;
+        d = Hm_PlanField(&b,&o,&rules,0);
+        assert(d.selection[9] == 1 && !d.selection[10] && d.selection[11] == 1);
+    }
 
     b = empty(); o = opts(); b.own[0] = monster(1,3000,2500);
     b.enemy[0] = (HmCard){-1,0,0,0,0,0,0,HM_DOWN,0,0}; o.blind_risk = 0;
@@ -241,11 +299,38 @@ static void retail_cases(void)
     b.own[0] = monster(2,800,2000); b.enemy[0] = monster(3,3000,3000);
     o.attacks = o.defense = o.spells = 0;
     d = Hm_PlanField(&b,&o,&rules,&retail); assert(d.result == 3);
-    o.attacks = 1;
+    /* The script ends the field phase only with no unused monster left. */
+    o.attacks = 1; b.own[0].flags = HM_USED;
     d = Hm_PlanField(&b,&o,&rules,&retail); assert(d.result == 3);
+    b.own[0].flags = 0;
     retail.result = 2; retail.selection[9] = 1; retail.selection[11] = 1;
     d = Hm_PlanField(&b,&o,&rules,&retail);
     assert(d.result == 2 && d.selection[9] == 1 && d.selection[11] == 1);
+
+    /* Without situational defense, a back-row card the planner turns down
+       still leaves the script's rules for the field: its walls (Millennium
+       Shield) to defense, then, no attack being worth it, the rest but the
+       eight that stay. */
+    b = empty(); o = opts(); o.defense = 0;
+    b.own[0] = monster(3,1800,1000); b.own[1] = monster(362,0,3000); b.own[1].zone = 2;
+    b.enemy[0] = monster(20,2500,1000); b.back[0] = magic(999,20);
+    retail = (HmDecision){{0},2,0,0}; retail.selection[9] = 6; retail.selection[10] = 6;
+    d = Hm_PlanField(&b,&o,&rules,&retail);
+    assert(d.result == 2 && d.selection[9] == 2 && !d.selection[10] && d.selection[11] == 1);
+    b.own[1].flags = HM_USED | HM_DEFENSE;
+    d = Hm_PlanField(&b,&o,&rules,&retail);
+    assert(d.result == 2 && d.selection[9] == 1 && !d.selection[10] && d.selection[11] == 1);
+    b.own[0] = monster(1,3000,2500); b.enemy[0] = monster(20,3500,1000);
+    d = Hm_PlanField(&b,&o,&rules,&retail);
+    assert(d.result == 2 && d.selection[9] == 1 && !d.selection[10] && !d.selection[11]);
+    /* The script's own order: a back-row card the planner plays still
+       comes before the walls. */
+    b.own[1].flags = 0; b.back[0] = magic(347,20); b.enemy_lp = 900;
+    d = Hm_PlanField(&b,&o,&rules,&retail); assert(d.result == 2 && d.selection[9] == 6);
+    b.back[0] = magic(999,20); b.enemy_lp = 8000; b.own[1].flags = HM_USED | HM_DEFENSE;
+    /* Without attack planning either, the script's attacks are unknown. */
+    o.attacks = 0;
+    d = Hm_PlanField(&b,&o,&rules,&retail); assert(d.result == 3);
 }
 
 static unsigned random_state = 1;
