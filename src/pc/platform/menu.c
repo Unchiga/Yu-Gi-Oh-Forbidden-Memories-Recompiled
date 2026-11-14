@@ -733,12 +733,18 @@ void Menu_DrawText(MenuCanvas *into, int x, int y, const char *text, uint32_t co
 
 int Menu_TextWidth(const char *text) { return text_width(text); }
 
-int Menu_TextWidthScaled(const char *text, int scale) { return text_width(text) * scale / ui; }
+static int text_width_px(const char *text, int px);
+
+int Menu_TextWidthScaled(const char *text, int scale)
+{
+    if (scale & MENU_TEXT_PX_FLAG) return text_width_px(text, scale & 0xFFFF);
+    return text_width(text) * scale / ui;
+}
 /* Characters bigger than the menu's own (Menu_DrawTextScaled at a scale
  * above it: the title's text lines, the side windows), rendered at their
  * size rather than magnified, kept by character and scale until the table
  * fills, when it starts again. */
-typedef struct { uint32_t code; int scale, missing; Glyph glyph; } BigGlyph;
+typedef struct { uint32_t code; int px, missing; Glyph glyph; } BigGlyph;
 #define BIG_GLYPHS 1024
 static BigGlyph big_glyphs[BIG_GLYPHS];
 static int big_count;
@@ -751,33 +757,81 @@ static void forget_big_glyphs(void)
     big_count = 0;
 }
 
-static const Glyph *big_glyph_for(uint32_t character, int scale)
+static const Glyph *big_glyph_at(uint32_t character, int px)
 {
-    unsigned slot = (character * 2654435761u + (unsigned)scale * 40503u) & (BIG_GLYPHS - 1);
+    unsigned slot = (character * 2654435761u + (unsigned)px * 40503u) & (BIG_GLYPHS - 1);
     BigGlyph *b;
     for (b = &big_glyphs[slot]; b->code; slot = (slot + 1) & (BIG_GLYPHS - 1), b = &big_glyphs[slot]) {
-        if (b->code == character && b->scale == scale) return b->missing ? NULL : &b->glyph;
+        if (b->code == character && b->px == px) return b->missing ? NULL : &b->glyph;
     }
     if (big_count * 2 >= BIG_GLYPHS) {
         forget_big_glyphs();
-        slot = (character * 2654435761u + (unsigned)scale * 40503u) & (BIG_GLYPHS - 1);
+        slot = (character * 2654435761u + (unsigned)px * 40503u) & (BIG_GLYPHS - 1);
         b = &big_glyphs[slot];
     }
     b->code = character;
-    b->scale = scale;
+    b->px = px;
     big_count++;
     /* The face is the menu's: at the character's size for this one, then
      * back to the menu's for everything else. */
-    b->missing = FT_Set_Pixel_Sizes(font_face, 0, (FT_UInt)(13 * scale)) ||
+    b->missing = FT_Set_Pixel_Sizes(font_face, 0, (FT_UInt)px) ||
                  !FT_Get_Char_Index(font_face, (FT_ULong)character) ||
                  !render_glyph(font_face, (FT_ULong)character, &b->glyph);
     FT_Set_Pixel_Sizes(font_face, 0, FONT_PX);
     return b->missing ? NULL : &b->glyph;
 }
 
+static const Glyph *big_glyph_for(uint32_t character, int scale) { return big_glyph_at(character, 13 * scale); }
+
+/* Text at any size in pixels (MENU_TEXT_PX): each glyph rendered at that size, advanced by its own advance; a
+ * character the face has no glyph at that size for is the menu-size one, scaled. */
+static int text_width_px(const char *text, int px)
+{
+    int width = 0;
+    if (px < 1) px = 1;
+    if (!font_loaded) return text_width(text) * px / FONT_PX;
+    while (*text) {
+        uint32_t character = Glyphs_NextCharacter(&text);
+        const Glyph *big = font_face ? big_glyph_at(character, px) : NULL;
+        width += big ? big->advance : glyph_for(character)->advance * px / FONT_PX;
+    }
+    return width;
+}
+
+static void draw_text_px(int x, int middle, const char *text, uint32_t color, int px)
+{
+    int baseline;
+    if (px < 1) px = 1;
+    if (!font_loaded) {
+        int previous = ui;
+        ui = (px + 6) / 13 < 1 ? 1 : (px + 6) / 13;
+        draw_bitmap_text(x, middle, text, color);
+        ui = previous;
+        return;
+    }
+    baseline = middle + (font_ascent - font_descent + 1) * px / (2 * FONT_PX);
+    while (*text) {
+        uint32_t character = Glyphs_NextCharacter(&text);
+        const Glyph *g = glyph_for(character), *big = font_face ? big_glyph_at(character, px) : NULL;
+        if (big) {
+            for (int row = 0; row < big->h && big->coverage; row++)
+                for (int col = 0; col < big->w; col++)
+                    put(x + big->left + col, baseline - big->top + row, color, big->coverage[row * big->w + col]);
+            x += big->advance;
+            continue;
+        }
+        for (int row = 0; row < g->h * px / FONT_PX && g->coverage; row++)
+            for (int col = 0; col < g->w * px / FONT_PX; col++)
+                put(x + g->left * px / FONT_PX + col, baseline - g->top * px / FONT_PX + row, color,
+                    g->coverage[(row * FONT_PX / px) * g->w + col * FONT_PX / px]);
+        x += g->advance * px / FONT_PX;
+    }
+}
+
 void Menu_DrawTextScaled(MenuCanvas *into, int x, int middle, const char *text, uint32_t color, int scale)
 {
     canvas = into;
+    if (scale & MENU_TEXT_PX_FLAG) { draw_text_px(x, middle, text, color, scale & 0xFFFF); return; }
     if (scale == ui) { draw_text(x, middle, text, color); return; }
     if (!font_loaded) {
         int previous = ui; ui = scale; draw_bitmap_text(x, middle, text, color); ui = previous; return;
@@ -804,6 +858,39 @@ void Menu_DrawTextScaled(MenuCanvas *into, int x, int middle, const char *text, 
                     g->coverage[(row * ui / scale) * g->w + col * ui / scale]);
         advance += g->advance;
     }
+}
+
+/* The text as a picture: `px` pixels (4 to 512, as MENU_TEXT_PX), white on transparent, straight alpha, a margin of a
+ * few pixels all round for what a glyph reaches past its box. *pixels is malloc'ed (Menu_TextBitmapFree); *middle_row
+ * is the row of the line's vertical middle (what Menu_DrawTextScaled's `middle` is). For a mod that makes pictures of its own (bank sprites) of text at any size. */
+int Menu_TextBitmap(const char *text, int px, uint32_t **pixels, int *width, int *height, int *middle_row)
+{
+    MenuCanvas into;
+    const int ascent = (font_loaded ? font_ascent : 10) * px / (font_loaded ? FONT_PX : 13);
+    const int descent = (font_loaded ? font_descent : 3) * px / (font_loaded ? FONT_PX : 13);
+    int pad, w, h, middle;
+    if (!text || !pixels || px < 4 || px > 512) return 0;
+    pad = px / 4 + 2;
+    w = Menu_TextWidthScaled(text, MENU_TEXT_PX(px)) + 2 * pad;
+    h = ascent + descent + 2 * pad;
+    if (w < 1 || h < 1 || w > 8192 || !(into.pixels = calloc((size_t)w * (size_t)h, sizeof(uint32_t)))) return 0;
+    into.stride = w;
+    into.width = w;
+    into.height = h;
+    into.alpha = 1;
+    /* Menu_DrawTextScaled puts the baseline at middle + (ascent - descent + 1) / 2 of the size's own. */
+    middle = pad + ascent - (ascent - descent + 1) / 2;
+    Menu_DrawTextScaled(&into, pad, middle, text, 0xFFFFFFu, MENU_TEXT_PX(px));
+    *pixels = into.pixels;
+    if (width) *width = w;
+    if (height) *height = h;
+    if (middle_row) *middle_row = middle;
+    return 1;
+}
+
+void Menu_TextBitmapFree(uint32_t *pixels)
+{
+    free(pixels);
 }
 
 void Menu_LoadSettingsWithoutMods(void)
