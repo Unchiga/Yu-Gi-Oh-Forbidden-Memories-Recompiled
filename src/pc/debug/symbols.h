@@ -19,6 +19,11 @@ int Symbols_Load(void);
  * may be read, and writing it crashes the game. */
 int Symbols_FindVariable(const char *name, uintptr_t *address, uintptr_t *size, int *read_only);
 const char *Symbols_Lookup(uintptr_t address, uintptr_t *offset);
+/* For an address no table names, outside Windows (win32.c names its
+ * modules): the loaded library that holds it, as "library!symbol" with the
+ * offset from that exported symbol, or "library" with the offset from its
+ * start. 0 when no library holds it. */
+int Symbols_Module(uintptr_t address, char *name, size_t size, uintptr_t *offset);
 /* Code loaded after startup (a mod's object file, src/pc/mods): its
  * functions, so crash and hang reports can name them. One call per object. */
 typedef struct {

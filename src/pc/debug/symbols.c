@@ -1,3 +1,9 @@
+#ifndef _WIN32
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* dladdr's Dl_info, on glibc */
+#endif
+#include <dlfcn.h>
+#endif
 #include "pc/compat/fs.h"
 #include "symbols.h"
 #include "pc/guest/state.h"
@@ -195,3 +201,29 @@ int Symbols_Add(const SymbolsEntry *entries, size_t count)
     symbol_count = total;
     return 0;
 }
+
+#ifdef _WIN32
+int Symbols_Module(uintptr_t address, char *name, size_t size, uintptr_t *offset)
+{
+    (void)address, (void)name, (void)size, (void)offset;
+    return 0;
+}
+#else
+int Symbols_Module(uintptr_t address, char *name, size_t size, uintptr_t *offset)
+{
+    Dl_info info;
+    const char *file, *slash;
+    if (!address || !size || !dladdr((void *)address, &info) || !info.dli_fname) return 0;
+    file = info.dli_fname;
+    slash = strrchr(file, '/');
+    if (slash) file = slash + 1;
+    if (info.dli_sname && info.dli_saddr) {
+        snprintf(name, size, "%s!%s", file, info.dli_sname);
+        if (offset) *offset = address - (uintptr_t)info.dli_saddr;
+    } else {
+        snprintf(name, size, "%s", file);
+        if (offset) *offset = address - (uintptr_t)info.dli_fbase;
+    }
+    return 1;
+}
+#endif
