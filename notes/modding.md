@@ -1070,17 +1070,25 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
      tables from the record, so it runs your bytes as it is, with one limit.
      The hash of a disc row covers some data past the code on purpose
      (`config/pc/model_gate.csv`'s note says which): the command table, and
-     words the C divides by or indexes with, which native C cannot survive
+     words the C may divide by or index with, which native C cannot survive
      as the interpreter does (a zero divisor stops the game; a larger count
      writes past the C's arrays). Inside that span the tool makes C only
      where the row's own checks still hold: the command table's entries,
      when each is one of the disc's own entries for the shape (reordered or
      repeated: the attack picks an entry, and every value it reads is one
-     the disc has). Any other change there (`words inside the hashed span`,
-     named in the report) is to port by hand. `--accept-data` makes the C
-     anyway and warns: that C then divides by and indexes with your words
-     unchecked, at your mod's risk. Data past the span is the record's own,
-     and the C reads whatever you put there.
+     the disc has). A change to any other word of the span (`words outside
+     the command table but inside the hashed span`, named in the report) is
+     not checked, because the span also covers words the C does not divide
+     by or index with, such as a texture rectangle's header (shape 54's
+     `GsIMAGE`s, which only the page and CLUT packing reads), and the tool
+     cannot tell them apart yet. A mod that changes such words, a texture
+     rectangle inside an attack module for one, gets `port by hand`. The way
+     forward is `--accept-data`: it makes the C anyway and warns that the C
+     may divide by, index with or otherwise depend on your words, which it
+     did not check. Then run the oracle, as the
+     next step describes (`model_oracle.py --mod ... --records` or
+     `--models`), and check that the C and the MIPS draw alike. Data past
+     the span is the record's own, and the C reads whatever you put there.
    - **A const the port's C keeps its own copy of changed** (in `changed
      code`, the bytes of a `const` such as `D_8013BAE4`, a scale vector):
      the C it makes defines that const with your bytes.

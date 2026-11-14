@@ -517,8 +517,9 @@ def nearest(module: Module, tables: Tables, disc: Disc) -> tuple[model_gate.Row,
 def map_bytes(module: Module, disc_image: bytes) -> None:
     """Each byte that differs from the disc's module of the shape. Past the
     data start but inside the span are the words a native row's span was
-    widened over (model_gate.py: the command table, and the words the C
-    divides by or indexes with): the C stands only where the row's checks
+    widened over (model_gate.py: the command table, and the words the C may
+    divide by or index with, which also takes in words it only passes on,
+    such as a texture rectangle's header): the C stands only where the row's checks
     hold whatever the mod put there. They do for the command table's
     entries when each is one of the disc's own entries (reordered or
     repeated: every value the C reads is one the disc has; the bound picks
@@ -621,15 +622,18 @@ def plan(modules: list[Module], tables: Tables, disc: Disc, over_disc: bool, wor
             module.action, module.why = "hand", "the code differs: " + describe_code(module)
         elif module.hashed and not accept_data:
             module.action, module.why = "hand", (
-                f"words inside the hashed span changed ({describe_words(module.hashed)}): the span covers words "
-                "the C divides by or indexes with (config/pc/model_gate.csv's note for shape "
-                f"{module.row.shape}), which its checks do not hold; port by hand, or --accept-data")
+                f"words outside the command table but inside the hashed span changed "
+                f"({describe_words(module.hashed)}): they were not checked (the C may divide by, index with or "
+                "otherwise depend on them; config/pc/model_gate.csv's note for shape "
+                f"{module.row.shape}); port by hand, or --accept-data and compare the C with the MIPS "
+                "(model_oracle.py)")
         else:
             module.action = "generate"
             if module.hashed:
-                module.why = (f"--accept-data: words inside the hashed span changed "
-                              f"({describe_words(module.hashed)}), which the C divides by or indexes with "
-                              "unchecked: a zero divisor or a larger count crashes the game")
+                module.why = (f"--accept-data: words outside the command table but inside the hashed span changed "
+                              f"({describe_words(module.hashed)}) and were not checked: the C may divide by, index "
+                              "with or otherwise depend on them; compare the C with the MIPS "
+                              "(model_oracle.py)")
 
 
 # --- the C it writes -------------------------------------------------------------------
@@ -1001,8 +1005,8 @@ def summary_line(module: Module) -> str:
                          f"(0x{module.row.data_start:X}-0x{module.row.span:X}; inside the span, only the command "
                          "table's entries, each one of the disc's own)")
         if module.hashed:
-            parts.append(f"{len(module.hashed)} bytes inside the hashed span the C does not check "
-                         f"({describe_words(module.hashed)})")
+            parts.append(f"{len(module.hashed)} bytes outside the command table but inside the hashed span, "
+                         f"which were not checked ({describe_words(module.hashed)})")
         if module.consts:
             parts.append(f"the const{'s' if len(module.consts) > 1 else ''} {', '.join(sorted(module.consts))}, "
                          "which the C defines: it gets the mod's bytes")

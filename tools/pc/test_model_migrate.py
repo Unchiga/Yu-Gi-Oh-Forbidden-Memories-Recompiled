@@ -15,6 +15,11 @@ data is kept.
   data     the command table entry the attack picks zeroed (divisors among
            its words): to port by hand, naming the words, no C, mod-row
            prints no row; --accept-data makes the C and warns;
+  accept   a texture rectangle's header (shape 54's GsIMAGE, which only the
+           page and CLUT packing reads: inside the hashed span, outside the
+           command table) moved: to port by hand without --accept-data; with
+           it the C and a warning, and the oracle sees the C draw what the
+           interpreter draws, other frames than the unpatched ones;
   replace  the same bytes as a raw replacement of the record's module
            sectors, in a mod with its own MemoriesModInit: the same C, rows
            registered through MemoriesModelRows_Register, and no oracle
@@ -63,7 +68,7 @@ BUILD = "python tools/pc/build_mod.py {mod} --target i386"
 ORACLE_RECORDS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --records {records}"
 ORACLE_MODELS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --models {models}"
 PLAIN = "python tools/pc/model_oracle.py --disc {disc} --records {records}"
-CASES = ("class", "tables", "data", "replace", "const", "code", "models")
+CASES = ("class", "tables", "data", "accept", "replace", "const", "code", "models")
 
 
 class Test:
@@ -319,6 +324,51 @@ def case_data(test: Test, disc: model_oracle.Disc) -> None:
     report = json.loads((mod / model_migrate.COPIES / "migrate.json").read_text(encoding="utf-8"))
     test.expect(result.returncode == 0 and len(modules(report, "generate")) == 1 and "!! --accept-data" in result.stdout,
                 "data: with --accept-data the C is made, and the report warns")
+
+
+def case_accept(test: Test, disc: model_oracle.Disc) -> None:
+    """A word of the span that is not in the command table, and the C does
+    not divide by or index with: the page x of the first GsIMAGE (D_8013C648)
+    of shape 54's records, moved to another texture page. Without
+    --accept-data the tool says to port by hand; with it the C is made, and
+    the oracle shows that it draws what the interpreter draws, and not what
+    the unpatched record draws (the patch is seen on screen)."""
+    row, record, alternatives, plain, _ = shape54(test, disc)
+    first = 0x1648    # D_8013C648[0]: pmode, then px, py
+    patches = []
+    for alternative in alternatives:
+        for slot in "AB":
+            image = disc.variant(record, alternative, slot)
+            test.expect(row.data_start <= first + 4 < row.span and not
+                        row.command_table[0] <= first + 4 < row.command_table[0] + row.command_table[1] *
+                        row.command_table[2], "accept: the GsIMAGE is inside the span and outside the command table")
+            px = struct.unpack_from("<H", image, first + 4)[0]
+            patches.append({"at": test_model_mod_c.stage_at(record, alternative, slot) + first + 4,
+                            "bytes": struct.pack("<H", px + 0x40).hex()})
+    mod = mod_folder(test.arguments.out / "mods" / "migrate-accept", "migrate-accept",
+                     {"data": [{"file": "\\DATA\\MODEL.MRG;1", "patch": patches}]})
+    result, report = test.migrate(mod, "accept-migrate")
+    hand = modules(report, "hand")
+    test.expect(result.returncode == 1 and hand and all(m["hashed_words"] == ["0x164C"] and
+                                                        "--accept-data" in m["why"] for m in hand) and
+                not modules(report, "generate") and not list(mod.glob("*.c")),
+                f"accept: a moved texture rectangle is to port by hand, naming its word, with no C "
+                f"({[(m['where'], m['action'], m.get('hashed_words')) for m in report['modules']]})")
+    result = test.run(MIGRATE.format(mod=rel(mod), disc=rel(test.arguments.disc)), ["--accept-data"], "accept-accept")
+    report = json.loads((mod / model_migrate.COPIES / "migrate.json").read_text(encoding="utf-8"))
+    made = modules(report, "generate")
+    test.expect(result.returncode == 0 and len(made) == 2 and not modules(report, "hand") and
+                "!! --accept-data" in result.stdout and "were not checked" in result.stdout,
+                f"accept: with --accept-data the C is made, and the report warns that the words were not checked "
+                f"({[(m['where'], m['action']) for m in report['modules']]})")
+    want = ORACLE_RECORDS.format(disc=rel(test.arguments.disc), mod=rel(mod), records=record)
+    test.expect(test.build(mod, "accept-build"), "accept: the mod builds")
+    found = test.oracle(want, "accept-oracle", ["--alternatives", ",".join(map(str, alternatives))])
+    tag = "mod:migrate-accept"
+    test.expect(found["exit"] == 0, "accept: the C draws what the interpreter draws (oracle exit 0)")
+    test.expect(ways(found) == {tag}, f"accept: the subject ran {tag} and nothing else ({sorted(ways(found))})")
+    test.expect(bool(digests(found)) and not set(digests(found)) & set(digests(plain)),
+                f"accept: the patch changes the frames ({digests(plain)} unpatched, {digests(found)} patched)")
 
 
 OWN_INIT = """/* The mod's own entry, which registers mod-migrate's rows itself. */
