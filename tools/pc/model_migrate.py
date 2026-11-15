@@ -59,6 +59,11 @@ model_c/migrate.json holds the same for tools.
     python tools/pc/model_gate.py mod-migrate mods/my-mod --disc game/rpg-yfm.bin
     python tools/pc/model_gate.py mod-row mods/my-mod/models/pikachu.mrg
 
+In a release's SDK the same tool is sdk/tools/model_gate.py (tools/pc/ is the
+SDK's tools/, src/ its include/, config/pc/ its config/; model_layout.py), with
+the same C, tables and labels as the game build it came with; `mod-check`
+there says, without the disc, that all of them are in place.
+
 --records adds records of the disc's own MODEL.MRG to what the mod changes,
 and --over-disc makes C for NATIVE modules too and flags every row
 MEMORIES_MODEL_OVER_DISC: tools/pc/test_model_migrate_all.py runs every
@@ -81,14 +86,16 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_layout as layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
 import model_gate  # noqa: E402
+import model_sdk  # noqa: E402
 import model_span_words  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
+ROOT = layout.ROOT
+SRC = layout.SRC
 NATIVE_OVERLAYS = SRC / "native_overlays"
-RETAIL = ROOT / "config/pc/model_retail.csv"
-RENAMES = ROOT / "config/pc/host_symbol_renames.txt"
+RETAIL = layout.path("config/pc/model_retail.csv")
+RENAMES = layout.path("config/pc/host_symbol_renames.txt")
 STALE_HEADER = SRC / "pc/overlays/model_stale_locals.h"
 WRITTEN = "/* Written by tools/pc/model_gate.py mod-migrate"
 COPIES = "model_c"
@@ -407,8 +414,8 @@ class Source:
         self.row, self.slot = row, slot
         self.kind = row.KIND
         self.base = self.kind.base[slot]
-        self.units = [ROOT / path for pattern in model_gate.source_patterns(row, slot)
-                      for path in sorted(ROOT.glob(pattern))]
+        self.units = [path for pattern in model_gate.source_patterns(row, slot)
+                      for path in sorted(layout.glob(pattern))]
         if not self.units:
             raise SystemExit(f"mod-migrate: shape {row.shape} slot {slot} has no C in {model_gate.SOURCES.name}")
         closure: list[Path] = []
@@ -464,7 +471,7 @@ class Source:
         return None
 
     def label(self) -> str:
-        return " ".join(path.relative_to(ROOT).as_posix() for path in self.units)
+        return " ".join(layout.shown(path) for path in self.units)
 
 
 # --- what differs ----------------------------------------------------------------
@@ -598,8 +605,14 @@ def span_stale(row: model_gate.Row) -> str:
     the headers it reads changed since it was made (then for every row), or
     the row's C did."""
     if "tool" not in _SPAN_STALE:
-        found = model_span_words.tool_stale(span_table())
-        _SPAN_STALE["tool"] = found[0] if found else ""
+        stamp = None if os.environ.get("MEMORIES_SPAN_WORDS") else model_sdk.read_stamp()
+        if stamp and stamp.get("labels", {}).get("problems"):
+            # An SDK made while its tables and C disagreed: what was found then, and nothing to run here
+            # (the digests would find the same, and say a file was changed).
+            _SPAN_STALE["tool"] = "the labels were already stale when this SDK was made: " + stamp["labels"]["problems"][0]
+        else:
+            found = model_span_words.tool_stale(span_table())
+            _SPAN_STALE["tool"] = found[0] if found else ""
     if _SPAN_STALE["tool"]:
         return _SPAN_STALE["tool"]
     key = (row.KIND.name, row.shape)
@@ -1200,7 +1213,20 @@ def migrate(folder: Path, disc_path: Path, records: list[int], over_disc: bool, 
 
 
 def tool_path(name: str) -> str:
-    return os.path.relpath(Path(__file__).resolve().parent / name).replace(os.sep, "/")
+    """A tool beside this one, as the commands in the report name it: from the
+    current folder (an SDK's tools/ or the repository's tools/pc/), or its
+    full path when that is on another drive."""
+    path = Path(__file__).resolve().parent / name
+    try:
+        return os.path.relpath(path).replace(os.sep, "/")
+    except ValueError:
+        return str(path).replace(os.sep, "/")
+
+
+def quote(text: str) -> str:
+    """A word of a printed command: as it is when nothing in it needs quoting
+    (spaces, shell characters), else in double quotes."""
+    return text if re.fullmatch(r"[A-Za-z0-9_@%+=:,./~\u00a0-\U0010ffff-]+", text) else '"' + text.replace('"', '\\"') + '"'
 
 
 def ranges(numbers: list[int]) -> str:
@@ -1217,13 +1243,16 @@ def ranges(numbers: list[int]) -> str:
 def verify_commands(folder: Path, disc: Path, records: list[int], models: list[str]) -> list[str]:
     if not records and not models:
         return []
-    mod, disc_name = (str(path).replace(os.sep, "/") for path in (folder, disc))
-    commands = [f"python {tool_path('build_mod.py')} {mod} --target i386"]
-    oracle = f"python {tool_path('model_oracle.py')} --disc {disc_name} --mod {mod}"
+    mod, disc_name = (quote(str(path).replace(os.sep, "/")) for path in (folder, disc))
+    # In a checkout the oracle runs the 32-bit game it builds; an SDK's runs the release beside it, which
+    # may be the 64-bit one (its mods load their x86_64-windows object): the SDK's build_mod builds every target.
+    target = "" if layout.SHIPPED else " --target i386"
+    commands = [f"python {quote(tool_path('build_mod.py'))} {mod}{target}"]
+    oracle = f"python {quote(tool_path('model_oracle.py'))} --disc {disc_name} --mod {mod}"
     if records:
         oracle += f" --records {ranges(records)}"
     if models:
-        oracle += f" --models {','.join(models)}"
+        oracle += f" --models {quote(','.join(models))}"
     return commands + [oracle]
 
 
@@ -1311,6 +1340,7 @@ def mod_row(path: Path, over_disc: bool, disc_path: Path, force: bool, texture_p
 
 
 def main(argv: list[str] | None = None) -> int:
+    layout.tolerant_output()
     parser = argparse.ArgumentParser(prog="model_gate.py mod-migrate", description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("mod-migrate", "mod-row"))

@@ -53,6 +53,14 @@ mod's attacks from MIPS to C"), which the test checks word for word.
 
     python tools/pc/test_model_migrate.py --out tmp/pc/model-migrate --jobs 6
     python tools/pc/test_model_migrate.py --only class --classifier tmp/pc/tests/memories_model_module_class_test.exe
+
+With --sdk DIR (an unpacked release's `sdk` folder, outside the repository) the
+commands are the SDK's own (`python <DIR>/tools/model_gate.py mod-migrate ...`,
+`<DIR>/tools/build_mod.py`, `<DIR>/tools/model_oracle.py`), run from the --out
+folder, so nothing can come from this checkout: the mods are made here, and
+migrated, built and checked by the SDK. The oracle runs the game beside the
+SDK unless --executable names another. `--only tables --only models --sdk ...`
+is the check that the release's SDK does what the guide says.
 """
 from __future__ import annotations
 
@@ -74,10 +82,13 @@ import model_oracle  # noqa: E402
 import test_model_mod_c  # noqa: E402
 
 NOTES = ROOT / "notes/modding.md"
+CWD = ROOT              # where the commands run: the repository, or with --sdk the --out folder
+TOOLS = "tools/pc"      # the tools' folder as the commands name it: with --sdk, the SDK's tools/ from CWD
+TOOLS_DIR = ROOT / "tools/pc"
 # The guide's commands, with the guide's own mod, disc, record and model.
 GUIDE = {"mod": "mods/my-mod", "disc": "game/rpg-yfm.bin", "records": "83", "models": "pikachu"}
 MIGRATE = "python tools/pc/model_gate.py mod-migrate {mod} --disc {disc}"
-BUILD = "python tools/pc/build_mod.py {mod} --target i386"
+BUILD = BUILD_REPOSITORY = "python tools/pc/build_mod.py {mod} --target i386"
 ORACLE_RECORDS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --records {records}"
 ORACLE_MODELS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --models {models}"
 PLAIN = "python tools/pc/model_oracle.py --disc {disc} --records {records}"
@@ -100,7 +111,7 @@ class Test:
         words = command.split() + list(extra)
         words[0] = sys.executable
         print(f"test_model_migrate: {name}: {command}{' ' + ' '.join(extra) if extra else ''}", flush=True)
-        result = subprocess.run(words, cwd=ROOT, capture_output=True, text=True, errors="replace")
+        result = subprocess.run(words, cwd=CWD, capture_output=True, text=True, errors="replace")
         if name:
             (self.arguments.out / f"{name}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
         return result
@@ -133,8 +144,8 @@ class Test:
     def build(self, mod: Path, name: str) -> bool:
         ok = self.run(BUILD.format(mod=rel(mod)), name=name).returncode == 0
         for target in self.arguments.target or []:
-            ok &= subprocess.run([sys.executable, str(ROOT / "tools/pc/build_mod.py"), str(mod), "--target", target],
-                                 cwd=ROOT).returncode == 0
+            ok &= subprocess.run([sys.executable, str(TOOLS_DIR / "build_mod.py"), str(mod), "--target", target],
+                                 cwd=CWD).returncode == 0
         return ok
 
 
@@ -148,11 +159,17 @@ def rel(path: Path) -> str:
 
 
 def guide(test: Test) -> None:
-    """The guide gives the commands the cases run, word for word."""
+    """The guide gives the commands the cases run, word for word (the repository's
+    form of them: for an SDK it says to name tools/pc/ as the SDK's tools/)."""
     text = NOTES.read_text(encoding="utf-8")
-    for command in (MIGRATE, BUILD, ORACLE_RECORDS, ORACLE_MODELS):
-        line = command.format(**GUIDE)
+    for command in (MIGRATE, BUILD_REPOSITORY, ORACLE_RECORDS, ORACLE_MODELS):
+        line = command.format(**GUIDE).replace(TOOLS, "tools/pc")
         test.expect(line in text, f"notes/modding.md gives `{line}`")
+    if TOOLS != "tools/pc":
+        test.expect("sdk/tools/model_gate.py mod-migrate" in text and "sdk/tools/model_oracle.py" in text,
+                    "notes/modding.md gives the SDK's form of them (sdk/tools/...)")
+        line = BUILD.format(**GUIDE).replace(TOOLS, "sdk/tools")
+        test.expect(line in text, f"notes/modding.md gives the SDK's build command `{line}` (no --target)")
 
 
 def mod_folder(folder: Path, identifier: str, manifest: dict) -> Path:
@@ -294,7 +311,7 @@ def case_models(test: Test, disc: model_oracle.Disc) -> None:
     test.expect(ways(found) == {tag} and all(v["battle"].startswith("model:") for v in found.get("verdicts", ())),
                 f"models: the model fought, and the subject ran {tag} and nothing else ({sorted(ways(found))})")
     # mod-row on the model file: the same analysis, and the rows mod-migrate registered.
-    rows = test.run(f"python tools/pc/model_gate.py mod-row {rel(mod / 'models' / 'pikachu.mrg')} "
+    rows = test.run(f"python {TOOLS}/model_gate.py mod-row {rel(mod / 'models' / 'pikachu.mrg')} "
                     f"--disc {rel(test.arguments.disc)}", name="models-mod-row")
     sha = {m["sha256"] for m in made}
     test.expect(rows.returncode == 0 and all(digest in rows.stdout for digest in sha) and
@@ -327,7 +344,7 @@ def case_data(test: Test, disc: model_oracle.Disc) -> None:
     offset = (at - (record * 0x114 + model_migrate.MODULES_SECTOR) * model_oracle.SECTOR)
     image[offset:offset + stride] = bytes(stride)
     (mod / "stages.bin").write_bytes(bytes(image))
-    rows = test.run(f"python tools/pc/model_gate.py mod-row {rel(mod / 'stages.bin')} --disc {rel(test.arguments.disc)}",
+    rows = test.run(f"python {TOOLS}/model_gate.py mod-row {rel(mod / 'stages.bin')} --disc {rel(test.arguments.disc)}",
                     name="data-mod-row")
     test.expect(rows.returncode == 1 and "port by hand" in rows.stdout and
                 rows.stdout.count("sizeof(MemoriesModelModule)") == 0,
@@ -736,6 +753,8 @@ def main() -> int:
     parser.add_argument("--only", action="append", choices=CASES, help="the cases to run (default all)")
     parser.add_argument("--classifier", type=Path, help="memories_model_module_class_test (the class case)")
     parser.add_argument("--target", action="append", help="build the mods for these targets too (a build check)")
+    parser.add_argument("--sdk", type=Path, help="run the SDK's tools (an unpacked release's sdk folder), "
+                                                 "not this checkout's, from the --out folder")
     arguments = parser.parse_args()
     if not arguments.disc or not Path(arguments.disc).is_file():
         print("test_model_migrate: no disc (MEMORIES_DISC or --disc), skipped")
@@ -743,6 +762,18 @@ def main() -> int:
     arguments.disc = Path(arguments.disc).resolve()
     arguments.out = arguments.out.resolve()
     arguments.out.mkdir(parents=True, exist_ok=True)
+    if arguments.sdk:
+        global CWD, TOOLS, TOOLS_DIR, MIGRATE, BUILD, ORACLE_RECORDS, ORACLE_MODELS, PLAIN
+        sdk = arguments.sdk.resolve()
+        if not (sdk / "tools/model_gate.py").is_file() or ROOT.resolve() in sdk.parents:
+            parser.error(f"--sdk {sdk}: not an unpacked SDK outside this checkout (tools/model_gate.py)")
+        CWD, TOOLS_DIR = arguments.out, sdk / "tools"
+        TOOLS = os.path.relpath(TOOLS_DIR, CWD).replace(os.sep, "/")
+        MIGRATE, BUILD, ORACLE_RECORDS, ORACLE_MODELS, PLAIN = (
+            text.replace("tools/pc", TOOLS) for text in (MIGRATE, BUILD, ORACLE_RECORDS, ORACLE_MODELS, PLAIN))
+        # An SDK's build_mod builds every target (the release beside it may be the 32-bit or the 64-bit game):
+        # the tool prints no --target there.
+        BUILD = BUILD.replace(" --target i386", "")
     disc = model_oracle.Disc(arguments.disc)
     test = Test(arguments)
     cases = arguments.only or list(CASES)
