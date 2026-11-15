@@ -967,7 +967,75 @@ slot word or entry where the retail images differ makes the row `keep`; one
 the scan cannot follow is listed for review. For 418 it finds table
 `0x3A68`, entry size `0x44` and field `0x1B74`, and the seven divisions of
 spiral, sheet, bands and quad by the entry's timing words. Then
-`update --disc` and a build.
+`update --disc` and a build, and **`python tools/pc/model_span_words.py`**,
+which rewrites `config/pc/model_span_words.csv`: each word of a native row's
+span past the data start and outside the command table, classed by how the
+row's C uses it (`texture`, `value`, `divisor`, `index`, `bound`,
+`pointer`, `shift`, `address`, `copy`, `unknown`, `unread`; the same
+AST walk, followed forward from every read of the module's data). Every
+class is a label: it describes what the module's own C does with the word,
+and is not a proof, so no class makes C by itself (mod-migrate's report gives
+each changed word its label; the word needs a port by hand or
+`--accept-data`). Not even `unread` ("not read by this module's own C") is a
+safety class, because modules share memory: slot 0's variant work area
+starts at `0x80136000` and the primary module's image at `0x8013A000` (slot
+1: `0x80176000` and `0x8017A000`), so a variant whose work record is larger
+than 0x4000 bytes reaches into the primary's image. Variant 446's work
+record is 0x4AC4 bytes, and its C reads work fields at +0x4724..+0x4AC4,
+which are offsets the primary rows 45, 46 and 47 label `unread`; variants
+433, 462 and 799 reach +0x4000..+0x430C. The walk is not sound in general;
+known gaps, which affect labels only:
+- a GTE out-parameter (`RotTrans`'s output after `SetRotMatrix` from the
+  data) is not tagged with the matrix the data set;
+- the setter rule misses a setter whose result is used, a getter that
+  returns a pointer to what the game kept, and a kept value read at an
+  absolute address;
+- `rand` is on the pure list though `srand` can seed it from the data;
+- the texture packing handed a copy of a header (a local, the work area)
+  carries no pointee;
+- the known-pointer filter drops the game's memory from a pointer that may
+  also point into it;
+- the width lock checks plain stores, not compound ones (`|=`);
+- `&&` and `||` are not branches.
+
+The labels fail closed where they can. A construct the walk does not model
+(a call through a function pointer or a callback of the module's, `memcpy`,
+the command plus or minus a constant, a work-area store wider than its
+member or, with no record, than 16 bytes, a divisor, index, shift or address
+a game function returned in a module that hands the game its data) makes
+every word of the row `unknown`, the reason as the evidence, and a branch on
+the data, a pointee a game call writes and a store through a pointer or a
+cast read back by another name are followed conservatively. Each row's line
+carries a digest of its C (its units and the files of `src/native_overlays`
+they include, which declare its work-area records, line ends made `\n`),
+and every line a digest of the tool (`model_span_words.py` with its list of
+pure game functions, `model_gate_scan.py`, `model_gate_port.py`'s flags and
+compiler, `model_gate.py`'s rows and names, and the game's headers the rows
+include from outside the overlays, `src/game`, `src/psyq`, `src/types.h`,
+`src/port_ptr.h`, `src/pc/overlays/model_stale_locals.h` and the forced
+`src/pc/compat/pgxp_game.h`, computed from the includes, and the texture
+packing's sources `src/game/model_texture_upload.c` and
+`src/game/func_80059A50.c`, since the gaps after a header are labelled
+`unread` because of the fields it reads); the lines also record the check
+compiler's version, reported when another one runs, not a failure.
+`model_gate.py mod-migrate` gives each changed span word its label in the
+report, and says the labels are stale when the row's digest, or the tool
+digest, is another (notes/modding.md, "Moving a mod's attacks from MIPS to
+C"). **When a row's C
+changes** (an upstream sync retyping a model's C, say), `pc_model_span_words`
+fails and prints the one command that regenerates the table,
+`python tools/pc/model_span_words.py`: it needs only the repository and clang
+as `model_gate_port.CHECK_CC` on PATH (llvm-mingw's `i686-w64-mingw32-clang`,
+which `tools/pc/fetch_tools.py` fetches; about 4 minutes), no disc, overlay
+build or game, so the test stays red until the table is regenerated and
+committed with the C. Linux's `CHECK_CC` is gcc, which cannot dump the AST:
+regenerate on Windows. `--check` regenerates and compares (a few minutes), and
+`tools/pc/test_model_span_words.py` (CTest `pc_model_span_words`) checks,
+with no compiler, that the table covers every row and every digest is the
+tree's C; with clang it also runs the analysis on a few rows and on made-up
+modules. The check that model_gate_scan.py's own fixed-offset slot words
+come out unsafe covers zero words today: every native row's span was widened
+over its command table only.
 `build_config.py` makes two gated modules of it (`model_variant_<shape>` and
 `_slot1`, banks `0x8013B000` and `0x8017B000`, every name prefixed as for the
 effect bank), and their entry is the function at the slot base + 4. These
