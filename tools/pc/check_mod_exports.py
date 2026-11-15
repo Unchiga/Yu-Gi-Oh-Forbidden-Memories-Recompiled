@@ -37,12 +37,20 @@ def main():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import build_win32_deps
         build_win32_deps.use_toolchain()
-    linked = {}
+    # Global symbols first, then absolute ones: a unit's static of the same
+    # name as an export (a decomp const named after its retail address,
+    # D_8013BDE4 in french_model_variant beside the pinned guest variable)
+    # is listed too, in either order, and is never what a mod binds to. The
+    # pins are absolute: 'A' on Windows, 'a' on Linux (guest_symbols.ld
+    # makes them HIDDEN), so an absolute local still counts.
+    linked, absolute = {}, {}
     for line in subprocess.run([nm, options.executable], capture_output=True, text=True, check=True).stdout.splitlines():
         parts = line.split()
-        if len(parts) == 3:
+        if len(parts) == 3 and (parts[1].isupper() or parts[1] == "a"):
             name = parts[2][1:] if windows and parts[2].startswith("_") else parts[2]
-            linked.setdefault(name, int(parts[0], 16))
+            (linked if parts[1].isupper() else absolute).setdefault(name, int(parts[0], 16))
+    for name, address in absolute.items():
+        linked.setdefault(name, address)
     checked = 0
     for address, name in table:
         if name in linked:
