@@ -1023,16 +1023,20 @@ report, and says the labels are stale when the row's digest, or the tool
 digest, is another (notes/modding.md, "Moving a mod's attacks from MIPS to
 C"). **When a row's C
 changes** (an upstream sync retyping a model's C, say), `pc_model_span_words`
-fails and prints the one command that regenerates the table,
-`python tools/pc/model_span_words.py`: it needs only the repository and clang
-as `model_gate_port.CHECK_CC` on PATH (llvm-mingw's `i686-w64-mingw32-clang`,
-which `tools/pc/fetch_tools.py` fetches; about 4 minutes), no disc, overlay
-build or game, so the test stays red until the table is regenerated and
-committed with the C. Linux's `CHECK_CC` is gcc, which cannot dump the AST:
+**warns** (on stderr, naming the rows and the tool digest) and prints the one
+command that regenerates the table, `python tools/pc/model_span_words.py`: it
+needs only the repository and clang as `model_gate_port.CHECK_CC` on PATH
+(llvm-mingw's `i686-w64-mingw32-clang`, which `tools/pc/fetch_tools.py`
+fetches; about 4 minutes), no disc, overlay build or game. A stale table does
+not fail the test or a release: labels describe what a module's C does with a
+word and gate nothing (no label makes C), and only Windows with clang can
+regenerate them, so the warning is the whole cost until someone does. What
+still fails is coverage: a native row without labels, or a span that changed
+size. Linux's `CHECK_CC` is gcc, which cannot dump the AST:
 regenerate on Windows. `--check` regenerates and compares (a few minutes), and
 `tools/pc/test_model_span_words.py` (CTest `pc_model_span_words`) checks,
-with no compiler, that the table covers every row and every digest is the
-tree's C; with clang it also runs the analysis on a few rows and on made-up
+with no compiler, that the table covers every row (and warns when a digest is
+not the tree's C or tool); with clang it also runs the analysis on a few rows and on made-up
 modules. The check that model_gate_scan.py's own fixed-offset slot words
 come out unsafe covers zero words today: every native row's span was widened
 over its command table only.

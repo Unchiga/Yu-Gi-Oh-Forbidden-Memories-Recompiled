@@ -1323,21 +1323,48 @@ def digests(path: Path = TABLE) -> dict[tuple[str, int], str]:
     return out
 
 
-def stale(path: Path = TABLE, keys=None) -> list[str]:
-    """The rows whose C (row_digest) is not the C the table was made from:
-    their words cannot be trusted (mod-migrate locks them)."""
+def stale_rows(path: Path = TABLE, keys=None) -> list[tuple[tuple[str, int], str, str]]:
+    """[((kind, shape), the table's digest, the C's now)] of the rows whose C
+    (row_digest) is not the C the table was made from."""
     stored = digests(path)
     rows = {(row.KIND.name, row.shape): row for row in all_rows()}
-    problems = []
+    found = []
     for key in sorted(keys if keys is not None else stored):
         row = rows.get(key)
         if row is None or key not in stored:
             continue
         actual = row_digest(row)
         if stored[key] != actual:
-            problems.append(f"{key[0]} {key[1]}: its C changed since {path.name} was made (digest {stored[key]}, "
-                            f"now {actual}); regenerate: {REGENERATE}")
-    return problems
+            found.append((key, stored[key], actual))
+    return found
+
+
+def stale(path: Path = TABLE, keys=None) -> list[str]:
+    """Why the labels of the rows whose C is not the C the table was made from
+    cannot be trusted (mod-migrate says so in its report)."""
+    return [f"{key[0]} {key[1]}: its C changed since {path.name} was made (digest {then}, now {now}); "
+            f"regenerate: {REGENERATE}" for key, then, now in stale_rows(path, keys)]
+
+
+def stale_warnings(path: Path = TABLE) -> list[str]:
+    """What to say, as a warning, when the table is not the tree's: the tool
+    digest, and which rows' C (once, with the regeneration command). Labels
+    describe and gate nothing, so a stale table is told and never fails a test
+    or a release; coverage (a native row without labels, a span that changed
+    size) does fail."""
+    warnings = tool_stale(path)
+    rows = stale_rows(path)
+    if rows:
+        names = [f"{kind} {shape}" for (kind, shape), _, _ in rows]
+        more = f" and {len(names) - 20} more" if len(names) > 20 else ""
+        warnings.append(f"{len(rows)} rows' C changed since {path.name} was made, so mod-migrate calls their labels "
+                        f"stale: {', '.join(names[:20])}{more}; regenerate: {REGENERATE}")
+    return warnings
+
+
+def warn(warnings: list[str]) -> None:
+    for text in warnings:
+        print(f"model_span_words: WARNING: {text}", file=sys.stderr)
 
 
 def class_of(table: dict, kind: str, shape: int, offset: int) -> tuple[str, str, str] | None:
@@ -1426,7 +1453,8 @@ def widened(table: dict, info: dict) -> tuple[list[str], int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--check", action="store_true", help="compare the table with a fresh analysis")
+    parser.add_argument("--check", action="store_true", help="compare the table with a fresh analysis (a table that "
+                        "differs is a warning; a row without labels or a span that changed size fails)")
     parser.add_argument("--shape", type=int, action="append", help="only these shapes (with --explain)")
     parser.add_argument("--kind", choices=("variant", "primary"), default=None)
     parser.add_argument("--explain", action="store_true", help="print the rows' words, do not write")
@@ -1447,27 +1475,29 @@ def main() -> int:
     if arguments.explain:
         sys.stdout.write(text)
     elif arguments.check:
+        warnings = []   # labels that are not the analysis's or the tree's: told, never a failure (stale_warnings)
         if only is None:
             current = TABLE.read_text(encoding="utf-8") if TABLE.exists() else ""
             if current != text:
                 old = set(current.splitlines())
                 new = set(text.splitlines())
                 for line in sorted(old - new)[:10]:
-                    problems.append(f"{TABLE.name} has {line}")
+                    warnings.append(f"{TABLE.name} has {line}")
                 for line in sorted(new - old)[:10]:
-                    problems.append(f"the analysis gives {line}")
-                problems.append(f"{TABLE.relative_to(ROOT)} is stale; regenerate: {REGENERATE}")
+                    warnings.append(f"the analysis gives {line}")
+                warnings.append(f"{TABLE.relative_to(ROOT)} is stale; regenerate: {REGENERATE}")
         else:
             table = load()
             fresh = load_text(text)
             for key, runs in fresh.items():
                 if table.get(key) != runs:
-                    problems.append(f"{key[0]} {key[1]}: {TABLE.name} differs from the analysis")
+                    warnings.append(f"{key[0]} {key[1]}: {TABLE.name} differs from the analysis; regenerate: {REGENERATE}")
         table = load()
         found, checked = widened(table, info)
         print(f"model_span_words: {checked} of model_gate_scan.py's slot words lie in the rows' regions",
               file=sys.stderr)
-        problems += coverage(table) + found + wrappers() + tool_stale() + stale()
+        problems += coverage(table) + found + wrappers()
+        warn(warnings + stale_warnings())
         if compiler_note():
             print(f"model_span_words: note: {compiler_note()}", file=sys.stderr)
     else:
@@ -1482,7 +1512,8 @@ def main() -> int:
         found, checked = widened(table, info)
         print(f"model_span_words: {checked} of model_gate_scan.py's slot words lie in the rows' regions",
               file=sys.stderr)
-        problems = coverage(table) + found + wrappers() + tool_stale() + stale()
+        problems = coverage(table) + found + wrappers()
+        warn(stale_warnings())
         counts = collections.Counter()
         for runs in table.values():
             for _, size, cls, _, _ in runs:

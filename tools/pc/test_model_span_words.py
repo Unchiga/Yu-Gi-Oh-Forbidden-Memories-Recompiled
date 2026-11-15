@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """config/pc/model_span_words.csv (tools/pc/model_span_words.py), the labels
 of each native row's words past the data start and outside the command table:
-the table covers every row, slot B's C is slot A's renamed, each row's digest
-(the C its labels came from) is the C the tree has and the tool digest the
-tool's (no compiler: these run on every CI), and no label makes C by itself.
+the table covers every row and slot B's C is slot A's renamed (a failure when
+not), and each row's digest (the C its labels came from) and the tool digest
+are the tree's or a WARNING on stderr naming the rows and the regeneration
+command (no compiler: these run on every CI; labels describe and gate
+nothing, so a stale table never fails), and no label makes C by itself.
 With clang as the check compiler (model_gate_port's; skipped where it is not
 clang, as on Linux CI with gcc): a few rows' labels are what the analysis
 gives today and model_gate_scan.py's slot words among them are labelled a
@@ -480,14 +482,33 @@ class Table(unittest.TestCase):
     def test_slot_b_is_slot_a_renamed(self):
         self.assertEqual(model_span_words.wrappers(), [])
 
-    def test_every_row_is_the_c_it_was_classed_from(self):
-        """The digest of each row's C (no compiler: Linux CI runs this)."""
-        self.assertEqual(model_span_words.stale(), [])
+    def test_the_table_is_the_trees_or_warns(self):
+        """The digest of each row's C and of the analysis, the scan it builds
+        on, the flags and rows it reads and the game's headers the rows
+        include (no compiler: Linux CI runs this). Labels describe and gate
+        nothing, and regenerating them needs clang on Windows: a table that is
+        not the tree's is a WARNING with the rows and the command, never a
+        failure (coverage is: test_covers_every_row_exactly)."""
+        warnings = model_span_words.stale_warnings()
+        model_span_words.warn(warnings)
+        for text in warnings:
+            self.assertIn("python tools/pc/model_span_words.py", text, "the warning names the command")
 
-    def test_the_table_is_the_tools(self):
-        """The digest of the analysis, the scan it builds on, the flags and
-        rows it reads and the game's headers the rows include (no compiler)."""
-        self.assertEqual(model_span_words.tool_stale(), [])
+    def test_a_stale_table_warns_and_does_not_fail(self):
+        with tempfile.TemporaryDirectory(prefix="span-words-") as folder:
+            copy = Path(folder) / "model_span_words.csv"
+            row = next(r for r in model_span_words.all_rows() if (r.KIND.name, r.shape) == ("variant", 54))
+            text = model_span_words.TABLE.read_bytes().decode("utf-8")
+            text = text.replace(model_span_words.row_digest(row), "0" * 16)
+            text = text.replace(model_span_words.tool_digest(), "1" * 16)
+            copy.write_bytes(text.encode("utf-8"))
+            warnings = model_span_words.stale_warnings(copy)
+            self.assertEqual(len(warnings), 2, warnings)
+            self.assertIn("tool digest", warnings[0])
+            self.assertIn("variant 54", warnings[1])
+            for text in warnings:
+                self.assertIn("python tools/pc/model_span_words.py", text)
+            self.assertEqual(model_span_words.coverage(model_span_words.load(copy)), [], "coverage is still checked")
 
     def test_a_changed_tool_is_stale(self):
         plain = model_span_words.tool_digest()
