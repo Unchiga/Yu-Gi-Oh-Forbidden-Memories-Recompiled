@@ -706,7 +706,16 @@ in slot A: retail code, native C`) or what else (`the disc's code, interpreted
 until the port has its C`, or a mod's: `the disc's code with other tables`,
 `changed code`, `code no disc module has`; `model_module_class.h`).
 `MEMORIES_TRACE_MIPS_PRINTF=1` prints the
-modules' own `printf` format strings.
+modules' own `printf` format strings. `MEMORIES_MIPS_ENTRIES=<file>` appends
+one line per entry into the interpreter, at every depth, flushed as written
+(a game its client kills keeps them): the entry point (`model` with the
+module's identifier, slot and command, `duel-effect` with the effect's id and
+state, `credits`, `thunk` with the native caller's return address, or
+`other`), `outer` or `nested` (whether an interpreted frame was live, so
+`thunk outer` is native code alone reaching an overlay window), the target
+and the presented frame. No entry, no file. It is how the interpreter's
+removal was measured: run a yfm_control tool with the variable set for each
+game it starts.
 
 **The model modules in native C** (the gate, `src/pc/overlays/model_modules.c`).
 Upstream matched every variant module (2,362 distinct images, #8531); the
