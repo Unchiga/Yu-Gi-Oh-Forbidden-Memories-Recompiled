@@ -82,6 +82,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import model_gate  # noqa: E402
+import model_span_words  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -482,6 +483,8 @@ class Module:
         self.unmapped: list[str] = []               # (b) consts whose bytes are not the disc's (not a plain copy)
         self.data = 0                               # (c) bytes inside the span the C stands
         self.hashed: list[int] = []                 # bytes inside the span the C does not stand (port by hand)
+        self.labels: dict[int, tuple[str, str]] = {}    # changed span word: (its label, its symbol)
+        self.stale = ""                                 # why the span-word table is not the row's C's
         self.past = 0                               # bytes past the span
         self.action = ""                            # "generate", "hand" or "none"
         self.why = ""
@@ -523,7 +526,12 @@ def map_bytes(module: Module, disc_image: bytes) -> None:
     hold whatever the mod put there. They do for the command table's
     entries when each is one of the disc's own entries (reordered or
     repeated: every value the C reads is one the disc has; the bound picks
-    the entry). Any other change there is to port by hand (`hashed`)."""
+    the entry). Any other change there is to port by hand, or --accept-data
+    (`hashed`): config/pc/model_span_words.csv labels each word with what
+    the module's own C does with it, for the report, and a label is not a
+    proof (another module's C may read the bytes too: a variant's work area
+    runs into the primary's image). A stale table (the row's C, or the
+    analysis, changed since it was made) marks the labels stale."""
     row, source = module.row, module.source
     table = row.command_table
     first, last = (table[0], table[0] + table[1] * table[2]) if table else (0, 0)
@@ -535,6 +543,12 @@ def map_bytes(module: Module, disc_image: bytes) -> None:
             if first <= at < last:
                 changed_entries.setdefault((at - first) // table[1], []).append(at)
             else:
+                # Not checked: port by hand or --accept-data. The label
+                # (config/pc/model_span_words.csv) is for the report.
+                module.stale = span_stale(row)
+                found = model_span_words.class_of(span_words(), row.KIND.name, row.shape, at)
+                if found:
+                    module.labels.setdefault(at & ~3, (found[0], found[1]))
                 module.hashed.append(at)
         else:
             symbol = source.const_at(at)
@@ -562,9 +576,70 @@ def map_bytes(module: Module, disc_image: bytes) -> None:
     module.hashed.sort()
 
 
+_SPAN_WORDS: dict | None = None
+_SPAN_STALE: dict = {}
+
+
+def span_table() -> Path:
+    """config/pc/model_span_words.csv, or MEMORIES_SPAN_WORDS (a test's copy)."""
+    return Path(os.environ.get("MEMORIES_SPAN_WORDS") or model_span_words.TABLE)
+
+
+def span_words() -> dict:
+    """The span-word table, read once."""
+    global _SPAN_WORDS
+    if _SPAN_WORDS is None:
+        _SPAN_WORDS = model_span_words.load(span_table())
+    return _SPAN_WORDS
+
+
+def span_stale(row: model_gate.Row) -> str:
+    """Why the table cannot be trusted for the row, or "": the analysis or
+    the headers it reads changed since it was made (then for every row), or
+    the row's C did."""
+    if "tool" not in _SPAN_STALE:
+        found = model_span_words.tool_stale(span_table())
+        _SPAN_STALE["tool"] = found[0] if found else ""
+    if _SPAN_STALE["tool"]:
+        return _SPAN_STALE["tool"]
+    key = (row.KIND.name, row.shape)
+    if key not in _SPAN_STALE:
+        found = model_span_words.stale(span_table(), [key])
+        _SPAN_STALE[key] = found[0] if found else ""
+    return _SPAN_STALE[key]
+
+
 def describe_words(offsets: list[int]) -> str:
     words = sorted({at & ~3 for at in offsets})
     return ", ".join(f"0x{at:X}" for at in words[:8]) + (f" and {len(words) - 8} more" if len(words) > 8 else "")
+
+
+# What a word's label (config/pc/model_span_words.csv) says the module's own
+# C does with it: a description, not a proof.
+LABEL_TEXT = {"unread": "not read by this module's own C", "texture": "handed to the texture packing",
+              "value": "computed with", "divisor": "may reach a divisor", "index": "may reach an index",
+              "bound": "may reach a branch", "pointer": "may be used as an address",
+              "shift": "may reach a shift count", "address": "its address escapes the walk",
+              "copy": "the C keeps its own copy", "unknown": "the walk does not follow this module's C"}
+
+
+def describe_unproven(module: Module) -> str:
+    """The changed words, each with its symbol and what its label says the
+    module's own C does with it (config/pc/model_span_words.csv), or that it
+    is a command table entry not one of the disc's."""
+    row = module.row
+    table = row.command_table
+    first, last = (table[0], table[0] + table[1] * table[2]) if table else (0, 0)
+    parts = []
+    words = sorted({at & ~3 for at in module.hashed})
+    for at in words[:8]:
+        if first <= at < last:
+            parts.append(f"0x{at:X} (a command table entry not the disc's)")
+            continue
+        label, symbol = module.labels.get(at, ("", ""))
+        text = f"{label}: {LABEL_TEXT.get(label, label)}" if label else "no label"
+        parts.append(f"0x{at:X} {symbol} ({text}{', stale' if module.stale else ''})".replace("  ", " "))
+    return ", ".join(parts) + (f" and {len(words) - 8} more" if len(words) > 8 else "")
 
 
 def describe_code(module: Module) -> str:
@@ -622,18 +697,19 @@ def plan(modules: list[Module], tables: Tables, disc: Disc, over_disc: bool, wor
             module.action, module.why = "hand", "the code differs: " + describe_code(module)
         elif module.hashed and not accept_data:
             module.action, module.why = "hand", (
-                f"words outside the command table but inside the hashed span changed "
-                f"({describe_words(module.hashed)}): they were not checked (the C may divide by, index with or "
-                "otherwise depend on them; config/pc/model_gate.csv's note for shape "
-                f"{module.row.shape}); port by hand, or --accept-data and compare the C with the MIPS "
-                "(model_oracle.py)")
+                f"words outside the command table but inside the hashed span changed ({describe_unproven(module)}): "
+                "the labels (config/pc/model_span_words.csv) say what this module's own C does with each word, "
+                "and are not a proof that the C draws what the interpreter draws"
+                + (f"; the labels are stale: {module.stale}" if module.stale else "")
+                + ". Next: port the module by hand, or make the C anyway with --accept-data at your own risk and "
+                "compare it with the MIPS (model_oracle.py)")
         else:
             module.action = "generate"
             if module.hashed:
-                module.why = (f"--accept-data: words outside the command table but inside the hashed span changed "
-                              f"({describe_words(module.hashed)}) and were not checked: the C may divide by, index "
-                              "with or otherwise depend on them; compare the C with the MIPS "
-                              "(model_oracle.py)")
+                module.why = (f"--accept-data, at your own risk: words outside the command table but inside the "
+                              f"hashed span changed ({describe_unproven(module)}); the labels are not a proof"
+                              + (f", and they are stale: {module.stale}" if module.stale else "")
+                              + "; compare the C with the MIPS (model_oracle.py)")
 
 
 # --- the C it writes -------------------------------------------------------------------
@@ -988,6 +1064,8 @@ def module_report(module: Module) -> dict:
     if module.row:
         found.update(code_bytes=len(module.code), consts=sorted(module.consts), data_bytes=module.data,
                      hashed_words=sorted({f"0x{at & ~3:X}" for at in module.hashed}),
+                     span_labels={f"0x{at:X}": list(found) for at, found in sorted(module.labels.items())},
+                     span_words_stale=module.stale,
                      past_span=module.past, span=module.row.span, data_start=module.row.data_start,
                      sha256=sha(module.image[:module.row.span]))
     return found
@@ -1006,7 +1084,7 @@ def summary_line(module: Module) -> str:
                          "table's entries, each one of the disc's own)")
         if module.hashed:
             parts.append(f"{len(module.hashed)} bytes outside the command table but inside the hashed span, "
-                         f"which were not checked ({describe_words(module.hashed)})")
+                         f"not checked ({describe_unproven(module)})")
         if module.consts:
             parts.append(f"the const{'s' if len(module.consts) > 1 else ''} {', '.join(sorted(module.consts))}, "
                          "which the C defines: it gets the mod's bytes")
@@ -1018,7 +1096,8 @@ def summary_line(module: Module) -> str:
     if module.action == "generate":
         text += f"\n    -> C: {module.unit or 'what mod-migrate makes'} (from {module.source.label()})"
         if module.why:
-            text += f"\n    !! {module.why}"
+            # A warning (--accept-data) or a note (words the C stands).
+            text += f"\n    {'!!' if module.hashed else '--'} {module.why}"
     elif module.action == "hand":
         text += f"\n    -> port by hand: {module.why}"
     else:

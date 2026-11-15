@@ -1076,19 +1076,29 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
      where the row's own checks still hold: the command table's entries,
      when each is one of the disc's own entries for the shape (reordered or
      repeated: the attack picks an entry, and every value it reads is one
-     the disc has). A change to any other word of the span (`words outside
-     the command table but inside the hashed span`, named in the report) is
-     not checked, because the span also covers words the C does not divide
-     by or index with, such as a texture rectangle's header (shape 54's
-     `GsIMAGE`s, which only the page and CLUT packing reads), and the tool
-     cannot tell them apart yet. A mod that changes such words, a texture
-     rectangle inside an attack module for one, gets `port by hand`. The way
-     forward is `--accept-data`: it makes the C anyway and warns that the C
-     may divide by, index with or otherwise depend on your words, which it
-     did not check. Then run the oracle, as the
-     next step describes (`model_oracle.py --mod ... --records` or
-     `--models`), and check that the C and the MIPS draw alike. Data past
-     the span is the record's own, and the C reads whatever you put there.
+     the disc has). The span is one run of bytes, so it also covers words
+     between those that the C does not divide by or index with.
+     A change to any other word there gets `port by hand`: the tool does
+     not check those words. The report names each changed word with its
+     symbol and a label, from `config/pc/model_span_words.csv`
+     (`tools/pc/model_span_words.py` works it out from the C), saying what
+     the module's own C does with it: `unread` (not read by this module's
+     own C), `texture` (a `GsIMAGE` header handed to the page and CLUT
+     packing), `value` (computed with), what it may reach (`divisor`,
+     `index`, `bound`, `pointer`, `shift`, `address`, `copy`), or `unknown`
+     (the walk does not follow this module's C). A label is a description,
+     not a proof that the C draws what the interpreter draws: even `unread`
+     is only this module's view, and another module's C may read the bytes.
+     When the row's C, or the analysis and the headers it reads, changed
+     since the table was made (digests, checked by CTest
+     `pc_model_span_words`), the report says the labels are stale. Your
+     next step is one of two: port the module by hand, or run mod-migrate
+     with `--accept-data`, which makes the C anyway, at your own risk, and
+     warns that the words were not checked. Then run the
+     oracle, as the next step describes (`model_oracle.py --mod ...
+     --records` or `--models`), and check that the C and the MIPS draw
+     alike. Data past the span is the
+     record's own, and the C reads whatever you put there.
    - **A const the port's C keeps its own copy of changed** (in `changed
      code`, the bytes of a `const` such as `D_8013BAE4`, a scale vector):
      the C it makes defines that const with your bytes.
