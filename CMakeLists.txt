@@ -1316,6 +1316,13 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME pc_model_span_words
             COMMAND "${Python3_EXECUTABLE}" tools/pc/test_model_span_words.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # The model-migration tool in an SDK, without a disc: an SDK written
+        # as a build writes it, moved outside the checkout, and `model_gate.py
+        # mod-check` run from it (tools/pc/model_sdk.py, model_layout.py).
+        add_test(NAME pc_model_sdk
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/test_model_sdk.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        set_tests_properties(pc_model_sdk PROPERTIES TIMEOUT 1800)
         # model_oracle.py's comparison and coverage on made-up games
         # (notes/pc-build.md, "MIPS-only effects").
         add_test(NAME pc_model_oracle_check

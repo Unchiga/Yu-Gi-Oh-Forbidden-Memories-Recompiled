@@ -49,6 +49,18 @@ and sdk/build-mod.sh, which fetch their compiler (and, on Windows, a Python)
 once and build a code mod with nothing installed, and sdk/toolchain-pins.json,
 what they download.
 
+Every SDK also carries the model tool, `python sdk/tools/model_gate.py
+mod-migrate` (tools/pc/model_migrate.py; notes/modding.md, "Moving a mod's
+attacks from MIPS to C"): its Python, its tables, and the C of every native
+model module (the decomp's own source: no disc data), which
+build_game32.write_sdk copies as tools/pc/model_sdk.py computes them, and
+sdk/config/model_sdk.json, with each file's SHA-256 and what was found when
+the span-word labels were checked against the tree. Labels that are not the
+tree's are warned about, loudly, at the start of packing and when each SDK is
+staged, and the stamp says so (the SDK's reports then call the labels stale);
+they never stop a release: labels gate nothing and only Windows with clang can
+regenerate them.
+
 Every SDK also carries the guest pass (sdk/tools/memories-guest-ir[.exe]),
 which build_mod.py runs an Android (aarch64-translated) object through: a
 program of the archive's system, built against the LLVM of the SDK's own
@@ -66,7 +78,7 @@ release key: MEMORIES_ANDROID_KEYSTORE and its password must be set
 APK signed with the debug key is never put in dist/. A build_game32.py
 --target android-arm64-v8a build without them is the debug-signed APK for
 testing, in its build folder."""
-import argparse, datetime, os, re, shutil, struct, subprocess, sys, tarfile, zipfile
+import argparse, datetime, json, os, re, shutil, struct, subprocess, sys, tarfile, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DIST = os.path.join(ROOT, "dist")
@@ -308,6 +320,45 @@ def sdk_exports(system, exports_from=()):
     return lists
 
 
+def model_labels_stale():
+    """Why the SDKs' model tool (tools/model_gate.py mod-migrate,
+    tools/pc/model_sdk.py) would report the span-word labels as stale, or None.
+    The labels (config/pc/model_span_words.csv) carry the digest of the C and
+    of the tool they were made from, which only a checkout can check against
+    the tree being packed. A warning, never a reason not to pack."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import model_sdk
+    problems = model_sdk.labels_problems()
+    return problems[0] if problems else None
+
+
+def warn_labels_stale(why):
+    print(f"package: WARNING: the span-word labels are not this tree's, so the SDKs' mod-migrate will call them "
+          f"stale: {why}\npackage: WARNING: packing goes on (labels describe and gate nothing); regenerate them on "
+          "Windows with clang: python tools/pc/model_span_words.py", file=sys.stderr)
+
+
+def sdk_model_stamp(sdk):
+    """The model tool's stamp of a staged SDK (model_sdk.install wrote it): why
+    the SDK may not be packed (no stamp: it has no model tool), or None. The
+    labels the stamp calls stale are the caller's warning (model_stale_labels)."""
+    path = os.path.join(sdk, "config", "model_sdk.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            json.load(handle)
+    except (OSError, ValueError):
+        return f"{os.path.relpath(path, ROOT)} is missing: the SDK has no model tool (build_game32.py writes it)"
+    return None
+
+
+def model_stale_labels(sdk):
+    """What the staged SDK's stamp says is stale about the labels, or None."""
+    path = os.path.join(sdk, "config", "model_sdk.json")
+    with open(path, encoding="utf-8") as handle:
+        problems = json.load(handle).get("labels", {}).get("problems")
+    return problems[0] if problems else None
+
+
 def add_launchers(sdk):
     """The one-click build into `sdk` (the folder's sdk/): build-mod.bat with
     Windows' line ends (a batch file with bare LF mis-reads its labels),
@@ -334,6 +385,11 @@ def stage(system, label, exports=None, guest_ir=None):
         strip(os.path.join(folder, executable))
     for name in ("mods", "sdk", "languages"):
         shutil.copytree(os.path.join(build_dir, name), os.path.join(folder, name))
+    problem = sdk_model_stamp(os.path.join(folder, "sdk"))
+    if problem:
+        sys.exit(f"package: the {system} SDK: {problem}; nothing was packed")
+    if stale := model_stale_labels(os.path.join(folder, "sdk")):
+        warn_labels_stale(f"the {system} SDK's stamp says: {stale}")
     # The guest pass build_mod.py runs the Android object through, where it
     # looks for it (beside build_mod.py).
     if guest_ir:
@@ -495,6 +551,8 @@ def main():
         systems = [system for system in systems if system != "windows-x64"]
     unavailable = (exports_unavailable(systems, options.exports_from, missing) or
                    (None if options.no_guest_ir else guest_ir_unavailable(systems, options.guest_ir)))
+    if not unavailable and (stale := model_labels_stale()):
+        warn_labels_stale(stale)
     if unavailable:
         sys.exit(f"package: {unavailable}; nothing was packed")
     if not options.no_build:

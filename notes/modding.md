@@ -1050,9 +1050,25 @@ the C is there whenever the models are.
 #### Moving a mod's attacks from MIPS to C
 
 `tools/pc/model_gate.py mod-migrate` does most of the above for a mod whose
-models come from the disc's. It runs in a clone of this repository, with the
-disc: the port's C it starts from (`src/native_overlays`) is not in the
-SDK. Four steps, here for a mod in `mods/my-mod`:
+models come from the disc's. It needs the disc (the game's own image: the tool
+reads the modules your mod changes against it) and the port's C it starts from
+(`src/native_overlays`), which **every release's SDK carries**: `sdk/tools/`
+has the tool and `sdk/include/native_overlays/` that C (the decomp's own
+source, no disc data), with its tables in `sdk/config/`. So you need no clone
+of this repository: in the commands below, `tools/pc/` is the SDK's `tools/`
+(`python sdk/tools/model_gate.py mod-migrate ...`, `sdk/tools/build_mod.py`,
+`sdk/tools/model_oracle.py`; the report prints the commands as they are for
+the tool you ran). The tables, the hashes of the rows and the C are those of
+the game build the SDK came with, which is why the tool comes in the SDK and
+not on its own: use the SDK of the release you play with.
+`python sdk/tools/model_gate.py mod-check` says without a disc that all of
+it is there. The compiler is the one `build_mod.py` uses: the llvm-mingw the
+one-click build fetched into `sdk/toolchain` (`build-mod.bat --setup` or
+`build-mod.sh --setup` fetches it and stops), else what is on your PATH. On
+Windows with no Python of your own, the one-click build's is
+`sdk\toolchain\python-<version>\python.exe`, and runs these tools too. The
+oracle (step 4) runs the game beside the SDK, the release's `memories-pc`.
+Four steps, here for a mod in `mods/my-mod`:
 
 1. **Make the C.**
 
@@ -1091,7 +1107,11 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
      is only this module's view, and another module's C may read the bytes.
      When the row's C, or the analysis and the headers it reads, changed
      since the table was made (digests, checked by CTest
-     `pc_model_span_words`), the report says the labels are stale. Your
+     `pc_model_span_words`, which only warns, and when a release is packed,
+     which warns and goes on), the report says the labels are stale; an SDK's
+     labels are checked against the tree it was made from, so its report says
+     so only when they were already stale then or a file of the SDK was
+     changed. Your
      next step is one of two: port the module by hand, or run mod-migrate
      with `--accept-data`, which makes the C anyway, at your own risk, and
      warns that the words were not checked. Then run the
@@ -1105,15 +1125,16 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
    - **The code changed**: the report names the functions with bytes of
      their own (`func_8013B2A0 (4 bytes at 0x2A4-0x2A7)`) and makes no C:
      the C would be the disc's, not yours. Port those functions by hand,
-     starting from the shape's C (`src/native_overlays/...`, named in the
-     report), and register them as [above](#your-own-c-for-a-module-api-29).
+     starting from the shape's C (`src/native_overlays/...` in a checkout,
+     `sdk/include/native_overlays/...` in an SDK: the report names it as the
+     tree you ran it from does), and register them as [above](#your-own-c-for-a-module-api-29).
    - **The disc's module, or one without entry:** nothing to do.
    - **A first word no disc module has:** no source; port it by hand.
 
    It exits with 1 when any module needs porting by hand.
 2. **What it wrote, beside your `mod.json`:**
    - `model_c/<prefix>/`: the shape's files from `src/native_overlays`
-     (slot A's C, slot B's wrapper, their headers), with their includes made
+     (`sdk/include/native_overlays` in an SDK; slot A's C, slot B's wrapper, their headers), with their includes made
      relative to the copy. `<prefix>` names the module copy, such as
      `mm_v54a` for shape 54 in slot A.
    - `<prefix>.h`: everything the module's C defines, under the prefix, so
@@ -1156,7 +1177,12 @@ SDK. Four steps, here for a mod in `mods/my-mod`:
 
    Without `--target`, and with clang (the one-click build's, or
    llvm-mingw), it builds the 64-bit Windows and Android objects too; with
-   GCC it builds the i386 object only.
+   GCC it builds the i386 object only. **From an SDK the report prints
+   `python sdk/tools/build_mod.py mods/my-mod` with no `--target`:** the
+   oracle runs the game beside the SDK, which may be the 64-bit Windows one
+   (it loads the `x86_64-windows` object and registers nothing from an i386
+   one), so build every target. In a checkout the oracle runs the 32-bit game
+   it builds, and the report names `--target i386`.
 4. **Check it against the interpreter.** The report ends with the command
    for your mod. For records of `MODEL.MRG` it is like:
 
@@ -2854,7 +2880,11 @@ object per target. Beside a released game the same script is
 `sdk/tools/build_mod.py`, and it builds against `sdk/include` there. The
 release's `sdk/` also carries `extract_images.py` and `upscale_pack.py` in
 `sdk/tools`, the example mods in `sdk/examples/mods`, and this note with
-`mod-api-3.md` and `more-cards.md` in `sdk/notes`.
+`mod-api-3.md` and `more-cards.md` in `sdk/notes`. The tool that moves a
+mod's attacks from MIPS to C (`model_gate.py`, `model_oracle.py` and what they
+import, in `sdk/tools`, with their tables in `sdk/config` and the port's C in
+`sdk/include/native_overlays`) is there too: [Moving a mod's attacks from MIPS
+to C](#moving-a-mods-attacks-from-mips-to-c).
 
 What it needs:
 

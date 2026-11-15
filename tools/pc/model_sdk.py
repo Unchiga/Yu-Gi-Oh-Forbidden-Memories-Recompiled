@@ -35,8 +35,9 @@ import functools
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import model_layout as layout  # noqa: E402
@@ -247,8 +248,10 @@ def install(sdk: Path, copy=None) -> dict:
             inside(name).is_file() and inside(name).stat().st_size == (root / name).stat().st_size
             for name in earlier_stamp["files"]):
         return earlier_stamp
+    started = time.time_ns()
     names = files()
     every = stamped()
+    before = fingerprint(root, every)   # before the hashes and the labels are taken, and again after (below)
     earlier = earlier_stamp["files"] if earlier_stamp else {}
     for name in sorted(set(earlier) - set(every)):
         if not shipped_header(name) and inside(name).is_file():   # (headers are write_sdk's)
@@ -262,13 +265,26 @@ def install(sdk: Path, copy=None) -> dict:
     text = json.dumps(stamp, indent=1, sort_keys=True) + "\n"
     if not stamp_file.is_file() or stamp_file.read_text(encoding="utf-8") != text:
         stamp_file.write_text(text, encoding="utf-8", newline="\n")
-    inputs_file.write_text(json.dumps(fingerprint(root, stamp["files"]), sort_keys=True), encoding="utf-8")
+    # What was read must be what is there now, and not a file written in the last moments (a time that
+    # is this close to the start says nothing a clock of two seconds could tell from an edit in the
+    # middle of the step): else the next build does the step again.
+    after = fingerprint(root, every)
+    newest = max([value[1] for value in after.values() if isinstance(value, list)]
+                 + [value for value in after.values() if isinstance(value, int)])
+    if before == after and newest < started - 2_000_000_000:
+        inputs_file.write_text(json.dumps(after, sort_keys=True), encoding="utf-8")
+    else:
+        inputs_file.unlink(missing_ok=True)
     return stamp
 
 
 # The folders whose entries decide what the tools find: a new C file or Python
-# module appears as a change of the folder.
-WATCHED = ("src/native_overlays", "tools/pc", "config/pc")
+# module appears as a change of the folder. src/native_overlays is watched down
+# to its last folder, the others (here) at their top; and the folder of every
+# file the stamp names (a quoted include is looked for beside the includer
+# first, then from src/, and new names appear in the folder it ends in), src/
+# itself (a new folder under it) and src/psyq, which stamped() globs.
+WATCHED = ("src", "src/psyq", "tools/pc", "config/pc")
 
 
 def fingerprint(root: Path, names) -> dict:
@@ -282,12 +298,24 @@ def fingerprint(root: Path, names) -> dict:
             found[name] = [info.st_size, info.st_mtime_ns]
         except OSError:
             found[name] = None
-    for folder in WATCHED:
-        for directory, subdirs, _ in os.walk(root / folder):
-            found[Path(directory).relative_to(root).as_posix() + "/"] = os.stat(directory).st_mtime_ns
-            if folder != "src/native_overlays":
-                subdirs[:] = []
+    folders = set(WATCHED) | {PurePosixPath(name).parent.as_posix() for name in names}
+    for directory, _, _ in os.walk(root / "src/native_overlays"):
+        folders.add(Path(directory).relative_to(root).as_posix())
+    for folder in folders:
+        try:
+            found[folder + "/"] = os.stat(root / folder).st_mtime_ns
+        except OSError:
+            found[folder + "/"] = None
     return found
+
+
+def display(name: str) -> str:
+    """The repository's name of a file as this tree's reports say it: the same
+    in a checkout, include/..., config/... or tools/... in an SDK."""
+    try:
+        return shipped_name(name) if layout.SHIPPED else name
+    except ValueError:
+        return name
 
 
 def shipped_name(name: str) -> str:
@@ -319,7 +347,7 @@ def unresolved_includes() -> list[str]:
             continue
         for include in model_gate.INCLUDE.findall(model_gate._text(path)):
             if not ((path.parent / include).is_file() or (layout.SRC / include).is_file()):
-                found.append(f"{name}: #include \"{include}\"")
+                found.append(f"{display(name)}: #include \"{include}\"")
     return found
 
 
@@ -338,9 +366,9 @@ def check() -> list[str]:
         for name, digest in sorted(stamp["files"].items()):
             path = layout.path(name)
             if not path.is_file():
-                problems.append(f"{name} is missing from the SDK")
+                problems.append(f"{display(name)} is missing from the SDK")
             elif sha256(path) != digest:
-                problems.append(f"{name} is not the file the SDK was made with")
+                problems.append(f"{display(name)} is not the file the SDK was made with")
     rows = native_rows()
     if stamp is not None and stamp["native_rows"] != len(rows):
         problems.append(f"the SDK was made with {stamp['native_rows']} native rows and its tables have {len(rows)}")
@@ -349,12 +377,12 @@ def check() -> list[str]:
         for slot in "AB":
             for pattern in model_gate.source_patterns(row, slot):
                 if not layout.glob(pattern):
-                    problems.append(f"{row.KIND.name} {row.shape} slot {slot}: no C matches {pattern}")
+                    problems.append(f"{row.KIND.name} {row.shape} slot {slot}: no C matches {display(pattern)}")
     problems += [f"no file for {text}" for text in unresolved_includes()]
     if stamp is not None:
         # A file the tool would use (matched by a row's source pattern, or included from one) that the SDK
         # was not made with: an extra C file beside a module's, a header from elsewhere.
-        problems += [f"{name} is not a file the SDK was made with" for name in sorted(row_sources())
+        problems += [f"{display(name)} is not a file the SDK was made with" for name in sorted(row_sources())
                      if name not in stamp["files"]]
     return problems
 

@@ -309,9 +309,9 @@ jobs:
         id: scope
         run: |
           touched=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/sdk/|tools/pc/package\.py$|tools/pc/build_mod\.py$|tools/pc/check_one_click\.py$|\.github/workflows/pc-release\.yml$)'; then
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/sdk/|tools/pc/package\.py$|tools/pc/build_mod\.py$|tools/pc/check_one_click\.py$|tools/pc/model_[a-z_]+\.py$|tools/pc/yfm_control\.py$|src/(native_overlays|game|psyq)/|src/(types|port_ptr)\.h$|src/pc/(overlays/model_stale_locals|compat/pgxp_game)\.h$|config/pc/(model_|host_symbol_renames)|\.github/workflows/pc-release\.yml$)'; then
             touched=false
-            echo "::notice title=SDK one-click build::not run: this pull request touches none of tools/pc/sdk/, package.py, build_mod.py, check_one_click.py or the workflow"
+            echo "::notice title=SDK one-click build::not run: this pull request touches none of tools/pc/sdk/, package.py, build_mod.py, check_one_click.py, the model tool (tools/pc/model_*.py, yfm_control.py, its tables and C) or the workflow"
           fi
           echo "touched=$touched" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
@@ -368,6 +368,20 @@ jobs:
       - name: Check the objects
         if: steps.scope.outputs.touched == 'true'
         run: python tools/pc/check_one_click.py tmp/clean/mod --sdk tmp/clean/game/sdk $([ "$GITHUB_EVENT_NAME" = pull_request ] && echo --allow-no-guest-pass)
+      # The model-migration tool the SDK carries (tools/model_gate.py,
+      # tools/pc/model_sdk.py): run from the unpacked SDK, with the runner's own
+      # Python and nothing of the checkout (`cd` out of it: the script's own
+      # folder is all that is on the path), no disc. It lists the native rows,
+      # finds the C of each and every file the stamp names, and recomputes
+      # the span-word labels' digests from the SDK's own files (stale labels
+      # are a warning, not a failure).
+      - name: Check the model tool in the SDK
+        if: steps.scope.outputs.touched == 'true'
+        run: |
+          mkdir tmp/elsewhere && cd tmp/elsewhere
+          python ../clean/game/sdk/tools/model_gate.py mod-check | tee mod-check.txt
+          grep -Eq 'mod-check: [0-9]+ native rows, [0-9]+ C and header files, labels (current|STALE).* .the SDK.s.' mod-check.txt
+          test "$(python ../clean/game/sdk/tools/model_gate.py check >/dev/null 2>&1; echo $?)" = 2
       - name: Upload the objects
         if: always() && steps.scope.outputs.touched == 'true'
         uses: actions/upload-artifact@v4
@@ -444,7 +458,7 @@ jobs:
         id: scope
         run: |
           touched=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/llvm/|tools/pc/build_sdk_guest_ir\.py$|tools/pc/sdk_llvm\.json$|tools/pc/fetch_tools\.py$|src/pc/memory_map\.h$|tools/pc/sdk/|tools/pc/package\.py$|tools/pc/build_mod\.py$|tools/pc/check_one_click\.py$|\.github/workflows/pc-release\.yml$)'; then
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -Eq '^(tools/pc/llvm/|tools/pc/build_sdk_guest_ir\.py$|tools/pc/sdk_llvm\.json$|tools/pc/fetch_tools\.py$|src/pc/memory_map\.h$|tools/pc/sdk/|tools/pc/package\.py$|tools/pc/build_mod\.py$|tools/pc/check_one_click\.py$|tools/pc/model_[a-z_]+\.py$|tools/pc/yfm_control\.py$|src/(native_overlays|game|psyq)/|src/(types|port_ptr)\.h$|src/pc/(overlays/model_stale_locals|compat/pgxp_game)\.h$|config/pc/(model_|host_symbol_renames)|\.github/workflows/pc-release\.yml$)'; then
             touched=false
           fi
           echo "touched=$touched" >> "$GITHUB_OUTPUT"
