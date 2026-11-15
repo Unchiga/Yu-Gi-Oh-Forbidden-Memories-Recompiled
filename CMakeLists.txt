@@ -1309,6 +1309,13 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME pc_replay_check
             COMMAND "${Python3_EXECUTABLE}" tests/pc/replay_check_test.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # config/pc/model_span_words.csv covers every native row's span words,
+        # and each row's digest is the C the tree has (no compiler needed);
+        # with clang as the check compiler also the analysis of a few rows
+        # and of made-up modules (tools/pc/model_span_words.py).
+        add_test(NAME pc_model_span_words
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/test_model_span_words.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         # model_oracle.py's comparison and coverage on made-up games
         # (notes/pc-build.md, "MIPS-only effects").
         add_test(NAME pc_model_oracle_check

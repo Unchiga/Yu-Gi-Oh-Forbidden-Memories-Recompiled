@@ -15,11 +15,24 @@ data is kept.
   data     the command table entry the attack picks zeroed (divisors among
            its words): to port by hand, naming the words, no C, mod-row
            prints no row; --accept-data makes the C and warns;
-  accept   a texture rectangle's header (shape 54's GsIMAGE, which only the
-           page and CLUT packing reads: inside the hashed span, outside the
-           command table) moved: to port by hand without --accept-data; with
-           it the C and a warning, and the oracle sees the C draw what the
-           interpreter draws, other frames than the unpatched ones;
+  accept   a texture rectangle's header (shape 105's GsIMAGE: inside the
+           hashed span, outside the command table, labelled `texture` in
+           config/pc/model_span_words.csv) moved: to port by hand without
+           --accept-data (a label is not a proof), the report naming the word
+           and its label; with it the C, and the oracle sees the C draw what
+           the interpreter draws, other frames than the unpatched ones;
+  unread   the word after shape 54's command table (labelled `unread`: not
+           read by the module's own C) changed: to port by hand without
+           --accept-data, the report naming it and its label; with a copy of
+           the table whose digest of shape 54's C, or of the tool, is not the
+           tree's (MEMORIES_SPAN_WORDS), the report says the labels are
+           stale; --accept-data makes the C in each;
+  labels   for each label the table has, a word of it changed: to port by
+           hand without --accept-data, the report naming its label; with it
+           the C;
+  divisor  a word of the span outside the command table labelled `divisor`
+           (the analysis cannot rule out that the C divides by it): to port
+           by hand without --accept-data, naming the word, no C;
   replace  the same bytes as a raw replacement of the record's module
            sectors, in a mod with its own MemoriesModInit: the same C, rows
            registered through MemoriesModelRows_Register, and no oracle
@@ -68,7 +81,7 @@ BUILD = "python tools/pc/build_mod.py {mod} --target i386"
 ORACLE_RECORDS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --records {records}"
 ORACLE_MODELS = "python tools/pc/model_oracle.py --disc {disc} --mod {mod} --models {models}"
 PLAIN = "python tools/pc/model_oracle.py --disc {disc} --records {records}"
-CASES = ("class", "tables", "data", "accept", "replace", "const", "code", "models")
+CASES = ("class", "tables", "data", "accept", "unread", "labels", "divisor", "replace", "const", "code", "models")
 
 
 class Test:
@@ -326,40 +339,53 @@ def case_data(test: Test, disc: model_oracle.Disc) -> None:
                 "data: with --accept-data the C is made, and the report warns")
 
 
+ACCEPT = (105, 0x1424, "D_8013C424")   # a shape, its GsIMAGE header labelled texture, the header's symbol
+
+
 def case_accept(test: Test, disc: model_oracle.Disc) -> None:
-    """A word of the span that is not in the command table, and the C does
-    not divide by or index with: the page x of the first GsIMAGE (D_8013C648)
-    of shape 54's records, moved to another texture page. Without
-    --accept-data the tool says to port by hand; with it the C is made, and
-    the oracle shows that it draws what the interpreter draws, and not what
-    the unpatched record draws (the patch is seen on screen)."""
-    row, record, alternatives, plain, _ = shape54(test, disc)
-    first = 0x1648    # D_8013C648[0]: pmode, then px, py
+    """A word of the span that is not in the command table, and that the C
+    only hands to the texture packing: the page x of shape 105's GsIMAGE
+    (D_8013C424), moved to another texture page. config/pc/model_span_words.csv
+    labels it `texture`, which is not a proof: without --accept-data the tool
+    says to port it by hand, naming the word and its label; with it the C,
+    and the oracle shows that it draws what the interpreter draws, and not
+    what the unpatched record draws (the patch is seen on screen)."""
+    shape, first, symbol = ACCEPT
+    row = next(r for r in model_gate.native_rows() if r.shape == shape)
+    record, alternatives = test_model_mod_c.find_record(disc, row)
+    plain = test.oracle(PLAIN.format(disc=rel(test.arguments.disc), records=record), "accept-unpatched",
+                        ["--alternatives", ",".join(map(str, alternatives))])
+    word = first + 4   # pmode, then px, py
+    found = model_migrate.model_span_words.class_of(model_migrate.span_words(), "variant", shape, word)
+    test.expect(found is not None and found[0] == "texture",
+                f"accept: config/pc/model_span_words.csv classes the GsIMAGE's px texture ({found})")
     patches = []
     for alternative in alternatives:
         for slot in "AB":
             image = disc.variant(record, alternative, slot)
-            test.expect(row.data_start <= first + 4 < row.span and not
-                        row.command_table[0] <= first + 4 < row.command_table[0] + row.command_table[1] *
-                        row.command_table[2], "accept: the GsIMAGE is inside the span and outside the command table")
-            px = struct.unpack_from("<H", image, first + 4)[0]
-            patches.append({"at": test_model_mod_c.stage_at(record, alternative, slot) + first + 4,
+            test.expect(row.data_start <= word < row.span and not (row.command_table and
+                        row.command_table[0] <= word < row.command_table[0] + row.command_table[1] *
+                        row.command_table[2]), "accept: the GsIMAGE is inside the span and outside the command table")
+            px = struct.unpack_from("<H", image, word)[0]
+            patches.append({"at": test_model_mod_c.stage_at(record, alternative, slot) + word,
                             "bytes": struct.pack("<H", px + 0x40).hex()})
     mod = mod_folder(test.arguments.out / "mods" / "migrate-accept", "migrate-accept",
                      {"data": [{"file": "\\DATA\\MODEL.MRG;1", "patch": patches}]})
     result, report = test.migrate(mod, "accept-migrate")
     hand = modules(report, "hand")
-    test.expect(result.returncode == 1 and hand and all(m["hashed_words"] == ["0x164C"] and
-                                                        "--accept-data" in m["why"] for m in hand) and
-                not modules(report, "generate") and not list(mod.glob("*.c")),
-                f"accept: a moved texture rectangle is to port by hand, naming its word, with no C "
-                f"({[(m['where'], m['action'], m.get('hashed_words')) for m in report['modules']]})")
+    test.expect(result.returncode == 1 and hand and not modules(report, "generate") and
+                all(m["hashed_words"] == [f"0x{word & ~3:X}"] and
+                    m["span_labels"] == {f"0x{word & ~3:X}": ["texture", symbol]} and
+                    f"0x{word & ~3:X} {symbol} (texture: handed to the texture packing)" in m["why"] and
+                    "--accept-data at your own risk" in m["why"] for m in hand) and not list(mod.glob("*.c")),
+                f"accept: a moved texture rectangle is to port by hand without --accept-data, the report naming "
+                f"its word and label ({[(m['where'], m['action'], m.get('hashed_words')) for m in report['modules']]})")
     result = test.run(MIGRATE.format(mod=rel(mod), disc=rel(test.arguments.disc)), ["--accept-data"], "accept-accept")
     report = json.loads((mod / model_migrate.COPIES / "migrate.json").read_text(encoding="utf-8"))
     made = modules(report, "generate")
-    test.expect(result.returncode == 0 and len(made) == 2 and not modules(report, "hand") and
-                "!! --accept-data" in result.stdout and "were not checked" in result.stdout,
-                f"accept: with --accept-data the C is made, and the report warns that the words were not checked "
+    test.expect(result.returncode == 0 and made and not modules(report, "hand") and
+                "!! --accept-data, at your own risk" in result.stdout,
+                f"accept: with --accept-data the C is made, the report warning "
                 f"({[(m['where'], m['action']) for m in report['modules']]})")
     want = ORACLE_RECORDS.format(disc=rel(test.arguments.disc), mod=rel(mod), records=record)
     test.expect(test.build(mod, "accept-build"), "accept: the mod builds")
@@ -369,6 +395,187 @@ def case_accept(test: Test, disc: model_oracle.Disc) -> None:
     test.expect(ways(found) == {tag}, f"accept: the subject ran {tag} and nothing else ({sorted(ways(found))})")
     test.expect(bool(digests(found)) and not set(digests(found)) & set(digests(plain)),
                 f"accept: the patch changes the frames ({digests(plain)} unpatched, {digests(found)} patched)")
+
+
+def case_unread(test: Test, disc: model_oracle.Disc) -> None:
+    """Shape 54's word after its command table's last entry, which the
+    module's own C does not read (labelled `unread`, which is not a proof:
+    another module's C may read the bytes): port by hand without
+    --accept-data, the report naming the word and its label. Then the same
+    mod against a copy of the table whose digest of shape 54's C, or of the
+    tool, is another: the report says the labels are stale. --accept-data
+    makes the C in each."""
+    row, record, alternatives, plain, _ = shape54(test, disc)
+    word = 0x17B8
+    table = model_migrate.span_words()
+    found = model_migrate.model_span_words.class_of(table, "variant", 54, word)
+    test.expect(found is not None and found[0] == "unread",
+                f"unread: config/pc/model_span_words.csv labels shape 54's 0x{word:X} unread ({found})")
+    patches = []
+    for alternative in alternatives:
+        for slot in "AB":
+            image = disc.variant(record, alternative, slot)
+            value = struct.unpack_from("<I", image, word)[0]
+            patches.append({"at": test_model_mod_c.stage_at(record, alternative, slot) + word,
+                            "bytes": struct.pack("<I", value ^ 0x01010101).hex()})
+    mod = mod_folder(test.arguments.out / "mods" / "migrate-unread", "migrate-unread",
+                     {"data": [{"file": "\\DATA\\MODEL.MRG;1", "patch": patches}]})
+    labelled(test, mod, word, "unread", "D_8013C6D4", "unread")
+    # The same mod against a table made from other C.
+    digest = model_migrate.model_span_words.digests(model_migrate.model_span_words.TABLE)[("variant", 54)]
+    copy = test.arguments.out / "stale_span_words.csv"
+    text = model_migrate.model_span_words.TABLE.read_bytes().decode("utf-8")
+    copy.write_bytes(text.replace(digest, "0" * 16).encode("utf-8"))
+    stale_migrate(test, mod, copy, word, "unread-stale", "a table made from other C")
+    # A table made by another version of the analysis: every row stale.
+    tool = model_migrate.model_span_words.tool_digests(model_migrate.model_span_words.TABLE)
+    copy = test.arguments.out / "stale_tool_span_words.csv"
+    text = model_migrate.model_span_words.TABLE.read_bytes().decode("utf-8")
+    for one in tool:
+        text = text.replace(one, "f" * 16)
+    copy.write_bytes(text.encode("utf-8"))
+    stale_migrate(test, mod, copy, word, "unread-stale-tool", "a table made by another analysis")
+
+
+def stale_migrate(test: Test, mod: Path, copy: Path, word: int, name: str, what: str) -> None:
+    """The mod against a stale copy of the table: port by hand, the report
+    saying the table is stale and naming the next steps; with --accept-data
+    the C anyway, the report warning."""
+    os.environ["MEMORIES_SPAN_WORDS"] = str(copy)
+    try:
+        result, report = test.migrate(mod, name)
+        hand = modules(report, "hand")
+        test.expect(result.returncode == 1 and len(hand) == 2 and not modules(report, "generate") and
+                    all(m["hashed_words"] == [f"0x{word:X}"] and m["span_words_stale"] and
+                        "the labels are stale" in m["why"] and "not a proof" in m["why"] and
+                        "port the module by hand" in m["why"] and
+                        "--accept-data at your own risk" in m["why"] for m in hand),
+                    f"unread: with {what} the word is to port by hand, the labels stale, the next steps named "
+                    f"({[(m['where'], m['action'], m.get('span_words_stale')) for m in report['modules']]})")
+        result = test.run(MIGRATE.format(mod=rel(mod), disc=rel(test.arguments.disc)), ["--accept-data"],
+                          f"{name}-accept")
+        report = json.loads((mod / model_migrate.COPIES / "migrate.json").read_text(encoding="utf-8"))
+    finally:
+        del os.environ["MEMORIES_SPAN_WORDS"]
+    made = modules(report, "generate")
+    test.expect(result.returncode == 0 and len(made) == 2 and not modules(report, "hand") and
+                "!! --accept-data, at your own risk" in result.stdout and "stale" in result.stdout,
+                f"unread: with {what} and --accept-data the C is made, the report warning "
+                f"({[(m['where'], m['action']) for m in report['modules']]})")
+
+
+def labelled(test: Test, mod: Path, word: int, label: str, symbol: str, name: str) -> None:
+    """mod-migrate on a mod that changes one labelled word: port by hand,
+    the report naming the word, its symbol and its label; with --accept-data
+    the C, the report warning."""
+    result, report = test.migrate(mod, f"{name}-migrate")
+    hand = modules(report, "hand")
+    test.expect(result.returncode == 1 and hand and not modules(report, "generate") and
+                all(m["hashed_words"] == [f"0x{word:X}"] and m["span_labels"] == {f"0x{word:X}": [label, symbol]} and
+                    f"0x{word:X} {symbol} ({label}:" in m["why"] and "not a proof" in m["why"] and
+                    "port the module by hand" in m["why"] for m in hand) and not list(mod.glob("*.c")),
+                f"{name}: a changed `{label}` word is to port by hand without --accept-data, the report naming it "
+                f"({[(m['where'], m['action'], m.get('span_labels')) for m in report['modules']]})")
+    result = test.run(MIGRATE.format(mod=rel(mod), disc=rel(test.arguments.disc)), ["--accept-data"],
+                      f"{name}-accept")
+    report = json.loads((mod / model_migrate.COPIES / "migrate.json").read_text(encoding="utf-8"))
+    test.expect(result.returncode == 0 and modules(report, "generate") and not modules(report, "hand") and
+                "!! --accept-data, at your own risk" in result.stdout,
+                f"{name}: with --accept-data the `{label}` word gets the C, the report warning")
+
+
+def case_labels(test: Test, disc: model_oracle.Disc) -> None:
+    """The invariant, per label: for each label config/pc/model_span_words.csv
+    has, a word of it in a shape with a disc record, changed, is to port by
+    hand without --accept-data; with it, the C."""
+    table = model_migrate.span_words()
+    rows = {row.shape: row for row in model_gate.native_rows()}
+    found_rows: dict[int, tuple[int, list[int]] | None] = {}
+    seen = set()
+    for (kind, shape), runs in sorted(table.items()):
+        if kind != "variant" or shape not in rows:
+            continue
+        for start, size, label, symbol, _ in runs:
+            first = (start + 3) & ~3
+            if label in seen or first + 4 > start + size:
+                continue
+            if shape not in found_rows:
+                try:
+                    found_rows[shape] = test_model_mod_c.find_record(disc, rows[shape])
+                except SystemExit:
+                    found_rows[shape] = None
+            if found_rows[shape] is None:
+                continue
+            seen.add(label)
+            record, alternatives = found_rows[shape]
+            patches = []
+            for alternative in alternatives:
+                for slot in "AB":
+                    image = disc.variant(record, alternative, slot)
+                    value = struct.unpack_from("<I", image, first)[0]
+                    patches.append({"at": test_model_mod_c.stage_at(record, alternative, slot) + first,
+                                    "bytes": struct.pack("<I", value ^ 0x01010101).hex()})
+            mod = mod_folder(test.arguments.out / "mods" / f"migrate-label-{label}", f"migrate-label-{label}",
+                             {"data": [{"file": "\\DATA\\MODEL.MRG;1", "patch": patches}]})
+            labelled(test, mod, first, label, symbol, f"labels-{label}")
+    test.expect(seen >= {"divisor", "index", "bound", "address", "unknown", "value", "texture", "unread"},
+                f"labels: every label the table has was changed in some shape ({sorted(seen)})")
+
+
+def divisor_word(disc: model_oracle.Disc) -> tuple[model_gate.Row, int, int, list[int]] | None:
+    """A variant row with a word outside its command table labelled `divisor`
+    (config/pc/model_span_words.csv), and a record of the disc with its
+    modules: (row, word, record, alternatives)."""
+    table = model_migrate.span_words()
+    rows = {row.shape: row for row in model_gate.native_rows()}
+    for (kind, shape), runs in sorted(table.items()):
+        if kind != "variant" or shape not in rows:
+            continue
+        for start, size, cls, _, _ in runs:
+            if cls == "divisor" and size >= 4 and start % 4 == 0:
+                try:
+                    record, alternatives = test_model_mod_c.find_record(disc, rows[shape])
+                except SystemExit:
+                    break
+                return rows[shape], start, record, alternatives
+    return None
+
+
+def case_divisor(test: Test, disc: model_oracle.Disc) -> None:
+    """A word of the span outside the command table labelled `divisor` in
+    config/pc/model_span_words.csv (the analysis cannot rule out that the C
+    divides by it; no word outside a table is one the gate's own scan names),
+    changed: the tool says to port by hand, names the word, and writes no C."""
+    found = divisor_word(disc)
+    test.expect(found is not None, "divisor: a disc record has a shape with a divisor word outside its table")
+    if found is None:
+        return
+    row, word, record, alternatives = found
+    patches = []
+    for alternative in alternatives:
+        for slot in "AB":
+            image = disc.variant(record, alternative, slot)
+            value = struct.unpack_from("<I", image, word)[0]
+            patches.append({"at": test_model_mod_c.stage_at(record, alternative, slot) + word,
+                            "bytes": struct.pack("<I", value ^ 1).hex()})
+    mod = mod_folder(test.arguments.out / "mods" / "migrate-divisor", "migrate-divisor",
+                     {"data": [{"file": "\\DATA\\MODEL.MRG;1", "patch": patches}]})
+    result, report = test.migrate(mod, "divisor-migrate")
+    hand = modules(report, "hand")
+    test.expect(result.returncode == 1 and hand and not modules(report, "generate") and
+                all(m["shape"] == row.shape and m["hashed_words"] == [f"0x{word:X}"] and
+                    "--accept-data" in m["why"] for m in hand) and not list(mod.glob("*.c")),
+                f"divisor: shape {row.shape}'s divisor word 0x{word:X} changed is to port by hand, naming it, "
+                f"with no C ({[(m['where'], m['action'], m.get('hashed_words')) for m in report['modules']]})")
+    test.expect(all("(divisor: may reach a divisor)" in m["why"] and "not a proof" in m["why"] for m in hand),
+                f"divisor: the report labels the word with what it may reach, not a proof "
+                f"({[m['why'][:160] for m in hand]})")
+    result = test.run(MIGRATE.format(mod=rel(mod), disc=rel(test.arguments.disc)), ["--accept-data"],
+                      "divisor-accept")
+    report = json.loads((mod / model_migrate.COPIES / "migrate.json").read_text(encoding="utf-8"))
+    test.expect(result.returncode == 0 and modules(report, "generate") and not modules(report, "hand") and
+                "!! --accept-data, at your own risk" in result.stdout,
+                "divisor: with --accept-data the locked word gets the C, the report warning")
 
 
 OWN_INIT = """/* The mod's own entry, which registers mod-migrate's rows itself. */
