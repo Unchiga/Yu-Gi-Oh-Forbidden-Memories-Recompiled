@@ -214,7 +214,41 @@ def objcopy_for(clang):
 def clang_candidates(named):
     """The compilers build_mod.py tries, in order (programs): `named`
     (MEMORIES_MOD_CC) alone when set."""
-    return [named] if named else [os.path.join(LLVM_MINGW, "clang"), "clang", "gcc"]
+    return [named] if named else [*one_click_clangs(), os.path.join(LLVM_MINGW, "clang"), "clang", "gcc"]
+
+
+def one_click_clangs():
+    """The clang of the llvm-mingw the SDK's one-click build (build-mod.bat,
+    build-mod.sh) fetched into sdk/toolchain/llvm-mingw-<the pinned release>,
+    so that the SDK's other tools that compile with this module's compiler
+    (model_gate.py mod-migrate) find the one the launcher builds with, run
+    on their own. Only when it starts here: an SDK folder that was copied or
+    shared from the other system holds that system's clang, which would stop
+    the build with "not a valid Win32 application" where PATH has a good one
+    (the next candidates then). None in the repository, whose own is LLVM_MINGW. A
+    MEMORIES_SDK_TOOLCHAIN (the launchers' own variable: a folder with clang
+    in it, or in its bin/, for a system where the download does not run)
+    is the one then (before PATH), as it is for the launchers."""
+    if not SHIPPED:
+        return []
+    own = os.environ.get("MEMORIES_SDK_TOOLCHAIN")
+    if own:
+        return [os.path.join(os.path.join(own, "bin") if os.path.isdir(os.path.join(own, "bin")) else own, "clang")]
+    # clang.exe on Windows and clang elsewhere, not whichever is there: under WSL the Windows
+    # clang.exe starts (interop) and then cannot compile a /mnt path.
+    program = os.path.join(SDK, "toolchain", f"llvm-mingw-{LLVM_MINGW_RELEASE}", "bin",
+                           "clang.exe" if os.name == "nt" else "clang")
+    return [program] if os.path.isfile(program) and clang_starts(program) else []
+
+
+@functools.lru_cache(maxsize=None)
+def clang_starts(path):
+    """Whether `path --version` runs (a program of another system, or a file
+    that is not one, does not)."""
+    try:
+        return subprocess.run([path, "--version"], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def resolve(candidate):
