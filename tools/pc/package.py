@@ -163,6 +163,12 @@ def strip(executable):
         import build_win32_deps
         build_win32_deps.use_toolchain()
     subprocess.run(["llvm-strip", "--strip-all", executable], check=True)
+    from pe_layout import pe_layout_gaps      # beside this file (sys.path above)
+    with open(executable, "rb") as handle:
+        gaps = pe_layout_gaps(handle.read())
+    if gaps:
+        sys.exit(f"package: {executable} has a hole in its image after the strip, which Windows will not load "
+                 f"(not a valid Win32 application): {'; '.join(gaps)}")
     set_pe_checksum(executable)
 
 
