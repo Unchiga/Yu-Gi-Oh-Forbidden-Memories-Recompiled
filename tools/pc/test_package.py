@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Check release archives without a ROM: layout, modes, no user data."""
 import argparse
+import hashlib
 import json
+import os
 import struct
+import subprocess
+import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 import tarfile
 import zipfile
@@ -68,6 +73,76 @@ def check_exe(image):
     # test path, which a release leaves out (MEMORIES_TEST_HOOKS).
     for name in (b"SetProcessDEPPolicy", b"GetProcessDEPPolicy", b"GetSystemDEPPolicy", b"MEMORIES_TEST_EXEC_GUEST"):
         assert name not in image, f"memories-pc.exe contains {name.decode()}"
+
+
+# Where an SDK keeps what the repository calls tools/pc, config/pc and src (tools/pc/model_layout.py).
+SDK_FOLDERS = {"src/": "sdk/include/", "config/pc/": "sdk/config/", "tools/pc/": "sdk/tools/"}
+
+
+def sdk_files(path, root):
+    """{name inside the archive's top folder: bytes} of the SDK's tools/,
+    config/ and include/, in one pass: a .tar.gz is decompressed from its start
+    for every member opened by name (about 1,700 of them here), so it is read
+    once."""
+    prefixes = tuple(f"{root}/sdk/{folder}/" for folder in ("tools", "config", "include"))
+    found = {}
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                if info.filename.startswith(prefixes) and not info.is_dir() and "memories-guest-ir" not in info.filename:
+                    found[info.filename[len(root) + 1:]] = archive.read(info)
+    else:
+        with tarfile.open(path) as archive:
+            for member in archive:
+                if member.isfile() and member.name.startswith(prefixes) and "memories-guest-ir" not in member.name:
+                    found[member.name[len(root) + 1:]] = archive.extractfile(member).read()
+    return found
+
+
+def check_model_tool(path, root, contents):
+    """The model-migration tool in the SDK (tools/pc/model_sdk.py): its Python,
+    its tables and the C of every native row are there, each as the stamp
+    says, and `model_gate.py mod-check` passes from the SDK unpacked on its
+    own, outside any checkout. Whether the span-word labels were current when
+    it was packed is told (a warning), not asserted: stale labels block nothing.
+    Nothing here reads a disc: the C is the decomp's own, the tables hold
+    offsets, symbols, hashes and labels."""
+    blobs = sdk_files(path, root)
+    assert "sdk/config/model_sdk.json" in blobs, "the SDK has no sdk/config/model_sdk.json (its model tool's stamp)"
+    stamp = json.loads(blobs["sdk/config/model_sdk.json"])
+    for problem in stamp["labels"]["problems"][:1]:
+        print(f"{path.name}: WARNING: the SDK's span-word labels were stale when it was made: {problem}",
+              file=sys.stderr)
+    assert stamp["native_rows"] > 300, f"the SDK's tool knows {stamp['native_rows']} native rows"
+    shipped = {}
+    for name, digest in stamp["files"].items():
+        folder = next((folder for folder in SDK_FOLDERS if name.startswith(folder)), None)
+        assert folder, f"the stamp names {name}, which has no place in the SDK"
+        shipped[name] = SDK_FOLDERS[folder] + name[len(folder):]
+        assert shipped[name] in blobs, f"the SDK lacks {shipped[name]}, which its model tool needs"
+        found = hashlib.sha256(blobs[shipped[name]]).hexdigest()
+        assert found == digest, f"{shipped[name]} is not the file the SDK was stamped with"
+    tools = {name for name in shipped.values() if name.startswith("sdk/tools/")}
+    assert {"sdk/tools/model_gate.py", "sdk/tools/model_migrate.py", "sdk/tools/model_oracle.py",
+            "sdk/tools/model_layout.py", "sdk/tools/yfm_control.py"} <= tools, "the SDK lacks a file of its model tool"
+    modules = [name for name in shipped.values() if name.startswith("sdk/include/native_overlays/") and name.endswith(".c")]
+    assert len(modules) > 1000, f"the SDK has only {len(modules)} of the native modules' C files"
+    assert not any(PurePosixPath(name).suffix.lower() in {".bin", ".cue", ".iso", ".mrg"} for name in shipped.values())
+    with tempfile.TemporaryDirectory(prefix="model-tool-") as work:
+        release = Path(work) / "release"
+        for name, data in blobs.items():   # the SDK's headers (include/) are most of what the C includes
+            target = release / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        elsewhere = Path(work) / "elsewhere"
+        elsewhere.mkdir()
+        environment = dict(os.environ, PYTHONIOENCODING="utf-8")
+        done = subprocess.run([sys.executable, str(release / "sdk/tools/model_gate.py"), "mod-check"], cwd=elsewhere,
+                              env=environment, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        said = done.stdout + done.stderr
+        assert done.returncode == 0 and "(the SDK's)" in done.stdout, \
+            f"mod-check from the unpacked SDK failed: {said}"
+        print(f"{path.name}: {done.stdout.strip()}")
 
 
 def check_launchers(path, root, contents, windows):
@@ -179,6 +254,7 @@ def check(path, guest_ir_wanted=True):
                 member = archive.getmember(f"{next(iter(roots))}/{guest_ir}")
                 assert member.mode & 0o111, f"{guest_ir} must be executable"
     check_launchers(path, next(iter(roots)), contents, windows)
+    check_model_tool(path, next(iter(roots)), contents)
     shipped = {name: read_member(path, f"{next(iter(roots))}/{name}") for name in sorted(lists)}
     assert all(len(text.split()) > 1000 for text in shipped.values()), "an SDK export list is (nearly) empty"
     if not wide:

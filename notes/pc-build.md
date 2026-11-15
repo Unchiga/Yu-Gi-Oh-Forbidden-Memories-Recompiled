@@ -1112,6 +1112,32 @@ order given), and the checks use the model file's module stages. `tools/pc/model
 the mod it made C for (notes/modding.md, "Moving a mod's attacks from MIPS
 to C"), and `tools/pc/test_model_migrate_all.py` runs every native shape's
 C so made against the interpreter, record by record.
+The tool and the oracle are also in every release's SDK, so a modder needs no
+clone: `build_game32.py`'s `write_sdk` copies what `tools/pc/model_sdk.py`
+computes (the Python the entry points import, the files of
+`config/pc` they name, the C of every native row with its includes) to
+`sdk/tools`, `sdk/config` and `sdk/include` (`model_layout.py` maps the
+repository's `tools/pc`, `config/pc` and `src` to those, so the tools name
+every file the repository's way and the span-word digests are the same in
+both), and writes `sdk/config/model_sdk.json`: the SHA-256 of every file the
+tools depend on (the headers `write_sdk` copies for every mod among them: an
+altered header changes what mod-migrate copies into a mod), the number of
+native rows, and whether the span-word labels were current when the SDK was
+made. `model_gate.py mod-check` (no disc) holds an SDK to it: a missing or
+altered file fails, and so does a file the tool would use (a row's C, a header
+it includes) that the SDK was not made with; stale labels only warn. The
+step is incremental: `<build>/model_sdk_inputs.json` (beside the SDK, not in
+it) holds the size and time of each checkout file it read and of the folders
+that could hold another, and a build in which none changed does nothing but
+compare them (a few thousand stats; about 20 s of closure and digests
+otherwise). Stale labels never stop a build or
+a release (`pc_model_span_words` warns too): `write_sdk` and `package.py` print
+a WARNING, the stamp says so, and the SDK's report calls the labels stale; they
+describe and gate nothing, and only Windows with clang regenerates them. A file a tool starts to name
+is shipped by the next build, and `test_model_sdk.py` fails when one of the
+tool's entry points needs something an unpacked SDK lacks (the C every native
+row includes, a module the tool imports). `model_gate.py check`, `update`,
+`write` and `port` need the repository and refuse in an SDK.
 `tools/pc/test_model_mod_c.py` (disc-gated) patches a shape-54
 record from the disc, builds the port's own C for it into a mod and checks
 the three cases: the mod's C, the data without it (interpreted and warned),

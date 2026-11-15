@@ -71,6 +71,7 @@ native row's span is written from the disc by `update`, never by hand.
     python tools/pc/model_gate.py port 418 433 --disc game/rpg-yfm.bin   # copy shapes' C from upstream
     python tools/pc/model_gate.py mod-migrate mods/my-mod --disc game/rpg-yfm.bin   # a mod's modules to C
     python tools/pc/model_gate.py mod-row mods/my-mod/models/pikachu.mrg   # a model's rows (mod API 29)
+    python tools/pc/model_gate.py mod-check                # the tool's files are all here (no disc; an SDK runs this too)
 
 mod-migrate and mod-row are tools/pc/model_migrate.py's: a mod's own control
 modules (its "models" and its MODEL.MRG data) run as the port's C for the
@@ -100,10 +101,12 @@ import struct
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-ROOT = Path(__file__).resolve().parents[2]
-TABLE = ROOT / "config/pc/model_gate.csv"
-HEADER = ROOT / "src/pc/overlays/model_gate_table.inc"
-ADDRESSES = ROOT / "config/pc/guest_addresses.txt"
+import model_layout as layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
+
+ROOT = layout.ROOT
+TABLE = layout.path("config/pc/model_gate.csv")
+HEADER = layout.path("src/pc/overlays/model_gate_table.inc")
+ADDRESSES = layout.path("config/pc/guest_addresses.txt")
 COLUMNS = ("shape", "backend", "span", "data_start", "sources", "command_table", "identifier_a", "identifier_b",
            "images", "sha256_a", "sha256_b", "note")
 NO_TABLE = 0xFFFFFFFF   # model_modules.c: the C takes no command index
@@ -125,7 +128,8 @@ class Kind:
 
     def __init__(self, name: str, table: str, header: str, macro: str, prefix: str, base: dict[str, int],
                  image_size: int, folder: str):
-        self.name, self.table, self.header, self.macro = name, ROOT / table, ROOT / header, macro
+        self.name, self.table, self.header, self.macro = name, layout.path(table), layout.path(header), macro
+        self.table_name = table   # the repository's name of it
         self.prefix, self.base, self.image_size, self.folder = prefix, base, image_size, folder
 
 
@@ -232,7 +236,7 @@ def native_rows(path: Path = TABLE) -> list[Row]:
 
 
 def primary_rows(root: Path = ROOT) -> list[Row]:
-    return load_table(root / PRIMARY.table.relative_to(ROOT), PRIMARY)
+    return load_table(layout.path(PRIMARY.table_name, root), PRIMARY)
 
 
 def native_primary_rows(root: Path = ROOT) -> list[Row]:
@@ -251,7 +255,7 @@ def write_table(rows: list[Row], path: Path = TABLE) -> None:
 
 # --- what the build needs ---------------------------------------------------------
 
-SOURCES = ROOT / "config/pc/model_gate_sources.txt"
+SOURCES = layout.path("config/pc/model_gate_sources.txt")
 
 
 _LISTED: dict[tuple, dict[str, list[str]]] = {}
@@ -263,7 +267,7 @@ def listed_sources(root: Path = ROOT) -> dict[str, list[str]]:
     `port` writes from the upstream layouts (model_gate_port.py); read once
     while the file stays the same."""
     import model_gate_port
-    path = root / SOURCES.relative_to(ROOT)
+    path = layout.path("config/pc/model_gate_sources.txt", root)
     key = (str(path), path.stat().st_mtime_ns if path.exists() else 0)
     if key not in _LISTED:
         _LISTED[key] = model_gate_port.read_sections(path)
@@ -300,6 +304,15 @@ def _text(path: Path) -> str:
 
 
 _CLOSURES: dict[str, list[Path]] = {}
+_FILES: dict[str, bool] = {}
+
+
+def _is_file(name: str) -> bool:
+    """os.path.isfile, once a process for each name (a closure asks for the
+    same few thousand files again and again)."""
+    if name not in _FILES:
+        _FILES[name] = os.path.isfile(name)
+    return _FILES[name]
 
 
 def port_closure(path: Path, root: Path = ROOT) -> list[Path]:
@@ -311,12 +324,12 @@ def port_closure(path: Path, root: Path = ROOT) -> list[Path]:
     seen, todo = [], [start]
     while todo:
         current = todo.pop(0)
-        if current in seen or not os.path.isfile(current):
+        if current in seen or not _is_file(current):
             continue
         seen.append(current)
         for name in INCLUDE.findall(_text(Path(current))):
             beside = os.path.normpath(os.path.join(os.path.dirname(current), name))
-            todo.append(beside if os.path.isfile(beside) else os.path.normpath(os.path.join(root, "src", name)))
+            todo.append(beside if _is_file(beside) else os.path.normpath(layout.path("src", root) / name))
     _CLOSURES[start] = [Path(one) for one in seen]
     return _CLOSURES[start]
 
@@ -335,7 +348,7 @@ def module_addresses(row: Row, slot: str, root: Path = ROOT) -> dict[str, int]:
     base, size = row.KIND.base[slot], row.KIND.image_size
     texts = []
     for pattern in source_patterns(row, slot, root):
-        for path in sorted(root.glob(pattern)):
+        for path in sorted(layout.glob(pattern, root)):
             for one in port_closure(path, root):
                 if one.suffix == ".c":
                     texts.append(_text(one))
@@ -358,7 +371,7 @@ def address_sections(root: Path = ROOT) -> dict[str, dict[str, int]]:
     """{module name: addresses} for every native shape, variants then
     primaries, each in its table's order."""
     sections = {}
-    for row in native_rows(root / "config/pc/model_gate.csv") + native_primary_rows(root):
+    for row in native_rows(layout.path("config/pc/model_gate.csv", root)) + native_primary_rows(root):
         for slot in "AB":
             sections[row.module(slot)] = module_addresses(row, slot, root)
     return sections
@@ -616,14 +629,14 @@ def indexed_tables(row: Row) -> list[tuple[int, str, int]]:
     in the shape's C (slot A; slot B's files are #defines around it)."""
     files = []
     for pattern in source_patterns(row, "A"):
-        for source in sorted(ROOT.glob(pattern)):
+        for source in sorted(layout.glob(pattern)):
             files += [path for path in port_closure(source) if path.suffix == ".c"]
     raws = {path: path.read_text(encoding="utf-8", errors="replace") for path in files}
     renamed = {old: new for raw in raws.values() for old, new in ALIAS.findall(COMMENT.sub(" ", raw))}
     found = set()
     for path, raw in raws.items():
         for offset, line in command_sites(raw, renamed, row.KIND.base["A"]):
-            found.add((offset, path.relative_to(ROOT).as_posix(), line))
+            found.add((offset, layout.logical(path), line))
     return sorted(found)
 
 
@@ -664,7 +677,7 @@ def printf_formats(row: Row) -> list[int]:
     span must therefore cover each one through its NUL (check --disc)."""
     found = set()
     for pattern in source_patterns(row, "A"):
-        for source in ROOT.glob(pattern):
+        for source in layout.glob(pattern):
             for path in port_closure(source):
                 text = without_comments(_text(path))
                 aliases = dict(ALIAS.findall(text))
@@ -699,7 +712,7 @@ def check_sources(rows: list[Row]) -> list[str]:
             continue
         for slot in "AB":
             for pattern in source_patterns(row, slot):
-                if not list(ROOT.glob(pattern)):
+                if not layout.glob(pattern):
                     bad.append(f"shape {row.shape} is native but {pattern} matches nothing")
     sections: dict[str, dict[str, int]] = {}
     current = None
@@ -741,8 +754,8 @@ def check_sources(rows: list[Row]) -> list[str]:
 # `update --disc` writes it, `check` holds it to the tables (and to the disc
 # with --disc), and `write` and `update` write RETAIL_HEADER from it.
 
-RETAIL = ROOT / "config/pc/model_retail.csv"
-RETAIL_HEADER = ROOT / "src/pc/overlays/model_retail_table.inc"
+RETAIL = layout.path("config/pc/model_retail.csv")
+RETAIL_HEADER = layout.path("src/pc/overlays/model_retail_table.inc")
 RETAIL_COLUMNS = ("kind", "slot", "identifier", "shape", "size", "sha256", "records")
 RETAIL_KINDS = {"code": VARIANT, "primary": PRIMARY}
 PRIMARY_RETURN_TWO = (0x03E00008, 0x24020002)   # the words at +4: jr ra; addiu v0, zero, 2
@@ -862,13 +875,36 @@ def header_problems(rows: list[Row], kind: Kind) -> list[str]:
 
 
 def main() -> int:
+    layout.tolerant_output()
     if sys.argv[1:2] in (["mod-migrate"], ["mod-row"]):
         # A mod's modules moved to the port's C (mod API 29): model_migrate.py.
         import model_migrate
         return model_migrate.main(sys.argv[1:])
+    if sys.argv[1:2] == ["mod-check"]:
+        # The tool's own files are all here, without the disc (model_sdk.py): what an SDK is held to.
+        import model_sdk
+        failed = model_sdk.check()
+        stale = model_sdk.label_warnings()   # told, never a failure: labels describe and gate nothing
+        for line in failed:
+            print("model_gate: " + line, file=sys.stderr)
+        for line in stale:
+            print("model_gate: WARNING: the span-word labels are stale: " + line, file=sys.stderr)
+        rows = model_sdk.native_rows()
+        print(f"model_gate: mod-check: {len(rows)} native rows, {len(model_sdk.row_sources())} C and header files, "
+              + ("labels STALE (mod-migrate says so in its report)" if stale else "labels current")
+              + (f", {len(failed)} problem(s)" if failed else "")
+              + (" (the SDK's)" if layout.SHIPPED else " (the repository's)"))
+        return 1 if failed else 0
+    if layout.SHIPPED and sys.argv[1:2] in (["check"], ["update"], ["write"], ["port"]):
+        # These keep the repository's tables true to the disc and to the C, and write into it: an SDK has no
+        # repository (model_layout.py); mod-migrate, mod-row and mod-check are what it carries.
+        print(f"model_gate: {sys.argv[1]} works on the repository's tables and sources, which an SDK does not "
+              "have: use a checkout of the game's source. This SDK runs mod-migrate, mod-row and mod-check.",
+              file=sys.stderr)
+        return 2
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("check", "update", "write", "port", "mod-migrate", "mod-row"))
+    parser.add_argument("command", choices=("check", "update", "write", "port", "mod-migrate", "mod-row", "mod-check"))
     parser.add_argument("shapes", nargs="*", type=int, help="port: the shapes to copy from upstream")
     parser.add_argument("--disc", type=Path, default=os.environ.get("MEMORIES_DISC"),
                         help="the disc image (default: MEMORIES_DISC)")

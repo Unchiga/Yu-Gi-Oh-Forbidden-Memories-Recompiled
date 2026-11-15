@@ -65,10 +65,13 @@ import struct
 import subprocess
 import sys
 
-ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_layout as layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
+
+ROOT = layout.ROOT
 NATIVE = "src/native_overlays"
-SOURCES = ROOT / "config/pc/model_gate_sources.txt"
-NAMES = ROOT / "config/pc/model_gate_names.txt"
+SOURCES = layout.path("config/pc/model_gate_sources.txt")
+NAMES = layout.path("config/pc/model_gate_names.txt")
 OVERLAY_FOLDERS = ("model_variant", "french_model_variant", "spanish_model_variant", "spanish_model_primary")
 BASES = {"A": 0x8013B000, "B": 0x8017B000}
 # The upstream module names of each kind (model_gate.Kind): the variant

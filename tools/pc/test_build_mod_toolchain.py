@@ -69,6 +69,53 @@ class Toolchain(unittest.TestCase):
         for system, url in build_mod.LLVM_MINGW_DOWNLOADS.items():
             self.assertEqual(pins[system]["url"], url)
 
+    def test_the_sdks_one_click_clang_is_found_by_the_sdks_tools(self):
+        """In an SDK, build_mod.py (and model_gate.py mod-migrate, which compiles with its compiler) finds the
+        llvm-mingw sdk/build-mod.bat fetched into sdk/toolchain, newest release first, before PATH; in the
+        repository there is no such place."""
+        sdk = os.path.join(self.bin, "sdk")
+        pinned = os.path.join(sdk, "toolchain", f"llvm-mingw-{build_mod.LLVM_MINGW_RELEASE}", "bin")
+        os.makedirs(pinned)
+        os.makedirs(os.path.join(sdk, "toolchain", "llvm-mingw-29990101", "bin"))   # another release: not the pin
+        for folder in (pinned, os.path.join(sdk, "toolchain", "llvm-mingw-29990101", "bin")):
+            for name in ("clang", "ld.lld", "llvm-objcopy"):
+                with open(os.path.join(folder, name + EXE), "w"):
+                    pass
+        self.program("clang")   # the one on PATH
+        clang = os.path.join(pinned, "clang" + EXE)
+        build_mod.clang_starts.cache_clear()
+        with mock.patch.object(build_mod, "SDK", sdk), mock.patch.object(build_mod, "SHIPPED", False):
+            self.assertEqual(build_mod.one_click_clangs(), [])
+        with mock.patch.object(build_mod, "SDK", sdk), mock.patch.object(build_mod, "SHIPPED", True):
+            # An empty file is not a program that starts (the other system's clang in a shared folder): PATH's.
+            self.assertFalse(build_mod.clang_starts(clang))
+            self.assertEqual(build_mod.one_click_clangs(), [])
+            self.assertEqual(build_mod.clang_candidates(None)[:2], [os.path.join(build_mod.LLVM_MINGW, "clang"), "clang"])
+            # One that starts, in the pinned release's folder only.
+            with mock.patch.object(build_mod, "clang_starts", lambda path: True):
+                self.assertEqual(build_mod.one_click_clangs(), [clang])
+                found = build_mod.clang_candidates(None)
+                self.assertEqual(found[:2], [clang, os.path.join(build_mod.LLVM_MINGW, "clang")])
+            self.assertEqual(build_mod.clang_candidates("/x/clang"), ["/x/clang"])
+            # The other system's name for it is not this system's clang, even when it would start (the Windows
+            # clang.exe under WSL's interop): only clang.exe on Windows and clang elsewhere.
+            other = os.path.join(pinned, "clang" if os.name == "nt" else "clang.exe")
+            os.remove(clang)
+            with open(other, "w"):
+                pass
+            with mock.patch.object(build_mod, "clang_starts", lambda path: True):
+                self.assertEqual(build_mod.one_click_clangs(), [])
+            # The launchers' own variable names the compiler instead of the download (it may not run here).
+            own = os.path.join(self.bin, "own-toolchain")
+            os.makedirs(os.path.join(own, "bin"))
+            with mock.patch.dict(os.environ, {"MEMORIES_SDK_TOOLCHAIN": own}):
+                self.assertEqual(build_mod.one_click_clangs(), [os.path.join(own, "bin", "clang")])
+                self.assertEqual(build_mod.clang_candidates(None)[0], os.path.join(own, "bin", "clang"))
+            with mock.patch.dict(os.environ, {"MEMORIES_SDK_TOOLCHAIN": self.bin}):
+                self.assertEqual(build_mod.one_click_clangs(), [os.path.join(self.bin, "clang")])
+            # A real program that starts is what clang_starts says yes to.
+            self.assertTrue(build_mod.clang_starts(sys.executable))
+
     def test_names_what_is_missing(self):
         self.assertEqual(build_mod.missing_64bit(), ["clang", "ld.lld", "llvm-objcopy"])
         self.program("clang")

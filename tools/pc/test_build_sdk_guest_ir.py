@@ -271,6 +271,11 @@ class Packing(unittest.TestCase):
             handle.write("0\n")
         with open(os.path.join(build, "symbols", "0.vars.txt"), "w") as handle:
             handle.write("0\n")
+        # An SDK carries the model tool's stamp (model_sdk.install writes it; package.stage refuses an SDK
+        # without one): a stamp of nothing, with the labels current, is all this fixture's SDK needs.
+        os.makedirs(os.path.join(build, "sdk", "config"))
+        with open(os.path.join(build, "sdk", "config", "model_sdk.json"), "w") as handle:
+            json.dump({"files": {}, "native_rows": 0, "labels": {"problems": []}}, handle)
         with mock.patch.dict(package.BUILDS, {"linux": (build, "memories-pc", [])}), \
                 mock.patch.object(package, "DIST", os.path.join(self.folder, "dist")):
             staged = package.stage("linux", "test", {}, source)

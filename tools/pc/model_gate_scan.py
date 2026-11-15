@@ -49,9 +49,11 @@ import re
 import subprocess
 import sys
 
-ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
 import model_gate  # noqa: E402
+
+ROOT = model_layout.ROOT
 import model_gate_port  # noqa: E402
 
 FLAGS = [f for f in model_gate_port.CHECK_FLAGS if not f.startswith("-Werror") and f != "-fsyntax-only"]

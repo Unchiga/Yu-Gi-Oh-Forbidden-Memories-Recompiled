@@ -42,7 +42,7 @@ loads and whose SDL_main it runs, is a loader that puts the game at that base
 src/pc/platform/android.c. It is ELF, so the Linux steps apply, except that
 sections cannot be placed at chosen addresses (as on Windows). The APK is packaged beside it (<build>/memories-<abi>.apk, by
 package_android.py) with the SDK's build tools; notes/pc-build.md, "Android"."""
-import argparse, concurrent.futures, csv, filecmp, glob, hashlib, json, os, re, shutil, struct, subprocess, sys
+import argparse, concurrent.futures, csv, filecmp, glob, hashlib, json, os, pathlib, re, shutil, struct, subprocess, sys
 import build_process
 from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURCE_ADDRESSED_MODULES, TARGETS,
                           game_sources, native_sources, newest_input)
@@ -949,6 +949,18 @@ def write_sdk(build, target="i386"):
     for path in glob.glob(f"{sdk}/exports*.txt"):
         if os.path.basename(path) not in own:
             os.remove(path)   # another target's, in a folder reused for this one
+    # The model-migration tool (tools/model_gate.py mod-migrate): its Python,
+    # tables and the C of every native model module, each as model_sdk.py
+    # computes it, and the stamp that holds the SDK to them. Its span-word
+    # labels are checked here, where the checkout is; a build whose labels
+    # are stale says so, and so does the stamp; neither stops a build or a
+    # release (labels describe and gate nothing).
+    import model_sdk
+    stamp = model_sdk.install(pathlib.Path(sdk), copy_if_changed)
+    for problem in stamp["labels"]["problems"]:
+        print(f"build_game32: WARNING: the SDK's model tool would report every span-word label as stale: {problem}; "
+              "regenerate them on Windows with clang: python tools/pc/model_span_words.py (nothing here stops)",
+              file=sys.stderr)
     stale = f"{build}/include"   # the lone modapi.h copy from before the SDK
     if os.path.isdir(stale):
         shutil.rmtree(stale)

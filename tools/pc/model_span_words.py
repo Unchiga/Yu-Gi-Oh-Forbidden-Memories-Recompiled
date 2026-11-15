@@ -79,6 +79,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_layout as layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
+import model_sdk  # noqa: E402
 import model_gate  # noqa: E402
 import model_gate_port  # noqa: E402
 import model_gate_scan as scan  # noqa: E402
@@ -97,8 +99,8 @@ PURE = frozenset({"rand", "ccos", "csin", "rcos", "rsin", "ratan2", "SquareRoot0
 COPIES = ("memcpy", "memmove", "bcopy", "__builtin_memcpy", "__builtin_memmove", "__builtin___memcpy_chk",
           "__builtin___memmove_chk")
 
-ROOT = Path(__file__).resolve().parents[2]
-TABLE = ROOT / "config/pc/model_span_words.csv"
+ROOT = layout.ROOT
+TABLE = layout.path("config/pc/model_span_words.csv")
 COLUMNS = ("kind", "shape", "offset", "size", "symbol", "class", "evidence", "digest", "tool", "compiler")
 SAFE: tuple[str, ...] = ()   # no class makes C by itself: every label is a description
 ORDER = ("divisor", "index", "bound", "pointer", "shift", "copy", "address", "unknown", "value", "texture",
@@ -147,6 +149,20 @@ def relative(path: str | None) -> str:
 REGENERATE = ("python tools/pc/model_span_words.py   (needs only the repository and clang as "
               "model_gate_port.CHECK_CC on PATH: llvm-mingw's i686-w64-mingw32-clang, tools/pc/fetch_tools.py; "
               "no disc; about 4 minutes)")
+
+
+def remedy() -> str:
+    """What to do about labels that are not the tree's: in a checkout,
+    regenerate them; in an SDK they cannot be (they were made from the tree it
+    was packed from), so say which of the two it is: stale when packed (the
+    stamp says so), or a file changed since (mod-check names it). Never the
+    repository's command."""
+    if not layout.SHIPPED:
+        return f"regenerate: {REGENERATE}"
+    stamp = model_sdk.read_stamp()
+    if stamp and stamp.get("labels", {}).get("problems"):
+        return "the labels were already stale when this SDK was made; nothing here can regenerate them"
+    return "a file of this SDK is not the one it was made with (model_gate.py mod-check says which)"
 # The tool's own files: the analysis, the scan it subclasses, the flags and
 # compiler it runs (model_gate_port.py), and the rows, sources and names it
 # reads (model_gate.py). Whole files: a superset of what decides a class.
@@ -196,7 +212,7 @@ def closure(path) -> list[str]:
         if current not in _INCLUDES:
             names = model_gate.INCLUDE.findall(model_gate._text(Path(current)))
             beside = [os.path.normpath(os.path.join(os.path.dirname(current), name)) for name in names]
-            _INCLUDES[current] = [one if is_file(one) else os.path.normpath(os.path.join(ROOT, "src", name))
+            _INCLUDES[current] = [one if is_file(one) else os.path.normpath(layout.path("src") / name)
                                   for one, name in zip(beside, names)]
         todo += _INCLUDES[current]
     return sorted(seen)
@@ -209,7 +225,7 @@ def _files(paths) -> list[Path]:
     for path in paths:
         full = os.path.abspath(path)
         if os.path.isfile(full) and os.path.normcase(full).startswith(root + os.sep):
-            out[os.path.relpath(full, ROOT).replace(os.sep, "/")] = Path(full)
+            out[layout.logical(full)] = Path(full)
     return [out[name] for name in sorted(out)]
 
 
@@ -223,15 +239,15 @@ def shared_files() -> list[Path]:
     what the analysis reads besides each row's own C. Once a process."""
     global _SHARED
     if _SHARED is None:
-        native = os.path.normcase(os.path.abspath(ROOT / model_gate_port.NATIVE)) + os.sep
+        native = os.path.normcase(os.path.abspath(layout.path(model_gate_port.NATIVE))) + os.sep
         found = []
         for flag in scan.FLAGS:
             if flag.endswith(".h"):
-                found += closure(ROOT / flag)
+                found += closure(layout.path(flag))
         for row in all_rows():
             for slot in "AB":
                 for pattern in model_gate.source_patterns(row, slot):
-                    for unit in sorted(ROOT.glob(pattern)):
+                    for unit in sorted(layout.glob(pattern)):
                         found += [one for one in closure(unit)
                                   if not os.path.normcase(os.path.abspath(one)).startswith(native)]
         _SHARED = _files(found)
@@ -244,20 +260,20 @@ def tool_digest(read=None) -> str:
     a change to either changes every row's classes."""
     read = read or normalised
     digest = hashlib.sha256()
-    for path in [ROOT / name for name in TOOL_FILES] + shared_files():
+    for path in [layout.path(name) for name in TOOL_FILES] + shared_files():
         text = read(path).replace("\r\n", "\n")
-        digest.update(path.relative_to(ROOT).as_posix().encode() + b"\0" + text.encode("utf-8") + b"\0")
+        digest.update(layout.logical(path).encode() + b"\0" + text.encode("utf-8") + b"\0")
     return digest.hexdigest()[:16]
 
 def row_files(row: model_gate.Row) -> list[Path]:
     """The row's C units in both slots and the files of src/native_overlays
     they include (the module's own headers, which declare its work-area
     records, and the C they share): what its words were classed from."""
-    native = os.path.normcase(os.path.abspath(ROOT / model_gate_port.NATIVE)) + os.sep
+    native = os.path.normcase(os.path.abspath(layout.path(model_gate_port.NATIVE))) + os.sep
     found = []
     for slot in "AB":
         for pattern in model_gate.source_patterns(row, slot):
-            for unit in sorted(ROOT.glob(pattern)):
+            for unit in sorted(layout.glob(pattern)):
                 found += [one for one in closure(unit)
                           if os.path.normcase(os.path.abspath(one)).startswith(native)]
     return _files(found)
@@ -271,7 +287,7 @@ def row_digest(row: model_gate.Row, read=None) -> str:
     digest = hashlib.sha256(f"{row['span']}|{row['data_start']}|{row['command_table']}\n".encode())
     for path in row_files(row):
         text = read(path).replace("\r\n", "\n")
-        digest.update(path.relative_to(ROOT).as_posix().encode() + b"\0" + text.encode("utf-8") + b"\0")
+        digest.update(layout.logical(path).encode() + b"\0" + text.encode("utf-8") + b"\0")
     return digest.hexdigest()[:16]
 
 
@@ -982,8 +998,8 @@ def analyse(row: model_gate.Row, units: list[str] | None = None, names: dict[str
     the row's own unless given (test_model_span_words.py's made-up modules)."""
     own = units is not None
     if units is None:
-        units = [str(path.relative_to(ROOT).as_posix()) for pattern in model_gate.source_patterns(row, "A")
-                 for path in sorted(ROOT.glob(pattern))]
+        units = [layout.logical(path) for pattern in model_gate.source_patterns(row, "A")
+                 for path in sorted(layout.glob(pattern))]
     if not units:
         raise RuntimeError(f"{row.KIND.name} {row.shape}: no C")
     layouts, functions, declared = {}, {}, {}
@@ -1301,15 +1317,20 @@ def compiler_note(path: Path = TABLE) -> str:
     return ""
 
 
-def tool_stale(path: Path = TABLE) -> list[str]:
-    """The table's tool digest is not the tree's tool (its files or the shared
-    headers changed): every word of the table is to be distrusted."""
+def tool_causes(path: Path = TABLE) -> list[str]:
+    """Why the table's tool digest is not the tree's tool (its files or the
+    shared headers changed): every word of the table is to be distrusted."""
     stored = tool_digests(path)
     actual = tool_digest()
     if stored and stored != {actual}:
         return [f"{path.name} was made by another version of the analysis or of the headers it reads (tool digest "
-                f"{', '.join(sorted(stored))}, now {actual}); regenerate: {REGENERATE}"]
+                f"{', '.join(sorted(stored))}, now {actual})"]
     return []
+
+
+def tool_stale(path: Path = TABLE) -> list[str]:
+    """tool_causes, each with what to do about it (remedy)."""
+    return [f"{cause}; {remedy()}" for cause in tool_causes(path)]
 
 
 def digests(path: Path = TABLE) -> dict[tuple[str, int], str]:
@@ -1339,11 +1360,16 @@ def stale_rows(path: Path = TABLE, keys=None) -> list[tuple[tuple[str, int], str
     return found
 
 
-def stale(path: Path = TABLE, keys=None) -> list[str]:
+def stale_causes(path: Path = TABLE, keys=None) -> list[str]:
     """Why the labels of the rows whose C is not the C the table was made from
     cannot be trusted (mod-migrate says so in its report)."""
-    return [f"{key[0]} {key[1]}: its C changed since {path.name} was made (digest {then}, now {now}); "
-            f"regenerate: {REGENERATE}" for key, then, now in stale_rows(path, keys)]
+    return [f"{key[0]} {key[1]}: its C changed since {path.name} was made (digest {then}, now {now})"
+            for key, then, now in stale_rows(path, keys)]
+
+
+def stale(path: Path = TABLE, keys=None) -> list[str]:
+    """stale_causes, each with what to do about it (remedy)."""
+    return [f"{cause}; {remedy()}" for cause in stale_causes(path, keys)]
 
 
 def stale_warnings(path: Path = TABLE) -> list[str]:
@@ -1358,7 +1384,7 @@ def stale_warnings(path: Path = TABLE) -> list[str]:
         names = [f"{kind} {shape}" for (kind, shape), _, _ in rows]
         more = f" and {len(names) - 20} more" if len(names) > 20 else ""
         warnings.append(f"{len(rows)} rows' C changed since {path.name} was made, so mod-migrate calls their labels "
-                        f"stale: {', '.join(names[:20])}{more}; regenerate: {REGENERATE}")
+                        f"stale: {', '.join(names[:20])}{more}; {remedy()}")
     return warnings
 
 
@@ -1452,6 +1478,11 @@ def widened(table: dict, info: dict) -> tuple[list[str], int]:
 
 
 def main() -> int:
+    if layout.SHIPPED:
+        print("model_span_words: regenerating the labels needs the repository (the C, the analysis and clang): "
+              "an SDK carries the table its release was made with, and model_gate.py mod-check says whether it is "
+              "intact", file=sys.stderr)
+        return 2
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--check", action="store_true", help="compare the table with a fresh analysis (a table that "
                         "differs is a warning; a row without labels or a span that changed size fails)")

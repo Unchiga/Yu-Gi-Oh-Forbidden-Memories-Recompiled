@@ -36,15 +36,30 @@ from typing import Callable, Iterable
 import weakref
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from smoke import launcher  # noqa: E402  (Wine for a Windows build off Windows)
+import model_layout as layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
 
-ROOT = Path(__file__).resolve().parents[2]
-EXECUTABLE = ROOT / "tmp/pc/game32" / ("memories-pc.exe" if sys.platform == "win32" else "memories-pc")
-OUTPUT = ROOT / "tmp/pc/control"   # a run-XXXXXXXX folder each, as smoke.py does
+try:
+    from smoke import launcher  # noqa: E402  (Wine for a Windows build off Windows)
+except ImportError:   # the SDK does not ship smoke.py: a release's game is run as it is
+    def launcher(executable: Path) -> tuple[list[str], dict[str, str]]:
+        if executable.suffix != ".exe" or sys.platform == "win32":
+            return [str(executable)], {}
+        return ["wine", str(executable)], {"WINEDLLOVERRIDES": "mscoree,mshtml=", "WINEDEBUG": "-all"}
+
+EXE = "memories-pc.exe" if sys.platform == "win32" else "memories-pc"
+if layout.SHIPPED:
+    # An SDK is the folder `sdk` of a release, beside the game it was made for.
+    ROOT = layout.ROOT.parent
+    EXECUTABLE = ROOT / EXE
+    OUTPUT = Path(tempfile.gettempdir()) / "memories-control"   # the SDK is not a place to write to
+else:
+    ROOT = layout.ROOT
+    EXECUTABLE = ROOT / "tmp/pc/game32" / EXE
+    OUTPUT = ROOT / "tmp/pc/control"   # a run-XXXXXXXX folder each, as smoke.py does
 # Variables every game this client starts gets, before a Game's own env:
 # replay.py play/run --env sets them for a scripted replay's games.
 EXTRA_ENV: dict[str, str] = {}
-ADDRESSES = ROOT / "config/pc/guest_addresses.txt"
+ADDRESSES = layout.path("config/pc/guest_addresses.txt")
 
 # PS1 digital pad bits, active high (src/pc/platform/platform.h, Platform_Pad).
 BUTTONS = {"select": 0x0001, "l3": 0x0002, "r3": 0x0004, "start": 0x0008, "up": 0x0010, "right": 0x0020,

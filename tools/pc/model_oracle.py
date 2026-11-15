@@ -71,9 +71,10 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from yfm_control import Game, GameHung, OUTPUT  # noqa: E402
 import model_gate  # noqa: E402
+import model_layout as layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
 
-ROOT = Path(__file__).resolve().parents[2]
-MODEL_HEADER = ROOT / "src/game/model.h"
+ROOT = layout.ROOT
+MODEL_HEADER = layout.path("src/game/model.h")
 SECTOR = 2048
 # A record's load (model_texture_transfer.c, func_80056D7C): stages 7-10 are
 # the variant images, ten sectors each (alternative 0 slot A, 0 B, 1 A, 1 B),
@@ -807,7 +808,8 @@ def main() -> int:
                              "differing frame, the one before and the one after (the hash sees the frame being "
                              "drawn, the screen shows it a frame later)")
     parser.add_argument("--pictures", help="frame offsets to picture the first battle at, both sides (\"300,900\")")
-    parser.add_argument("--out", type=Path, help="where it all goes (default a new tmp/pc/control/model-oracle-*)")
+    parser.add_argument("--out", type=Path, help="where it all goes (default a new model-oracle-* folder in yfm_control's output folder: "
+                        "tmp/pc/control in a checkout, the system's temporary folder in an SDK)")
     parser.add_argument("--keep", action="store_true", help="keep each game's log, frame hashes and state")
     parser.add_argument("--mod", action="append", type=Path, default=[],
                         help="a mod's folder, on for both sides, copied into each game's own mods folder "
