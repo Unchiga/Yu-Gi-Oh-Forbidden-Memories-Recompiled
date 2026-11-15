@@ -722,8 +722,20 @@ static const Symbol *containing(const Symbol *table, size_t count, uint32_t addr
 }
 
 /* The tables hold functions and the game objects' variables; the variables
- * are the ones linked between these addresses. */
-static int is_text(uint32_t address) { return address < 0x03000000u || address >= 0x08000000u; }
+ * are the ones linked between these addresses (the fixed game sections).
+ * Windows has no fixed sections (tools/pc/build_game32.py), so its tables
+ * hold functions alone, and the i386 game's text runs past 0x03000000: read
+ * by address, the functions there were taken for variables that moved, and
+ * every state from a build whose code before them changed size was refused. */
+static int is_text(uint32_t address)
+{
+#ifdef _WIN32
+    (void)address;
+    return 1;
+#else
+    return address < 0x03000000u || address >= 0x08000000u;
+#endif
+}
 static int is_game_text(uint32_t address) { return address >= 0x01000000u && address < 0x01400000u; }
 
 static void read_build_id(void)
