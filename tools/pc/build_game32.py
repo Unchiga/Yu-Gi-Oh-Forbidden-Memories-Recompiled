@@ -48,6 +48,7 @@ from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURC
                           game_sources, native_sources, newest_input)
 import model_gate
 import model_gate_port
+import pe_layout
 import ptr32_stores
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -430,11 +431,21 @@ def symbols(objects):
             {"U": undefined, "C": tentative}.get(parts[-2], defined).add(c_name(parts[-1]))
     return defined, tentative, undefined
 
-def rename_coff_sections(path, renames):
+def rename_coff_sections(path, renames, empty=True):
     """objcopy --rename-section for COFF objects, which llvm-objcopy lacks.
     The contents get a $m suffix on Windows: lld sorts a section's $-suffixed
     parts by suffix, which puts them between the $a and $z markers that stand
-    in for ELF's __start_ and __stop_ symbols."""
+    in for ELF's __start_ and __stop_ symbols.
+    empty=False does not rename a section with no bytes (clang writes .data
+    and .bss into every COFF object), so it adds no output section of its
+    own. lld reserves a section header for every output section it has
+    before it drops the empty ones, and llvm-strip then shrinks the headers
+    to the sections left without moving them: the model modules' empty ovl_*
+    sections (238 modules on 2026-11-15) put .text at 0x6000 behind 0x400
+    bytes of headers, an image Windows will not load (pe_layout.py). An empty
+    one renamed before (an object a build made before this, which is not
+    rebuilt for it) gets its first name back."""
+    back = {} if empty else {new: old for old, new in reversed(list(renames.items()))}
     with open(path, "rb") as handle:
         data = bytearray(handle.read())
     _, count, _, symbols_at, symbol_count, optional_size, _ = struct.unpack_from("<HHIIIHH", data, 0)
@@ -449,7 +460,10 @@ def rename_coff_sections(path, renames):
         if field.startswith(b"/"):
             start = strings_at + int(field[1:])
             field = bytes(data[start:data.index(b"\0", start)])
-        new = renames.get(field.decode())
+        if empty or struct.unpack_from("<I", data, at + 16)[0]:       # SizeOfRawData
+            new = renames.get(field.decode())
+        else:
+            new = back.get(field.decode())
         if new is None:
             continue
         encoded = new.encode()
@@ -1292,8 +1306,15 @@ def main():
             for old, new in sorted(renamed[name].items()):
                 command.append(f"--redefine-sym={PREFIX}{old}={PREFIX}{new}")
             if WINDOWS:
+                # A gated module's empty ones are not made ovl_* sections: it
+                # may have no variables (below), so it then has no ovl_*
+                # sections and no markers (Memories_Modules does not list it
+                # anyway). Its sources are game units too, so the rename
+                # below makes those empty .data/.bss game_data$m/game_bss$m:
+                # nothing in game_data and game_bss, and no section of their own.
                 rename_coff_sections(obj(source), {".data": f"ovl_{name}_data$m", ".bss": f"ovl_{name}_bss$m",
-                                                   ".sdata": f"ovl_{name}_data$n", ".sbss": f"ovl_{name}_data$n"})
+                                                   ".sdata": f"ovl_{name}_data$n", ".sbss": f"ovl_{name}_data$n"},
+                                     empty=name not in GATED_MODULES)
             else:
                 for section in (".data", ".sdata"):
                     command.append(f"--rename-section={section}=ovl_{name}_data")
@@ -1570,6 +1591,15 @@ def main():
              version, f"{options.build}/section_markers.o", *resources,
              f"{WIN32_DEPS}/sdl/lib/libSDL3.dll.a", "-lopengl32", f"{WIN32_DEPS}/lib/libfreetype.a",
              f"{WIN32_DEPS}/lib/libpng16.a", f"{WIN32_DEPS}/lib/libzs.a", "-ldbghelp", "-lwinhttp", "-lws2_32", "-lwinmm", "-static", "-lpthread"])
+        # Both widths, shipped stripped or not (CI strips only the 32-bit
+        # one): sections adjacent from the headers on, and headers within one
+        # page, so that llvm-strip can never leave a hole before .text.
+        with open(output, "rb") as handle:
+            problems = pe_layout.link_layout_problems(handle.read())
+        if problems:
+            sys.exit(f"{output}: the link's layout would not load once stripped (Windows: not a valid Win32 "
+                     f"application): {'; '.join(problems)}. An output section with nothing in it still takes a "
+                     "header (notes/pc-build.md, \"No empty gated-module sections\")")
         shutil.copy(f"{WIN32_DEPS}/sdl/bin/SDL3.dll", options.build)
     elif ANDROID:
         # The game is libgame.so, linked at ANDROID_GAME_BASE; libmain.so,

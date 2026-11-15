@@ -4134,6 +4134,28 @@ What differs from Linux, and why:
   other duplicate definition is still an error. PE cannot place sections at
   chosen addresses, so the fixed game sections are not there: save states
   work within one build but are not carried across rebuilds.
+- **No empty gated-module sections (header space).** lld reserves a section
+  header for every output section it has before it drops the empty ones,
+  and `llvm-strip` (package.py `strip`) shrinks SizeOfHeaders to the
+  sections left without moving any. clang writes an empty `.data` and `.bss`
+  into every COFF object, and renamed to `ovl_<module>_*` with their `$a`/`$z`
+  markers each became an output section. About 17 model shapes (two modules
+  each) are enough to push the headers past a page; #475 brought 20, and
+  master's 238 modules (2026-11-15) made 0x5200 bytes of headers, .text went
+  to 0x6000, and the stripped exe had a hole after its 0x400 bytes of
+  headers, which Windows will not load ("not a valid Win32 application",
+  error 193; the PE format wants sections adjacent). So a gated module's
+  empty sections are not made `ovl_*` ones
+  (`rename_coff_sections(..., empty=False)`): one without variables, as
+  every model module is, has no `ovl_*` sections or markers (and
+  `Memories_Modules` lists no gated module). Its sources are game units too,
+  so their empty `.data`/`.bss` then become `game_data$m`/`game_bss$m` with
+  the rest, empty parts of game_data and game_bss that add no section.
+  Every Windows link, 32- and 64-bit, fails unless its sections are adjacent
+  from the headers on and its headers fit in one page (`tools/pc/pe_layout.py`
+  `link_layout_problems`), so no strip can open a hole; `package.py` checks
+  the stripped exe again (`pe_layout_gaps`), and `test_package.py` checks the
+  archives' exes the same way.
 - **Bitfield layout.** MinGW compilers lay bitfields out as MSVC does by
   default, where fields of different declared types do not share a unit:
   `GsOT_TAG` (`unsigned p:24; unsigned char num:8`) became 8 bytes and every

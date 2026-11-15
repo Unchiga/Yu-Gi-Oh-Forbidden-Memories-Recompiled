@@ -7,6 +7,8 @@ from pathlib import Path, PurePosixPath
 import tarfile
 import zipfile
 
+from pe_layout import link_layout_problems, pe_layout_gaps
+
 # build_mod.py's targets: each has its export list in every SDK.
 TARGETS = ("i386", "x86_64-windows", "aarch64-translated")
 
@@ -40,6 +42,11 @@ def check_pe(image, label):
     assert symbols == 0 and symbol_count == 0, f"{label} keeps its COFF symbol table"
     assert len(image) == end, f"{label} has {len(image) - end} bytes after its last section"
     assert b".rsrc" in names, f"{label} has no resources (version information)"
+    # Sections adjacent from the headers on: with a hole Windows does not
+    # load it at all (pe_layout.py; master's packages after the model
+    # modules, whose empty sections grew lld's headers).
+    gaps = pe_layout_gaps(image)
+    assert not gaps, f"{label} has a hole in its image, which Windows will not load: {'; '.join(gaps)}"
     # The PE checksum package.py fills in after the strip: ImageHlp's sum
     # of the file's 16-bit words (its own field as 0), folded, plus the length.
     field = header + 24 + 64
@@ -50,6 +57,45 @@ def check_pe(image, label):
         total = (total & 0xFFFF) + (total >> 16)
     assert stored == total + len(image), f"{label}'s PE checksum is {stored:#x}, not {total + len(image):#x}"
     return header
+
+
+def check_layout_guard():
+    """pe_layout.py on images made here: sections adjacent from the headers
+    on pass; a stripped master build's shape (.text at 0x6000 behind 0x400
+    bytes of headers), a hole between two sections, a SectionAlignment of 0
+    or below a page do not; a VirtualSize of 0 counts SizeOfRawData; and a
+    link whose headers are over one page is refused before any strip."""
+    def image(text, data, alignment=0x1000, headers=0x400, sizes=(0x1800, 0x1800), raw=0):
+        made = bytearray(0x400)
+        made[:2] = b"MZ"
+        struct.pack_into("<I", made, 0x3C, 0x80)
+        made[0x80:0x84] = b"PE\0\0"
+        struct.pack_into("<HH", made, 0x84, 0x14C, 2)                  # i386, two sections
+        struct.pack_into("<H", made, 0x94, 0xE0)                       # SizeOfOptionalHeader
+        struct.pack_into("<H", made, 0x98, 0x10B)                      # PE32
+        struct.pack_into("<II", made, 0x98 + 32, alignment, 0x200)     # SectionAlignment, FileAlignment
+        struct.pack_into("<I", made, 0x98 + 60, headers)               # SizeOfHeaders
+        for index, (name, address, size) in enumerate(((b".text", text, sizes[0]), (b".data", data, sizes[1]))):
+            at = 0x98 + 0xE0 + 40 * index
+            made[at:at + 8] = name.ljust(8, b"\0")
+            struct.pack_into("<III", made, at + 8, size, address, raw)  # VirtualSize, VirtualAddress, SizeOfRawData
+        return bytes(made)
+    assert not pe_layout_gaps(image(0x1000, 0x3000)), "pe_layout_gaps refuses adjacent sections"
+    assert pe_layout_gaps(image(0x6000, 0x8000)), "pe_layout_gaps passes a hole after the headers"
+    assert pe_layout_gaps(image(0x1000, 0x4000)), "pe_layout_gaps passes a hole between sections"
+    assert pe_layout_gaps(image(0x1000, 0x3000, alignment=0)), "pe_layout_gaps passes a SectionAlignment of 0"
+    assert pe_layout_gaps(image(0x200, 0x1A00, alignment=0x200)), "pe_layout_gaps passes an alignment below a page"
+    # VirtualSize 0: the section takes SizeOfRawData (0x1800), so .data follows at 0x3000.
+    assert not pe_layout_gaps(image(0x1000, 0x3000, sizes=(0, 0x1800), raw=0x1800)), \
+        "pe_layout_gaps does not take SizeOfRawData for a VirtualSize of 0"
+    assert pe_layout_gaps(image(0x1000, 0x2000, sizes=(0, 0x1800), raw=0x1800)), \
+        "pe_layout_gaps lets .data overlap a section of VirtualSize 0"
+    # The link: adjacent, headers within one page; and the master link's
+    # shape (0x5200 bytes of headers, .text at 0x6000), adjacent until stripped.
+    assert not link_layout_problems(image(0x1000, 0x3000)), "link_layout_problems refuses a good link"
+    assert not pe_layout_gaps(image(0x6000, 0x8000, headers=0x5200)), "pe_layout_gaps refuses the unstripped master link"
+    assert link_layout_problems(image(0x6000, 0x8000, headers=0x5200)), \
+        "link_layout_problems passes headers over one page"
 
 
 def check_exe(image):
@@ -201,6 +247,7 @@ def main():
                         help="archives packed with package.py --no-guest-ir (a pull request's check, where the "
                              "pass was not built): the SDK must not have one")
     args = parser.parse_args()
+    check_layout_guard()
     archives = sorted(args.archives.glob("*.zip")) + sorted(args.archives.glob("*.tar.gz"))
     assert archives, "no release archives found"
     sdks = {path: check(path, not args.no_guest_ir) for path in archives}
