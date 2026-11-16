@@ -388,7 +388,9 @@ CI can hold retail inputs.
   in", and passes with it), `state-load-mips-stack` (scripted: record 330's
   3D battle from a state, record 320's, then 330's from the same state
   again must draw the same frames; it failed from +679 before "Port: save
-  states carry the interpreter's stack", and passes with it), and
+  states carry the interpreter's stack", and passes with it; it runs the
+  reference build with every module interpreted, as no shipped game has the
+  interpreter), and
   `x64-data-mods` (recorded with two data
   mods, a card pack and a recolored texture pack, made by its `mods.py`:
   the 64-bit build's data mods gate), `dark-hole` and `spellbinding` (the
@@ -587,7 +589,9 @@ If the API cannot express these cleanly, the API is wrong.
 - **`fx.py`:** `tools/pc/test_duel_effects.py` (162 lines; the review's
   `fx.py`, `scenarios.py`, `stateedit.py` and the state-making script were
   219, with a story-input prefix and twenty saved states besides). One game
-  a side, native and `MEMORIES_DUEL_EFFECTS=interpreter`, run side by side;
+  a side, native and `MEMORIES_DUEL_EFFECTS=interpreter` (on the reference
+  build: the game with the MIPS interpreter, which no shipped game has;
+  `tools/pc/reference_build.py` builds it when it is missing), run side by side;
   each of the twenty scenarios is a `goto("duel", opponent=1, deck=...)`
   and the duel actions, the review's state edits done in the one frame
   between the shuffle and the deal (`duel_ready(before_deal=...)`:

@@ -579,7 +579,132 @@ period could land on the same voice and the first never played, which
 showed as missing sound effects at 200% and above; `MEMORIES_TRACE=spu`
 logs "replaces a key-on not yet mixed" whenever it still happens.
 
+### The reference build
+
+The MIPS interpreter (`src/pc/guest/mips.c`) is no longer in the shipped game;
+a reference build for tests keeps it. Every target's game (Windows i386 and
+x64, Linux, macOS, the Android app) is built without it:
+`build_config.native_sources()` leaves `mips.c` out unless asked for the
+reference, and `src/pc/guest/mips.h` declares its functions only under
+`MEMORIES_REFERENCE`, so a shipped unit that still reached for it does not
+compile. On retail data nothing entered it any more: measured with
+`MEMORIES_MIPS_ENTRIES` (below) over 1,242 + 2,484 battles of the model oracle,
+the 20 duel-effect scenarios, the credits in six languages and 16 replays, 0
+entries at all four entry points (model modules, duel effects, credits, the
+guest-call thunk).
+
+**The reference build** is the same tree with it:
+`python tools/pc/build_game32.py --reference` (Windows and Linux; with
+`--target windows-x64` too) defines `MEMORIES_REFERENCE`, compiles `mips.c`
+and builds into `tmp/pc/reference/<the build folder's name>`
+(`tmp/pc/reference/game32` by default). It is for the tests and the oracle
+only: `--reference --release` is refused, it is never packaged, and
+`tools/pc/test_package.py` fails a package whose `symbols/*.txt` or
+`sdk/exports*.txt` name a `Memories_Mips` function or whose executable holds
+the string `MIPS overlay` (the interpreter's crash report; by bytes, since
+the shipped executable is stripped). `test_package.py --build-folder DIR`
+runs that guard alone on a build folder. Android and macOS have none
+(`build_arm64.py` builds no reference): the translated game's typed native
+calls (`GuestRuntime_InvokeNative`, `tools/pc/native_call_marshalling.py`),
+which only the interpreter used, are gone with it.
+
+`tools/pc/reference_build.py` finds it for the tools that compare the port's
+C with the disc's MIPS, and builds it when it is missing:
+`model_oracle.py` (its reference side), `test_model_mod_c.py`,
+`test_model_migrate.py` and `test_model_migrate_all.py` (through the oracle),
+`test_duel_effects.py`, and the interpreter passes of
+`tests/pc/ritual_tributes_runtime.py`, `monster_for_each_runtime.py` and
+`editor_ui_runtime.py`; each takes `--reference-executable PATH` for another.
+It warns when the reference was built from other sources than the game it is
+compared with (their `source` stamps): rebuild it then. The replay
+`tests/pc/replays/state-load-mips-stack` runs on it too, with every module
+interpreted. The CMake tests of the interpreter itself (`pc_mips_varargs`,
+`pc_mips_stack`) build only with `-DMEMORIES_REFERENCE=ON`; CI's Linux,
+Windows and sanitizer jobs set it (two small executables: seconds), and they
+need no disc. Nothing in CI
+runs the reference game: the tools above need the disc.
+
+**Without the interpreter** the game does this where it used to interpret
+(`tests/pc/no_interpreter_runtime.py` plays each on the disc, and with
+`--reference` the same on the reference build):
+
+- a battle model's control module whose bytes no native row covers and no
+  mod's C runs (a mod's MIPS: changed code, other tables, a new module): the
+  stand-in, the resident spark burst (`model_modules.c`, `native_variant`).
+  The game says so once per mod and module on stderr, naming the mod whose
+  models hold it (`Mods_ModuleMipsOwner`, from the check below) and the SDK's
+  `tools/model_gate.py mod-migrate`, which moves it to C (notes/modding.md,
+  "Attack code: C, not MIPS"); the model trace says `stand-in`;
+- a duel effect bank that is not the retail one: every effect completes at
+  once and unseen, said once: the request leaves the pool (`D_8009B261`) with
+  its hand-off byte (`field_1D`) holding what the bank's effect leaves there
+  at its end, where its caller waits for it (1; 2 for Swords of Revealing
+  Light's swords, effect `0x15`). Without the byte a field magic, Swords, an
+  equip and a ritual never finished their card's use (5 of
+  `test_duel_effects.py`'s 20 scenarios stalled; with it all 20 go on). What
+  a caller does at an effect's earlier signals (a count the effect raises as
+  it goes) is not done. A mod that changes the bank, its tables past the
+  code included (the hash covers all of it), loses its duel effects' pictures
+  and what they do: all of them complete unseen where they used to be
+  interpreted;
+- credits that are not the retail module: skipped (set-up and lines do
+  nothing, the update reports the roll over), said once; the ending's scene
+  runs on without the roll until its music ends, as it does with the roll
+  (5,628 frames either way, `tests/pc/no_interpreter_runtime.py`), and the
+  game restarts as after any credits;
+- a native call into an overlay window with no native function (the old
+  thunk path): the "call into guest code ... which has no native function"
+  crash report, on the branch thunks, the guest-call fault handler and the
+  translated runtime ("unknown guest function") alike; it never falls through;
+- `MEMORIES_MODEL_MODULES=interpreter`, `MEMORIES_DUEL_EFFECTS=interpreter`,
+  `MEMORIES_CREDITS=interpreter` and `MEMORIES_TRACE_MIPS_PRINTF` (or
+  `MEMORIES_TRACE=mips_printf`): said once on stderr (this game has no MIPS
+  interpreter; a `--reference` build has it), then the default runs.
+  `MEMORIES_DUEL_EFFECTS=skip` keeps its meaning: fusion (1), battle damage
+  (2) and destruction (3) only, through the bank's C (the retail bank), the
+  rest complete at once.
+
+**Save states** saved by a game with the interpreter still load: its chunk
+`mips-stack` (and the translated game's `arm64-mips`) is looked up by no part
+of a game without it, so a load passes over it (`tests/pc/state_io_test.c`).
+Loading such a state in a new build is a carry-over between builds (below,
+"Save states"); on Windows i386 that refused every state whose build had
+code before the functions past `0x03000000` change size, the model modules'
+C among them, because the loader took those functions for game variables
+that moved (`is_text`, `src/pc/guest/state.c`): Windows has no fixed game
+sections and its tables hold functions alone, which the loader now knows. A
+state saved with the interpreter build (debug menu, and mid-battle) loaded
+in the build without it and played on, the battle to its end. As for any
+carry-over, the saving build's symbol table must be in `symbols/` (a build
+folder keeps every one it built; `package.py` ships only its own build's, so
+a release finds an earlier one's when it is unpacked over it). The battle's
+first 26 frames after the load differed from the interpreter build's own
+load of the same state, the 274 after were identical. After that load every
+module call ran the disc's C (no stand-in). Carried into the reference build
+instead, the same state's battle never ended (12,000 frames, twice, the
+second with the reference built at this branch's head), and no module call
+followed the load, where the reference build's own states of that battle
+load and end as the others do: not understood yet, and seen with the
+reference build alone. States carried between two builds without the
+interpreter (a test build and a --release one, both ways) load and end
+their battle. A state from before
+the effect bank's check (2026-09-30, no chunk `retail-images`) loaded
+mid-duel completes that duel's effects at once until the next duel package. The reservation of `0x9FF00000` on
+Windows x64 (`image.c`) was the interpreter's stack alone, and is the
+reference build's now.
+
+**Mods**: the nine `Memories_Mips*` names left the export table; releases
+v0.1.2, v0.2.0 and v0.3.0 lent five of them, accepted in
+`tools/pc/mod_compat.txt` (no shipped mod, and no mod of those releases,
+imports any). A mod whose attack modules are MIPS is told so in the Mods
+window (its module note: a stand-in plays in their place until it moves them
+to C).
+
 ### MIPS-only effects
+
+What follows is how the interpreter came to run these, and how native C took
+them over; the shipped game has no interpreter now (above, "The reference
+build"), a reference build for tests keeps it.
 
 Two kinds of duel code were loaded as MIPS bytes from the archives:
 
@@ -594,8 +719,8 @@ Two kinds of duel code were loaded as MIPS bytes from the archives:
   monster's attack choreography and impact particles. MODEL.MRG has 621
   records and 1,181 distinct variant modules.
 
-Translating those one by one was the earlier plan; the default now runs the
-loaded bytes through the interpreter in `src/pc/guest/mips.c` (integer MIPS I
+Translating those one by one was the earlier plan; from 2026-09-21 the default
+ran the loaded bytes through the interpreter in `src/pc/guest/mips.c` (integer MIPS I
 plus COP2 through the software GTE), which bridges every call that leaves an
 overlay to the native function of that address. A code-following scan of the
 WA bank and all 1,181 variant modules (`tmp/`, 2026-09-21) found only
@@ -607,7 +732,7 @@ function map. Calls the other way (a native routine reaching a callback an
 effect installed) go through the branch thunks (or, as the second net, the
 guest-call fault handler) into the interpreter. Interpreted code runs on its
 own stack mapped at `0x9FF00000`, negative like every console address, and
-nests through native calls.
+nests through native calls. (All of this is the reference build's now.)
 
 A bridged call forwards a0-a3 and eight stack words (sp+16 to sp+44). The
 one native callee that takes more is `Model_QueueTintRequestForParts`
@@ -670,57 +795,64 @@ pending; the next effect call
 hashes all `0x16000` bytes (SHA-256, before the bank has written its own
 variables) and compares them with the image `config/slus_01411/overlays.json`
 records (`baa203b9...`, the same at all seven WA_MRG copies). A mod or disc
-patch that changed any byte, code or tables, gets the delivered bank
-interpreted as before (`src/pc/guest/retail_image.c`). `MEMORIES_TRACE=mods`
+patch that changed any byte, code or tables, gets its effects completed at
+once in the shipped game (the delivered bank interpreted, in a reference
+build; `src/pc/guest/retail_image.c`). `MEMORIES_TRACE=mods`
 logs each verdict (`duel_effects: retail bytes ... native C` or `changed
-bytes ... interpreter`); save states carry it (chunk `retail-images`), and a
-state from before the check, whose bank can no longer be hashed, gets the
-interpreter until the next duel package. The bank's functions are kept out of
+bytes ... skipped (no MIPS interpreter)`, `... interpreter` in a reference
+build); save states carry it (chunk `retail-images`), and a
+state from before the check, whose bank can no longer be hashed, is taken for
+a changed bank until the next duel package. The bank's functions are kept out of
 `Memories_FunctionMap` (`GATED_MODULES`), so nothing else can reach the native
 C for a modded image. Only the NA executable runs here, so the regional
 banks (French matched 85/85, Spanish 84/85, European and Japanese 80/85
 upstream) are never loaded; the language packs take only text from PAL discs.
 
 Switches: `MEMORIES_DUEL_EFFECTS=interpreter` interprets the bank even when it
-is retail (the reference for comparisons); `MEMORIES_DUEL_EFFECTS=skip`
+is retail (a reference build's, the reference for comparisons; the shipped
+game says it has no interpreter and runs the default); `MEMORIES_DUEL_EFFECTS=skip`
 (called `native` before the bank ran as native C; `native` now means the
 default) restores the bring-up behaviour
-(ids 1-3 interpreted, others complete at once); `MEMORIES_FRAME_HASHES=<file>`
+(ids 1-3 only, others complete at once; ids 1-3 are interpreted in a
+reference build, the bank's C in the game); `MEMORIES_FRAME_HASHES=<file>`
 writes a hash of VRAM per presented frame for comparing two runs;
 `MEMORIES_MODEL_MODULES=interpreter` interprets every battle model module
 even one native C stands in for (the reference, as the duel effects'
-switch);
+switch: a reference build's);
 `MEMORIES_MODEL_MODULES=spark` puts the resident spark burst in place of
 every monster's module (it was called `native`; `native` now means the
 default, as for the duel effects: the decomp's C for the shapes the gate
-table ports, the interpreter for the rest; any other value is the default
-too, and says so once on stderr);
-an effect or module the interpreter cannot run is reported once on stderr
-and falls back the same way. `MEMORIES_TRACE=model` logs every call
+table ports, the stand-in for the rest (the interpreter, in a reference
+build); any other value is the default too, and says so once on stderr);
+in a reference build an effect or module the interpreter cannot run is
+reported once on stderr and falls back the same way. `MEMORIES_TRACE=model` logs every call
 of a model module with the module's identifier, its slot and what ran it
-(`variant slot=0 command=1 module 418 in A: native`, or `interpreter` or
-`stand-in`; `slot=` is the active model, `D_8009AFA0`); with
+(`variant slot=0 command=1 module 418 in A: native`, or `stand-in`, or
+`interpreter` in a reference build; `slot=` is the active model, `D_8009AFA0`); with
 `MEMORIES_TRACE=mods` each slot logs once, when its module's code changes,
 whether it is the retail code of a native shape (`model variant module 418
-in slot A: retail code, native C`) or what else (`the disc's code, interpreted
-until the port has its C`, or a mod's: `the disc's code with other tables`,
-`changed code`, `code no disc module has`; `model_module_class.h`).
-`MEMORIES_TRACE_MIPS_PRINTF=1` prints the
-modules' own `printf` format strings. `MEMORIES_MIPS_ENTRIES=<file>` appends
+in slot A: retail code, native C`) or what else (`the disc's code the port
+has no C for yet`, or a mod's: `the disc's code with other tables`,
+`changed code`, `code no disc module has`, each `MIPS code (a stand-in
+plays)`; `model_module_class.h`).
+`MEMORIES_TRACE_MIPS_PRINTF=1` prints the interpreted
+modules' own `printf` format strings (a reference build). `MEMORIES_MIPS_ENTRIES=<file>` (a reference build) appends
 one line per entry into the interpreter, at every depth, flushed as written
 (a game its client kills keeps them): the entry point (`model` with the
 module's identifier, slot and command, `duel-effect` with the effect's id and
 state, `credits`, `thunk` with the native caller's return address, or
 `other`), `outer` or `nested` (whether an interpreted frame was live, so
 `thunk outer` is native code alone reaching an overlay window), the target
-and the presented frame. No entry, no file. It is how the interpreter's
-removal was measured: run a yfm_control tool with the variable set for each
+and the presented frame. No entry, no file. It is how it was measured that
+nothing entered the interpreter on retail data before it left the shipped
+game (a reference build for tests keeps it): run a yfm_control tool with the variable set for each
 game it starts.
 
 **The model modules in native C** (the gate, `src/pc/overlays/model_modules.c`).
 Upstream matched every variant module (2,362 distinct images, #8531); the
 port links the decomp's C for the shapes `config/pc/model_gate.csv` lists
-as `native` and interprets the rest. A **shape** is a code layout: the
+as `native` (all of them now), and gives anything else the stand-in (the
+interpreter, in a reference build). A **shape** is a code layout: the
 first word of the slot A image names one (418 is one; slot B's image of the
 same code is linked at `0x8017B000` and its first word is 568), and the disc
 has 324 of them, 183 on more than one image. A row has the shape, its
@@ -734,11 +866,12 @@ decomp's `data_start` and, for a module made of the C of two headers, the
 decomp's layout starts the module's data): the hash then covers code and
 constants only, so a mod that changes a model's tables or textures
 (`MODEL.MRG` data, #398/#399) still runs the C, and one that changes the
-code is interpreted. **A batch widens it** to cover any word of the slot's
+code does not (the stand-in plays; a reference build interprets it). **A batch widens it** to cover any word of the slot's
 data that the C divides by, takes a remainder by, or indexes with: the
 interpreter survives a zero divisor (`divu` leaves lo = `0xFFFFFFFF`,
 `break 7` is a no-op) where native C faults on x86 (and gives 0 on arm64),
-so a mod that zeroed such a word must get the interpreter. The batch's
+so a mod that zeroed such a word must not get the C (the stand-in, or a
+reference build's interpreter). The batch's
 reviewer greps the shape's C for `/`, `%` and `[` on values derived from the
 slot, and the row's note says which words the widening covers. `check --disc`
 fails when the images of a row differ anywhere inside its span, and
@@ -755,7 +888,7 @@ example of a widened span: its data start is `0x396C`, but
 the timing words of the attack's config entry (`+0x28..+0x3C` of the entry at
 `D_8013E96C + 0xFC + cmd * 0x44`), so its span is `0x3F60`, the common prefix
 of its 11 (slot A) and 12 (slot B) retail images: a mod that changes
-those 1,524 bytes runs the interpreter, and one that changes anything after
+those 1,524 bytes gets the stand-in (a reference build's interpreter), and one that changes anything after
 them (the model's tables and textures) still runs the C.
 
 **A table picked with `command % 100`.** Shapes 72, 104, 118 to 121, 156
@@ -1086,7 +1219,9 @@ runs: the attacker's (A) always; the defender's (B) only when the attacker
 does not win (`field_02`: 1 is the side that wins), so the default outcome
 is a tie (both modules run; `--outcomes attacker,defender` adds the other
 paths). Every battle runs twice, by default the build's default against
-`MEMORIES_MODEL_MODULES=interpreter`, in games of their own (`--jobs`), and
+`MEMORIES_MODEL_MODULES=interpreter` on the reference build (["The
+reference build"](#the-reference-build): built when it is missing,
+`--reference-executable` names another, as an SDK must), in games of their own (`--jobs`), and
 the two must agree on every frame hash and every module call the trace logs
 (setup commands by frame, updates by count). A battle where either run did
 not call the variant module of a slot its outcome runs (A always, B unless
@@ -1099,7 +1234,7 @@ each module is checked, not assumed:** the trace names the backend of every
 call (`native`, `interpreter`, `stand-in`), and a default-mode side must have
 run native C in exactly the slots whose disc image is a native row's code of
 `config/pc/model_gate.csv` (its first `span` bytes by SHA-256), and the
-interpreter in the others; a reference in `interpreter` mode that ran native C
+interpreter in the others (the stand-in, in a game without it); a reference in `interpreter` mode that ran native C
 is as much an error as a gated shape that ran interpreted, so a gate that
 silently stopped matching cannot pass as "identical". The summary counts the
 battle slots by backend (`backends ...: subject interpreter 65, native 65`),
@@ -1322,11 +1457,13 @@ prefixed `credits__`). The function map sends its three entries
 `src/pc/overlays/credits.c`, which applies the duel-effect bank's rule (see
 [MIPS-only effects](#mips-only-effects)): SHA-256 of the `0x8000` bytes at the
 first call after a delivery of the module's first sector against
-`f125a2a6...`, native C if equal, the interpreter above otherwise. Only a new
+`f125a2a6...`, native C if equal; otherwise the credits are skipped in the
+shipped game (said once; the update reports the roll over) and interpreted
+as above in a reference build. Only a new
 first sector starts a new check because the credits then stream 20 more
 sectors into the module's tail (`0x80185CD4-0x8018FCD4`) while they run. `MEMORIES_CREDITS=interpreter` forces the
-interpreter. Gated modules are kept out of the module registry, so the
-interpreter still owns `0x80180000-0x80188000` whenever it runs a modded image.
+interpreter (a reference build's; the game says it has none). Gated modules are kept out of the module registry, so a
+reference build's interpreter still owns `0x80180000-0x80188000` whenever it runs a modded image.
 
 The retail game never leaves the credits: `Main_RunCredits` runs the scene in
 its last phase, after the save and the secret number, and drops the answer of
@@ -2121,7 +2258,7 @@ texture pack's two maps whenever they changed); and `present phases`
 (sdl.c: the events and menu, the picture's copy into the window's texture,
 and the swap, which waits while the GPU is behind or, with vsync, for the
 display; and the texture pack's PNGs read on the main thread, which the
-frame they are read in waits for); and `interpreter:` (mips.c: the share
+frame they are read in waits for); and, in a reference build, `interpreter:` (mips.c: the share
 of the game's time spent interpreting MIPS, mostly the battle models'
 control modules: calls, instructions and microseconds a frame and the
 worst frame's, the instructions by where they ran, slot A's and slot B's
@@ -4114,7 +4251,7 @@ Native pieces (all under `src/pc/`):
 | LIBGS units | `sdk/libgs_unit.c` | The HMD path the town map uses: `GsMapUnit`, `GsMapCoordUnit`, `GsScanUnit`, `GsSortUnit` (primitive drivers are function pointers the game installs), the library's null and image-upload drivers, `GsGetLwUnit`/`GsGetLsUnit`/`GsGetLwsUnit` with their per-frame coordinate cache, `GsMulCoord2/3`, `GsSetRefView2`, `GsSetLightMatrix`, `GsSetFlatLight`, `GsLinkAnim`, `GsScanAnim`; `GsSortLine`/`GsSortGLine` are in `libgs.c`. `tests`: a scratch harness checked that the reference point lands on the view axis at the right distance and `ApplyMatrixLV` against 64-bit math; not yet a CTest |
 | Model drivers | `overrides/model_polygon_drivers.c` | The 61 hand-written GTE routines at `0x800612C0`-`0x8006ADE8` are HMD primitive drivers, and one algorithm under switches: triangle/quad x flat/Gouraud, back-face culled (`0x0020xxxx`) or both-sided (`0x0030xxxx`), plain or tiled (`0x02xx`: each polygon wrapped in its texture-window word and a reset), a second bank that forces semi-transparency, a shared-vertex bank (`0x012x/0x013x`) fed by a pre-calculation pass at `0x80067220`, and twelve outline drivers. Record layouts, the lighting modes of `D_8009AFE4`, the color cache and the translucent second pass are described at the top of the file. Read in full for each shape and by diff for each variant; the outline drivers and most variants have not been seen running yet |
 | Null page | `guest/image.c` | Retail code dereferences null pointers that land in kernel RAM on the console (`CardList_CreateSlotTextBox` clears a flag through `box->field_28` one call before that object is created; it made BUILD DECK fault). A faulting access below 64 KiB is redirected: the handler decodes the instruction's base register, points it at a mapping of guest RAM's first 64 KiB, single-steps (trap flag) and restores the register. Each site is reported once on stderr, which makes these bugs visible instead of fatal |
-| Guest calls | `guest/branch_thunks.c`, `guest/image.c` | Every unit's indirect calls and jumps go through `__x86_indirect_thunk_<reg>`; a MIPS address stored in the data image resolves to the native function via the generated `Memories_FunctionMap` (or to the MIPS interpreter). Guest RAM is also non-executable, so a call that escaped the thunks faults and the handler redirects it the same way where DEP is on |
+| Guest calls | `guest/branch_thunks.c`, `guest/image.c` | Every unit's indirect calls and jumps go through `__x86_indirect_thunk_<reg>`; a MIPS address stored in the data image resolves to the native function via the generated `Memories_FunctionMap` (or, in a reference build, to the MIPS interpreter; else it is the "no native function" crash report). Guest RAM is also non-executable, so a call that escaped the thunks faults and the handler redirects it the same way where DEP is on |
 | Overrides | `overlays/boot_check.c`, `sdk/deferred.c` | The boot package's console-modification check has no source and is passed. `GsSetFlatLight` and the debug font log once and do nothing |
 
 A native definition with a game function's name replaces it (the driver
@@ -4518,7 +4655,7 @@ hashes (PGXP and HD off, as the fixtures run). What makes it work:
   within 2 GB. Guest RAM, its mirrors, the scratchpad, the game stack
   (0xB0000000) and the arenas keep their 32-bit addresses. The game stops
   with a message if Windows ever loads it above 4 GB. The regions mapped
-  after guest RAM (arenas, the interpreter's and the game's stacks) are
+  after guest RAM (arenas, the game's stack, a reference build's interpreter stack) are
   reserved right after it: a 64-bit GL driver and audio also load below
   4 GB, and once took the game stack's range. `MEMORIES_X64_MAP_REPORT=1`
   prints the image base; 320 headless launches all mapped, and windowed runs
@@ -4528,7 +4665,7 @@ hashes (PGXP and HD off, as the fixtures run). What makes it work:
   pointer, comes from `Memories_LowAlloc`/`Memories_LowFree`
   (`src/pc/guest/low_memory.h`): a first-fit allocator over 16 MiB at the
   fixed address `0x9E000000` (after the compiled text's region at
-  `0x9C000000`, below the interpreter's stack at `0x9FF00000`), held from
+  `0x9C000000`, below a reference build's interpreter stack at `0x9FF00000`), held from
   `Memories_GuestMap` like the other regions and mapped on first use. Its
   users: the kanji ROM glyphs `Krom2RawAdd2` returns to the credits, the
   compiled text when its own region cannot be had or is full (on 32-bit it
@@ -5459,7 +5596,8 @@ untouched: with a mouse every path is the old one, pixel for pixel.
   again, F7 at the title brings the Options screen back, live.
 - The app process's layout: `0x1F800000` is taken (ART's heap), the port
   says so once and uses `0x9F800000`; guest RAM, its mirrors, the game stack
-  and the interpreter stack map where they do on the desktop.
+  and the interpreter stack (which no shipped game has now) map where they
+  do on the desktop.
 - Presents take 20-40 ms at 2280x1080 with the emulator's host GPU
   (`-gpu host`), 40-80 ms with SwiftShader; the game clock keeps time and
   presents drop frames.
@@ -5748,7 +5886,7 @@ or 0xC0000000 starts the game all the same.
   `Memories_TranslatedMmap` (`translated_mman.c`): host memory anywhere,
   registered with the runtime at the guest address asked for. The text
   arena (0x9C000000), low memory (0x9E000000) and the interpreter stack
-  (0x9FF00000) go that way, as on macOS; before, on Android they were raw
+  (0x9FF00000, until the interpreter left the shipped game) go that way, as on macOS; before, on Android they were raw
   fixed mappings that the runtime did not know, so a held range broke the
   translations and the interpreter stack. Linux's own flag value is kept.
 - **Save states** name the game by its GNU build ID (`translated_state_backend.c`,
@@ -5869,8 +6007,8 @@ or 0xC0000000 starts the game all the same.
   `MEMORIES_TEST_OLD_KERNEL=1`; v0.3.0 said "(File exists)" on the phones of
   #372), the translated one starts. In the translated
   game the value can list several addresses, 2 MiB held at each:
-  `0x80000000,0x9C000000,0x9E000000,0x9FF00000` also holds the text arena,
-  low memory and the interpreter stack, which it then takes elsewhere
+  `0x80000000,0x9C000000,0x9E000000` also holds the text arena and low
+  memory, which it then takes elsewhere
   (the fixed requests above) without a word in the log. An entry
   `START-END` holds that whole range (each free 2 MiB of it when part is
   taken already, as on the emulator): `0x762fd000-0x962fd000` is the large

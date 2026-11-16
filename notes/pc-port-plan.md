@@ -131,7 +131,10 @@ The first boot/demo may cover a subset; a full release must cover all reachable
 gameplay paths. A permanent MIPS interpreter was outside the native-port default until
 2026-09-21, when the WA effect bank and the 1,181 MODEL control modules were
 put under one (see [pc-build.md](pc-build.md#mips-only-effects)) rather than
-translated one by one; that decision stands unless a translated form exists.
+translated one by one. Once the decomp's C covered all of them (the effect
+bank, the credits and every MODEL module) and nothing entered it on retail
+data, the interpreter left the shipped game; a reference build for tests
+keeps it ([pc-build.md](pc-build.md#the-reference-build)).
 
 Reuse the tracked image hashes, disc layout, and extraction tooling. Keep raw
 BIN/CUE sector access available for XA/STR, since ordinary extracted-file reads
