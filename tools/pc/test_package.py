@@ -16,6 +16,13 @@ from pe_layout import link_layout_problems, pe_layout_gaps
 
 # build_mod.py's targets: each has its export list in every SDK.
 TARGETS = ("i386", "x86_64-windows", "aarch64-translated")
+# The MIPS interpreter (src/pc/guest/mips.c) is in no shipped game, only in
+# the reference build for tests (tools/pc/build_game32.py --reference): a
+# package whose tables name its functions, or whose executable holds the
+# title of its crash report, was packed from one. By bytes, not nm: the
+# shipped executable is stripped.
+INTERPRETER_NAME = "Memories_Mips"
+INTERPRETER_MARKER = b"MIPS overlay"   # tools/pc/reference_build.py's MARKER
 
 
 def read_bytes(path, name):
@@ -101,6 +108,48 @@ def check_layout_guard():
     assert not pe_layout_gaps(image(0x6000, 0x8000, headers=0x5200)), "pe_layout_gaps refuses the unstripped master link"
     assert link_layout_problems(image(0x6000, 0x8000, headers=0x5200)), \
         "link_layout_problems passes headers over one page"
+
+
+def interpreter_problems(executable, tables):
+    """Why a game (its executable's bytes; {name: text} of its symbols/*.txt
+    and sdk/exports*.txt) has the MIPS interpreter, or [] for none."""
+    problems = []
+    if INTERPRETER_MARKER in executable:
+        problems.append(f"the executable holds {INTERPRETER_MARKER.decode()!r}, the interpreter's crash report")
+    for name, text in sorted(tables.items()):
+        found = sorted({word for word in text.split() if word.startswith(INTERPRETER_NAME)})
+        if found:
+            problems.append(f"{name} names {', '.join(found[:3])}{' and more' if len(found) > 3 else ''}")
+    return problems
+
+
+def check_interpreter_guard():
+    """interpreter_problems on made-up games: it passes a game without the
+    interpreter and refuses each sign of one."""
+    clean = b"MZ...memories-pc: call into guest code at 0x%08x, which has no native function"
+    tables = {"symbols/0123abcd.txt": "00401000 00000010 Memories_Main\n",
+              "sdk/exports.i386.txt": "Memories_Main\nModel_QueueTintRequest\n"}
+    assert not interpreter_problems(clean, tables), "interpreter_problems refuses a game without the interpreter"
+    assert interpreter_problems(clean + b"MIPS overlay\0", tables), "interpreter_problems passes mips.c's string"
+    for name, line in (("symbols/0123abcd.txt", "00402000 00000040 Memories_MipsTry\n"),
+                       ("sdk/exports.txt", "Memories_MipsThunkTarget\n")):
+        assert interpreter_problems(clean, {**tables, name: tables.get(name, "") + line}), \
+            f"interpreter_problems passes {line.split()[-1]} in {name}"
+
+
+def check_build_folder(folder):
+    """The guard on a build folder (its executable, symbols/ and sdk/), for
+    telling a reference build from a game: the problems, or []."""
+    folder = Path(folder)
+    executable = next((folder / name for name in ("memories-pc.exe", "memories-pc") if (folder / name).is_file()), None)
+    assert executable, f"{folder}: no memories-pc(.exe)"
+    # The build's own symbol tables, as package.py ships them: a build folder
+    # keeps its earlier builds' too, for carrying save states.
+    build_id = (folder / "buildid").read_text().strip()
+    tables = {str(path.relative_to(folder).as_posix()): path.read_text(errors="replace")
+              for pattern in (f"symbols/{build_id}.txt", f"symbols/{build_id}.vars.txt", "sdk/exports*.txt")
+              for path in folder.glob(pattern)}
+    return interpreter_problems(executable.read_bytes(), tables)
 
 
 def check_exe(image):
@@ -303,6 +352,13 @@ def check(path, guest_ir_wanted=True):
     check_model_tool(path, next(iter(roots)), contents)
     shipped = {name: read_member(path, f"{next(iter(roots))}/{name}") for name in sorted(lists)}
     assert all(len(text.split()) > 1000 for text in shipped.values()), "an SDK export list is (nearly) empty"
+    # No MIPS interpreter: the game was not packed from a reference build.
+    executable = read_bytes(path, f"{next(iter(roots))}/{'memories-pc.exe' if windows else 'memories-pc'}")
+    symbols = {name: read_member(path, f"{next(iter(roots))}/{name}") for name in sorted(contents)
+               if name.startswith("symbols/") and name.endswith(".txt")}
+    problems = interpreter_problems(executable, {**shipped, **symbols})
+    assert not problems, (f"{path.name} has the MIPS interpreter, which only a reference build may have: "
+                          + "; ".join(problems))
     if not wide:
         assert shipped["sdk/exports.txt"] == shipped["sdk/exports.i386.txt"], "exports.txt is not the i386 list"
     languages = {f"languages/{name}.txt" for name in ("en-eu", "fr", "de", "it", "es")}
@@ -318,12 +374,22 @@ def check(path, guest_ir_wanted=True):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--archives", type=Path, required=True)
+    parser.add_argument("--archives", type=Path)
+    parser.add_argument("--build-folder", type=Path, action="append", default=[],
+                        help="only the MIPS interpreter guard, on a build folder (exit 1 if it has the interpreter)")
     parser.add_argument("--no-guest-ir", action="store_true",
                         help="archives packed with package.py --no-guest-ir (a pull request's check, where the "
                              "pass was not built): the SDK must not have one")
     args = parser.parse_args()
     check_layout_guard()
+    check_interpreter_guard()
+    if args.build_folder:
+        found = {folder: check_build_folder(folder) for folder in args.build_folder}
+        for folder, problems in found.items():
+            print(f"{folder}: {'; '.join(problems) if problems else 'no MIPS interpreter'}")
+        sys.exit(1 if any(found.values()) else 0)
+    if not args.archives:
+        parser.error("--archives (or --build-folder)")
     archives = sorted(args.archives.glob("*.zip")) + sorted(args.archives.glob("*.tar.gz"))
     assert archives, "no release archives found"
     sdks = {path: check(path, not args.no_guest_ir) for path in archives}
