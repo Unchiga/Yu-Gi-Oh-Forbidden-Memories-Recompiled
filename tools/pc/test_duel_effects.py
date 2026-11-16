@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The duel effects, native against the interpreter (MEMORIES_DUEL_EFFECTS=
-interpreter), on the control client: the twenty scenarios of the native
+interpreter, on the reference build: the game with the MIPS interpreter,
+which no shipped game has; tools/pc/reference_build.py builds it when it is
+missing, --reference-executable names another), on the control client: the twenty scenarios of the native
 duel-effects review (its fx.py and scenarios.py, which drove one process per
 run with frame-numbered presses from a story state). Each side is one game:
 every scenario is a duel against Simon Muran reached with goto() and a deck
@@ -8,7 +10,7 @@ of the cards under test, played with the client's duel actions. The two
 sides must agree on every frame hash and every effect call, and each
 scenario must have called an effect.
 
-    python3 tools/pc/test_duel_effects.py [--executable PATH] [names...]
+    python3 tools/pc/test_duel_effects.py [--executable PATH] [--reference-executable PATH] [names...]
 """
 from __future__ import annotations
 
@@ -22,7 +24,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from yfm_control import Game, OUTPUT  # noqa: E402
+from yfm_control import EXECUTABLE, Game, OUTPUT  # noqa: E402
+from reference_build import reference_executable  # noqa: E402
 
 OUT = OUTPUT / "duel-effects"   # a new duel-effects-* folder in it a run, unless --out
 SIMON = 1
@@ -128,7 +131,10 @@ def side(executable, name, env, scenarios):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--executable", type=Path)
+    parser.add_argument("--executable", type=Path, help="the native side's game (default yfm_control's)")
+    parser.add_argument("--reference-executable", type=Path,
+                        help="the interpreted side's game, one with the MIPS interpreter (default the reference "
+                             "build, built when it is missing)")
     parser.add_argument("--out", type=Path, help="where the two games go (default: a new tmp/pc/control/"
                                                   "duel-effects-* folder)")
     parser.add_argument("names", nargs="*")
@@ -140,9 +146,10 @@ def main() -> int:
         OUTPUT.mkdir(parents=True, exist_ok=True)
         OUT = Path(tempfile.mkdtemp(prefix="duel-effects-", dir=OUTPUT))
     scenarios = [s for s in SCENARIOS if not arguments.names or s[0] in arguments.names]
+    reference = reference_executable(arguments.reference_executable, subject=arguments.executable or EXECUTABLE)
     with ThreadPoolExecutor(2) as pool:
         native = pool.submit(side, arguments.executable, "native", {}, scenarios)
-        interpreted = pool.submit(side, arguments.executable, "interpreter",
+        interpreted = pool.submit(side, reference, "interpreter",
                                   {"MEMORIES_DUEL_EFFECTS": "interpreter"}, scenarios)
         (native_out, native_spans), (int_out, int_spans) = native.result(), interpreted.result()
     hashes = [dict(line.split() for line in (out / "hashes.txt").read_text().splitlines())

@@ -12,15 +12,23 @@ under a prefix header). The patched bytes and the rows' hashes are made
 from the disc here, at run time: no game data is kept.
 
 Oracle runs (tools/pc/model_oracle.py, --mod for all but the first), each
-the subject in the default mode against the interpreter:
+the subject in the default mode against the interpreter (the reference
+build's: the game with the MIPS interpreter, which no shipped game has;
+notes/pc-build.md, "The reference build"):
   0. the record unpatched: its frames, and the setup commands its attacks
      make; the patch swaps the table entries those commands pick, and run 2
      must draw other frames (else the swap would go unused and prove nothing);
   1. the mod: identical frames, and the subject ran "mod:model-c54" in the
      covered slots (the oracle checks that from the rows the mod logged);
-  2. the same data without the code: the record is interpreted, and the
-     mod is warned that its modules are MIPS;
-  3. the mod with MEMORIES_MODEL_MOD_C=0 on the subject: the interpreter;
+  2. the same data without the code, the subject the reference build in its
+     default mode: the record is interpreted, and the mod is warned that its
+     modules are MIPS;
+  2s. the same on the game itself (no interpreter): the stand-in ran, so the
+     frames differ from the interpreter's, and the game said once per module
+     that the mod's module is MIPS code a stand-in plays for, naming the mod
+     and model_gate.py mod-migrate;
+  3. the mod with MEMORIES_MODEL_MOD_C=0 on the subject (the reference build):
+     the interpreter;
   4. a C-only module registered once for both slots (MEMORIES_MODEL_SLOT_BOTH,
      tests/pc/mod_fixtures/model_both.c): both slots ran "mod:model-both",
      identical to the interpreter running the module's MIPS, and the
@@ -46,6 +54,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import model_gate  # noqa: E402
 import model_oracle  # noqa: E402
+from reference_build import reference_executable  # noqa: E402
+from yfm_control import EXECUTABLE  # noqa: E402
 
 FIXTURE = ROOT / "tests/pc/mod_fixtures/model_c54"
 MOD_ID = "model-c54"
@@ -184,14 +194,16 @@ def both_bases(out: Path) -> tuple[dict[str, set[int]], int]:
     return bases, wrong
 
 
-def oracle(arguments, name: str, record: int, alternatives: list[int], mod: Path | None, extra: list[str]) -> dict:
+def oracle(arguments, name: str, record: int, alternatives: list[int], mod: Path | None, extra: list[str],
+           executable: Path | None = None) -> dict:
+    """One oracle run; `executable` the subject's game when it is not --executable's."""
     out = arguments.out / name
     shutil.rmtree(out, ignore_errors=True)
     command = [sys.executable, "-u", str(ROOT / "tools/pc/model_oracle.py"), "--disc", str(arguments.disc),
                "--records", str(record), "--alternatives", ",".join(map(str, alternatives)),
                "--jobs", str(arguments.jobs), "--out", str(out), *(["--mod", str(mod)] if mod else []), *extra]
-    if arguments.executable:
-        command += ["--executable", str(arguments.executable)]
+    if executable or arguments.executable:
+        command += ["--executable", str(executable or arguments.executable)]
     print(f"test_model_mod_c: {name}: {' '.join(command[2:])}", flush=True)
     result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, errors="replace")
     (arguments.out / f"{name}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
@@ -202,6 +214,19 @@ def oracle(arguments, name: str, record: int, alternatives: list[int], mod: Path
     report["exit"] = result.returncode
     report["summary"] = [line for line in result.stdout.splitlines() if line.startswith(("model oracle:", "  "))]
     return report
+
+
+STAND_IN = re.compile(r"memories-pc: (mod \S+: )?model \S+ module \d+ \(slot [AB]\) is MIPS code no native C covers.*")
+
+
+def stand_in_lines(out: Path) -> list[str]:
+    """The game's stand-in lines (model_modules.c, say_stand_in) from the
+    subject's kept logs, each game's own: one per mod and module a game."""
+    found = []
+    for log in sorted((out / "subject").glob("*/game.log")):
+        found += sorted({match.group(0) for match in map(STAND_IN.search, log.read_text(errors="replace").splitlines())
+                         if match})
+    return found
 
 
 def subject_ways(report: dict) -> set[str]:
@@ -269,7 +294,9 @@ def main() -> int:
            "with the mod's C: no MIPS warning for the mod")
 
     with_c = report
-    report = oracle(arguments, "data-only", record, alternatives, data, [])
+    # The subject that interprets a mod's MIPS in the default mode is a reference build alone.
+    reference = reference_executable(None, subject=arguments.executable or EXECUTABLE)
+    report = oracle(arguments, "data-only", record, alternatives, data, [], reference)
     print("\n".join(report["summary"]))
     expect(report["exit"] == 0, "without the code: identical (oracle exit 0)")
     expect(subject_ways(report) == {"interpreter"}, f"without the code: the subject interpreted "
@@ -286,7 +313,18 @@ def main() -> int:
            f"the mod's C draws what the MIPS draws on the patched record ({digests(with_c)} with C, "
            f"{digests(report)} without)")
 
-    report = oracle(arguments, "mod-c-off", record, alternatives, code, ["--no-mod-c"])
+    # The game itself, which has no interpreter: the stand-in, said once per module with the mod's name.
+    shipped = oracle(arguments, "data-only-game", record, alternatives, data, ["--keep"])
+    print("\n".join(shipped["summary"]))
+    expect(shipped["exit"] != 0, "without the code, on the game: the stand-in draws other frames than the "
+                                 "interpreter (oracle exit nonzero)")
+    expect(subject_ways(shipped) == {"stand-in"}, f"without the code, on the game: the subject ran the stand-in "
+                                                 f"({sorted(subject_ways(shipped))})")
+    said = stand_in_lines(arguments.out / "data-only-game")
+    expect(bool(said) and all(f"mod {MOD_ID}-data:" in line and "mod-migrate" in line for line in said),
+           f"without the code, on the game: it said a stand-in plays, naming the mod and mod-migrate ({said[:2]})")
+    expect(len(said) == len(set(said)), f"without the code, on the game: each module said once per game ({said})")
+    report = oracle(arguments, "mod-c-off", record, alternatives, code, ["--no-mod-c"], reference)
     print("\n".join(report["summary"]))
     expect(report["exit"] == 0, "MEMORIES_MODEL_MOD_C=0: identical (oracle exit 0)")
     expect(subject_ways(report) == {"interpreter"}, f"MEMORIES_MODEL_MOD_C=0: the subject interpreted "

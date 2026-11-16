@@ -16,14 +16,17 @@ same save state (the debug menu), so each is the same whatever ran before.
 
 Two sides run every battle: the subject (by default the build's default,
 MEMORIES_MODEL_MODULES unset) and the reference (MEMORIES_MODEL_MODULES=
-interpreter). For each battle they must agree on every frame hash
+interpreter, on the reference build: the game with the MIPS interpreter,
+which no shipped game has; tools/pc/reference_build.py builds it into
+tmp/pc/reference when it is missing, and --reference-executable names another,
+as an SDK must: notes/pc-build.md, "The reference build"). For each battle they must agree on every frame hash
 (MEMORIES_FRAME_HASHES) and every module call the model trace logs (a
 setup command, its slot, module and frame; the updates by count). The
 trace also says what ran each module call: "native" (the decomp's C, for
 the code shapes config/pc/model_gate.csv ports), "interpreter" or "stand-in".
 A default-mode side must have run native C in exactly the slots whose disc
 image is a native row's code (the first `span` bytes by SHA-256), and the
-interpreter in the rest; a reference in interpreter mode must never run
+interpreter in the rest (the stand-in, in a game without it); a reference in interpreter mode must never run
 native: anything else is an error, not a difference. The report gives, per record: identical, or the first differing frame counted
 from the battle's start; the modules that ran (identifier and slot); and any
 the interpreter could not run. The coverage check hashes the variant image
@@ -70,6 +73,8 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from yfm_control import Game, GameHung, OUTPUT  # noqa: E402
+import yfm_control  # noqa: E402
+from reference_build import has_interpreter, reference_executable  # noqa: E402
 import model_gate  # noqa: E402
 import model_layout as layout  # noqa: E402  (the repository's, or an SDK's: model_layout.py)
 
@@ -788,7 +793,10 @@ def main() -> int:
     parser.add_argument("--outcomes", default="tie",
                         help="tie (both modules run), attacker (only slot A's), defender; comma-separated")
     parser.add_argument("--executable", type=Path, help="the subject's game (default yfm_control's)")
-    parser.add_argument("--reference-executable", type=Path, help="the reference's game (default the subject's)")
+    parser.add_argument("--reference-executable", type=Path,
+                        help="the reference's game: one with the MIPS interpreter for --reference-mode interpreter "
+                             "(default the reference build, tools/pc/build_game32.py --reference, built when it is "
+                             "missing; in an SDK, the game beside it if it has one); the subject's for other modes")
     parser.add_argument("--mode", default="", help="the subject's MEMORIES_MODEL_MODULES (default unset)")
     parser.add_argument("--reference-mode", default="interpreter",
                         help="the reference's MEMORIES_MODEL_MODULES (default interpreter; \"\" for unset)")
@@ -861,7 +869,16 @@ def main() -> int:
         OUTPUT.mkdir(parents=True, exist_ok=True)
         out = Path(tempfile.mkdtemp(prefix="model-oracle-", dir=OUTPUT))
     subject_exe = arguments.executable
-    reference_exe = arguments.reference_executable or subject_exe
+    # The interpreter is in no shipped game: a side that asks for it runs a
+    # reference build (reference_build.py; notes/pc-build.md, "The reference build").
+    if arguments.reference_mode == "interpreter":
+        reference_exe = reference_executable(arguments.reference_executable,
+                                             subject=subject_exe or yfm_control.EXECUTABLE)
+    else:
+        reference_exe = arguments.reference_executable or subject_exe
+    if arguments.mode == "interpreter" and not has_interpreter(Path(subject_exe or yfm_control.EXECUTABLE)):
+        parser.error(f"--mode interpreter: {subject_exe or yfm_control.EXECUTABLE} has no MIPS interpreter; "
+                     "name a reference build with --executable (tools/pc/build_game32.py --reference)")
     subject_env = side_env(arguments.mode)
     if arguments.poison is not None:
         try:

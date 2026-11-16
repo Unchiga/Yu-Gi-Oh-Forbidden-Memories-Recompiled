@@ -5,9 +5,11 @@ title, a duel against Simon Muran through Debug > Jump to's path with a deck
 whose opening hand is arranged (two Thunder Dragons, Raigeki, Forest, Red
 Medicine), played to its end: the fusion (Twin-headed Thunder Dragon),
 Raigeki, the terrain, the heal, attacks with their 3D battles (the MODEL
-variant modules, interpreted), the result and the rewards, back to the Free
-Duel screen. Every native duel effect it calls is the matched C of the WA
-bank; the attacks run each monster's choreography in the MIPS interpreter.
+variant modules, interpreted when it was recorded), the result and the
+rewards, back to the Free Duel screen. Every native duel effect it calls is
+the matched C of the WA bank; the attacks ran each monster's choreography in
+the MIPS interpreter then, and run the decomp's C now (the shipped game has
+no interpreter; a reference build for tests keeps it).
 Kept to record it again; playing the replay does not run it."""
 import sys
 from pathlib import Path
