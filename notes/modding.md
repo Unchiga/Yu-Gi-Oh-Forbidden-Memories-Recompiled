@@ -128,6 +128,7 @@ editors write, is fine):
 | `packs`, `pack_shop` | card packs sold for starchips on the Password screen, and the shop's rules, below |
 | `title`, `menu` | the title screen, and its two menus: their entries, buttons of the mod's own and their background, below |
 | `text`, `font` | a translation of the game's text, and fonts for letters it has none of, below |
+| `duel_effects` | `"own data"`: the mod changes the duel effect bank's tables only and asks for the bank's C to run them, unchecked, at its own risk ([A mod's duel effect bank](#a-mods-duel-effect-bank)); any other value is a warning, and the bank stays checked |
 
 `version`, `author` and `description` are displayed in the manager. Version
 bounds in `requires` are checked before activation. API 3 also supports
@@ -249,13 +250,15 @@ disc's map after loading, even with the mod on, until the game enters the map
 again (`Main_RunCampaignMap` reads the overworld package each time it does).
 
 The duel-effect bank is the other way round: it runs as native C only while
-its bytes are the disc's. A disc patch that changes it is seen when the
-package is read, and the game has no MIPS interpreter (it is gone from the
-shipped game; a reference build for tests keeps it: `notes/pc-build.md`,
-"The reference build"), so the bank's effects then complete at once and unseen (the duel goes
-on), and the game says so once. A changed effect bank is therefore no way to mod an
-effect, its tables included: change what the game's C reads (the cards, the fusions) or give C in
-a code mod. The check happens at that read only, so a code mod that writes
+its code is the disc's, and its tables too unless the mod says otherwise
+([A mod's duel effect bank](#a-mods-duel-effect-bank), below). A disc patch
+that changes it is seen when the package is read, and the game has no MIPS
+interpreter (it is gone from the shipped game; a reference build for tests
+keeps it: `notes/pc-build.md`, "The reference build"), so the bank's effects
+then complete at once and unseen (the duel goes on as the effect would have
+left it: Raigeki still destroys every monster, Swords of Revealing Light
+still holds for its turns), and the game says so once. The check happens at
+that read only, so a code mod that writes
 into the bank's memory itself, after it is loaded, is not seen and the
 native C still runs. The credits follow the same rule: the ending's
 16-sector credits module at `0x80180000` runs as native C only while its
@@ -293,6 +296,51 @@ Overrides stand in for the disc for every reader in the port: the drive
 model, the bulk reads a mod makes, and the file lookup itself. Nothing on the
 real disc image is touched, and removing the mod puts the game back exactly
 as it was.
+
+### A mod's duel effect bank
+
+`WA_MRG.MRG` holds the duel effect bank (the code that draws the duel's
+effects: Raigeki's bolts, the swords, the explosions) seven times, one copy
+a scene. Its bytes are code (the effects' functions, a jump table, and two
+messages the bank prints) and data (each effect's tables: sizes, colours,
+positions, timings). The game runs the bank as the port's C, which reads the
+tables where the disc put them, so it can run a mod's tables, but nothing
+in it checks them, and the game cannot tell a table changed on purpose from
+a patch that went wrong:
+
+- **Tables only, opted in.** A mod whose `mod.json` says
+  `"duel_effects": "own data"` gets its tables run by the bank's C, at its
+  own risk: a value the C divides by or indexes with can stop the game. The
+  game says once, on stderr, that the mod's data is unchecked.
+- **Tables only, not opted in.** The effects complete at once, unseen, and
+  the game says once how to opt in.
+- **Code changed.** The effects complete at once, unseen, said once. A mod
+  that changes the bank's code has no way to run it as C yet: that needs a
+  mod API entry for the bank's code, as API 29 is for the attack modules
+  (a later release).
+
+You do not have to work out which one a mod is.
+`model_gate.py effect-migrate` reads the mod's `data`, compares each copy of
+the bank it changes with the disc's and names every changed byte: the
+function or table, code or data, the effect ids that use it and the game's
+code that starts them (`config/pc/duel_effect_bank.csv` and
+`duel_effect_ids.csv`, made from the decomp):
+
+```
+python tools/pc/model_gate.py effect-migrate mods/my-mod --disc game/rpg-yfm.bin
+```
+
+(from an SDK: `python tools/model_gate.py effect-migrate ...`). For a mod that
+changes tables only, it writes the opt-in into its `mod.json` (unless
+`--report-only`) and prints the commands that check it: the bank's C with
+the mod's tables against the MIPS interpreter running the mod's bank,
+`tools/pc/test_duel_effects.py --mod`, frame for frame, effect call for
+effect call, and the duel's life points and cards after each scenario. That
+needs a reference build (`build_game32.py --reference`; an SDK names one with
+`--reference-executable`). The scenarios it names are the ones that play the
+changed effects; an effect no scenario plays is named, to be checked in a
+duel. For a mod that changes code it names the functions and exits 1,
+writing nothing.
 
 ## Named assets: an image and the name of what it replaces
 

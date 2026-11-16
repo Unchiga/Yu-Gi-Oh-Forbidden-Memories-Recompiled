@@ -71,12 +71,16 @@ native row's span is written from the disc by `update`, never by hand.
     python tools/pc/model_gate.py port 418 433 --disc game/rpg-yfm.bin   # copy shapes' C from upstream
     python tools/pc/model_gate.py mod-migrate mods/my-mod --disc game/rpg-yfm.bin   # a mod's modules to C
     python tools/pc/model_gate.py mod-row mods/my-mod/models/pikachu.mrg   # a model's rows (mod API 29)
+    python tools/pc/model_gate.py effect-migrate mods/my-mod --disc game/rpg-yfm.bin   # a mod's duel effect bank
     python tools/pc/model_gate.py mod-check                # the tool's files are all here (no disc; an SDK runs this too)
 
 mod-migrate and mod-row are tools/pc/model_migrate.py's: a mod's own control
 modules (its "models" and its MODEL.MRG data) run as the port's C for the
 disc shape they come from, in the mod (notes/modding.md, "Moving a mod's
-attacks from MIPS to C").
+attacks from MIPS to C"). effect-migrate is tools/pc/effect_migrate.py's: what
+a mod changed in the duel effect bank, code or data, and the opt-in a mod
+that changes its data only needs (notes/modding.md, "A mod's duel effect
+bank").
 
 To port a shape: `port` copies the decomp's C by rule (model_gate_port.py; the
 slot B wrappers go to src/native_overlays/model_variant_slot1) and sets the
@@ -880,6 +884,10 @@ def main() -> int:
         # A mod's modules moved to the port's C (mod API 29): model_migrate.py.
         import model_migrate
         return model_migrate.main(sys.argv[1:])
+    if sys.argv[1:2] == ["effect-migrate"]:
+        # A mod's duel effect bank, named byte by byte; its opt-in when it changes data only.
+        import effect_migrate
+        return effect_migrate.main(sys.argv[1:])
     if sys.argv[1:2] == ["mod-check"]:
         # The tool's own files are all here, without the disc (model_sdk.py): what an SDK is held to.
         import model_sdk
@@ -897,14 +905,16 @@ def main() -> int:
         return 1 if failed else 0
     if layout.SHIPPED and sys.argv[1:2] in (["check"], ["update"], ["write"], ["port"]):
         # These keep the repository's tables true to the disc and to the C, and write into it: an SDK has no
-        # repository (model_layout.py); mod-migrate, mod-row and mod-check are what it carries.
+        # repository (model_layout.py); mod-migrate, mod-row, effect-migrate and mod-check are what it carries.
         print(f"model_gate: {sys.argv[1]} works on the repository's tables and sources, which an SDK does not "
-              "have: use a checkout of the game's source. This SDK runs mod-migrate, mod-row and mod-check.",
+              "have: use a checkout of the game's source. This SDK runs mod-migrate, mod-row, effect-migrate and "
+              "mod-check.",
               file=sys.stderr)
         return 2
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("check", "update", "write", "port", "mod-migrate", "mod-row", "mod-check"))
+    parser.add_argument("command", choices=("check", "update", "write", "port", "mod-migrate", "mod-row",
+                                            "effect-migrate", "mod-check"))
     parser.add_argument("shapes", nargs="*", type=int, help="port: the shapes to copy from upstream")
     parser.add_argument("--disc", type=Path, default=os.environ.get("MEMORIES_DISC"),
                         help="the disc image (default: MEMORIES_DISC)")

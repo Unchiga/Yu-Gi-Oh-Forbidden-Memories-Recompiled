@@ -1,0 +1,26 @@
+id,function,file,started_by
+0,func_80154688,effect_0.c,DuelScene_UpdateExodiaResult
+1,func_80157794,effect_1.c,DuelScene_UpdateCardPlacement
+2,func_80153200,effect_2.c,DuelScene_UpdateBattle
+3,func_80149F90,tile_effect.c,DuelScene_UpdateBattle
+4,func_80159AAC,effect_4.c,
+5,func_80157E10,effect_5.c,DuelEffect_ApplyLifePointRecovery
+6,func_80154B30,effect_6.c,DuelEffect_ApplyDirectDamage
+7,func_801587D8,effect_7.c,DuelEffect_ApplyDirectDamage
+8,func_80147B18,effect_8.c,DuelEffect_ApplyCursebreaker Duel_UpdateTrapPresentation
+9,func_801593A8,effect_9.c,DuelEffect_ApplyLifePointRecovery
+10,func_8014C8FC,effect_10.c,DuelEffect_ApplyTerrain
+11,func_80146760,effect_11.c,DuelEffect_ApplyMonsterRemoval DuelEffect_ApplyRaigeki DuelScene_UpdateResume
+12,func_80150E00,effect_12.c,DuelEffect_ApplyStopDefense
+13,func_801503F8,effect_13.c,DuelEffect_ApplyStatPenalty func_8001B170
+14,func_801481A8,gather_effect.c,DuelScene_UpdateBattle
+15,func_8014FF40,effect_15.c,DuelEffect_ApplyMonsterRemoval
+16,func_80151558,effect_16.c,DuelEffect_ApplyRaigeki
+17,func_80148BA4,effect_17.c,DuelEffect_ApplyBoardDestruction
+18,func_80154084,effect_18.c,DuelEffect_StartRitual DuelEffect_StartSwords
+19,func_80153ADC,effect_19.c,DuelEffect_ApplyDarkPiercingLight DuelScene_UpdateExodiaResult
+20,func_80151558,effect_16.c,
+21,func_8014E3EC,effect_21.c,DuelEffect_ApplySwords DuelScene_UpdateResume
+22,func_8014A8E4,effect_22.c,DuelEffect_ApplyRitual
+23,func_80152048,effect_23.c,DuelEffect_ApplyHarpiesFeatherDuster
+24,func_8014D3E8,effect_24.c,DuelScene_UpdateExodiaResult

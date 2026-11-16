@@ -43,8 +43,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import model_layout as layout  # noqa: E402
 
 # The programs of the model tools: `model_gate.py mod-migrate`, which imports
-# model_migrate, and the oracle it names in its report.
-ENTRY = ("model_gate", "model_migrate", "model_oracle")
+# model_migrate, and the oracle it names in its report; `effect-migrate`'s
+# effect_migrate and the comparison it names (test_duel_effects).
+ENTRY = ("model_gate", "model_migrate", "model_oracle", "effect_migrate", "test_duel_effects")
 # Shipped by write_sdk for every mod (and imported by name, not copied again).
 BUILT_IN = ("build_mod", "build_process", "ptr32_stores")
 # Modules the entry points import that the SDK does not need, and why:

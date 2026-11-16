@@ -193,12 +193,14 @@ def classify(image: bytes, slot: str, primary: bool, tables: Tables) -> Info:
 # --- the disc and the mod --------------------------------------------------------------
 
 class Disc:
-    """MODEL.MRG of a raw 2352-byte-sector image, as the mod's "data" leaves it."""
+    """MODEL.MRG of a raw 2352-byte-sector image, as the mod's "data" leaves it
+    (FILE and NAME: another file's, effect_migrate.py's WA_MRG.MRG)."""
+    FILE, NAME = ["DATA", "MODEL.MRG;1"], MRG
 
     def __init__(self, path: Path):
         self.path = path
         self.file = path.open("rb")
-        self.lba, self.size = self._find(["DATA", "MODEL.MRG;1"])
+        self.lba, self.size = self._find(self.FILE)
         self.records = self.size // (RECORD_SECTORS * SECTOR)
         self.replaced: bytes | None = None      # a "replace" of the whole file
         self.raw: dict[int, bytes] = {}         # sector of MODEL.MRG: a raw region's bytes
@@ -223,7 +225,7 @@ class Disc:
                         found = struct.unpack_from("<I", entry, 2)[0], struct.unpack_from("<I", entry, 10)[0]
                     at += data[at]
             if not found:
-                raise SystemExit(f"mod-migrate: {name} is not on {self.path}")
+                raise SystemExit(f"{name} is not on {self.path}")
             lba, size = found
         return lba, size
 
@@ -276,7 +278,7 @@ class Disc:
             name = str(entry.get("file", "")).upper().replace("/", "\\")
             name = ("\\" + name.lstrip("\\")).split(";")[0] if name else ""
             raw = entry.get("lba")
-            if name == MRG:
+            if name == self.NAME:
                 base = 0
             elif raw is not None:
                 base = int(str(raw), 0) - self.lba

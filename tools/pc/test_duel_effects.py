@@ -8,14 +8,23 @@ run with frame-numbered presses from a story state). Each side is one game:
 every scenario is a duel against Simon Muran reached with goto() and a deck
 of the cards under test, played with the client's duel actions. The two
 sides must agree on every frame hash and every effect call, and each
-scenario must have called an effect.
+scenario must have called an effect; and the duel must stand the same after
+each (both sides' life points, monsters and spells and traps: what an
+effect's hand-off decides, Raigeki's destroyed zones, Swords' turns).
 
-    python3 tools/pc/test_duel_effects.py [--executable PATH] [--reference-executable PATH] [names...]
+With --mod FOLDER both games load that mod (a copy of it, enabled): the
+native side runs the bank's C on the mod's tables when its mod.json says
+"duel_effects": "own data", the interpreted side the mod's bank
+(`model_gate.py effect-migrate` prints this command; notes/modding.md, "A
+mod's duel effect bank").
+
+    python3 tools/pc/test_duel_effects.py [--executable PATH] [--reference-executable PATH] [--mod FOLDER] [names...]
 """
 from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import json
 from pathlib import Path
 import re
 import shutil
@@ -104,18 +113,39 @@ SCENARIOS = [
     ("bad-reaction", "342", opponent_deck(688), magic_twice), ("goblin-fan", "344", opponent_deck(687), magic_twice),
 ]
 CALL = re.compile(r"frame (\d+) vb \d+ duel_effects\] (id=.*)")
+# The effect ids each scenario calls, on the disc's bank (a run's report
+# says them; effect_migrate.py picks the scenarios that play what a mod
+# changed from these).
+EFFECT_IDS = {
+    "raigeki-t2": (2, 11, 16), "forest": (10,), "dark-hole": (17,), "swords": (18, 21), "harpie": (23,),
+    "warrior-elim": (15,), "crush-card": (15,), "stop-defense": (12,), "dp-light": (19,), "cursebreaker": (8,),
+    "spellbinding": (2, 13), "shadow-spell": (2, 13), "fusion-attack": (1, 2, 3), "equip-sword": (4,),
+    "megamorph": (0,), "kuriboh-battle": (2, 3, 14), "ritual": (1, 18, 22), "exodia": (0, 19, 24),
+    "bad-reaction": (5, 8, 9), "goblin-fan": (6, 7, 8),
+}
 
 
-def side(executable, name, env, scenarios):
-    """One game through every scenario: {name: (first frame, last frame, picture, error)}."""
+def standing(game):
+    """The duel as it stands: each side's life points, monsters and spells
+    (id, face down, defense position)."""
+    return [(side["lp"], [card and (card["id"], card["face_down"], card["defense_position"])
+                          for card in side["monsters"] + side["spells"]]) for side in game.duel()]
+
+
+def side(executable, name, env, scenarios, mod=None):
+    """One game through every scenario: {name: (first frame, last frame, picture, error, the duel after)}."""
     out = OUT / name
     shutil.rmtree(out, ignore_errors=True)
     (out / "mods").mkdir(parents=True)
-    env = {**env, "MEMORIES_FRAME_HASHES": str(out / "hashes.txt"), "MEMORIES_TRACE": "duel_effects",
+    env = {**env, "MEMORIES_FRAME_HASHES": str(out / "hashes.txt"), "MEMORIES_TRACE": "duel_effects,mods",
            "MEMORIES_LOG": str(out / "log.txt")}
+    settings = {"mod.3d-monsters": 0, "mod.hand-camera": 0}
+    if mod:
+        identifier = str(json.loads((mod / "mod.json").read_text(encoding="utf-8-sig")).get("id") or mod.name)
+        shutil.copytree(mod, out / "mods" / mod.name)
+        settings[f"mod.{identifier}"] = 1
     spans = {}
-    with Game(executable, out=out, settings={"mod.3d-monsters": 0, "mod.hand-camera": 0}, mods_dir=out / "mods",
-              env=env) as game:
+    with Game(executable, out=out, settings=settings, mods_dir=out / "mods", env=env) as game:
         for label, deck, before_deal, play in scenarios:
             first, error = game.frame, None
             try:
@@ -125,7 +155,7 @@ def side(executable, name, env, scenarios):
                 game.step(120)
             except (TimeoutError, RuntimeError, StopIteration, ValueError) as failure:
                 error = f"{type(failure).__name__}: {failure}"
-            spans[label] = (first, game.frame, game.shot(f"{label}.png"), error)
+            spans[label] = (first, game.frame, game.shot(f"{label}.png"), error, standing(game))
     return out, spans
 
 
@@ -137,6 +167,7 @@ def main() -> int:
                              "build, built when it is missing)")
     parser.add_argument("--out", type=Path, help="where the two games go (default: a new tmp/pc/control/"
                                                   "duel-effects-* folder)")
+    parser.add_argument("--mod", type=Path, help="a mod both games load (its duel effect bank: effect-migrate)")
     parser.add_argument("names", nargs="*")
     arguments = parser.parse_args()
     global OUT
@@ -145,31 +176,48 @@ def main() -> int:
     else:   # a folder of its own: two runs at once must not share one
         OUTPUT.mkdir(parents=True, exist_ok=True)
         OUT = Path(tempfile.mkdtemp(prefix="duel-effects-", dir=OUTPUT))
+    unknown = [name for name in arguments.names if name not in EFFECT_IDS]
+    if unknown:
+        parser.error(f"no scenario {', '.join(unknown)}; the scenarios: {', '.join(EFFECT_IDS)}")
+    if arguments.mod and not (arguments.mod / "mod.json").is_file():
+        parser.error(f"{arguments.mod}: no mod.json")
+    mod = arguments.mod.resolve() if arguments.mod else None
     scenarios = [s for s in SCENARIOS if not arguments.names or s[0] in arguments.names]
     reference = reference_executable(arguments.reference_executable, subject=arguments.executable or EXECUTABLE)
     with ThreadPoolExecutor(2) as pool:
-        native = pool.submit(side, arguments.executable, "native", {}, scenarios)
+        native = pool.submit(side, arguments.executable, "native", {}, scenarios, mod)
         interpreted = pool.submit(side, reference, "interpreter",
-                                  {"MEMORIES_DUEL_EFFECTS": "interpreter"}, scenarios)
+                                  {"MEMORIES_DUEL_EFFECTS": "interpreter"}, scenarios, mod)
         (native_out, native_spans), (int_out, int_spans) = native.result(), interpreted.result()
     hashes = [dict(line.split() for line in (out / "hashes.txt").read_text().splitlines())
               for out in (native_out, int_out)]
     calls = [[(int(m.group(1)), m.group(2)) for m in map(CALL.search, (out / "log.txt").read_text(errors="replace")
                                                        .splitlines()) if m] for out in (native_out, int_out)]
     failed = 0
+    if mod:
+        stderr = native_out / "game.log"   # what the game says once goes to stderr
+        text = stderr.read_text(errors="replace") if stderr.exists() else ""
+        said = [line for line in text.splitlines() if "duel effect bank" in line and "memories-pc:" in line]
+        print("duel effects: the mod's bank, native side: " + (said[0].split("memories-pc: ", 1)[1] if said else
+                                                                 "nothing said (the disc's bank?)"))
     for label, *_ in scenarios:
-        (first, last, _, error), other = native_spans[label], int_spans[label]
+        (first, last, _, error, after), other = native_spans[label], int_spans[label]
         frames = [str(frame) for frame in range(first, last + 1)]
         differing = next((frame for frame in frames if hashes[0].get(frame) != hashes[1].get(frame)), None)
         mine = [call for call in calls[0] if first <= call[0] <= last]
         theirs = [call for call in calls[1] if first <= call[0] <= last]
         ids = sorted({int(call[1].split()[0][3:]) for call in mine})
-        ok = not error and not other[3] and (first, last) == other[:2] and differing is None and mine == theirs and mine
+        same_duel = after == other[4]
+        ok = (not error and not other[3] and (first, last) == other[:2] and differing is None and mine == theirs
+              and mine and same_duel)
         failed += not ok
         print(f"duel effects: {label}: {'ok' if ok else 'FAILED'}: frames {first}-{last}, effect ids {ids}, "
               f"{len(mine)} calls" + (f"; {error or other[3]}" if error or other[3] else "") +
               (f"; first differing frame {differing}" if differing else "") +
-              ("; the calls differ" if mine != theirs else "") + ("; no effect ran" if not mine else ""))
+              ("; the calls differ" if mine != theirs else "") + ("; no effect ran" if not mine else "") +
+              ("" if same_duel else f"; the duel differs after it: {after} against {other[4]}"))
+        if tuple(ids) != EFFECT_IDS[label] and not mod:
+            print(f"duel effects: {label}: NOTE: called {ids}, EFFECT_IDS says {list(EFFECT_IDS[label])}")
     print(f"duel effects: {len(scenarios) - failed} of {len(scenarios)} agree; pictures in {native_out}")
     return 1 if failed else 0
 

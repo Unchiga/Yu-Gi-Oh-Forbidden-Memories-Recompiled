@@ -1344,6 +1344,12 @@ if(Python3_Interpreter_FOUND)
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
             set_tests_properties(pc_model_migrate_class PROPERTIES SKIP_RETURN_CODE 77)
         endif()
+        # model_gate.py effect-migrate (tools/pc/effect_migrate.py): its tables
+        # are the decomp's and the game's code ranges; on the disc (MEMORIES_DISC;
+        # those cases skip without it), mods made from it at run time.
+        add_test(NAME pc_effect_migrate
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/test_effect_migrate.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         # Native units that name files reach compat/fs.h (notes/pc-build.md).
         add_test(NAME pc_utf8_paths
             COMMAND "${Python3_EXECUTABLE}" tools/pc/check_utf8_paths.py
