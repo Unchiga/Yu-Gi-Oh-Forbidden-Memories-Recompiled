@@ -95,6 +95,25 @@ int main(void)
             assert(size == 0);
         }
     }
-    puts("State chunks: round trip, field ordering, truncation, layout mismatch and overflow passed");
+    {
+        /* A chunk this build has no part for (a state saved by a game with
+         * the MIPS interpreter: "mips-stack", or the translated game's
+         * "arm64-mips") is passed over: the chunks after it load. */
+        uint8_t old[16 + 20 + 8 + 20 + 4], stack[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        uint32_t after = 0xCAFEF00Du;
+        MemoriesStateField unknown = {stack, sizeof(stack)}, known = {&after, sizeof(after)};
+        MemoriesState writer = {0, state_file(), NULL, 0};
+        MemoriesState reader = {1, NULL, old, sizeof(old)};
+        assert(writer.file);
+        Memories_StateWrite(&writer, zero, sizeof(zero));
+        Memories_StateChunk(&writer, "mips-stack", &unknown, 1);
+        Memories_StateChunk(&writer, "after", &known, 1);
+        rewind(writer.file);
+        assert(fread(old, 1, sizeof(old), writer.file) == sizeof(old));
+        fclose(writer.file);
+        after = 0;
+        assert(Memories_StateChunk(&reader, "after", &known, 1) && after == 0xCAFEF00Du);
+    }
+    puts("State chunks: round trip, field ordering, truncation, layout mismatch, overflow and unknown chunks passed");
     return 0;
 }

@@ -7,7 +7,6 @@ import tempfile
 from llvm_guest import ROOT, TranslationError, inspect, normalize, process, translate, toolchain
 from macos_deps import sdk_path
 from direct_overlay_bridges import validate_declaration
-from native_call_marshalling import emit_native_calls
 
 
 class GuestExecutionTests(unittest.TestCase):
@@ -427,34 +426,6 @@ attributes #7 = { nounwind }
         with self.assertRaisesRegex(ValueError, 'Unsupported native ABI attributes.*argument 3 byval'):
             validate_declaration('func_801462B0',
                 'declare void @func_801462B0(i16 signext, i16 signext, i32, ptr byval(i32))')
-
-
-class NativeABITests(unittest.TestCase):
-    def test_libgs_psxlong_parameters_must_not_widen(self):
-        for name in ('GsSetAmbient', 'GsSetProjection'):
-            with self.subTest(name=name):
-                with self.assertRaisesRegex(ValueError, 'Unaudited native call type'):
-                    emit_native_calls([(1, name, 0, 0)], [f'declare void @{name}(i64)'])
-
-    def test_special_parameter_attributes_rejected(self):
-        for attribute in ('byval(i32)', 'byref(i32)', 'sret(i32)', 'inalloca(i32)',
-                          'preallocated(i32)', 'inreg', 'nest', 'swiftself',
-                          'swifterror', 'swiftasync'):
-            with self.subTest(attribute=attribute):
-                with self.assertRaisesRegex(ValueError, 'Unsupported native ABI attributes.*argument 0'):
-                    emit_native_calls([(1, 'Unknown', 0, 0)],
-                        [f'declare void @Unknown(ptr {attribute})'])
-
-    def test_calling_convention_and_return_attribute_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'Unsupported calling convention: Unknown'):
-            emit_native_calls([(1, 'Unknown', 0, 0)], ['declare fastcc void @Unknown(ptr)'])
-        with self.assertRaisesRegex(ValueError, 'Unsupported native ABI attributes.*result inreg'):
-            emit_native_calls([(1, 'Unknown', 0, 0)], ['declare inreg i32 @Unknown()'])
-
-    def test_ordinary_parameter_hints_preserved(self):
-        generated = emit_native_calls([(1, 'Unknown', 0, 0)],
-            ['declare zeroext i8 @Unknown(i8 zeroext, ptr noundef nonnull)'])
-        self.assertIn('uint8_t (*)(uint8_t, void *)', generated)
 
 
 if __name__ == '__main__':

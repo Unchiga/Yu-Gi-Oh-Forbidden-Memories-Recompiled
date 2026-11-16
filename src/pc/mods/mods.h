@@ -94,7 +94,7 @@ extern unsigned short (*Mods_PadSource)(int port);
  * the C any applied mod gives for them: the result is the mod's module note
  * (Mods_ModuleNote), never its status. */
 void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size, int *mod_native,
-                                     const char **mod_owner),
+                                     const char **mod_owner, uint32_t *identifiers),
                          int (*read)(int lba, int sectors, void *out),
                          int (*disc_shape)(int primary, int slot, uint32_t identifier, uint32_t span,
                                            const char *sha256));
@@ -104,6 +104,11 @@ void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, 
  * count. */
 const char *Mods_ModuleNote(int mod);
 int Mods_ModuleMips(int mod);
+/* The id of the applied mod whose model modules the check found MIPS code
+ * with this first word in (the last such in load order), or NULL: whom the
+ * game names when a stand-in plays for a module (model_modules.c). It reads
+ * what the last check found and runs none itself. */
+const char *Mods_ModuleMipsOwner(uint32_t identifier);
 /* Holds the module notes' check while a set of changes is made (Mods_Apply):
  * it runs once, when the last hold is let go (0), if anything it reads
  * changed. Holds nest. */

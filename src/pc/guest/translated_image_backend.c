@@ -8,7 +8,6 @@
 #include "pc/compat/fs.h"
 #include "../../types.h"
 #include "image.h"
-#include "mips.h"
 #include "translated_image.h"
 #include "translated_runtime.h"
 #include "function_map.h"
@@ -27,14 +26,14 @@ int Memories_ScratchpadRetailView = 1;
 extern void GuestRuntime_RegisterAllGlobals(void);
 void *(*Memories_GuestBranchResolver)(unsigned);
 
+/* The native function of a guest address, or NULL: the translated game has
+ * no MIPS interpreter (only a desktop reference build does), so a call into
+ * an overlay window with no native function is the runtime's "unknown guest
+ * function" report (GuestRuntime_ResolveFunction). */
 static void *resolve_function(u32 address)
 {
     const MemoriesGuestFunction *entry = Memories_FindResidentFunction(address);
     if (entry) return (void *)(uintptr_t)entry->host;
-    if (Memories_MipsInOverlay(address)) {
-        Memories_MipsThunkTarget = address;
-        return (void *)(uintptr_t)Memories_MipsThunk;
-    }
     return NULL;
 }
 static void *resolve_branch(unsigned address)
@@ -61,9 +60,9 @@ static int map_failed(const char *why)
  * each (0x80000000 for 1) and named as ART's large object space, which
  * holds guest RAM on some phones (notes/pc-build.md, "Android arm64"). The
  * translated game needs no host address there, so it starts all the same:
- * this shows it. "0x80000000,0x9C000000,0x9E000000,0x9FF00000" also holds
- * the text arena, low memory and the interpreter stack, which
- * compat/mman.h's fixed requests take elsewhere (translated_mman.c). An
+ * this shows it. "0x80000000,0x9C000000,0x9E000000" also holds the text
+ * arena and low memory, which compat/mman.h's fixed requests take elsewhere
+ * (translated_mman.c). An
  * entry START-END holds that whole range instead, as a phone's runtime
  * can: 0x762fd000-0x962fd000 is the large object space of #372 (a Retroid
  * Pocket Nova, Android 13), across guest RAM's 0x80000000.

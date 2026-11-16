@@ -117,11 +117,11 @@ STAGES = (("stance 0 slot A", False, "A", 0, 10), ("stance 0 slot B", False, "B"
 # model_module_class.h's ModelModuleClass, in its order (the C test prints the number).
 CLASSES = ("NATIVE", "RETAIL", "EMPTY", "TABLES", "CODE", "NEW", "MOD")
 CLASS_TEXT = {"NATIVE": "the disc's code, native C",
-              "RETAIL": "the disc's code, interpreted until the port has its C",
+              "RETAIL": "the disc's code the port has no C for yet, a stand-in",
               "EMPTY": "no entry, the stand-in",
-              "TABLES": "the disc's code with other tables, interpreted",
-              "CODE": "changed code, interpreted",
-              "NEW": "code no disc module has, interpreted"}
+              "TABLES": "the disc's code with other tables, MIPS code (a stand-in plays)",
+              "CODE": "changed code, MIPS code (a stand-in plays)",
+              "NEW": "code no disc module has, MIPS code (a stand-in plays)"}
 
 
 def sha(data: bytes) -> str:

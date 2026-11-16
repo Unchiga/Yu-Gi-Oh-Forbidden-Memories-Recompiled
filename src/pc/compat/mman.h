@@ -87,8 +87,8 @@ static inline int mprotect(void *address, size_t length, int prot)
 #elif defined(MEMORIES_TRANSLATED)
 #include <sys/mman.h>
 /* The translated game (macOS, Android arm64): a fixed request (the text
- * arena at 0x9C000000, low memory at 0x9E000000, the interpreter stack at
- * 0x9FF00000, mod arenas) takes host memory wherever the system gives it
+ * arena at 0x9C000000, low memory at 0x9E000000, mod arenas) takes host
+ * memory wherever the system gives it
  * and registers it with the translation runtime at the guest address asked
  * for (translated_mman.c), so no fixed host address is needed: a range the
  * system holds there (ART's spaces on a phone) changes nothing. They never

@@ -26,24 +26,40 @@ enum { MODE_AUTO, MODE_INTERPRETER, MODE_SKIP };
  *
  * The decomp matched the whole North American bank, and its C
  * (src/overlays/duel_effects) is linked in: that runs whenever the bytes the
- * disc delivered are the retail bank (src/pc/guest/retail_image.c). A mod or
- * disc patch that changed any of them gets the delivered MIPS run by the
- * interpreter instead, which bridges its resident SDK and game calls to the
- * native port. MEMORIES_TRACE=mods reports which of the two each delivery
- * got.
+ * disc delivered are the retail bank (src/pc/guest/retail_image.c). The game
+ * has no MIPS interpreter (notes/pc-build.md, "The reference build"), so a
+ * bank a mod or disc patch changed has its effects reported complete on
+ * their first update, said once. MEMORIES_TRACE=mods reports which of the two
+ * each delivery got. MEMORIES_DUEL_EFFECTS=skip restores the bring-up
+ * behaviour (it was called `native` before the bank ran as native C;
+ * `native` now means the default): fusion (1), battle damage (2) and
+ * destruction (3) only (the bank's C, for the retail bank), everything else
+ * complete on its first update.
  *
- * MEMORIES_DUEL_EFFECTS=interpreter interprets the bank even when it is
- * retail (the reference for comparing the two). MEMORIES_DUEL_EFFECTS=skip
- * restores the bring-up behaviour (it was called `native` before the bank
- * ran as native C; `native` now means the default): fusion (1), battle
- * damage (2) and destruction (3) interpreted, everything else reported
- * complete on its first update. An effect the interpreter cannot run is
- * reported once and completed the same way from then on. */
+ * A reference build (MEMORIES_REFERENCE, for tests) has the interpreter: it
+ * runs a changed bank's delivered MIPS, bridging its resident SDK and game
+ * calls to the native port; MEMORIES_DUEL_EFFECTS=interpreter interprets the
+ * bank even when it is retail (the reference for comparing the two; a game
+ * without the interpreter says so once and runs the default), skip
+ * interprets ids 1-3, and an effect the interpreter cannot run is reported
+ * once and completed at once from then on. */
 void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectRequest *request)
 {
     static int mode = -1;
     static unsigned failed[8];
+#ifdef MEMORIES_REFERENCE
     uint32_t args[4], result;
+#else
+    static int said;
+    /* Completed at once: the request leaves the pool (D_8009B261), and its
+     * hand-off byte holds what the bank's effect leaves there at its end,
+     * where its caller waits for it: 1, or 2 for Swords of Revealing Light's
+     * swords (0x15, whose caller waits for 2). The terrain, Swords, the
+     * rituals and the equips wait on it, and their card's use never ended
+     * without it. What a caller does at the effect's earlier signals (a
+     * count the effect raises as it goes) is not done. */
+#define COMPLETE_AT_ONCE() (request->field_1D = index == 0x15 ? 2 : 1, D_8009B261 = 1)
+#endif
     int native, tpage, u, v, clut;
     unsigned index = (unsigned)(unsigned short)id;
 
@@ -53,10 +69,36 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
              : strcmp(setting, "interpreter") == 0 ? MODE_INTERPRETER
              : strcmp(setting, "skip") == 0 ? MODE_SKIP
              : MODE_AUTO;
+#ifndef MEMORIES_REFERENCE
+        if (mode == MODE_INTERPRETER) {
+            Memories_NoInterpreter("MEMORIES_DUEL_EFFECTS=interpreter");
+            mode = MODE_AUTO;
+        }
+#endif
     }
     LOG(LOG_DUEL_EFFECTS, "id=%d state=%d buffer=%08x payload=%d,%d,%d damage=%d",
         id, state, (unsigned)buffer, request->field_00, request->field_02, request->field_04, request->field_12);
+#ifdef MEMORIES_REFERENCE
     native = mode == MODE_AUTO && RetailImage_Verified(RETAIL_IMAGE_DUEL_EFFECTS);
+#else
+    /* No interpreter: the bank's C runs whatever the mode, for the retail
+     * bank alone (skip leaves out all but 1-3, below). */
+    native = RetailImage_Verified(RETAIL_IMAGE_DUEL_EFFECTS);
+    if (!native) {
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "memories-pc: the duel effect bank is not the disc's (a mod or patch changed it), and this "
+                            "game has no MIPS interpreter: its effects complete at once, unseen (effect %d first)\n",
+                    id);
+        }
+        COMPLETE_AT_ONCE();
+        return;
+    }
+    if (mode == MODE_SKIP && !(id >= 1 && id <= 3)) {
+        COMPLETE_AT_ONCE();
+        return;
+    }
+#endif
     /* The battle's guardian star (0xE): its first update gets the star
        less one and picks the icon's cell, u at +0x8C4, v +0x8C6, page
        +0x8C8, palette +0x8CA; past the disc's ten it draws an error cross.
@@ -68,7 +110,9 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
 
         if (native) {
             duel_effects__func_80146258(id, 0, (void *)(uintptr_t)(unsigned)buffer, request);
-        } else {
+        }
+#ifdef MEMORIES_REFERENCE
+        else {
             args[0] = index;
             args[1] = 0;
             args[2] = (uint32_t)buffer;
@@ -80,6 +124,7 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
                 return;
             }
         }
+#endif
         cell[0] = (uint16_t)u;
         cell[1] = (uint16_t)v;
         cell[2] = (uint16_t)((cell[2] & 0x60) | tpage);
@@ -90,6 +135,7 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
         duel_effects__func_80146258(id, state, (void *)(uintptr_t)(unsigned)buffer, request);
         return;
     }
+#ifdef MEMORIES_REFERENCE
     if ((mode == MODE_SKIP && !(id >= 1 && id <= 3)) || index >= 256 || (failed[index >> 5] & (1u << (index & 31)))) {
         D_8009B261 = 1;
         return;
@@ -103,4 +149,5 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
         failed[index >> 5] |= 1u << (index & 31);
         D_8009B261 = 1;
     }
+#endif
 }

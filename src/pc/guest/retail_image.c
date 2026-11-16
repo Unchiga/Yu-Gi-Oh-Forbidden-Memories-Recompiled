@@ -6,6 +6,13 @@
 #include <string.h>
 
 enum { UNKNOWN, PENDING, RETAIL, CHANGED };
+/* What a changed image gets: the interpreter in a reference build alone
+ * (MEMORIES_REFERENCE); a shipped game skips it (duel_effects.c, credits.c). */
+#ifdef MEMORIES_REFERENCE
+#define CHANGED_RUNS "interpreter"
+#else
+#define CHANGED_RUNS "skipped (no MIPS interpreter)"
+#endif
 
 typedef struct Image {
     const char *name;
@@ -37,7 +44,7 @@ int RetailImage_Verified(RetailImageId id)
         }
         LOG(LOG_MODS, "%s: %s bytes at 0x%08X (sha256 %s): %s", image->name,
             verdicts[id] == RETAIL ? "retail" : "changed", (unsigned)image->base, hex,
-            verdicts[id] == RETAIL ? "native C" : "interpreter");
+            verdicts[id] == RETAIL ? "native C" : CHANGED_RUNS);
     }
     return verdicts[id] == RETAIL;
 }

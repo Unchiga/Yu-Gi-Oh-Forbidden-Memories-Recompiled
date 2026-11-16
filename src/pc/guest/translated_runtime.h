@@ -55,6 +55,4 @@ void GuestRuntime_FlattenOt(void *tags, unsigned count, uint32_t end,
                             uint32_t *first, uint32_t *last, unsigned *nearest);
 void *GuestRuntime_ResolveFunction(void *address);
 uint32_t GuestRuntime_EncodePointer(void *host);
-/* Generated, typed dispatch for calls leaving an interpreted MIPS module. */
-uint32_t GuestRuntime_InvokeNative(unsigned index, const uint32_t *arguments);
 #endif

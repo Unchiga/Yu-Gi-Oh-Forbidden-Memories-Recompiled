@@ -4,6 +4,7 @@
 #include "monitor.h"
 #include "pc/platform/platform.h"
 #include "pc/sdk/display.h"
+#include "pc/guest/mips.h"
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -83,7 +84,7 @@ void Log_Init(void)
 {
     const char *selected = getenv("MEMORIES_TRACE");
     const char *path = getenv("MEMORIES_LOG");
-    int channel;
+    int channel, printf_named = getenv("MEMORIES_TRACE_MIPS_PRINTF") != NULL;
     enabled = 0;
     for (channel = 0; channel < LOG_COUNT; channel++) {
         if (legacy_env[channel] && getenv(legacy_env[channel])) Log_Enable((LogChannel)channel, 1);
@@ -96,6 +97,7 @@ void Log_Init(void)
                 if ((length == 3 && !strncmp(at, "all", length)) ||
                     (strlen(names[channel]) == length && !strncmp(at, names[channel], length))) {
                     Log_Enable((LogChannel)channel, 1);
+                    printf_named |= channel == LOG_MIPS_PRINTF && length != 3;
                 }
             }
             at += length;
@@ -103,6 +105,13 @@ void Log_Init(void)
         }
     }
     if (path && *path) log_file = fopen(path, "a");
+#ifndef MEMORIES_REFERENCE
+    /* The channel has the interpreted modules' printf lines (mips.c), which
+     * only a reference build has: asked for by name, say so. */
+    if (printf_named) Memories_NoInterpreter("MEMORIES_TRACE_MIPS_PRINTF (mips_printf)");
+#else
+    (void)printf_named;
+#endif
 }
 
 /* `print`: to the console and the log file too, not only the ring. */

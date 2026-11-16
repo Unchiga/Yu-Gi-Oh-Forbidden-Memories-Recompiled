@@ -12,7 +12,6 @@ int Log_Wanted(LogChannel c){(void)c;return 0;}
 void Log_Printf(LogChannel c,const char*f,...){(void)c;(void)f;}
 int RetailImage_Verified(RetailImageId id){assert(id==RETAIL_IMAGE_DUEL_EFFECTS);return 1;}
 int Stars_EffectCell(int s,int*t,int*u,int*v,int*c){(void)s;(void)t;(void)u;(void)v;(void)c;return 0;}
-int Memories_MipsTry(unsigned a,const unsigned*b,unsigned n,unsigned*r){(void)a;(void)b;(void)n;(void)r;abort();}
 void duel_effects__func_80146258(int id,int phase,void*buffer,DuelEffectRequest*request)
 {
  assert(id==-7 && phase==-123 && (uintptr_t)buffer==0x80018000u && request==wanted);calls++;

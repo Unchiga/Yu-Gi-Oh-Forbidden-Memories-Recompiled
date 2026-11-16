@@ -288,9 +288,6 @@ def build(directory, out=None, *, game=None):
         "guest_build": hashlib.sha256(
             (ROOT / "tools/pc/guest_build.py").read_bytes()
         ).hexdigest(),
-        "marshalling": hashlib.sha256(
-            (ROOT / "tools/pc/native_call_marshalling.py").read_bytes()
-        ).hexdigest(),
         "toolchain_config": hashlib.sha256(
             (ROOT / "tools/pc/macos_toolchain.json").read_bytes()
         ).hexdigest(),

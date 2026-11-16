@@ -22,9 +22,13 @@
  * those ten's) and a variant module (0x8013B000 / 0x8017B000) holding the
  * monster's attack choreography and impact particles. The game calls each
  * through the word at +4. A module no native C stands in for runs through
- * the interpreter, which keeps every monster's own attack movement; one the
- * interpreter cannot run (reported once per loaded module) falls back to the
- * stand-in below.
+ * the stand-in below, the resident spark burst: the game has no MIPS
+ * interpreter (notes/pc-build.md, "The reference build"), so a module whose
+ * bytes no native C covers (a mod's MIPS) plays the burst in place of its
+ * monster's own attack movement, said once per mod and module with the SDK's
+ * way to move it to C. In a reference build (MEMORIES_REFERENCE, for tests
+ * and the oracle) the interpreter runs such a module instead, and the
+ * stand-in takes one it cannot run (reported once per loaded module).
  *
  * The decomp's C for a code shape runs in its place where the tables say so
  * (config/pc/model_gate.csv for the variant modules and
@@ -34,13 +38,17 @@
  * retail code and constants, the first `span` bytes of its image by SHA-256.
  * What follows is the record's own data, which the C reads where the disc
  * put it, so a mod that changes only a model's tables or textures still runs
- * the C, and one that changes the code gets the interpreter.
+ * the C, and one that changes the code gets the stand-in (the interpreter, in
+ * a reference build).
  *
  * MEMORIES_MODEL_MODULES picks:
  *   unset, `native`  the default: the decomp's C for the shapes the table
- *                    ports, the interpreter for the rest;
- *   `interpreter`    every module interpreted, even one native C exists for:
- *                    the reference tools/pc/model_oracle.py compares against;
+ *                    ports, the stand-in for the rest (a reference build: the
+ *                    interpreter);
+ *   `interpreter`    a reference build only: every module interpreted, even
+ *                    one native C exists for, the reference
+ *                    tools/pc/model_oracle.py compares against; a game without
+ *                    the interpreter says so once and runs the default;
  *   `spark`          the stand-in for every module (the resident spark burst,
  *                    called `native` before native C was planned).
  * Anything else is the default, as MEMORIES_DUEL_EFFECTS takes its values,
@@ -54,6 +62,13 @@
 
 enum { MODE_DEFAULT, MODE_INTERPRETER, MODE_SPARK };
 
+/* What a module no native C takes gets, in the mods trace's words. */
+#ifdef MEMORIES_REFERENCE
+#define NOT_NATIVE "interpreter"
+#else
+#define NOT_NATIVE "stand-in"
+#endif
+
 static int model_mode(void)
 {
     static int mode = -1;
@@ -63,7 +78,14 @@ static int model_mode(void)
              : strcmp(setting, "interpreter") == 0 ? MODE_INTERPRETER
              : strcmp(setting, "spark") == 0 ? MODE_SPARK
              : MODE_DEFAULT;
-        if (setting && *setting && mode == MODE_DEFAULT && strcmp(setting, "native") != 0) {
+#ifndef MEMORIES_REFERENCE
+        if (mode == MODE_INTERPRETER) {
+            Memories_NoInterpreter("MEMORIES_MODEL_MODULES=interpreter");
+            mode = MODE_DEFAULT;
+        } else
+#endif
+        if (setting && *setting && mode == MODE_DEFAULT && strcmp(setting, "native") != 0 &&
+            strcmp(setting, "interpreter") != 0) {
             fprintf(stderr, "memories-pc: MEMORIES_MODEL_MODULES=%s is not native, interpreter or spark; "
                     "using the default\n", setting);
         }
@@ -364,9 +386,9 @@ static const ModelGateRow *native_row(int primary, uint32_t module, int slot, ui
         verdict->words[i] = guest[i];
     }
     if (Log_Wanted(LOG_MODS)) {
-        /* What the interpreter runs, for a mod's author: the disc's module
-         * the port has no C for yet, or the mod's own code or tables
-         * (model_module_class.h). */
+        /* What the stand-in plays for (the interpreter runs, in a reference
+         * build), for a mod's author: the disc's module the port has no C
+         * for yet, or the mod's own code or tables (model_module_class.h). */
         if (found && found->owner >= 0) {
             LOG(LOG_MODS, "model %s module %u in slot %c: native C from mod %s", primary ? "primary" : "variant",
                 (unsigned)identifier, slot ? 'B' : 'A', Mods_Id(found->owner));
@@ -396,7 +418,8 @@ static uint32_t read_entry_word(const void *context, const ModelGateRow *row)
 /* Whether the native C may take this call: the retail code is in the slot
  * (native_row) and the call stays within the entries the hash covers
  * (model_gate_command.h). A call outside them, which only a mod's record can
- * make, is interpreted, and logged once for the code in the slot. Who
+ * make, gets the stand-in (the interpreter, in a reference build), and is
+ * logged once for the code in the slot. Who
  * keeps an update of an attack already set up is model_claim.h's to say:
  * the stand-in's attack stays with it, and one set up under another choice
  * with what set it up. *field is the work area's entry POINTER for a
@@ -441,15 +464,15 @@ static ModelEntry native_entry(int primary, uint32_t module, int slot, uint32_t 
             verdict->outside_logged = 1;
             if (command >= 0) {
                 LOG(LOG_MODS, "model %s module %u in slot %c: command %d is past the %u entries of its table "
-                    "the hash covers, interpreter", kind, (unsigned)identifier, slot ? 'B' : 'A', command,
+                    "the hash covers, " NOT_NATIVE, kind, (unsigned)identifier, slot ? 'B' : 'A', command,
                     (unsigned)row->entries);
             } else if (row->index_width) {
                 LOG(LOG_MODS, "model %s module %u in slot %c: an attack whose index %u is not one of the "
-                    "%u the hash covers, interpreter", kind, (unsigned)identifier, slot ? 'B' : 'A',
+                    "%u the hash covers, " NOT_NATIVE, kind, (unsigned)identifier, slot ? 'B' : 'A',
                     (unsigned)entry_word, (unsigned)row->entries);
             } else {
                 LOG(LOG_MODS, "model %s module %u in slot %c: an attack whose entry (0x%08X) is not one of the "
-                    "%u the hash covers, interpreter", kind, (unsigned)identifier, slot ? 'B' : 'A',
+                    "%u the hash covers, " NOT_NATIVE, kind, (unsigned)identifier, slot ? 'B' : 'A',
                     (unsigned)entry_word, (unsigned)row->entries);
             }
         }
@@ -498,18 +521,62 @@ static ModelEntry return_two_entry(uint32_t module, int slot, int command, const
     return native_primary;
 }
 
+#ifndef MEMORIES_REFERENCE
+/* A module with an entry that no native C takes, in the default mode: MIPS
+ * code (a mod's, or the disc's where the port has no C), which this game has
+ * no interpreter for. Said once per mod and module (kind, slot, identifier),
+ * naming the mod whose models the check found it in (Mods_ModuleMipsOwner)
+ * and the SDK's way to move it to C; the stand-in then plays it. */
+static void say_stand_in(int variant, int slot, uint32_t identifier)
+{
+    enum { SAID = 64 };
+    static struct {
+        const char *owner;
+        uint32_t identifier;
+        unsigned char variant, slot;
+    } said[SAID];
+    static unsigned count;
+    const char *owner = Mods_ModuleMipsOwner(identifier);
+    unsigned i;
+    for (i = 0; i < count; i++)
+        if (said[i].identifier == identifier && said[i].variant == variant && said[i].slot == slot &&
+            (said[i].owner == owner || (said[i].owner && owner && !strcmp(said[i].owner, owner))))
+            return;
+    if (count == SAID) return; /* that many said: the rest go unsaid rather than every call */
+    said[count].owner = owner;
+    said[count].identifier = identifier;
+    said[count].variant = (unsigned char)variant;
+    said[count].slot = (unsigned char)slot;
+    count++;
+    fprintf(stderr,
+            "memories-pc: %s%s%smodel %s module %u (slot %c) is MIPS code no native C covers, and this game has no "
+            "MIPS interpreter: the stand-in (the spark burst) plays in its place. Move it to C with the SDK's "
+            "tools/model_gate.py mod-migrate (notes/modding.md, \"Attack code: C, not MIPS\")\n",
+            owner ? "mod " : "", owner ? owner : "", owner ? ": " : "", variant ? "variant" : "primary",
+            (unsigned)identifier, slot ? 'B' : 'A');
+    LOG(LOG_MODS, "model %s module %u in slot %c: MIPS code, the stand-in%s%s%s", variant ? "variant" : "primary",
+        (unsigned)identifier, slot ? 'B' : 'A', owner ? " (mod " : "", owner ? owner : "", owner ? ")" : "");
+}
+#endif
+
 /* module: the slot base (the identifier word; the entry is at +4). The
  * trace names the module by its slot and identifier, and what runs it:
  * "native" (the decomp's C), "mod:<id>" (a mod's C, mod API 29),
- * "interpreter" or "stand-in". */
+ * "interpreter" (a reference build) or "stand-in". */
 static int run_module(uint32_t module, int variant, void *context, int command)
 {
+#ifdef MEMORIES_REFERENCE
     static uint32_t failed[2][2]; /* [slot][variant]: identifier of a module that failed */
+#endif
     int slot = module >= 0x8017A000u;
     uint32_t identifier = *(const uint32_t *)(uintptr_t)module;
     uint32_t entry = *(const uint32_t *)(uintptr_t)(module + 4);
     int mode = model_mode();
+#ifdef MEMORIES_REFERENCE
     int interpret = mode != MODE_SPARK && entry != 0 && failed[slot][variant] != identifier;
+#else
+    int interpret = 0; /* no interpreter: the stand-in */
+#endif
     int field = -1;
     ModelVerdict *verdict = variant ? &verdicts[slot] : &primary_verdicts[slot];
     const ModelGateRow *chosen = NULL, *ran = NULL;
@@ -570,6 +637,7 @@ static int run_module(uint32_t module, int variant, void *context, int command)
         ModelRows_SetRunning(previous);
         return result;
     }
+#ifdef MEMORIES_REFERENCE
     if (interpret) {
         uint32_t args[2], result;
         args[0] = (uint32_t)(uintptr_t)context;
@@ -582,9 +650,14 @@ static int run_module(uint32_t module, int variant, void *context, int command)
                 variant ? "variant" : "primary", (unsigned)identifier, slot ? 'B' : 'A');
         failed[slot][variant] = identifier;
     }
+#else
+    if (mode == MODE_DEFAULT && entry != 0) {
+        say_stand_in(variant, slot, identifier);
+    }
+#endif
     /* The stand-in takes the attack. Its work area is another structure (a
      * variant's: its first bytes are random sparks; a primary's: native_primary
-     * set nothing up, after an interpreter that failed or no entry), so what
+     * set nothing up, after no native C, an interpreter that failed or no entry), so what
      * the native C would read there
      * means nothing, and an index row cannot be told from a native setup's: an
      * index below `entries` is any small number, 0 included, and a stand-in's

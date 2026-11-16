@@ -134,7 +134,7 @@ static void preview_probe(MemoriesModEvent *event) { (void)event; }
  * stubbed disc reads: a module counts when any of its bytes is not zero, and
  * the sectors are read as the game would, with the mods' changes in. */
 static int module_check_mips(const unsigned char *stages, char *detail, size_t size, int *mod_native,
-                             const char **mod_owner)
+                             const char **mod_owner, uint32_t *identifiers)
 {
     static const int first[6] = {0, 10, 20, 30, 40, 42}, sectors[6] = {10, 10, 10, 10, 2, 2};
     int count = 0;
@@ -143,6 +143,7 @@ static int module_check_mips(const unsigned char *stages, char *detail, size_t s
     for (int i = 0; i < 6; i++)
         for (size_t at = 0; at < (size_t)sectors[i] * 2048; at++)
             if (stages[(size_t)first[i] * 2048 + at]) {
+                if (identifiers) memcpy(&identifiers[count], stages + (size_t)first[i] * 2048, 4);
                 count++;
                 break;
             }
@@ -296,6 +297,11 @@ int main(void)
     assert(Mods_Active(find("modeler")) &&
            strstr(Mods_ModuleNote(find("modeler")), "1 attack module in MODEL.MRG card 2 is MIPS code") &&
            Mods_ModuleMips(find("modeler")) == 1 && !strstr(Mods_Status(find("modeler")), "attack module"));
+    /* No interpreter in the game: the note says a stand-in plays, and how to
+     * move the module to C; the game names the mod when it plays one. */
+    assert(strstr(Mods_ModuleNote(find("modeler")), "a stand-in plays in its place") &&
+           strstr(Mods_ModuleNote(find("modeler")), "model_gate.py mod-migrate"));
+    assert(Mods_ModuleMipsOwner(0) && !strcmp(Mods_ModuleMipsOwner(0), "modeler") && !Mods_ModuleMipsOwner(12345));
     assert(!Mods_ModuleNote(patcher)[0] && !Mods_ModuleNote(replacer)[0] && !Mods_ModuleMips(patcher));
     assert(!Mods_Active(find("xa-named")) && strstr(Mods_Status(find("xa-named")), "MASTER.XA") &&
            strstr(Mods_Status(find("xa-named")), "\"audio\""));

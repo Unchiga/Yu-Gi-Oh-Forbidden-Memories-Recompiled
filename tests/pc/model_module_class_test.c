@@ -133,15 +133,19 @@ static void mod_rows(void)
     stages[0] = 0xEF, stages[1] = 0xCD, stages[2] = 0xAB; /* stance 0 slot A: first word 0x00ABCDEF */
     stages[4] = 0x08, stages[7] = 0x03;                   /* +4: jr ra */
     expect(ModelModule_Classify(stages, 0, 0).kind == MODEL_MODULE_NEW, "no finder: a new first word is not NEW", -1);
-    expect(ModelModule_StagesMips(stages, detail, sizeof(detail), &native, &owner) == 1 && native == 0 && !owner,
-           "no finder: a new module is not the mod's MIPS", -1);
+    {
+        uint32_t identifiers[6] = {0};
+        expect(ModelModule_StagesMips(stages, detail, sizeof(detail), &native, &owner, identifiers) == 1 && native == 0 &&
+                   !owner && identifiers[0] == 0x00ABCDEFu,
+               "no finder: a new module is not the mod's MIPS, or its first word is not given", -1);
+    }
     ModelModule_SetModRows(finder);
     {
         ModelModuleInfo info = ModelModule_Classify(stages, 0, 0);
         expect(info.kind == MODEL_MODULE_MOD && info.owner && !strcmp(info.owner, "late"),
                "a module a mod's row covers is not MOD", -1);
     }
-    expect(ModelModule_StagesMips(stages, detail, sizeof(detail), &native, &owner) == 0 && native == 1 && owner &&
+    expect(ModelModule_StagesMips(stages, detail, sizeof(detail), &native, &owner, NULL) == 0 && native == 1 && owner &&
                !strcmp(owner, "late") && strstr(detail, "native C from mod late"),
            "a module a mod's row covers is counted as MIPS", -1);
     expect(!ModelModule_IsModsMips(MODEL_MODULE_MOD), "MOD is the mod's MIPS", -1);
@@ -210,7 +214,7 @@ int main(int argc, char **argv)
                 return 1;
             }
         /* The disc is no mod: none of its modules is a mod's MIPS. */
-        expect(ModelModule_StagesMips(stages, detail, sizeof(detail), NULL, NULL) == 0, detail, record);
+        expect(ModelModule_StagesMips(stages, detail, sizeof(detail), NULL, NULL, NULL) == 0, detail, record);
         for (int i = 0; i < 6; i++) {
             int primary = i >= 4, slot = primary ? i - 4 : i & 1;
             const unsigned char *image = stages + (primary ? 40 + 2 * (i - 4) : 10 * i) * SECTOR;

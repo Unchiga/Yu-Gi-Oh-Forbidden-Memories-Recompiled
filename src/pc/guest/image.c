@@ -159,11 +159,15 @@ static void *guest_call_target(uint32_t address)
     }
     entry = Memories_FindResidentFunction(address);
     if (entry) return (void *)(uintptr_t)entry->host;
+#ifdef MEMORIES_REFERENCE
     if (Memories_MipsInOverlay(address)) {
-        /* A callback into a loaded overlay: run it interpreted. */
+        /* A callback into a loaded overlay: run it interpreted (a reference
+         * build; a shipped game has no interpreter, and such a call is the
+         * "no native function" report every caller makes of NULL). */
         Memories_MipsThunkTarget = address;
         return (void *)(uintptr_t)Memories_MipsThunk;
     }
+#endif
     return NULL;
 }
 
@@ -714,16 +718,18 @@ int Memories_GuestMap(void)
     }
     if (!result) {
         /* The fixed regions mapped later (mod code, mod arenas, the text
-         * arena, the low memory region, the interpreter's stack, the game
-         * stack) are held from here: in a 64-bit process the window's GL
-         * driver and audio load below 4 GB too, and took the game stack's
-         * range before it was mapped. Each takes its range back as
+         * arena, the low memory region, a reference build's interpreter
+         * stack, the game stack) are held from here: in a 64-bit process the
+         * window's GL driver and audio load below 4 GB too, and took the game
+         * stack's range before it was mapped. Each takes its range back as
          * compat/mman.h's mmap maps it. */
         reserve_mod_code((uintptr_t)GetModuleHandleW(NULL));
         reserve_free(0x90000000u, 0x91000000u);
         reserve_free(0x9C000000u, 0x9D000000u);
         reserve_free(MEMORIES_LOW_MEMORY_BASE, MEMORIES_LOW_MEMORY_BASE + MEMORIES_LOW_MEMORY_SIZE);
-        reserve_free(0x9FF00000u, 0x9FF40000u);
+#ifdef MEMORIES_REFERENCE
+        reserve_free(0x9FF00000u, 0x9FF40000u); /* mips.c's stack: nothing else maps there */
+#endif
         reserve_free(0xB0000000u, 0xB0800000u);
         reserve_low_memory();
     }
