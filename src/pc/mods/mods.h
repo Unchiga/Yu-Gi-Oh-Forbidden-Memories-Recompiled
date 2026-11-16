@@ -109,6 +109,12 @@ int Mods_ModuleMips(int mod);
  * game names when a stand-in plays for a module (model_modules.c). It reads
  * what the last check found and runs none itself. */
 const char *Mods_ModuleMipsOwner(uint32_t identifier);
+/* The id of the last applied mod whose mod.json has "duel_effects": "own
+ * data" (it changes the duel effect bank's tables only and asks for the
+ * bank's C to run them, unchecked, at its own risk; notes/modding.md), or
+ * NULL. pc/overlays/duel_effects.c asks it when the delivered bank is not
+ * the disc's but its code is. */
+const char *Mods_DuelEffectsOwnData(void);
 /* Holds the module notes' check while a set of changes is made (Mods_Apply):
  * it runs once, when the last hold is let go (0), if anything it reads
  * changed. Holds nest. */

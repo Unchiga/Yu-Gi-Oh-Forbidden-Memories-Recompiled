@@ -636,17 +636,26 @@ runs the reference game: the tools above need the disc.
   `tools/model_gate.py mod-migrate`, which moves it to C (notes/modding.md,
   "Attack code: C, not MIPS"); the model trace says `stand-in`;
 - a duel effect bank that is not the retail one: every effect completes at
-  once and unseen, said once: the request leaves the pool (`D_8009B261`) with
-  its hand-off byte (`field_1D`) holding what the bank's effect leaves there
-  at its end, where its caller waits for it (1; 2 for Swords of Revealing
-  Light's swords, effect `0x15`). Without the byte a field magic, Swords, an
-  equip and a ritual never finished their card's use (5 of
-  `test_duel_effects.py`'s 20 scenarios stalled; with it all 20 go on). What
-  a caller does at an effect's earlier signals (a count the effect raises as
-  it goes) is not done. A mod that changes the bank, its tables past the
-  code included (the hash covers all of it), loses its duel effects' pictures
-  and what they do: all of them complete unseen where they used to be
-  interpreted;
+  once and unseen, said once (naming `model_gate.py effect-migrate`, and the
+  opt-in when only data changed), with what the game's code reads of it
+  left as the bank's effect leaves it (`complete_at_once` in
+  `src/pc/overlays/duel_effects.c`). Every caller in `src/game` reads the
+  request's hand-off byte (`field_1D`); all but two test it for nonzero, so
+  it is 1 and the request leaves the pool (`D_8009B261`) at once. Raigeki
+  (`0x10`) raises it once a bolt, 1 to 5, and `DuelEffect_ApplyRaigeki`
+  destroys the opponent's zone N when it is N + 1: the byte goes up one an
+  update and the request ends after the fifth, so every zone is cleared
+  (with the byte set to 1 only zone 0 was). Swords of Revealing Light's
+  swords (`0x15`) wait for 2, and their request lives for the swords' turns
+  (`gDuel_apSwordsEffectObjects` keeps it and `duel_phase_entry.c` writes its
+  end into it at expiry): it stays until neither side's pointer is it. The
+  only other write the bank makes outside itself, the text tint
+  `D_8009B300` (effects 17 and 22), ramps back to where it started, so
+  leaving it alone is the same. Without the byte a field magic, Swords, an
+  equip and a ritual never finished their card's use. A mod that changes the
+  bank's code loses its duel effects' pictures (they complete unseen where
+  they used to be interpreted); one that changes only its tables keeps them
+  with `"duel_effects": "own data"` (below);
 - credits that are not the retail module: skipped (set-up and lines do
   nothing, the update reports the roll over), said once; the ending's scene
   runs on without the roll until its music ends, as it does with the roll
@@ -797,10 +806,22 @@ variables) and compares them with the image `config/slus_01411/overlays.json`
 records (`baa203b9...`, the same at all seven WA_MRG copies). A mod or disc
 patch that changed any byte, code or tables, gets its effects completed at
 once in the shipped game (the delivered bank interpreted, in a reference
-build; `src/pc/guest/retail_image.c`). `MEMORIES_TRACE=mods`
-logs each verdict (`duel_effects: retail bytes ... native C` or `changed
-bytes ... skipped (no MIPS interpreter)`, `... interpreter` in a reference
-build); save states carry it (chunk `retail-images`), and a
+build; `src/pc/guest/retail_image.c`), with one exception: when the bank's
+code is the disc's (its identifier, the two format strings it prints, the
+effect 22 jump table and the text: `0x0-0x4`, `0x14-0x6C`, `0x9C-0x180`,
+`0x2B0-0x14270`, hashed on their own, `85d81752...`) and an applied mod says
+`"duel_effects": "own data"` (`Mods_DuelEffectsOwnData`), the bank's C runs
+on the mod's tables, which it reads where the disc put them (its `D_` names
+are pinned there; nothing is compiled in), said once and unchecked
+(notes/modding.md, "A mod's duel effect bank"; `model_gate.py
+effect-migrate` names each changed byte from `config/pc/duel_effect_bank.csv`
+and writes the opt-in for a mod that changes data only). A delivery during
+the hash is hashed again, so a verdict is never left pending (a pending one
+used to be taken for a changed bank). `MEMORIES_TRACE=mods`
+logs each verdict (`duel_effects: retail bytes ... native C`, `changed data,
+retail code bytes ...` or `changed bytes ... skipped (no MIPS interpreter)`,
+`... interpreter` in a reference build); save states carry it (chunk
+`retail-images`), and a
 state from before the check, whose bank can no longer be hashed, is taken for
 a changed bank until the next duel package. The bank's functions are kept out of
 `Memories_FunctionMap` (`GATED_MODULES`), so nothing else can reach the native

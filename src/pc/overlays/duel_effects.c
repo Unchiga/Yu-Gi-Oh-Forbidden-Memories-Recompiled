@@ -4,10 +4,12 @@
 #include <string.h>
 
 #include "game/duel_effect_request.h"
+#include "game/duel_side_state.h"
 #include "pc/guest/mips.h"
 #include "pc/guest/retail_image.h"
 #include "pc/debug/log.h"
 #include "pc/cards/stars.h"
+#include "pc/mods/mods.h"
 
 extern unsigned char D_8009B261;
 extern unsigned Memories_PresentedFrames(void);
@@ -43,6 +45,44 @@ enum { MODE_AUTO, MODE_INTERPRETER, MODE_SKIP };
  * without the interpreter says so once and runs the default), skip
  * interprets ids 1-3, and an effect the interpreter cannot run is reported
  * once and completed at once from then on. */
+#ifndef MEMORIES_REFERENCE
+/* An effect completed at once and unseen, in a game without the MIPS
+ * interpreter: the request leaves the pool (D_8009B261), with its hand-off
+ * byte (field_1D) where its caller waits for it, as the bank's effect leaves
+ * it, so the duel goes on as on the console:
+ *   0x10 (Raigeki) raises the byte once a bolt, 1 to 5, and its caller
+ *        destroys the opponent's monster of zone N when the byte is N + 1
+ *        (DuelEffect_ApplyRaigeki): one step an update, then the request
+ *        ends, so every zone is cleared;
+ *   0x15 (Swords of Revealing Light's swords) lives for the turns the swords
+ *        stay: its caller keeps the request in gDuel_apSwordsEffectObjects
+ *        and writes the end into it at expiry (duel_phase_entry.c), before
+ *        it forgets it. The byte is 2 (the swords are down,
+ *        DuelEffect_ApplySwords), and the request ends once neither side's
+ *        pointer is it (expired, or another Swords took the side), so no
+ *        pointer is ever a freed entry;
+ *   every other id: 1, which every caller tests for nonzero (the terrain,
+ *        the rituals, the equips, the battles; without it their card's use
+ *        never ended). */
+static void complete_at_once(unsigned index, DuelEffectRequest *request)
+{
+    if (index == 0x10) {
+        if (request->field_1D < 5) {
+            request->field_1D++;
+            return;
+        }
+    } else if (index == 0x15) {
+        request->field_1D = 2;
+        if ((DuelFieldEffectObject *)request == gDuel_apSwordsEffectObjects[0] ||
+            (DuelFieldEffectObject *)request == gDuel_apSwordsEffectObjects[1])
+            return;
+    } else {
+        request->field_1D = 1;
+    }
+    D_8009B261 = 1;
+}
+#endif
+
 void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectRequest *request)
 {
     static int mode = -1;
@@ -51,14 +91,6 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
     uint32_t args[4], result;
 #else
     static int said;
-    /* Completed at once: the request leaves the pool (D_8009B261), and its
-     * hand-off byte holds what the bank's effect leaves there at its end,
-     * where its caller waits for it: 1, or 2 for Swords of Revealing Light's
-     * swords (0x15, whose caller waits for 2). The terrain, Swords, the
-     * rituals and the equips wait on it, and their card's use never ended
-     * without it. What a caller does at the effect's earlier signals (a
-     * count the effect raises as it goes) is not done. */
-#define COMPLETE_AT_ONCE() (request->field_1D = index == 0x15 ? 2 : 1, D_8009B261 = 1)
 #endif
     int native, tpage, u, v, clut;
     unsigned index = (unsigned)(unsigned short)id;
@@ -82,20 +114,44 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
     native = mode == MODE_AUTO && RetailImage_Verified(RETAIL_IMAGE_DUEL_EFFECTS);
 #else
     /* No interpreter: the bank's C runs whatever the mode, for the retail
-     * bank alone (skip leaves out all but 1-3, below). */
+     * bank (skip leaves out all but 1-3, below), and for a bank whose code
+     * is the retail one when an applied mod asks for its own data
+     * ("duel_effects": "own data", Mods_DuelEffectsOwnData): the C reads the
+     * bank's tables where the disc put them, so it then runs the mod's,
+     * unchecked. Anything else completes at once. */
     native = RetailImage_Verified(RETAIL_IMAGE_DUEL_EFFECTS);
     if (!native) {
-        if (!said) {
-            said = 1;
-            fprintf(stderr, "memories-pc: the duel effect bank is not the disc's (a mod or patch changed it), and this "
-                            "game has no MIPS interpreter: its effects complete at once, unseen (effect %d first)\n",
-                    id);
+        int data_only = RetailImage_CodeVerified(RETAIL_IMAGE_DUEL_EFFECTS);
+        const char *owner = data_only ? Mods_DuelEffectsOwnData() : NULL;
+        if (owner) {
+            native = 1;
+            if (said != 2) {
+                said = 2;
+                fprintf(stderr, "memories-pc: mod %s: the duel effect bank's data is the mod's own (\"duel_effects\": "
+                                "\"own data\"), and its code the disc's: the bank's C runs the mod's tables, which "
+                                "nothing checks (a value the C divides by or indexes with can stop the game)\n", owner);
+            }
+        } else {
+            if (!said) {
+                said = 1;
+                if (data_only)
+                    fprintf(stderr, "memories-pc: the duel effect bank's data is not the disc's (a mod or patch changed "
+                                    "its tables; its code is the disc's), and this game has no MIPS interpreter: its "
+                                    "effects complete at once, unseen. A mod that means it adds \"duel_effects\": "
+                                    "\"own data\" to its mod.json (sdk/tools/model_gate.py effect-migrate writes it), "
+                                    "and the bank's C then runs its tables (effect %d first)\n", id);
+                else
+                    fprintf(stderr, "memories-pc: the duel effect bank's code is not the disc's (a mod or patch changed "
+                                    "it), and this game has no MIPS interpreter: its effects complete at once, unseen "
+                                    "(sdk/tools/model_gate.py effect-migrate names what changed; effect %d first)\n",
+                            id);
+            }
+            complete_at_once(index, request);
+            return;
         }
-        COMPLETE_AT_ONCE();
-        return;
     }
     if (mode == MODE_SKIP && !(id >= 1 && id <= 3)) {
-        COMPLETE_AT_ONCE();
+        complete_at_once(index, request);
         return;
     }
 #endif

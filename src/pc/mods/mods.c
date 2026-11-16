@@ -119,6 +119,7 @@ typedef struct {
     char native_owner[ID_MAX];   /* the first one's mod */
     int native_more;             /* another mod's C runs others */
     char modules[STATUS_MAX];    /* its module note (Mods_ModuleNote) */
+    int effects_own_data;        /* "duel_effects": "own data" (Mods_DuelEffectsOwnData) */
     char mips_said[STATUS_MAX];  /* the MIPS warning last said on stderr */
     const char *origin;         /* "shipped", "folder" or "installed", for the window */
     int restart;                 /* the manifest asks for a fresh process */
@@ -3300,6 +3301,15 @@ int Mods_ModuleMips(int index)
     return index >= 0 && index < mod_count ? mods[index].mips_modules : 0;
 }
 
+const char *Mods_DuelEffectsOwnData(void)
+{
+    const char *owner = NULL;
+    /* The last applied one, in load order, as the data it names is the last applied. */
+    for (int i = 0; i < mod_count; i++)
+        if (mods[i].active && mods[i].effects_own_data) owner = mods[i].id;
+    return owner;
+}
+
 const char *Mods_ModuleMipsOwner(uint32_t identifier)
 {
     const char *owner = NULL;
@@ -3813,6 +3823,7 @@ static const char *const manifest_keys[] = {
     "chest_overflow", "terrain_bonus", "trap_thresholds", "equip_bonus_default", "passwords", "starter",
     "starter_pools", "title", "menu", "limits", "guardian_stars", "attributes", "packs", "pack_shop",
     "card_text_colors", "card_layout", "palette_ramps", "ui", "tower", "card_types", "fields", "models",
+    "duel_effects",
 };
 
 /* How many letters to add, remove or change to turn one word into the
@@ -3956,6 +3967,16 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
     }
     mod->restart = Json_Bool(Json_Member(root, "restart"), 0);
     mod->default_enabled = Json_Bool(Json_Member(root, "enabled"), 0);
+    /* "duel_effects": "own data": the mod changes the effect bank's tables
+     * only, and asks for the bank's C to run them, at its own risk
+     * (Mods_DuelEffectsOwnData). Any other value is a typo: said, and off. */
+    {
+        const JsonValue *effects = Json_Member(root, "duel_effects");
+        const char *value = Json_String(effects, NULL);
+        mod->effects_own_data = value && !strcmp(value, "own data");
+        if (effects && !mod->effects_own_data)
+            warn(mod, 1, "\"duel_effects\" is \"own data\" or left out; the effect bank's check stays on");
+    }
     text = Json_String(Json_Member(root, "textures"), NULL);
     if (text && *text) {
         if (!Paths_Contained(text)) {

@@ -10,10 +10,24 @@ notes/pc-build.md ("The reference build") says, and says so once.
   model     a data mod whose variant module's code is changed: the stand-in
             plays it, said once naming the mod and model_gate.py mod-migrate,
             and the battle ends
-  effects   a data mod that changes the duel effect bank (every copy in
-            WA_MRG.MRG): a field magic's effect (Forest: its card's use waits
-            for the effect's hand-off) completes at once, said once, and the
-            duel goes on to the next turn
+  effects   a data mod that changes the duel effect bank's code (every copy
+            in WA_MRG.MRG): a field magic's effect (Forest: its card's use
+            waits for the effect's hand-off) completes at once, said once, and
+            the duel goes on to the next turn
+  raigeki   Raigeki on a full opponent's field, with the disc's bank (its C)
+            and with one whose code a mod changed (completed at once): every
+            opponent's monster is destroyed both times, as on the console
+            (the bolt count its caller destroys zone by zone)
+  swords    Swords of Revealing Light, then Forest a turn, with the disc's
+            bank (its C) and with one whose code a mod changed (completed at
+            once): the swords hold the opponent's side as many turns both
+            times, and when they end no Swords request is left in the pool
+            (no pointer to a freed entry, none kept forever); the duel goes on
+  own-data  a data mod that changes a table of the bank only (Swords of
+            Revealing Light's sword positions), without and with
+            "duel_effects": "own data" in its mod.json: without, completed at
+            once and the opt-in named; with, the bank's C runs the mod's
+            table, said once
   credits   a data mod that changes the credits module (SU.MRG): the credits
             are skipped (no roll; the ending's scene runs on until its music
             ends, as with the roll), said once, and the presentation is
@@ -54,6 +68,12 @@ BANK_SIZE, BANK_SHA = 0x16000, "baa203b937dc6bdf91b1826c5832f0f32e11ae5fe9d05193
 CREDITS_SECTOR, CREDITS_SIZE = 1223, 0x8000   # func_800507D0's 16 SU sectors from 0x4C7
 CREDITS_SHA = "f125a2a6a8b57d222df544a7a02bf8c639c1fdde5cf978f80a56ea3fba2b836a"
 RECORD_SECTORS, VARIANT_SECTOR = 0x114, 180    # a MODEL.MRG record, its stance 0 slot A variant image
+RAIGEKI, SWORDS, KURIBOH = 337, 348, 58
+# Swords of Revealing Light's sword positions in the bank (D_8015AB68, at
+# 0x8015AC34 here: config/pc/duel_effect_bank.csv), a table its C reads; and
+# where the bank's dispatcher keeps the request's position (D_8015B7F8), which
+# only the bank's C writes.
+SWORD_POSITIONS, DISPATCH_POSITION = 0x14C34, 0x8015B7D0
 CARD, RECORD = 381, 330                         # card 381's model is record 330
 FOREST = 330                                    # a field magic: the bank's effect when played
 STAND_IN = re.compile(r"memories-pc: (mod (\S+): )?model variant module (\d+) \(slot A\) is MIPS code")
@@ -72,11 +92,12 @@ class Run:
             self.failures.append(what)
 
 
-def write_mod(folder: Path, identifier: str, file: str, patches: list[tuple[int, bytes]]) -> Path:
+def write_mod(folder: Path, identifier: str, file: str, patches: list[tuple[int, bytes]], **more) -> Path:
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     manifest = {"id": identifier, "name": identifier, "version": "1.0.0", "enabled": True,
-                "data": [{"file": file, "patch": [{"at": hex(at), "bytes": data.hex().upper()} for at, data in patches]}]}
+                "data": [{"file": file, "patch": [{"at": hex(at), "bytes": data.hex().upper()} for at, data in patches]}],
+                **more}
     (folder / "mod.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return folder
 
@@ -93,6 +114,26 @@ def bank_copies(wa: bytes) -> list[int]:
         if wa[at:at + 4] == b"\x18\0\0\0" and hashlib.sha256(wa[at:at + BANK_SIZE]).hexdigest() == BANK_SHA:
             found.append(at)
     return found
+
+
+def wa_mrg(disc: Path) -> bytes:
+    with DiscImage(disc) as image:
+        lba, size = image.find("DATA/WA_MRG.MRG")
+        return image.read(lba, size)
+
+
+def bank_said(text: str) -> list[str]:
+    """What the game said of a changed bank, on stderr (duel_effects.c)."""
+    return [line for line in text.splitlines() if "memories-pc:" in line and "duel effect bank" in line]
+
+
+def verdicts_of(text: str) -> list[tuple[str, str]]:
+    return re.findall(r"duel_effects: (retail|changed|changed data, retail code) bytes .*?: (.*)", text)
+
+
+def hand_index(game, card: int) -> int:
+    hand = [slot and slot["id"] for slot in game.duel()[0]["hand"]]
+    return hand.index(card)
 
 
 def log_text(game_out: Path) -> str:
@@ -199,8 +240,8 @@ def case_effects(executable: Path, out: Path, disc: Path, reference: bool) -> Ru
             print(f"  effects: {error}", flush=True)
     text = log_text(out)
     run.check("the duel went on past the effect, to the player's next turn", went_on)
-    said = [line for line in text.splitlines() if "duel effect bank is not the disc's" in line]
-    verdicts = re.findall(r"duel_effects: (retail|changed) bytes .*?: (.*)", text)
+    said = bank_said(text)
+    verdicts = verdicts_of(text)
     calls = re.findall(r"duel_effects\] id=(\d+)", text)
     run.check("the game saw the changed bank", any(kind == "changed" for kind, _ in verdicts), verdicts[:2])
     run.check(f"effects were called ({len(calls)} calls, ids {sorted(set(calls))})", bool(calls))
@@ -208,9 +249,161 @@ def case_effects(executable: Path, out: Path, disc: Path, reference: bool) -> Ru
         run.check("interpreted, and nothing said", not said and all(way == "interpreter" for kind, way in verdicts
                                                                     if kind == "changed"), said[:1])
     else:
-        run.check("completed at once, said once", len(said) == 1, said)
+        run.check("completed at once, said once, naming the code", len(said) == 1 and "code is not" in said[0], said)
         run.check("no interpreter named", all("skipped" in way for kind, way in verdicts if kind == "changed"),
                   verdicts[:2])
+    return run
+
+
+def raigeki_duel(executable: Path, out: Path) -> tuple[list, list, str]:
+    """Four turns of Forest while the opponent, whose deck is all Kuriboh,
+    sets a monster a turn; then Raigeki: (the opponent's monsters before it,
+    after it, the log)."""
+    def deal(game):
+        game.arrange_deck(0, [FOREST] * 4 + [RAIGEKI])
+        game.poke(game.address("gDuel_aDeckCardRecords") + 6 * 40, b"".join(
+            struct.pack("<h", KURIBOH) + record[2:] for record in
+            (game.peek(game.address("gDuel_aDeckCardRecords") + 6 * i, 6) for i in range(40, 80))))
+    with Game(executable, out=out, settings=SETTINGS, mods_dir=out / "mods",
+              env={"MEMORIES_TRACE": "duel_effects,mods"}) as game:
+        game.goto("duel", opponent=1, deck=f"{FOREST},{RAIGEKI}")
+        game.duel_ready(before_deal=deal)
+        for _ in range(4):
+            game.play_card(hand_index(game, FOREST))
+            game.end_turn()
+        before = game.field()[1]
+        game.play_card(hand_index(game, RAIGEKI))
+        game.step(240)
+        after = game.field()[1]
+    return before, after, log_text(out)
+
+
+def case_raigeki(executable: Path, out: Path, disc: Path, reference: bool) -> Run:
+    run = Run("raigeki" + (" (reference)" if reference else ""))
+    wa = wa_mrg(disc)
+    copies = bank_copies(wa)
+    results = {}
+    for label, patches in (("the disc's bank", None),
+                           ("a bank whose code a mod changed", [(at + 0x100, changed(wa, at + 0x100))
+                                                                for at in copies])):
+        game_out = out / ("retail" if patches is None else "changed")
+        (game_out / "mods").mkdir(parents=True)
+        if patches:
+            write_mod(game_out / "mods" / "no-interp-raigeki", "no-interp-raigeki", "\\DATA\\WA_MRG.MRG;1", patches)
+        before, after, text = raigeki_duel(executable, game_out)
+        results[label] = (before, after)
+        monsters = [card for card in before if card]
+        run.check(f"{label}: the opponent had monsters in more than one zone before Raigeki", len(monsters) >= 2,
+                  before)
+        run.check(f"{label}: Raigeki destroyed every one", not any(after), after)
+        if patches and not reference:
+            said = bank_said(text)
+            run.check(f"{label}: completed at once, said once", len(said) == 1 and "code is not" in said[0], said)
+    return run
+
+
+def swords_entries(game, addresses: set[int]) -> list[int]:
+    """Of these effect pool entries, the ones in use by a Swords request (id
+    0x15 at +0x18, DUEL_EFFECT_REQUEST_FLAG_ACTIVE in the flags at +0x1C)."""
+    found = []
+    for address in sorted(addresses):
+        identifier, _, flags = struct.unpack("<hhB", game.peek(address + 0x18, 5))
+        if identifier == 0x15 and flags & 0x80:
+            found.append(address)
+    return found
+
+
+def swords_duel(executable: Path, out: Path) -> tuple[list, list, bool]:
+    """Swords of Revealing Light once, then Forest a turn: (the opponent's
+    side's pointer after each turn, the Swords requests still in the pool
+    when the swords have ended, whether the duel went on)."""
+    with Game(executable, out=out, settings=SETTINGS, mods_dir=out / "mods",
+              env={"MEMORIES_TRACE": "duel_effects,mods"}) as game:
+        game.goto("duel", opponent=1, deck=f"{SWORDS},{FOREST}")
+        game.duel_ready(before_deal=lambda g: g.arrange_deck(0, [SWORDS] + [FOREST] * 4))
+        pointers = game.address("gDuel_apSwordsEffectObjects")
+        game.play_card(hand_index(game, SWORDS))
+        game.step(60)
+        seen, held, went_on = set(), [], True
+        try:
+            for _ in range(6):
+                pointer = struct.unpack("<2I", game.peek(pointers, 8))[1]
+                held.append(pointer)
+                if not pointer:
+                    break
+                seen.add(pointer)
+                game.end_turn()
+                game.play_card(hand_index(game, FOREST))
+                game.step(30)
+            game.step(240)
+            left = swords_entries(game, seen)
+            game.end_turn()
+        except (TimeoutError, ValueError) as error:
+            went_on, left = False, []
+            print(f"  swords: {error}", flush=True)
+    return held, left, went_on
+
+
+def case_swords(executable: Path, out: Path, disc: Path, reference: bool) -> Run:
+    run = Run("swords" + (" (reference)" if reference else ""))
+    wa = wa_mrg(disc)
+    copies = bank_copies(wa)
+    results = {}
+    for label, patches in (("the disc's bank", None),
+                           ("a bank whose code a mod changed", [(at + 0x100, changed(wa, at + 0x100))
+                                                                for at in copies])):
+        game_out = out / ("retail" if patches is None else "changed")
+        (game_out / "mods").mkdir(parents=True)
+        if patches:
+            write_mod(game_out / "mods" / "no-interp-swords", "no-interp-swords", "\\DATA\\WA_MRG.MRG;1", patches)
+        held, left, went_on = swords_duel(executable, game_out)
+        results[label] = held
+        turns = sum(1 for pointer in held if pointer)
+        run.check(f"{label}: the swords held the opponent's side for some turns, then ended", 0 < turns < len(held),
+                  [hex(pointer) for pointer in held])
+        run.check(f"{label}: no Swords request left in the pool after they ended", not left, [hex(a) for a in left])
+        run.check(f"{label}: the duel went on", went_on)
+    lengths = [sum(1 for pointer in held if pointer) for held in results.values()]
+    run.check("the swords lasted as many turns both times", len(set(lengths)) == 1, lengths)
+    return run
+
+
+def case_own_data(executable: Path, out: Path, disc: Path, reference: bool) -> Run:
+    run = Run("own-data" + (" (reference)" if reference else ""))
+    wa = wa_mrg(disc)
+    copies = bank_copies(wa)
+    # A sword's x, a little to the side: a table's value, not code.
+    patches = [(at + SWORD_POSITIONS, bytes([wa[at + SWORD_POSITIONS] ^ 0x10])) for at in copies]
+    for opted in (False, True):
+        game_out = out / ("opted-in" if opted else "not-opted-in")
+        (game_out / "mods").mkdir(parents=True)
+        write_mod(game_out / "mods" / "own-data-test", "own-data-test", "\\DATA\\WA_MRG.MRG;1", patches,
+                  **({"duel_effects": "own data"} if opted else {}))
+        with Game(executable, out=game_out, settings=SETTINGS, mods_dir=game_out / "mods",
+                  env={"MEMORIES_TRACE": "duel_effects,mods"}) as game:
+            game.goto("duel", opponent=1, deck=str(SWORDS))
+            game.duel_ready()
+            original = game.peek(DISPATCH_POSITION, 8)
+            game.play_card(0)
+            game.step(120)
+            position = game.peek(DISPATCH_POSITION, 8)
+        text = log_text(game_out)
+        said, verdicts = bank_said(text), verdicts_of(text)
+        how = "with the opt-in" if opted else "without the opt-in"
+        run.check(f"{how}: the game saw a change in the bank's data only",
+                  any(kind == "changed data, retail code" for kind, _ in verdicts), verdicts[:2])
+        ran = position != original
+        if reference:
+            run.check(f"{how}: interpreted, nothing said", not said and ran, said[:1])
+        elif opted:
+            run.check(f"{how}: said once, naming the mod and that nothing checks the data",
+                      len(said) == 1 and "own-data-test" in said[0] and "nothing checks" in said[0], said)
+            run.check(f"{how}: the bank's C ran (its dispatcher wrote the request's position)", ran,
+                      f"{original.hex()} -> {position.hex()}")
+        else:
+            run.check(f"{how}: completed at once, said once, naming the opt-in",
+                      len(said) == 1 and '"own data"' in said[0] and "effect-migrate" in said[0], said)
+            run.check(f"{how}: the bank's C did not run", not ran, f"{original.hex()} -> {position.hex()}")
     return run
 
 
@@ -269,7 +462,7 @@ def case_overlay(executable: Path, out: Path, reference: bool) -> Run:
     return run
 
 
-CASES = ("settings", "model", "effects", "credits", "overlay")
+CASES = ("settings", "model", "effects", "raigeki", "swords", "own-data", "credits", "overlay")
 
 
 def main() -> int:
@@ -303,7 +496,7 @@ def main() -> int:
             if case in ("settings", "overlay"):
                 runs.append(globals()["case_" + case](game, out, reference))
             else:
-                runs.append(globals()["case_" + case](game, out, disc, reference))
+                runs.append(globals()["case_" + case.replace("-", "_")](game, out, disc, reference))
     failed = sum(len(run.failures) for run in runs)
     for run in runs:
         print(f"{run.label}: {run.passed} passed, {len(run.failures)} failed" +
