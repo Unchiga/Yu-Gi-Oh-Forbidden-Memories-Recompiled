@@ -1167,7 +1167,9 @@ def check_x64_compiler(build):
 
 def main():
     global NEWEST_HEADER, PTR32_PASS
-    parser = argparse.ArgumentParser(description=__doc__)
+    # No abbreviations: --reference is read from argv before argparse runs
+    # (REFERENCE, NATIVE), so "--ref" must not mean it here alone.
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--backend", choices=list(BACKENDS), default=os.environ.get("MEMORIES_BACKEND") or
                         "sdl")
     parser.add_argument("--target", default=TARGET,
@@ -1191,6 +1193,8 @@ def main():
     parser.add_argument("--build", default=None, help=f"the build folder (default {default_build}; "
                                                       "tmp/pc/reference/<its name> with --reference)")
     options = parser.parse_args()
+    if options.reference != REFERENCE:
+        sys.exit("--reference: give it as --reference, which the sources were chosen by")
     if options.reference:
         if options.release:
             sys.exit("--reference --release: the reference build (the MIPS interpreter in) is for tests, never a "

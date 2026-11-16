@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 import subprocess
 import tempfile
-from llvm_guest import ROOT, TranslationError, inspect, normalize, process, translate, toolchain
+from llvm_guest import ROOT, TranslationError, inspect, normalize, process, translate, toolchain, validate_c_abi
 from macos_deps import sdk_path
 from direct_overlay_bridges import validate_declaration
 
@@ -426,6 +426,33 @@ attributes #7 = { nounwind }
         with self.assertRaisesRegex(ValueError, 'Unsupported native ABI attributes.*argument 3 byval'):
             validate_declaration('func_801462B0',
                 'declare void @func_801462B0(i16 signext, i16 signext, i32, ptr byval(i32))')
+
+
+
+class NativeABITests(unittest.TestCase):
+    """validate_c_abi, which still guards the mods' imports (build_mod_arm64.py)
+    and the direct overlay bridges: the cases the native-call marshalling's
+    tests held it to (its own type audit went with it)."""
+
+    def validate(self, name, declaration):
+        validate_c_abi(name, inspect(declaration)['signatures'][name])
+
+    def test_special_parameter_attributes_rejected(self):
+        for attribute in ('byval(i32)', 'byref(i32)', 'sret(i32)', 'inalloca(i32)',
+                          'preallocated(i32)', 'inreg', 'nest', 'swiftself',
+                          'swifterror', 'swiftasync'):
+            with self.subTest(attribute=attribute):
+                with self.assertRaisesRegex(ValueError, 'Unsupported native ABI attributes.*argument 0'):
+                    self.validate('Unknown', f'declare void @Unknown(ptr {attribute})')
+
+    def test_calling_convention_and_return_attribute_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Unsupported calling convention: Unknown'):
+            self.validate('Unknown', 'declare fastcc void @Unknown(ptr)')
+        with self.assertRaisesRegex(ValueError, 'Unsupported native ABI attributes.*result inreg'):
+            self.validate('Unknown', 'declare inreg i32 @Unknown()')
+
+    def test_ordinary_parameter_hints_accepted(self):
+        self.validate('Unknown', 'declare zeroext i8 @Unknown(i8 zeroext, ptr noundef nonnull)')
 
 
 if __name__ == '__main__':

@@ -2159,8 +2159,8 @@ static int fight_turn(int dx, int dz)
 
 /* The attacker's own effects (`effects`, on the field fight). The arena's
  * beams, flashes and particles come from each monster's control module, a
- * retail MIPS overlay the port interprets (notes/pc-build.md, MIPS-only
- * effects). Its primary goes to 0x8013A000 and its stance's variant to
+ * retail MIPS overlay the port runs as the decomp's C (notes/pc-build.md,
+ * MIPS-only effects; the game has no MIPS interpreter). Its primary goes to 0x8013A000 and its stance's variant to
  * 0x8013B000, the addresses slot 0's copies are linked for; what was there
  * is kept and put back when the fight is over. Its contexts are in its
  * arena. It draws from the arena's effect sheet, which the duel's card

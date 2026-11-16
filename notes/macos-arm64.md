@@ -5,8 +5,10 @@ The macOS target runs the game's existing 32-bit PS1 address model in a
 native host pointers remain 64-bit. The runtime registers PS1 address ranges independently of their host
 allocations and resolves guest data accesses into native memory. It also resolves
 indirect guest calls through a function map, so a callback stored in guest
-memory can enter translated game code or the MIPS interpreter for a loaded
-overlay.
+memory can enter translated game code; one into an overlay window with no
+native function is the runtime's "unknown guest function" report (the
+translated game has no MIPS interpreter: notes/pc-build.md, "The reference
+build").
 
 Target configuration records platform, CPU architecture, host ABI and guest
 memory model separately. Upstream's existing Android ARM64 target retains its
@@ -90,7 +92,8 @@ resolver retains its mapping-specific checks. Endian helpers and resident-functi
 lookup also share their implementations across the backends. Indirect function lookups
 use the generated map's address ordering to search logarithmically, then check
 every equal-address candidate's current overlay residency. No callable target
-is cached across a module switch; the interpreter fallback is unchanged.
+is cached across a module switch; an address no resident module has is the
+"unknown guest function" report, with no interpreter to fall back to.
 
 Texture-pack tables, resampled pixels and decoded PNG caches are exclusively
 host data with LP64 pointers. Their allocations retain native libc ownership
