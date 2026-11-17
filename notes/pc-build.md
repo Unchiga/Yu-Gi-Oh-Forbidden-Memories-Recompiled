@@ -2563,7 +2563,23 @@ HD text. The function now also calls `Memories_PictureCapture` (under
 when the record reaches it, and 16-bit texels in the rect take their color
 from the copy while their word still decides transparency and
 semi-transparency. A load, copy or fill over the rect, a resync or a new
-scale drops the copy. The software picture and 1x keep VRAM's texels there. A line is the console's one-pixel line made N
+scale drops the copy. The software picture and 1x keep VRAM's texels there.
+A story scene's image change is the same case: `Script_OpShowImage`
+copies the displayed 320x160 frame (MoveImage) to 448,256 and a sprite draws
+that snapshot while the screen fades to the next image. It now calls
+`Memories_PictureCapture` for the copy, so the snapshot takes its pixels from
+the scaled picture (with xBR or HD text on, the detail the picture had)
+instead of from VRAM's 1x copy. In the first-duel replay at 4x that is the
+fade of frames 1322-1342 only; the steady frames of the scene are drawn
+straight and were never affected. Only one capture holds at a time: the
+card's area (320,256, 0x8C by 0xC4) and this one share x 448-460, and a load
+or move over either drops the other, as the later one is what VRAM holds. A
+card burn and a script scene are not on screen together. It is the only
+display-to-texture MoveImage that needs one: the others in the game copy
+texture to texture (the model animations, texture tints) or shuffle the
+movie's frame to 0,256, and a capture for each of them would evict this one.
+
+A line is the console's one-pixel line made N
 times thicker, one quad covering each picture pixel once (`line_quad` in
 both renderers), so a semi-transparent line blends once per pixel as on the
 console. Drawing it as an N x N block per picture step blended the Library's
