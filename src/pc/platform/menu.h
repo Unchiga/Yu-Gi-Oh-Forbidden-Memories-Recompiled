@@ -214,6 +214,10 @@ void Menu_SetPresentPass(int on);
 void Menu_ShowNotice(const char *title, const char *text, const char *const *buttons, int count, int focus,
                      void (*chosen)(int button, int *quit));
 void Menu_CloseNotice(void);
+/* Internal resolution `refused` could not be made and the game runs at `fallback`
+ * (Memories_ScaleRefused): its Video > Resolution row is dimmed with the reason,
+ * and one notice says so. The saved setting is left as it was. */
+void Menu_ScaleRefused(int refused, int fallback, int why);
 int Menu_NoticeShown(void);
 /* A controller's newly pressed pad buttons (PS1 bits) for the notice shown:
  * the D-pad moves the focus, Cross presses the focused button and Circle the

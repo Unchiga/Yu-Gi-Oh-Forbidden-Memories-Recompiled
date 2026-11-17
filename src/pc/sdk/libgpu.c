@@ -297,12 +297,17 @@ static void present_wide(int w, int h)
  * pictures and widescreen targets the present is still reading. */
 static int presenting, scale_after_present;
 
+/* The highest scale this session can have: 8, until a backend refuses one
+ * (Memories_ScaleRefused). */
+static int scale_cap = 8;
+
 int Memories_SetInternalScale(int wanted)
 {
     sigset_t held, previous;
     int done;
     /* 1, 2, 4 or 8: the setting's 3 is 2, 5 to 7 are 4. */
     wanted = wanted >= 8 ? 8 : wanted >= 4 ? 4 : wanted >= 2 ? 2 : 1;
+    if (wanted > scale_cap) wanted = scale_cap;
     if (presenting) { /* after this frame (Memories_PresentDisplay) */
         scale_after_present = wanted;
         return 1;
@@ -314,7 +319,22 @@ int Memories_SetInternalScale(int wanted)
     sigprocmask(SIG_BLOCK, &held, &previous);
     done = SoftGpu_SetScale(wanted);
     sigprocmask(SIG_SETMASK, &previous, NULL);
+    if (!done && wanted > 1) { /* no room for the software picture */
+        Memories_ScaleRefused(wanted, MEMORIES_REFUSED_ROOM);
+        return 0;
+    }
     return done;
+}
+
+void Memories_ScaleRefused(int refused, int why)
+{
+    int fallback = refused >= 8 ? 4 : refused >= 4 ? 2 : 1;
+    if (refused < 2 || refused > scale_cap) return; /* a lower one is refused already */
+    scale_cap = fallback;
+    fprintf(stderr, "memories-pc: internal resolution: %dx does not fit here, %dx for this session\n", refused,
+            fallback);
+    Menu_ScaleRefused(refused, fallback, why);
+    Memories_SetInternalScale(fallback);
 }
 
 /* MEMORIES_FRAME_HASHES=<file>: one line per presented frame, the frame

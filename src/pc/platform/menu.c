@@ -120,6 +120,12 @@ enum { MENU_FILE, MENU_VIDEO, MENU_AUDIO, MENU_GAME, MENU_VIEW, MENU_DEBUG, MENU
 #endif
 enum { SUB_SCALE, SUB_MENU_SIZE, SUB_SPEED, SUB_FPS, SUB_CHEATS, SUB_TRACE, SUB_SCALING, SUB_ASPECT, SUB_RESOLUTION, SUB_COLOR, SUB_EFFECTS, SUB_JUMP, SUB_ANTIALIAS, SUB_FILTER, SUB_RANK, SUB_LANGUAGE, SUB_PGXP, SUB_TOUCH, SUB_ROTATION, SUB_HD_FAST, SUB_COUNT };
 #ifdef __ANDROID__
+#define RESOLUTION_ITEMS 3
+#else
+#define RESOLUTION_ITEMS 4 /* with Internal 8x */
+#endif
+#define RESOLUTION_8X_HINT "needs a strong graphics card"
+#ifdef __ANDROID__
 #define VIDEO_ITEMS 16 /* with Screen rotation */
 #else
 #define VIDEO_ITEMS 15
@@ -256,9 +262,15 @@ static Menu submenus[SUB_COUNT] = {
     {"Aspect Ratio", {{"4:3 aspect", 0, ITEM_RADIO, MENU_ITEM_ASPECT_4_3, SET_ASPECT, 0},
                        {"Square pixels", 0, ITEM_RADIO, MENU_ITEM_ASPECT_SQUARE, SET_ASPECT, 1},
                        {"Widescreen (16:9)", 0, ITEM_RADIO, MENU_ITEM_ASPECT_WIDESCREEN, SET_ASPECT, 2}}, 3},
+    /* 8x is a desktop's: the picture and its copy are 128 MiB each (1 GB with
+     * 8x anti-aliasing), more than OpenGL ES here gives (gl_picture.c). */
     {"Resolution", {{"Console resolution", 0, ITEM_RADIO, 0, SET_INTERNAL_SCALE, 1},
                      {"Internal 2x", 0, ITEM_RADIO, 0, SET_INTERNAL_SCALE, 2},
-                     {"Internal 4x", 0, ITEM_RADIO, 0, SET_INTERNAL_SCALE, 4}}, 3},
+                     {"Internal 4x", 0, ITEM_RADIO, 0, SET_INTERNAL_SCALE, 4}
+#ifndef __ANDROID__
+                     , {"Internal 8x", RESOLUTION_8X_HINT, ITEM_RADIO, 0, SET_INTERNAL_SCALE, 8}
+#endif
+                     }, RESOLUTION_ITEMS},
     /* The present pass (src/pc/render/present_pass.c); 100 is the picture as is. */
     {"Color", {{"Brightness", 0, ITEM_SLIDER, 0, SET_BRIGHTNESS},
                {"Contrast", 0, ITEM_SLIDER, 0, SET_CONTRAST},
@@ -988,6 +1000,90 @@ void Menu_SetPlatformItems(int windows, int window_modes, int update_check)
 
 static int hd_picture, present_pass = 1;
 
+/* Video > Resolution rows. A scale the picture could not be made at
+ * (Memories_ScaleRefused) is dimmed with the reason beside it, and so is every
+ * scale above it; the scale that runs instead is the one shown as chosen
+ * (item_state), the saved setting being left as it was so that the next start
+ * tries again, say after a driver update or with another program closed.
+ * Internal 8x is for the OpenGL picture pass: with no pass (the X11 backend,
+ * MEMORIES_GL_PICTURE=0, an older GL) the software GPU would draw every
+ * primitive 64 times, far too slow to play, so the row says what it needs
+ * instead of "needs a strong graphics card". */
+static int refused_why[9];   /* by scale: 0, or MEMORIES_REFUSED_* */
+static int scale_ceiling = 8; /* the highest scale that works this session */
+
+static const char *refused_text(int why)
+{
+    return why == MEMORIES_REFUSED_SIZE ? "too large for this graphics card"
+         : why == MEMORIES_REFUSED_ES ? "not with OpenGL ES" : "no room on this graphics card";
+}
+
+static void update_resolution_rows(void)
+{
+    Menu *m = &submenus[SUB_RESOLUTION];
+    int i;
+    for (i = 0; i < m->count; i++) {
+        Item *item = &m->items[i];
+        int scale = item->value;
+        if (item->setting != SET_INTERNAL_SCALE || scale < 2 || scale > 8) continue;
+        if (refused_why[scale]) {
+            item->shortcut = refused_text(refused_why[scale]);
+            item->flags |= ITEM_DISABLED;
+        } else if (scale == 8 && !hd_picture) {
+            item->shortcut = "needs OpenGL 3";
+            item->flags |= ITEM_DISABLED;
+        } else {
+            item->shortcut = scale == 8 ? RESOLUTION_8X_HINT : NULL;
+            item->flags &= ~ITEM_DISABLED;
+        }
+    }
+}
+
+/* One notice for what was refused, shown as soon as no other is up
+ * (Menu_TakeChanged). A second refusal before it is shown (8x, then 4x) is
+ * told in the same notice. */
+static int notice_top, notice_low, notice_why, notice_fallback;
+
+void Menu_ScaleRefused(int refused, int fallback, int why)
+{
+    int scale;
+    for (scale = refused; scale <= 8; scale++) {
+        if (scale >= 2 && !refused_why[scale]) refused_why[scale] = why;
+    }
+    scale_ceiling = fallback;
+    update_resolution_rows();
+    if (!notice_top) {
+        notice_top = refused;
+        notice_why = why;
+    }
+    notice_low = refused;
+    notice_fallback = fallback;
+    LOG(LOG_MENU, "internal %dx refused (%s), running at %dx", refused, refused_text(why), fallback);
+    changed = 1;
+}
+
+static void tell_scale_refused(void)
+{
+    static const char *const ok[] = {"OK"};
+    char text[320], what[160], now[64];
+    if (!notice_top || Menu_NoticeShown()) return;
+    if (notice_top != notice_low) {
+        snprintf(what, sizeof(what), "This graphics card could not make Internal %dx or %dx", notice_top, notice_low);
+    } else if (notice_why == MEMORIES_REFUSED_SIZE) {
+        snprintf(what, sizeof(what), "This graphics card cannot make a picture as large as Internal %dx", notice_top);
+    } else if (notice_why == MEMORIES_REFUSED_ES) {
+        snprintf(what, sizeof(what), "OpenGL ES does not do Internal %dx", notice_top);
+    } else {
+        snprintf(what, sizeof(what), "This graphics card has no room for Internal %dx", notice_top);
+    }
+    if (notice_fallback < 2) snprintf(now, sizeof(now), "the console's resolution");
+    else snprintf(now, sizeof(now), "Internal %dx", notice_fallback);
+    snprintf(text, sizeof(text), "%s, so the game runs at %s for now. Your setting stays, and the next start tries again.",
+             what, now);
+    Menu_ShowNotice("Internal resolution lowered", text, ok, 1, 0, NULL);
+    notice_top = notice_low = 0;
+}
+
 /* An item's reason beside it, and dimmed while it has one. Only a row
  * dimmed here is enabled again (these rows have no shortcut of their own):
  * a backend may dim one for good (x11.c, Sharp bilinear). */
@@ -1055,6 +1151,7 @@ static void update_hd_items(void)
 #else
     update_effect_items(console, "needs OpenGL 3");
 #endif
+    update_resolution_rows();
 }
 
 void Menu_SetHdPicture(int on)
@@ -1365,6 +1462,10 @@ static int item_state(const Item *item)
     if (item->id == RADIO_STATE_SLOT) return Platform_StateSlot() == item->value;
     if (item->id == CHECK_TRACE) return Log_Enabled((LogChannel)item->value);
     if (item->setting >= 0 && item->kind == ITEM_CHECK) return Settings_Get(item->setting) != 0;
+    if (item->setting == SET_INTERNAL_SCALE && item->kind == ITEM_RADIO) {
+        int scale = Settings_Get(item->setting); /* the one that runs, when the saved one did not fit */
+        return (scale > scale_ceiling ? scale_ceiling : scale) == item->value;
+    }
     if (item->setting >= 0 && item->kind == ITEM_RADIO) return Settings_Get(item->setting) == item->value;
     return 0;
 }
@@ -1554,6 +1655,7 @@ int Menu_TakeChanged(void)
 {
     int was;
     tell_settings_error();
+    tell_scale_refused();
     was = changed;
     changed = 0;
     return was;

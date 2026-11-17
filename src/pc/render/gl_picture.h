@@ -32,6 +32,13 @@ unsigned GlPicture_Texture(int *picture_w, int *picture_h);
  * frame. 0 when the pass is off. */
 unsigned GlPicture_ShownTexture(int x, int y, int w, int h);
 int GlPicture_Scale(void);
+/* The scale the pass could not make its picture at (the targets did not fit
+ * in video memory, or the scale is beyond the largest texture, or on OpenGL
+ * ES beyond 4x), once: 0 when there was none since the last call. *why is
+ * then MEMORIES_REFUSED_ROOM, _SIZE or _ES (display.h). The pass has no
+ * picture meanwhile; the platform asks the game for a lower scale
+ * (Memories_ScaleRefused). */
+int GlPicture_TakeRefusedScale(int *why);
 /* The record is half the arena: frames went unshown (a raised game speed)
  * and it should be replayed before it overflows, which would draw the next
  * frame from VRAM at 1x. */

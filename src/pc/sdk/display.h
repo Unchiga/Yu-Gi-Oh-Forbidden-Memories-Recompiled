@@ -26,6 +26,16 @@ unsigned long long Memories_VramHash(void);
 /* The internal resolution (SoftGpu_SetScale) from the main thread while
  * the game runs; 3 and 5 to 7 round down to 2 and 4. */
 int Memories_SetInternalScale(int scale);
+/* Why a backend could not make the picture at a scale. */
+enum { MEMORIES_REFUSED_ROOM = 1, /* no room: video or main memory ran out */
+       MEMORIES_REFUSED_SIZE,     /* beyond the largest texture */
+       MEMORIES_REFUSED_ES };     /* beyond what OpenGL ES gives (4x) */
+/* A backend could not make the picture at `refused` (why: MEMORIES_REFUSED_*):
+ * for the rest of the session the internal resolution goes no higher than the
+ * next scale down (8 to 4, then 4 to 2 if that is refused too), now and when it
+ * is asked for again by the setting or the Video menu. The saved setting is not
+ * changed. Says so in the log and, once, in a notice (Menu_ScaleRefused). */
+void Memories_ScaleRefused(int refused, int why);
 /* For game code that reads part of the picture back (StoreImage) and loads
  * it elsewhere to draw with (LoadImage): after the load, so the OpenGL
  * picture draws that copy from its scaled picture (SoftGpu_Capture)
