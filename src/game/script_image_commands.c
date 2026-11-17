@@ -16,6 +16,9 @@
 #include "script_image_objects.h"
 #include "script_image_rebuild.h"
 #include "script_image_commands.h"
+#ifdef MEMORIES_PC
+#include "pc/sdk/display.h"
+#endif
 
 #define VRAM_COPY_WIDTH 0x140
 #define VRAM_COPY_HEIGHT 0xA0
@@ -41,6 +44,13 @@ void Script_OpShowImage(void) {
             D_800E9D70[0].x = VRAM_COPY_WIDTH;
         }
         MoveImage(&D_800E9D70[0], 0x1C0, 0x100);
+#ifdef MEMORIES_PC
+        /* The image is drawn from this copy of the displayed frame: the
+         * port's scaled picture has the frame as it was drawn (a texture
+         * pack, HD text) where VRAM only has it at the console's resolution. */
+        Memories_PictureCapture(D_800E9D70[0].x, D_800E9D70[0].y, 0x1C0, 0x100, VRAM_COPY_WIDTH,
+                                VRAM_COPY_HEIGHT);
+#endif
         return;
     }
 
