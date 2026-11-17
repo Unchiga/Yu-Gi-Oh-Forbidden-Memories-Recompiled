@@ -3301,13 +3301,76 @@ int Mods_ModuleMips(int index)
     return index >= 0 && index < mod_count ? mods[index].mips_modules : 0;
 }
 
-const char *Mods_DuelEffectsOwnData(void)
+/* Where WA_MRG.MRG holds the duel effect bank: seven copies of 44 sectors
+ * (0x16000 bytes), one a scene, by sector of the file (on the US disc;
+ * tools/pc/effect_migrate.py's bank_copies finds them). */
+#define WA_MRG "\\DATA\\WA_MRG.MRG;1"
+#define BANK_SECTORS 44
+static const int bank_sectors[] = {5970, 6205, 6440, 6675, 6910, 7145, 7380};
+
+static int reaches_bank(long first, long last)
 {
-    const char *owner = NULL;
-    /* The last applied one, in load order, as the data it names is the last applied. */
-    for (int i = 0; i < mod_count; i++)
-        if (mods[i].active && mods[i].effects_own_data) owner = mods[i].id;
-    return owner;
+    for (unsigned c = 0; c < sizeof(bank_sectors) / sizeof(bank_sectors[0]); c++)
+        if (first <= bank_sectors[c] + BANK_SECTORS - 1 && last >= bank_sectors[c]) return 1;
+    return 0;
+}
+
+/* Whether the mod's `data` reaches a copy of the bank: a replacement of the
+ * whole of WA_MRG.MRG, or a raw region or a patch inside one (as
+ * check_disc_models does for MODEL.MRG). */
+static int touches_bank(int index, int retail_lba, unsigned retail_size)
+{
+    long retail_sectors = (long)((retail_size + SECTOR - 1) / SECTOR);
+    for (int i = 0; i < region_count; i++) {
+        const Region *region = &regions[i];
+        long first;
+        if (region->mod != index) continue;
+        if (region->file >= 0) {
+            if (disc_files[region->file].retail_lba == retail_lba) return 1;
+            continue;
+        }
+        first = (long)region->lba - retail_lba;
+        if (first < retail_sectors && first + region->sectors - 1 >= 0 &&
+            reaches_bank(first, first + region->sectors - 1))
+            return 1;
+    }
+    for (int i = 0; i < patch_count; i++) {
+        const Patch *patch = &patches[i];
+        long at;
+        if (patch->mod != index) continue;
+        if (patch->file >= 0) {
+            if (disc_files[patch->file].retail_lba != retail_lba) continue;
+            at = patch->lba;
+        } else {
+            at = (long)patch->lba - retail_lba;
+        }
+        if (at >= 0 && at < retail_sectors && reaches_bank(at, at)) return 1;
+    }
+    return 0;
+}
+
+int Mods_DuelEffectsOwnData(char *named, size_t size)
+{
+    int retail_lba, touching = 0, without = 0;
+    unsigned retail_size;
+    size_t used = 0;
+    if (size) named[0] = '\0';
+    if (Memories_DiscOriginalFileInfo(WA_MRG, &retail_lba, &retail_size)) return 0;
+    /* Two passes: the mods without the opt-in, if any, are the ones named. */
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < mod_count; i++) {
+            if (!mods[i].active || !touches_bank(i, retail_lba, retail_size)) continue;
+            if (pass == 0) {
+                touching++;
+                without += !mods[i].effects_own_data;
+                continue;
+            }
+            if (without && mods[i].effects_own_data) continue;
+            if (used < size)
+                used += (size_t)snprintf(named + used, size - used, "%s%s", used ? ", " : "", mods[i].id);
+        }
+    }
+    return touching && !without;
 }
 
 const char *Mods_ModuleMipsOwner(uint32_t identifier)

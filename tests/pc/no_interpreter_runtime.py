@@ -18,16 +18,19 @@ notes/pc-build.md ("The reference build") says, and says so once.
             and with one whose code a mod changed (completed at once): every
             opponent's monster is destroyed both times, as on the console
             (the bolt count its caller destroys zone by zone)
-  swords    Swords of Revealing Light, then Forest a turn, with the disc's
-            bank (its C) and with one whose code a mod changed (completed at
-            once): the swords hold the opponent's side as many turns both
+  swords    Swords of Revealing Light, then Forest a turn, in a duel after
+            one left with the swords up, with the disc's bank (its C) and
+            with one whose code a mod changed (completed at once): the
+            swords hold the opponent's side as many turns both
             times, and when they end no Swords request is left in the pool
             (no pointer to a freed entry, none kept forever); the duel goes on
   own-data  a data mod that changes a table of the bank only (Swords of
             Revealing Light's sword positions), without and with
             "duel_effects": "own data" in its mod.json: without, completed at
-            once and the opt-in named; with, the bank's C runs the mod's
-            table, said once
+            once and the mod and the opt-in named; with, the bank's C runs
+            the mod's table, said once, naming it; and without, while another
+            applied mod that changes nothing of the bank opts in: completed
+            at once, naming the mod that changes it and not the other
   credits   a data mod that changes the credits module (SU.MRG): the credits
             are skipped (no roll; the ending's scene runs on until its music
             ends, as with the roll), said once, and the presentation is
@@ -314,13 +317,21 @@ def swords_entries(game, addresses: set[int]) -> list[int]:
     return found
 
 
-def swords_duel(executable: Path, out: Path) -> tuple[list, list, bool]:
-    """Swords of Revealing Light once, then Forest a turn: (the opponent's
-    side's pointer after each turn, the Swords requests still in the pool
-    when the swords have ended, whether the duel went on)."""
+def swords_duel(executable: Path, out: Path) -> tuple[list, list, bool, int]:
+    """Two duels. In the first, Swords of Revealing Light is played and the
+    duel left with the swords up (its pointer stays: nothing clears it at a
+    duel's start). In the second, Swords once, then Forest a turn: (the
+    opponent's side's pointer after each turn, the Swords requests still in
+    the pool when the swords have ended, whether the duel went on, the
+    first duel's pointer as the second began)."""
     with Game(executable, out=out, settings=SETTINGS, mods_dir=out / "mods",
               env={"MEMORIES_TRACE": "duel_effects,mods"}) as game:
+        game.goto("duel", opponent=1, deck=str(SWORDS))
+        game.duel_ready()
+        game.play_card(0)
+        game.step(60)
         game.goto("duel", opponent=1, deck=f"{SWORDS},{FOREST}")
+        stale = struct.unpack("<2I", game.peek("gDuel_apSwordsEffectObjects", 8))[1]
         game.duel_ready(before_deal=lambda g: g.arrange_deck(0, [SWORDS] + [FOREST] * 4))
         pointers = game.address("gDuel_apSwordsEffectObjects")
         game.play_card(hand_index(game, SWORDS))
@@ -342,7 +353,7 @@ def swords_duel(executable: Path, out: Path) -> tuple[list, list, bool]:
         except (TimeoutError, ValueError) as error:
             went_on, left = False, []
             print(f"  swords: {error}", flush=True)
-    return held, left, went_on
+    return held, left, went_on, stale
 
 
 def case_swords(executable: Path, out: Path, disc: Path, reference: bool) -> Run:
@@ -357,7 +368,9 @@ def case_swords(executable: Path, out: Path, disc: Path, reference: bool) -> Run
         (game_out / "mods").mkdir(parents=True)
         if patches:
             write_mod(game_out / "mods" / "no-interp-swords", "no-interp-swords", "\\DATA\\WA_MRG.MRG;1", patches)
-        held, left, went_on = swords_duel(executable, game_out)
+        held, left, went_on, stale = swords_duel(executable, game_out)
+        run.check(f"{label}: the first duel's swords pointer was still set as the second began", stale != 0,
+                  hex(stale))
         results[label] = held
         turns = sum(1 for pointer in held if pointer)
         run.check(f"{label}: the swords held the opponent's side for some turns, then ended", 0 < turns < len(held),
@@ -375,11 +388,17 @@ def case_own_data(executable: Path, out: Path, disc: Path, reference: bool) -> R
     copies = bank_copies(wa)
     # A sword's x, a little to the side: a table's value, not code.
     patches = [(at + SWORD_POSITIONS, bytes([wa[at + SWORD_POSITIONS] ^ 0x10])) for at in copies]
-    for opted in (False, True):
-        game_out = out / ("opted-in" if opted else "not-opted-in")
+    # (the folder, whether the mod changing the table opts in, whether
+    # another applied mod, which changes nothing of the bank, opts in)
+    for name, opted, other in (("not-opted-in", False, False), ("opted-in", True, False),
+                               ("another-opted-in", False, True)):
+        game_out = out / name
         (game_out / "mods").mkdir(parents=True)
         write_mod(game_out / "mods" / "own-data-test", "own-data-test", "\\DATA\\WA_MRG.MRG;1", patches,
                   **({"duel_effects": "own data"} if opted else {}))
+        if other:
+            write_mod(game_out / "mods" / "own-data-other", "own-data-other", "\\DATA\\WA_MRG.MRG;1", [],
+                      duel_effects="own data")
         with Game(executable, out=game_out, settings=SETTINGS, mods_dir=game_out / "mods",
                   env={"MEMORIES_TRACE": "duel_effects,mods"}) as game:
             game.goto("duel", opponent=1, deck=str(SWORDS))
@@ -390,7 +409,7 @@ def case_own_data(executable: Path, out: Path, disc: Path, reference: bool) -> R
             position = game.peek(DISPATCH_POSITION, 8)
         text = log_text(game_out)
         said, verdicts = bank_said(text), verdicts_of(text)
-        how = "with the opt-in" if opted else "without the opt-in"
+        how = ("with the opt-in" if opted else "without the opt-in") + (" (another mod has it)" if other else "")
         run.check(f"{how}: the game saw a change in the bank's data only",
                   any(kind == "changed data, retail code" for kind, _ in verdicts), verdicts[:2])
         ran = position != original
@@ -402,8 +421,9 @@ def case_own_data(executable: Path, out: Path, disc: Path, reference: bool) -> R
             run.check(f"{how}: the bank's C ran (its dispatcher wrote the request's position)", ran,
                       f"{original.hex()} -> {position.hex()}")
         else:
-            run.check(f"{how}: completed at once, said once, naming the opt-in",
-                      len(said) == 1 and '"own data"' in said[0] and "effect-migrate" in said[0], said)
+            run.check(f"{how}: completed at once, said once, naming the mod and the opt-in",
+                      len(said) == 1 and "mod own-data-test:" in said[0] and '"own data"' in said[0] and
+                      "effect-migrate" in said[0] and "own-data-other" not in said[0], said)
             run.check(f"{how}: the bank's C did not run", not ran, f"{original.hex()} -> {position.hex()}")
     return run
 

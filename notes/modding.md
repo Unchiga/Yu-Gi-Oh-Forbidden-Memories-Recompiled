@@ -311,11 +311,18 @@ a patch that went wrong:
 - **Tables only, opted in.** A mod whose `mod.json` says
   `"duel_effects": "own data"` gets its tables run by the bank's C, at its
   own risk: a value the C divides by or indexes with can stop the game. The
-  game says once, on stderr, that the mod's data is unchecked. The game does
-  not tell which mod changed the tables: one applied mod's opt-in lets the
-  bank's C run the tables as every applied mod and patch left them.
+  game says once, on stderr, that the mod's data is unchecked, naming the
+  mod. Every applied mod whose `data` reaches a copy of the bank (a patch or
+  a raw region inside one, or a replacement of the whole `WA_MRG.MRG`) must
+  say so: one mod's opt-in never runs another mod's tables.
 - **Tables only, not opted in.** The effects complete at once, unseen, and
-  the game says once how to opt in.
+  the game says once, naming the mods that change the tables without the
+  opt-in, how to opt in. A disc whose tables differ from the US disc's with
+  no mod changing them (a patched disc) gets the same, said so.
+- **Rewritten at setup.** A few of the bank's variables (the request's
+  position and flags, the ordering table, the texture words) are written
+  by its dispatcher before every effect: a change there has no effect.
+  `effect-migrate` labels them so.
 - **Code changed.** The effects complete at once, unseen, said once. A mod
   that changes the bank's code has no way to run it as C yet: that needs a
   mod API entry for the bank's code, as API 29 is for the attack modules

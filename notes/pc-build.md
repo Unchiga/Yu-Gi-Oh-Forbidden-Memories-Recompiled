@@ -646,9 +646,12 @@ runs the reference game: the tools above need the disc.
   destroys the opponent's zone N when it is N + 1: the byte goes up one an
   update and the request ends after the fifth, so every zone is cleared
   (with the byte set to 1 only zone 0 was). Swords of Revealing Light's
-  swords (`0x15`) wait for 2, and their request lives for the swords' turns
-  (`gDuel_apSwordsEffectObjects` keeps it and `duel_phase_entry.c` writes its
-  end into it at expiry): it stays until neither side's pointer is it. The
+  swords (`0x15`) wait for 2, and their request lives for the swords' turns,
+  as on the console: `gDuel_apSwordsEffectObjects` keeps it and
+  `duel_phase_entry.c` dismisses it at expiry by writing `0xFFFD - side` into
+  its state, when `effect_21.c` fades the swords out and ends it; the request
+  ends once its state says so (nothing clears those pointers at a duel's
+  start, so liveness never rests on them). The
   only other write the bank makes outside itself, the text tint
   `D_8009B300` (effects 17 and 22), ramps back to where it started, so
   leaving it alone is the same. Without the byte a field magic, Swords, an
@@ -809,9 +812,12 @@ once in the shipped game (the delivered bank interpreted, in a reference
 build; `src/pc/guest/retail_image.c`), with one exception: when the bank's
 code is the disc's (its identifier, the two format strings it prints, the
 effect 22 jump table and the text: `0x0-0x4`, `0x14-0x6C`, `0x9C-0x180`,
-`0x2B0-0x14270`, hashed on their own, `85d81752...`) and an applied mod says
+`0x2B0-0x14270`, hashed on their own, `85d81752...`) and every applied mod
+whose `data` reaches a copy of the bank in `WA_MRG.MRG` (sectors 5970, 6205,
+6440, 6675, 6910, 7145 and 7380 of the file, 44 each; as
+`check_disc_models` finds the mods that reach `MODEL.MRG`'s modules) says
 `"duel_effects": "own data"` (`Mods_DuelEffectsOwnData`), the bank's C runs
-on the mod's tables, which it reads where the disc put them (its `D_` names
+on the mods' tables, which it reads where the disc put them (its `D_` names
 are pinned there; nothing is compiled in), said once and unchecked
 (notes/modding.md, "A mod's duel effect bank"; `model_gate.py
 effect-migrate` names each changed byte from `config/pc/duel_effect_bank.csv`

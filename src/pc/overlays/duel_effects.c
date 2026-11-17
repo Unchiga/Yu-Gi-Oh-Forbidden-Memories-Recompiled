@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include "game/duel_effect_request.h"
-#include "game/duel_side_state.h"
 #include "pc/guest/mips.h"
 #include "pc/guest/retail_image.h"
 #include "pc/debug/log.h"
@@ -55,12 +54,15 @@ enum { MODE_AUTO, MODE_INTERPRETER, MODE_SKIP };
  *        (DuelEffect_ApplyRaigeki): one step an update, then the request
  *        ends, so every zone is cleared;
  *   0x15 (Swords of Revealing Light's swords) lives for the turns the swords
- *        stay: its caller keeps the request in gDuel_apSwordsEffectObjects
- *        and writes the end into it at expiry (duel_phase_entry.c), before
- *        it forgets it. The byte is 2 (the swords are down,
- *        DuelEffect_ApplySwords), and the request ends once neither side's
- *        pointer is it (expired, or another Swords took the side), so no
- *        pointer is ever a freed entry;
+ *        stay, as on the console: its caller keeps the request in
+ *        gDuel_apSwordsEffectObjects and dismisses it at expiry by writing
+ *        0xFFFD - side into its state (duel_phase_entry.c), which is when
+ *        effect_21.c fades the swords out and ends it (|state| > 2). The
+ *        byte is 2 (the swords are down, DuelEffect_ApplySwords), and the
+ *        request ends once its state says it was dismissed, so the pointer
+ *        is never a freed entry while the swords stay. A request never
+ *        dismissed (the swords played again over them) stays, as on the
+ *        console, until the duel's pool is reset;
  *   every other id: 1, which every caller tests for nonzero (the terrain,
  *        the rituals, the equips, the battles; without it their card's use
  *        never ended). */
@@ -73,9 +75,7 @@ static void complete_at_once(unsigned index, DuelEffectRequest *request)
         }
     } else if (index == 0x15) {
         request->field_1D = 2;
-        if ((DuelFieldEffectObject *)request == gDuel_apSwordsEffectObjects[0] ||
-            (DuelFieldEffectObject *)request == gDuel_apSwordsEffectObjects[1])
-            return;
+        if (request->field_1A > -3) return;
     } else {
         request->field_1D = 1;
     }
@@ -90,7 +90,8 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
 #ifdef MEMORIES_REFERENCE
     uint32_t args[4], result;
 #else
-    static int said;
+    static char said[512];   /* the last thing said of a changed bank: each new one is said once */
+    char line[512], named[256];
 #endif
     int native, tpage, u, v, clut;
     unsigned index = (unsigned)(unsigned short)id;
@@ -115,40 +116,43 @@ void Memories_DuelEffectControl(short id, short state, int buffer, DuelEffectReq
 #else
     /* No interpreter: the bank's C runs whatever the mode, for the retail
      * bank (skip leaves out all but 1-3, below), and for a bank whose code
-     * is the retail one when an applied mod asks for its own data
-     * ("duel_effects": "own data", Mods_DuelEffectsOwnData): the C reads the
-     * bank's tables where the disc put them, so it then runs the mod's,
-     * unchecked. Anything else completes at once. */
+     * is the retail one when every applied mod whose data reaches the bank
+     * asks for its own data ("duel_effects": "own data",
+     * Mods_DuelEffectsOwnData): the C reads the bank's tables where the disc
+     * put them, so it then runs theirs, unchecked. Anything else (changed
+     * code, a mod that changes the tables without the opt-in, tables no mod
+     * changed: a patched disc) completes at once. */
     native = RetailImage_Verified(RETAIL_IMAGE_DUEL_EFFECTS);
     if (!native) {
         int data_only = RetailImage_CodeVerified(RETAIL_IMAGE_DUEL_EFFECTS);
-        const char *owner = data_only ? Mods_DuelEffectsOwnData() : NULL;
-        if (owner) {
-            native = 1;
-            if (said != 2) {
-                said = 2;
-                fprintf(stderr, "memories-pc: mod %s: the duel effect bank's data is the mod's own (\"duel_effects\": "
-                                "\"own data\"), and its code the disc's: the bank's C runs the mod's tables, which "
-                                "nothing checks (a value the C divides by or indexes with can stop the game)\n", owner);
-            }
-        } else {
-            if (!said) {
-                said = 1;
-                if (data_only)
-                    fprintf(stderr, "memories-pc: the duel effect bank's data is not the disc's (a mod or patch changed "
-                                    "its tables; its code is the disc's), and this game has no MIPS interpreter: its "
-                                    "effects complete at once, unseen. A mod that means it adds \"duel_effects\": "
-                                    "\"own data\" to its mod.json (sdk/tools/model_gate.py effect-migrate writes it), "
-                                    "and the bank's C then runs its tables (effect %d first)\n", id);
-                else
-                    fprintf(stderr, "memories-pc: the duel effect bank's code is not the disc's (a mod or patch changed "
-                                    "it), and this game has no MIPS interpreter: its effects complete at once, unseen "
-                                    "(sdk/tools/model_gate.py effect-migrate names what changed; effect %d first)\n",
-                            id);
-            }
+        int owned = data_only && Mods_DuelEffectsOwnData(named, sizeof(named));
+        if (owned)
+            snprintf(line, sizeof(line), "memories-pc: mod %s: the duel effect bank's data is the mod's own "
+                     "(\"duel_effects\": \"own data\"), and its code the disc's: the bank's C runs the mod's tables, "
+                     "which nothing checks (a value the C divides by or indexes with can stop the game)", named);
+        else if (data_only && named[0])
+            snprintf(line, sizeof(line), "memories-pc: mod %s: the duel effect bank's data is not the disc's (the mod "
+                     "changes its tables; its code is the disc's), and this game has no MIPS interpreter: its effects "
+                     "complete at once, unseen. A mod that means it adds \"duel_effects\": \"own data\" to its "
+                     "mod.json (sdk/tools/model_gate.py effect-migrate writes it), and the bank's C then runs its "
+                     "tables", named);
+        else if (data_only)
+            snprintf(line, sizeof(line), "memories-pc: the duel effect bank's data is not the disc's, and no applied "
+                     "mod changes it (a patched disc): this game has no MIPS interpreter, and its effects complete "
+                     "at once, unseen");
+        else
+            snprintf(line, sizeof(line), "memories-pc: the duel effect bank's code is not the disc's (a mod or patch "
+                     "changed it), and this game has no MIPS interpreter: its effects complete at once, unseen "
+                     "(sdk/tools/model_gate.py effect-migrate names what changed)");
+        if (strcmp(line, said)) {
+            snprintf(said, sizeof(said), "%s", line);
+            fprintf(stderr, "%s (effect %d first)\n", line, id);
+        }
+        if (!owned) {
             complete_at_once(index, request);
             return;
         }
+        native = 1;
     }
     if (mode == MODE_SKIP && !(id >= 1 && id <= 3)) {
         complete_at_once(index, request);
