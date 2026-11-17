@@ -32,6 +32,7 @@
 #include "pc/cards/fusion_helper.h"
 #include "update_check.h"
 #include "pc/debug/log.h"
+#include "window_hidden.h"
 #include "pc/debug/monitor.h"
 #include "pc/debug/crash_test.h"
 #include "pc/debug/control.h"
@@ -2606,6 +2607,10 @@ static void create_window(const char *title)
     int fitted = fit_scale(scale, 320, 240);
     const char *gles = getenv("MEMORIES_GLES");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    /* MEMORIES_WINDOW_HIDDEN=1 (window_hidden.h): the window is made hidden, never shown and never
+     * focused, with its OpenGL context, for runs of the picture pass with no window on the desktop
+     * (MEMORIES_WINDOW_SHOT, MEMORIES_DUMP_FRAME). */
+    if (WindowHidden_Asked()) flags |= SDL_WINDOW_HIDDEN;
     update_menu_scale(240 * fitted + 26 * Menu_AutoScale(240 * fitted));
 #ifdef __APPLE__
     /* The default macOS context is 2.1. Integer textures need 3.2 core,
@@ -2848,7 +2853,7 @@ void HERE(Platform_ShowError)(const char *title, const char *message)
     const char *headless = getenv("MEMORIES_HEADLESS");
     fprintf(stderr, "memories-pc: %s\n", message);
     Monitor_Shared()->error_shown = 1;
-    if (!headless || !*headless || !strcmp(headless, "0")) {
+    if ((!headless || !*headless || !strcmp(headless, "0")) && !WindowHidden_Asked()) {
         Monitor_Modal(1);
 #ifdef __ANDROID__
         {
@@ -3209,6 +3214,8 @@ int Platform_Open(const char *title)
      * available for diagnostics and compatibility overrides. */
     block_signals(&previous);
     SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0"); /* pump asks first */
+    /* A hidden run is not an app: no Dock icon, and macOS 13 and older do not activate it at launch. */
+    if (WindowHidden_Asked()) SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         restore_signals(&previous);
         fprintf(stderr, "memories-pc: SDL: %s; set MEMORIES_HEADLESS=1 to run without a window\n", SDL_GetError());

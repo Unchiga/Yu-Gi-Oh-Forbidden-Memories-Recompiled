@@ -5,6 +5,7 @@
 #include "game_files.h"
 #include "paths.h"
 #include "platform.h"
+#include "window_hidden.h"
 #include <dirent.h>
 #include <limits.h>
 #include <stdio.h>
@@ -220,7 +221,7 @@ int GameFiles_Setup(char *why, size_t why_size)
     char path[PATH_MAX_];
     const char *headless = getenv("MEMORIES_HEADLESS"), *named = getenv("MEMORIES_DISC");
     if (GameFiles_Disc(why, why_size)) return 1;
-    if ((headless && *headless && strcmp(headless, "0")) || (named && *named)) return -1;
+    if ((headless && *headless && strcmp(headless, "0")) || WindowHidden_Asked() || (named && *named)) return -1;
     for (;;) {
         int result = Platform_SelectDisc(path, sizeof(path), why, why_size);
         if (result <= 0) return result;

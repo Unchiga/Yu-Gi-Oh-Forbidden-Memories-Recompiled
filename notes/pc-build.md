@@ -516,6 +516,20 @@ give the same frames; in a window the frames are shown at the game speed
 and pause and frame step work, headless runs flat out; see
 [Agent control](agent-control.md). `MEMORIES_HEADLESS` with
 `MEMORIES_DUMP_FRAME` and `MEMORIES_SPEED=-1` still selects it too),
+`MEMORIES_WINDOW_HIDDEN=1` (the window is created hidden with its OpenGL
+context, and SDL never shows or focuses it: `MEMORIES_HEADLESS` has no GL at
+all, so the software picture is all it runs, and SDL's `offscreen` driver has
+no GL on Windows. A scripted run (`MEMORIES_INPUT`, `MEMORIES_DUMP_FRAME`,
+`MEMORIES_DUMP_PICTURE`, `MEMORIES_WINDOW_SHOT`, the control channel) then runs
+the OpenGL picture pass, `gl_picture.c`, with no window on the desktop. As for
+`MEMORIES_HEADLESS`, no dialog is raised either, since a hidden run has no one
+to answer it: an error goes to standard error only (`Platform_ShowError`), the
+disc picker and its welcome box are skipped (`GameFiles_Setup` fails as
+headless does, so name the disc with `MEMORIES_DISC` or put it in `game/`), and
+a crash or hang report is written without its box (`dialogs_allowed`, unless
+`MEMORIES_CRASH_DIALOG=1` asks for it). On macOS the app is a background one
+(`SDL_HINT_MAC_BACKGROUND_APP`: no Dock icon, no activation at launch). With
+`SDL_AUDIODRIVER=dummy` and `MEMORIES_NO_AUDIO=1` it is silent too),
 `MEMORIES_RECORD=path` (the pad bits of every VBlank, a frame hash at
 every frame and, with `MEMORIES_RECORD_STATES=N`, a state every N VBlanks,
 as text; `src/pc/debug/recorder.h`), `MEMORIES_PLAY=path` (play such a

@@ -87,6 +87,7 @@ int Monitor_Main(int argc, char **argv, int *status)
 #include "crash.h"
 #include "symbols.h"
 #include "pc/platform/paths.h"
+#include "pc/platform/window_hidden.h"
 #if defined(__i386__) || defined(__x86_64__)
 #include <cpuid.h>
 #endif
@@ -508,6 +509,7 @@ static int dialogs_allowed(void)
     const char *script = getenv("MEMORIES_SDL_SCRIPT");
     if (dialog && *dialog) return strcmp(dialog, "0") != 0;
     if (headless && *headless && strcmp(headless, "0")) return 0;
+    if (WindowHidden_Asked()) return 0;
     return !(script && *script);
 }
 
