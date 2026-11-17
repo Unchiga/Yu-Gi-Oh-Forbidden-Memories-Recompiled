@@ -177,7 +177,7 @@ class SdkTool(unittest.TestCase):
         wa = effect_migrate.wa_disc(Path(disc))
         original = wa.original(0, wa.size // effect_migrate.SECTOR)[:wa.size]
         wa.file.close()
-        positions = 0x14C34   # D_8015AB68, Swords' sword positions
+        positions = 0x14C3C   # D_8015AB68[0][1], a sword of the opponent's side (Swords)
         patches = [{"at": hex(at + positions), "bytes": f"{original[at + positions] ^ 0x10:02X}"}
                    for at in effect_migrate.bank_copies(original)]
         mod = self.work / "effect-data"

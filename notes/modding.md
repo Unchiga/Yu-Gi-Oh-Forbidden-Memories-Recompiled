@@ -311,7 +311,9 @@ a patch that went wrong:
 - **Tables only, opted in.** A mod whose `mod.json` says
   `"duel_effects": "own data"` gets its tables run by the bank's C, at its
   own risk: a value the C divides by or indexes with can stop the game. The
-  game says once, on stderr, that the mod's data is unchecked.
+  game says once, on stderr, that the mod's data is unchecked. The game does
+  not tell which mod changed the tables: one applied mod's opt-in lets the
+  bank's C run the tables as every applied mod and patch left them.
 - **Tables only, not opted in.** The effects complete at once, unseen, and
   the game says once how to opt in.
 - **Code changed.** The effects complete at once, unseen, said once. A mod
@@ -888,7 +890,10 @@ A save state taken with a bigger model in a battle slot carries its arena
 ### Attack code: C, not MIPS
 
 **The MIPS interpreter is gone from the shipped game** (a reference build
-for tests keeps it: `notes/pc-build.md`, "The reference build"). A record's
+for tests keeps it: `notes/pc-build.md`, "The reference build"). It also
+ran a changed duel effect bank: what a mod that changes the bank gets now,
+and the opt-in for one that changes only its tables, are in [A mod's duel
+effect bank](#a-mods-duel-effect-bank). A record's
 control modules (the table above: four variant modules and two primaries)
 are PlayStation code. The port runs the disc's modules as the decomp's C,
 compiled into the game: every variant module (the attacks) and the

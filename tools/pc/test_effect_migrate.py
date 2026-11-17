@@ -29,7 +29,7 @@ if "--disc" in sys.argv:   # before the classes: their skip reads it
     _at = sys.argv.index("--disc")
     DISC = sys.argv[_at + 1]
     del sys.argv[_at:_at + 2]
-SWORD_POSITIONS = 0x14C34      # D_8015AB68, effect 21's table (config/pc/duel_effect_bank.csv)
+SWORD_POSITIONS = 0x14C3C      # D_8015AB68[0][1], the first sword of the opponent's side (effect 21)
 
 
 def table_row(symbol: str) -> effect_migrate.Row:

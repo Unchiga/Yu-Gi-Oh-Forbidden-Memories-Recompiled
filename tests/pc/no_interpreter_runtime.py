@@ -69,11 +69,12 @@ CREDITS_SECTOR, CREDITS_SIZE = 1223, 0x8000   # func_800507D0's 16 SU sectors fr
 CREDITS_SHA = "f125a2a6a8b57d222df544a7a02bf8c639c1fdde5cf978f80a56ea3fba2b836a"
 RECORD_SECTORS, VARIANT_SECTOR = 0x114, 180    # a MODEL.MRG record, its stance 0 slot A variant image
 RAIGEKI, SWORDS, KURIBOH = 337, 348, 58
-# Swords of Revealing Light's sword positions in the bank (D_8015AB68, at
-# 0x8015AC34 here: config/pc/duel_effect_bank.csv), a table its C reads; and
+# A sword of the opponent's side in the bank's table of sword positions
+# (D_8015AB68[0][1], at 0x8015AC3C here: config/pc/duel_effect_bank.csv;
+# effect_21.c reads [i][side], and the player's Swords hold side 1); and
 # where the bank's dispatcher keeps the request's position (D_8015B7F8), which
 # only the bank's C writes.
-SWORD_POSITIONS, DISPATCH_POSITION = 0x14C34, 0x8015B7D0
+SWORD_POSITIONS, DISPATCH_POSITION = 0x14C3C, 0x8015B7D0
 CARD, RECORD = 381, 330                         # card 381's model is record 330
 FOREST = 330                                    # a field magic: the bank's effect when played
 STAND_IN = re.compile(r"memories-pc: (mod (\S+): )?model variant module (\d+) \(slot A\) is MIPS code")
