@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Structured compiler regressions, independent of ROM and generated game IR."""
+import re
 import unittest
 from pathlib import Path
 import subprocess
@@ -330,6 +331,89 @@ define i32 @second(i64 %0) {
 ''')
         self.assertIn(r'c"ptrtoint (ptr @callback to i32)\00"', result)
         self.assertIn('%3 = trunc i64 %2 to i32', result)
+
+
+class UnloweredUnitTests(unittest.TestCase):
+    # build_arm64.py UNLOWERED: the code as compiled, the registration as a
+    # lowered unit's (so no guest token after it moves).
+    SOURCE = r'''
+source_filename = "src/pc/audio/unit.c"
+@table = internal global [4 x i32] zeroinitializer
+@shared = global i16 7
+@.str = private unnamed_addr constant [3 x i8] c"hi\00"
+@Mix.gain = internal global i32 256
+define void @Mix(ptr %out) #0 {
+  %gain = load i32, ptr @Mix.gain
+  %slot = getelementptr [4 x i32], ptr @table, i64 0, i64 1
+  %value = load i32, ptr %slot
+  %sum = add i32 %gain, %value
+  store i32 %sum, ptr %out
+  ret void
+}
+attributes #0 = { noinline nounwind optnone }
+'''
+
+    @staticmethod
+    def registrations(text):
+        return re.findall(r'call void @GuestRuntime_RegisterGlobal\(.*\)', text)
+
+    def test_registration_matches_lowered_and_code_is_untouched(self):
+        lowered = translate(self.SOURCE, {}, 'GuestRuntime_RegisterUnit_test')
+        unlowered = translate(self.SOURCE, {}, 'GuestRuntime_RegisterUnit_test', lower=False)
+        self.assertEqual(len(self.registrations(lowered)), 4)
+        self.assertEqual(self.registrations(unlowered), self.registrations(lowered))
+        self.assertIn('GuestRuntime_ResolveData', lowered)
+        self.assertNotIn('GuestRuntime_ResolveData', unlowered)
+        self.assertIn('store i32 %sum, ptr %out', unlowered)
+        self.assertNotIn('optnone', unlowered)
+        self.assertNotIn('unnamed_addr constant', unlowered)
+
+    def test_guest_pointers_and_pinned_symbols_refused(self):
+        with self.assertRaisesRegex(TranslationError, 'unlowered unit with a guest pointer: Store'):
+            translate('define void @Store(ptr addrspace(271) %to) {\n'
+                      '  store i32 1, ptr addrspace(271) %to\n  ret void\n}',
+                      {}, 'GuestRuntime_RegisterUnit_test', lower=False)
+        with self.assertRaisesRegex(TranslationError, 'unlowered unit with a guest address: Read'):
+            translate('@record = external global i32\ndefine i32 @Read() {\n'
+                      '  %value = load i32, ptr @record\n  ret i32 %value\n}',
+                      {'record': 0x80018000}, 'GuestRuntime_RegisterUnit_test', lower=False)
+
+    def refused(self, source, message, pins=None, **options):
+        with self.assertRaisesRegex(TranslationError, message):
+            translate(source, pins or {}, 'GuestRuntime_RegisterUnit_test', lower=False, **options)
+
+    def test_narrowed_pointers_refused(self):
+        self.refused('define i32 @Word(ptr %p) {\n  %w = ptrtoint ptr %p to i32\n  ret i32 %w\n}',
+                     'pointer narrowed to a guest word: Word')
+        self.refused('define i32 @Cut(ptr %p) {\n  %w = ptrtoint ptr %p to i64\n'
+                     '  %c = trunc i64 %w to i32\n  ret i32 %c\n}', 'pointer narrowed to a guest word: Cut')
+        # (applyPins refuses this one first, lowered or not.)
+        self.refused('@slot = global i32 0\n@word = global i32 ptrtoint (ptr @slot to i32)',
+                     'narrow static initializer: word')
+        self.refused('@slot = global i32 0\ndefine i32 @Const() {\n  ret i32 ptrtoint (ptr @slot to i32)\n}',
+                     'pointer narrowed to a guest word: Const')
+        # A full-width pointer as an integer (a hash, a comparison) is fine.
+        translate('define i64 @Hash(ptr %p) {\n  %w = ptrtoint ptr %p to i64\n  ret i64 %w\n}',
+                  {}, 'GuestRuntime_RegisterUnit_test', lower=False)
+
+    def test_pointer_from_integer_refused(self):
+        self.refused('define i32 @Peek(i64 %a) {\n  %p = inttoptr i64 %a to ptr\n'
+                     '  %v = load i32, ptr %p\n  ret i32 %v\n}', 'pointer made from an integer: Peek')
+
+    def test_indirect_call_refused_inline_asm_kept(self):
+        self.refused('define void @Call(ptr %f) {\n  call void %f()\n  ret void\n}', 'indirect call: Call')
+        translate('define void @Fence() {\n  call void asm sideeffect "", "~{memory}"()\n  ret void\n}',
+                  {}, 'GuestRuntime_RegisterUnit_test', lower=False)
+
+    def test_pins_in_initializers_and_aggregates_refused(self):
+        self.refused('@record = external global i32\n@table = global [1 x ptr] [ptr @record]',
+                     'guest address in the initializer of table', {'record': 0x80018000})
+        self.refused('@record = external global i32\n@slot = global { ptr } zeroinitializer\n'
+                     'define void @Put() {\n  store { ptr } { ptr @record }, ptr @slot\n  ret void\n}',
+                     'guest address: Put', {'record': 0x80018000})
+
+    def test_hooks_refused(self):
+        self.refused('define void @Hooked() {\n  ret void\n}', 'unlowered unit with hooks', hooks=True)
 
 
 class SymbolNormalizationTests(unittest.TestCase):

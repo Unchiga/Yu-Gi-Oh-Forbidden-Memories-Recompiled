@@ -5460,6 +5460,48 @@ or 0xC0000000 starts the game all the same.
   (0x9FF00000) go that way, as on macOS; before, on Android they were raw
   fixed mappings that the runtime did not know, so a held range broke the
   translations and the interpreter stack. Linux's own flag value is kept.
+- **Unlowered units** (`build_arm64.py` `UNLOWERED`: `audio/spu.c`), in
+  both arm64 translated builds, Android and macOS. The guest pass lowers
+  every access of a port unit through `GuestRuntime_ResolveData`, which a
+  hot loop pays for: `Spu_Mix`, the audio thread's mixer, took 7.6% of the
+  app's cycles on a Galaxy A22's duel field and 20% in a 3D battle. An
+  `ORDINARY` unit skips the pass, but its globals then get no guest token,
+  which moves every token handed out after them: the region table a state
+  records (`translated_state_memory.c`) no longer matches, so every state
+  saved before would be refused, and its functions leave the signatures
+  mods are built against. An unlowered unit goes through the pass with
+  `"lower": false` (`guest_ir.cpp` `keepUnlowered`): the code is left as
+  compiled (Clang's -O0 `optnone`/`noinline` dropped, so it is optimized
+  at O2 like an ordinary unit; a `noinline` of the source's own cannot be
+  told from -O0's and goes too) and its globals are registered exactly as
+  a lowered unit's (same globals, order, sizes, identities and flags).
+  The pass refuses what it would have lowered, since the code would use it
+  raw: a guest-width pointer, a guest address (a pinned symbol, in the code
+  or a global's initializer), a pointer narrowed to 32 bits or less
+  (`ptrtoint`, or `trunc` of one), a pointer made from a runtime integer
+  (`inttoptr`), an indirect call, and hooks. `build_arm64.py` stops when
+  an entry does not exist, is not one of the target's native units or is
+  also ordinary. The rest of the contract is that every pointer such a
+  unit is handed is a host one. For `spu.c`: `Spu_Mix`'s output (SDL's
+  `feed` buffer, the silent thread's), `Spu_CdWrite`'s frames (LIBDS's
+  static XA buffer), `Spu_GetAdsr`'s two halves (LIBSPU's locals) and
+  `Spu_State`'s state are all host memory; LIBSPU's `SpuWrite` copies into
+  `Spu_Ram` by its host address; `Spu_Mix` reaches SDL's thread as a
+  function pointer (`Platform_StartAudio`), a host address that
+  `GuestRuntime_ResolveFunction` passes through as before. **For mods**:
+  the exported `Spu_*` functions now take host pointers only, as an
+  ordinary unit's functions already do, so on Android and macOS a code mod
+  that hands `Spu_GetAdsr` or `Spu_CdWrite` a pointer into guest RAM
+  crashes (a mod's own variables and buffers are host memory and are fine).
+  A golden test of the mixer's output, which this change keeps bit for bit,
+  is proposed separately. Galaxy A22 (simpleperf, cpu-cycles, three runs
+  before and two after, 2026-11-17): `Spu_Mix` 78-79 to 28 Mcycles/s on
+  the duel field (about 2.8x less; 7.6% to 2.9% of the app) and 155-160 to
+  50 Mcycles/s in a 3D battle (about 3.1x; 19.5-20.3% to 7.4%); the whole
+  app 1.03 to 0.98 Gcycles/s on the field and 0.78-0.80 to 0.68 in the
+  battle. A state saved by the build before loads in the build after
+  ("carried over by its symbol table"), and the two builds' states record
+  the same 11,485 non-heap regions.
 - **Save states** name the game by its GNU build ID (`translated_state_backend.c`,
   `dl_iterate_phdr`) and are relocated to where it is loaded, so they carry
   from one launch to the next; `check_load_bias` (`android.c`, which kept a
