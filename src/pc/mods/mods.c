@@ -110,13 +110,16 @@ typedef struct {
     char library[NAME_MAX_];     /* empty when the mod is data only */
     char status[STATUS_MAX];
     char warnings[STATUS_MAX];   /* what the manifest got wrong: shown again whenever status is reset */
-    int mips_modules;            /* its control modules the MIPS interpreter would run (check_model_modules) */
+    int mips_modules;            /* its control modules that are MIPS code (check_model_modules): a stand-in plays */
+    uint32_t mips_ids[32];       /* their first words, for naming the mod when one plays (Mods_ModuleMipsOwner) */
+    int mips_id_count;
     char mips_where[160];        /* and where they are, for its one warning */
     int mips_more;               /* places past what mips_where holds */
     int native_modules;          /* its control modules a code mod's C runs (mod API 29) */
     char native_owner[ID_MAX];   /* the first one's mod */
     int native_more;             /* another mod's C runs others */
     char modules[STATUS_MAX];    /* its module note (Mods_ModuleNote) */
+    int effects_own_data;        /* "duel_effects": "own data" (Mods_DuelEffectsOwnData) */
     char mips_said[STATUS_MAX];  /* the MIPS warning last said on stderr */
     const char *origin;         /* "shipped", "folder" or "installed", for the window */
     int restart;                 /* the manifest asks for a fresh process */
@@ -3031,11 +3034,11 @@ static int map_arenas(void)
 /* --- a mod's own MIPS in a model's control modules ------------------- */
 
 static int (*modules_mips)(const unsigned char *stages, char *detail, size_t size, int *mod_native,
-                           const char **mod_owner);
+                           const char **mod_owner, uint32_t *identifiers);
 static int (*read_sectors)(int lba, int sectors, void *out);
 
 void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, size_t size, int *mod_native,
-                                     const char **mod_owner),
+                                     const char **mod_owner, uint32_t *identifiers),
                          int (*read)(int lba, int sectors, void *out),
                          int (*disc_shape)(int primary, int slot, uint32_t identifier, uint32_t span,
                                            const char *sha256))
@@ -3056,6 +3059,17 @@ void Mods_SetModuleCheck(int (*mips)(const unsigned char *stages, char *detail, 
 static int record_card(int record)
 {
     return record < 300 ? record + 1 : record < 600 ? record + 51 : record < 620 ? record + 101 : record + 102;
+}
+
+/* The first words of `count` MIPS modules a check found, for Mods_ModuleMipsOwner. */
+static void mips_ids_found(Mod *mod, const uint32_t *identifiers, int count)
+{
+    for (int i = 0; i < count; i++) {
+        int seen = 0;
+        for (int j = 0; j < mod->mips_id_count && !seen; j++) seen = mod->mips_ids[j] == identifiers[i];
+        if (!seen && mod->mips_id_count < (int)(sizeof(mod->mips_ids) / sizeof(mod->mips_ids[0])))
+            mod->mips_ids[mod->mips_id_count++] = identifiers[i];
+    }
 }
 
 /* `count` modules at `where`, for the mod's one warning (mips_warning). */
@@ -3079,16 +3093,33 @@ static void native_found(Mod *mod, const char *owner, int count)
 
 /* The mod's module note (Mods_ModuleNote) from what the check found: one
  * line for all its modules; the log has each module. The MIPS part is also
- * said on stderr as a warning, once each time it changes. */
+ * said on stderr as a warning, once each time it changes. The game has no
+ * MIPS interpreter (only a reference build for tests does: MEMORIES_REFERENCE),
+ * so a stand-in plays in their place until the mod moves them to C with the
+ * SDK's model_gate.py mod-migrate. */
 static void module_note(Mod *mod)
 {
     char mips[STATUS_MAX] = "", text[STATUS_MAX] = "";
+    /* Two calls, not directives inside one: snprintf may be a macro (Darwin's fortified one). */
+#ifdef MEMORIES_REFERENCE
     if (mod->mips_modules)
         snprintf(mips, sizeof(mips),
-                 "%d attack module%s in %s%s %s MIPS code, which runs on an interpreter that a later version removes "
-                 "(notes/modding.md, \"Attack code: C, not MIPS\")",
+                 "%d attack module%s in %s%s %s MIPS code, which this reference build interprets; a shipped game "
+                 "has no MIPS interpreter and plays a stand-in in %s place (notes/modding.md, \"Attack code: C, not "
+                 "MIPS\")",
                  mod->mips_modules, mod->mips_modules == 1 ? "" : "s", mod->mips_where,
-                 mod->mips_more ? " and more" : "", mod->mips_modules == 1 ? "is" : "are");
+                 mod->mips_more ? " and more" : "", mod->mips_modules == 1 ? "is" : "are",
+                 mod->mips_modules == 1 ? "its" : "their");
+#else
+    if (mod->mips_modules)
+        snprintf(mips, sizeof(mips),
+                 "%d attack module%s in %s%s %s MIPS code, which this game has no interpreter for: a stand-in plays "
+                 "in %s place until the mod moves %s to C (sdk/tools/model_gate.py mod-migrate; notes/modding.md, "
+                 "\"Attack code: C, not MIPS\")",
+                 mod->mips_modules, mod->mips_modules == 1 ? "" : "s", mod->mips_where,
+                 mod->mips_more ? " and more" : "", mod->mips_modules == 1 ? "is" : "are",
+                 mod->mips_modules == 1 ? "its" : "their", mod->mips_modules == 1 ? "it" : "them");
+#endif
     if (mod->native_modules) {
         /* Both parts may not fit: the note is then cut, as the window trims it anyway. */
         if (snprintf(text, sizeof(text), "%s%s%d attack module%s run%s native C from mod %s%s", mips,
@@ -3117,6 +3148,7 @@ static void check_model_modules(Mod *mod, const ModModel *model)
     char detail[MIPS_DETAIL], where[NAME_MAX_ + 8];
     const char *owner = NULL;
     int count, native = 0;
+    uint32_t identifiers[6];
     FILE *file;
     if (!modules_mips || model->stale || !(file = fopen(model->path, "rb"))) return;
     if (!(stages = calloc(1, bytes))) {
@@ -3128,9 +3160,10 @@ static void check_model_modules(Mod *mod, const ModModel *model)
         (void)got; /* a shorter file reads as zeros */
     }
     fclose(file);
-    count = modules_mips(stages, detail, sizeof(detail), &native, &owner);
+    count = modules_mips(stages, detail, sizeof(detail), &native, &owner, identifiers);
     free(stages);
     if (!count && !native) return;
+    mips_ids_found(mod, identifiers, count);
     say("%s: model %s: %s", mod->id, model->name, detail);
     native_found(mod, owner, native);
     if (!count) return;
@@ -3193,13 +3226,15 @@ static void check_disc_models(Mod *mod, int index)
     for (int r = 0; r < records; r++) {
         int found, native = 0;
         const char *owner = NULL;
+        uint32_t identifiers[6];
         if (!touched[r]) continue;
         if (!stages && !(stages = malloc((size_t)MODEL_MODULES_SECTORS * SECTOR))) break;
         if (read_sectors(lba + r * MODEL_RECORD_SECTORS + MODEL_MODULES_SECTOR, MODEL_MODULES_SECTORS, stages) !=
             MODEL_MODULES_SECTORS)
             continue;
-        found = modules_mips(stages, detail, sizeof(detail), &native, &owner);
+        found = modules_mips(stages, detail, sizeof(detail), &native, &owner, identifiers);
         if (!found && !native) continue;
+        mips_ids_found(mod, identifiers, found);
         say("%s: MODEL.MRG record %d (card %d): %s", mod->id, r, record_card(r), detail);
         native_found(mod, owner, native);
         if (!found) continue;
@@ -3234,7 +3269,7 @@ static void refresh_module_notes(void)
     notes_rows = ModelRows_Generation();
     for (int i = 0; i < mod_count; i++) {
         Mod *mod = &mods[i];
-        mod->mips_modules = mod->mips_more = mod->native_modules = mod->native_more = 0;
+        mod->mips_modules = mod->mips_more = mod->native_modules = mod->native_more = mod->mips_id_count = 0;
         mod->mips_where[0] = mod->native_owner[0] = '\0';
         if (mod->active && modules_mips) {
             for (int m = 0; m < model_count; m++)
@@ -3264,6 +3299,89 @@ int Mods_ModuleMips(int index)
 {
     refresh_module_notes();
     return index >= 0 && index < mod_count ? mods[index].mips_modules : 0;
+}
+
+/* Where WA_MRG.MRG holds the duel effect bank: seven copies of 44 sectors
+ * (0x16000 bytes), one a scene, by sector of the file (on the US disc;
+ * tools/pc/effect_migrate.py's bank_copies finds them). */
+#define WA_MRG "\\DATA\\WA_MRG.MRG;1"
+#define BANK_SECTORS 44
+static const int bank_sectors[] = {5970, 6205, 6440, 6675, 6910, 7145, 7380};
+
+static int reaches_bank(long first, long last)
+{
+    for (unsigned c = 0; c < sizeof(bank_sectors) / sizeof(bank_sectors[0]); c++)
+        if (first <= bank_sectors[c] + BANK_SECTORS - 1 && last >= bank_sectors[c]) return 1;
+    return 0;
+}
+
+/* Whether the mod's `data` reaches a copy of the bank: a replacement of the
+ * whole of WA_MRG.MRG, or a raw region or a patch inside one (as
+ * check_disc_models does for MODEL.MRG). */
+static int touches_bank(int index, int retail_lba, unsigned retail_size)
+{
+    long retail_sectors = (long)((retail_size + SECTOR - 1) / SECTOR);
+    for (int i = 0; i < region_count; i++) {
+        const Region *region = &regions[i];
+        long first;
+        if (region->mod != index) continue;
+        if (region->file >= 0) {
+            if (disc_files[region->file].retail_lba == retail_lba) return 1;
+            continue;
+        }
+        first = (long)region->lba - retail_lba;
+        if (first < retail_sectors && first + region->sectors - 1 >= 0 &&
+            reaches_bank(first, first + region->sectors - 1))
+            return 1;
+    }
+    for (int i = 0; i < patch_count; i++) {
+        const Patch *patch = &patches[i];
+        long at;
+        if (patch->mod != index) continue;
+        if (patch->file >= 0) {
+            if (disc_files[patch->file].retail_lba != retail_lba) continue;
+            at = patch->lba;
+        } else {
+            at = (long)patch->lba - retail_lba;
+        }
+        if (at >= 0 && at < retail_sectors && reaches_bank(at, at)) return 1;
+    }
+    return 0;
+}
+
+int Mods_DuelEffectsOwnData(char *named, size_t size)
+{
+    int retail_lba, touching = 0, without = 0;
+    unsigned retail_size;
+    size_t used = 0;
+    if (size) named[0] = '\0';
+    if (Memories_DiscOriginalFileInfo(WA_MRG, &retail_lba, &retail_size)) return 0;
+    /* Two passes: the mods without the opt-in, if any, are the ones named. */
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < mod_count; i++) {
+            if (!mods[i].active || !touches_bank(i, retail_lba, retail_size)) continue;
+            if (pass == 0) {
+                touching++;
+                without += !mods[i].effects_own_data;
+                continue;
+            }
+            if (without && mods[i].effects_own_data) continue;
+            if (used < size)
+                used += (size_t)snprintf(named + used, size - used, "%s%s", used ? ", " : "", mods[i].id);
+        }
+    }
+    return touching && !without;
+}
+
+const char *Mods_ModuleMipsOwner(uint32_t identifier)
+{
+    const char *owner = NULL;
+    /* The last applied mod that has it, in load order: its data is what the game reads. */
+    for (int i = 0; i < mod_count; i++)
+        if (mods[i].active)
+            for (int j = 0; j < mods[i].mips_id_count; j++)
+                if (mods[i].mips_ids[j] == identifier) owner = mods[i].id;
+    return owner;
 }
 
 static int add_model(Mod *mod, int index, const JsonValue *entry, int at)
@@ -3768,6 +3886,7 @@ static const char *const manifest_keys[] = {
     "chest_overflow", "terrain_bonus", "trap_thresholds", "equip_bonus_default", "passwords", "starter",
     "starter_pools", "title", "menu", "limits", "guardian_stars", "attributes", "packs", "pack_shop",
     "card_text_colors", "card_layout", "palette_ramps", "ui", "tower", "card_types", "fields", "models",
+    "duel_effects",
 };
 
 /* How many letters to add, remove or change to turn one word into the
@@ -3911,6 +4030,16 @@ static int read_manifest(Mod *mod, const char *directory, const char *origin)
     }
     mod->restart = Json_Bool(Json_Member(root, "restart"), 0);
     mod->default_enabled = Json_Bool(Json_Member(root, "enabled"), 0);
+    /* "duel_effects": "own data": the mod changes the effect bank's tables
+     * only, and asks for the bank's C to run them, at its own risk
+     * (Mods_DuelEffectsOwnData). Any other value is a typo: said, and off. */
+    {
+        const JsonValue *effects = Json_Member(root, "duel_effects");
+        const char *value = Json_String(effects, NULL);
+        mod->effects_own_data = value && !strcmp(value, "own data");
+        if (effects && !mod->effects_own_data)
+            warn(mod, 1, "\"duel_effects\" is \"own data\" or left out; the effect bank's check stays on");
+    }
     text = Json_String(Json_Member(root, "textures"), NULL);
     if (text && *text) {
         if (!Paths_Contained(text)) {

@@ -41,13 +41,21 @@ loads and whose SDL_main it runs, is a loader that puts the game at that base
 (src/pc/platform/android_loader.c) and starts the port's main through
 src/pc/platform/android.c. It is ELF, so the Linux steps apply, except that
 sections cannot be placed at chosen addresses (as on Windows). The APK is packaged beside it (<build>/memories-<abi>.apk, by
-package_android.py) with the SDK's build tools; notes/pc-build.md, "Android"."""
+package_android.py) with the SDK's build tools; notes/pc-build.md, "Android".
+
+--reference builds the game WITH the MIPS interpreter (src/pc/guest/mips.c,
+MEMORIES_REFERENCE), which no shipped game has: the reference the tests and
+the oracle compare the port's C with (tools/pc/reference_build.py;
+notes/pc-build.md, "The reference build"). Windows and Linux only, into
+tmp/pc/reference/<the build folder's name> (game32, win64...) unless --build
+names one, and never with --release: it is not a game to ship."""
 import argparse, concurrent.futures, csv, filecmp, glob, hashlib, json, os, pathlib, re, shutil, struct, subprocess, sys
 import build_process
 from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURCE_ADDRESSED_MODULES, TARGETS,
                           game_sources, native_sources, newest_input)
 import model_gate
 import model_gate_port
+import pe_layout
 import ptr32_stores
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -242,7 +250,10 @@ ANDROID_LOADER = "src/pc/platform/android_loader.c"
 # The image is about 35 MiB (most of it .bss).
 ANDROID_GAME_BASE = 0xC0000000 if A64 else 0x08000000
 ANDROID_GAME_SPAN = 0x04000000
-NATIVE = native_sources(TARGETS[TARGET], None)
+# --reference (the MIPS interpreter in, for tests only): read before argparse
+# too, as NATIVE depends on it; main refuses it where it does not apply.
+REFERENCE = "--reference" in sys.argv[1:]
+NATIVE = native_sources(TARGETS[TARGET], None, reference=REFERENCE and not ANDROID)
 
 # Same contract as the host C library, so the host's version is used directly.
 # Runtime-loaded modules linked into the executable: name, sources, identifier
@@ -430,11 +441,21 @@ def symbols(objects):
             {"U": undefined, "C": tentative}.get(parts[-2], defined).add(c_name(parts[-1]))
     return defined, tentative, undefined
 
-def rename_coff_sections(path, renames):
+def rename_coff_sections(path, renames, empty=True):
     """objcopy --rename-section for COFF objects, which llvm-objcopy lacks.
     The contents get a $m suffix on Windows: lld sorts a section's $-suffixed
     parts by suffix, which puts them between the $a and $z markers that stand
-    in for ELF's __start_ and __stop_ symbols."""
+    in for ELF's __start_ and __stop_ symbols.
+    empty=False does not rename a section with no bytes (clang writes .data
+    and .bss into every COFF object), so it adds no output section of its
+    own. lld reserves a section header for every output section it has
+    before it drops the empty ones, and llvm-strip then shrinks the headers
+    to the sections left without moving them: the model modules' empty ovl_*
+    sections (238 modules on 2026-11-15) put .text at 0x6000 behind 0x400
+    bytes of headers, an image Windows will not load (pe_layout.py). An empty
+    one renamed before (an object a build made before this, which is not
+    rebuilt for it) gets its first name back."""
+    back = {} if empty else {new: old for old, new in reversed(list(renames.items()))}
     with open(path, "rb") as handle:
         data = bytearray(handle.read())
     _, count, _, symbols_at, symbol_count, optional_size, _ = struct.unpack_from("<HHIIIHH", data, 0)
@@ -449,7 +470,10 @@ def rename_coff_sections(path, renames):
         if field.startswith(b"/"):
             start = strings_at + int(field[1:])
             field = bytes(data[start:data.index(b"\0", start)])
-        new = renames.get(field.decode())
+        if empty or struct.unpack_from("<I", data, at + 16)[0]:       # SizeOfRawData
+            new = renames.get(field.decode())
+        else:
+            new = back.get(field.decode())
         if new is None:
             continue
         encoded = new.encode()
@@ -1143,7 +1167,9 @@ def check_x64_compiler(build):
 
 def main():
     global NEWEST_HEADER, PTR32_PASS
-    parser = argparse.ArgumentParser(description=__doc__)
+    # No abbreviations: --reference is read from argv before argparse runs
+    # (REFERENCE, NATIVE), so "--ref" must not mean it here alone.
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--backend", choices=list(BACKENDS), default=os.environ.get("MEMORIES_BACKEND") or
                         "sdl")
     parser.add_argument("--target", default=TARGET,
@@ -1151,6 +1177,9 @@ def main():
                              "ARM phones) or android-x86 (development, not packaged; notes/pc-build.md, \"Android\")")
     parser.add_argument("--release", action="store_true",
                         help="Windows GUI executable; omit the optional disc-derived executable icon")
+    parser.add_argument("--reference", action="store_true",
+                        help="the reference build: the game with the MIPS interpreter, for tests and the oracle "
+                             "only (never packaged; Windows and Linux), into tmp/pc/reference/<build>")
     parser.add_argument("--android-memory", choices=("translated", "fixed"),
                         default=os.environ.get("MEMORIES_ANDROID_MEMORY") or "translated",
                         help="android-arm64-v8a: the translated game (the app's: no fixed host address, "
@@ -1158,10 +1187,23 @@ def main():
                              "for comparison and code mods; notes/pc-build.md, \"Android arm64\")")
     # A Windows build made on Linux gets a directory of its own, so both
     # executables and their objects sit side by side.
-    parser.add_argument("--build", default="tmp/pc/win64" if X64 else
-                        "tmp/pc/win32" if WINDOWS and sys.platform != "win32" else
-                        f"tmp/pc/android-{ANDROID_ABI}" if ANDROID else "tmp/pc/game32")
+    default_build = ("tmp/pc/win64" if X64 else
+                     "tmp/pc/win32" if WINDOWS and sys.platform != "win32" else
+                     f"tmp/pc/android-{ANDROID_ABI}" if ANDROID else "tmp/pc/game32")
+    parser.add_argument("--build", default=None, help=f"the build folder (default {default_build}; "
+                                                      "tmp/pc/reference/<its name> with --reference)")
     options = parser.parse_args()
+    if options.reference != REFERENCE:
+        sys.exit("--reference: give it as --reference, which the sources were chosen by")
+    if options.reference:
+        if options.release:
+            sys.exit("--reference --release: the reference build (the MIPS interpreter in) is for tests, never a "
+                     "release")
+        if ANDROID:
+            sys.exit("--reference: the reference build is a Windows or Linux build; Android has none")
+        NATIVE_CFLAGS.append("-DMEMORIES_REFERENCE")
+    if options.build is None:
+        options.build = ("tmp/pc/reference/" + os.path.basename(default_build)) if options.reference else default_build
     # Forward slashes, as build.py on Windows hands over str(Path) with
     # backslashes: the object paths below are this folder plus "/obj/...",
     # and the Android build's `nm -A` check matches llvm-nm's listing against
@@ -1304,8 +1346,15 @@ def main():
             for old, new in sorted(renamed[name].items()):
                 command.append(f"--redefine-sym={PREFIX}{old}={PREFIX}{new}")
             if WINDOWS:
+                # A gated module's empty ones are not made ovl_* sections: it
+                # may have no variables (below), so it then has no ovl_*
+                # sections and no markers (Memories_Modules does not list it
+                # anyway). Its sources are game units too, so the rename
+                # below makes those empty .data/.bss game_data$m/game_bss$m:
+                # nothing in game_data and game_bss, and no section of their own.
                 rename_coff_sections(obj(source), {".data": f"ovl_{name}_data$m", ".bss": f"ovl_{name}_bss$m",
-                                                   ".sdata": f"ovl_{name}_data$n", ".sbss": f"ovl_{name}_data$n"})
+                                                   ".sdata": f"ovl_{name}_data$n", ".sbss": f"ovl_{name}_data$n"},
+                                     empty=name not in GATED_MODULES)
             else:
                 for section in (".data", ".sdata"):
                     command.append(f"--rename-section={section}=ovl_{name}_data")
@@ -1457,8 +1506,8 @@ def main():
     # direct call to a guest address never reaches the indirect-branch
     # thunks, so each of those becomes a host entry that sends its address
     # through their resolver instead, which picks the resident module's
-    # native function (or the MIPS interpreter) as a call through a pointer
-    # would. Without DEP the pinned call ran the MIPS bytes.
+    # native function (or, in a reference build, the MIPS interpreter) as a
+    # call through a pointer would. Without DEP the pinned call ran the MIPS bytes.
     branches = {name: pinned.pop(name) for name in sorted(direct_branches([obj(s) for s in game + NATIVE], set(pinned)))}
     guest_branches = write_guest_branches(options.build, branches)
     if WINDOWS:
@@ -1516,8 +1565,9 @@ def main():
         mapped = [(int(row["address"], 16), row["name"], row.get("bank", 0), row.get("identifier", 0))
                   for row in rows + overlay_rows if row["name"] in linked]
         # MODEL.MRG swaps per-monster MIPS control modules into these four
-        # fixed entry addresses. Native bridges preserve their lifecycle
-        # contract until the individual choreography modules are translated.
+        # fixed entry addresses, and the effect bank and the credits have
+        # theirs: native gates that run the decomp's C for the disc's bytes
+        # (src/pc/overlays/model_modules.c, duel_effects.c, credits.c).
         mapped += [(0x8013A004, "Memories_ModelPrimaryControlA", 0, 0),
                    (0x8013B004, "Memories_ModelVariantControlA", 0, 0),
                    (0x801462B0, "Memories_DuelEffectControl", 0, 0),
@@ -1582,6 +1632,15 @@ def main():
              version, f"{options.build}/section_markers.o", *resources,
              f"{WIN32_DEPS}/sdl/lib/libSDL3.dll.a", "-lopengl32", f"{WIN32_DEPS}/lib/libfreetype.a",
              f"{WIN32_DEPS}/lib/libpng16.a", f"{WIN32_DEPS}/lib/libzs.a", "-ldbghelp", "-lwinhttp", "-lws2_32", "-lwinmm", "-static", "-lpthread"])
+        # Both widths, shipped stripped or not (CI strips only the 32-bit
+        # one): sections adjacent from the headers on, and headers within one
+        # page, so that llvm-strip can never leave a hole before .text.
+        with open(output, "rb") as handle:
+            problems = pe_layout.link_layout_problems(handle.read())
+        if problems:
+            sys.exit(f"{output}: the link's layout would not load once stripped (Windows: not a valid Win32 "
+                     f"application): {'; '.join(problems)}. An output section with nothing in it still takes a "
+                     "header (notes/pc-build.md, \"No empty gated-module sections\")")
         shutil.copy(f"{WIN32_DEPS}/sdl/bin/SDL3.dll", options.build)
     elif ANDROID:
         # The game is libgame.so, linked at ANDROID_GAME_BASE; libmain.so,

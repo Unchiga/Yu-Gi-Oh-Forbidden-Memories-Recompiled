@@ -10,13 +10,23 @@ state: every frame must be the same. Before the fix the stack was not in
 the state, so the second run drew other sparks from 679 frames in. The
 battles start the way the duel starts one (duel_scene_battle.c, phase 5):
 the two model records into D_800EF658, the mode to return to into
-D_8009B269, the animated battle (1) into D_8009B26C."""
+D_8009B269, the animated battle (1) into D_8009B26C.
+
+The interpreter is in no shipped game: the replay runs a reference build
+(the game with it, tools/pc/build_game32.py --reference; notes/pc-build.md,
+"The reference build") with every module interpreted
+(MEMORIES_MODEL_MODULES=interpreter): the executable it is given when that
+is one, else MEMORIES_REFERENCE_EXE. With neither it is skipped, saying so,
+rather than building one unasked (replay.py run, an Android device run)."""
 import struct
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "tools/pc"))
 from yfm_control import Game  # noqa: E402
+import os  # noqa: E402
+import unittest  # noqa: E402
+from reference_build import has_interpreter, reference_executable  # noqa: E402
 
 SETTINGS = {"mod.3d-monsters": 0, "mod.hand-camera": 0, "mod.ai-hard-mode": 0}
 ANIMATED_BATTLE = 1
@@ -53,7 +63,15 @@ def battle(game, card, alternative, frames=None):
 
 def run(executable, out):
     (out / "mods").mkdir(parents=True, exist_ok=True)
-    with Game(executable, out=out / "game", settings=SETTINGS, mods_dir=out / "mods") as game:
+    if has_interpreter(Path(executable)):
+        reference = Path(executable)
+    elif os.environ.get("MEMORIES_REFERENCE_EXE"):
+        reference = reference_executable(Path(os.environ["MEMORIES_REFERENCE_EXE"]), subject=executable)
+    else:
+        raise unittest.SkipTest("it needs a reference build (the MIPS interpreter): give one as the executable, "
+                                "or set MEMORIES_REFERENCE_EXE")
+    with Game(reference, out=out / "game", settings=SETTINGS, mods_dir=out / "mods",
+              env={"MEMORIES_MODEL_MODULES": "interpreter"}) as game:
         game.goto("debug")
         game.save("base.state")
         frames = range(FIRST, LAST)

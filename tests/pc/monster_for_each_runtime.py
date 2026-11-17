@@ -40,10 +40,12 @@ modifiers and the count):
 
 Each pass writes pictures to --out/<pass>/shots (look at them). With
 --interpreter the scenarios run again with the duel effects interpreted
-(MEMORIES_DUEL_EFFECTS=interpreter).
+(MEMORIES_DUEL_EFFECTS=interpreter, on the reference build: the game with the
+MIPS interpreter, tools/pc/reference_build.py, built when it is missing, or
+--reference-executable).
 
     python3 tests/pc/monster_for_each_runtime.py [--executable PATH] [--out DIR]
-        [--interpreter] [scenarios...]
+        [--interpreter [--reference-executable PATH]] [scenarios...]
 """
 from __future__ import annotations
 
@@ -57,7 +59,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/pc"))
-from yfm_control import Game, DUEL_PHASES, FIELD_CURSOR  # noqa: E402
+from yfm_control import Game, DUEL_PHASES, EXECUTABLE, FIELD_CURSOR  # noqa: E402
+from reference_build import reference_executable  # noqa: E402
 
 MOD = "for-each-test"
 SIMON = 1
@@ -638,6 +641,8 @@ def main() -> int:
     parser.add_argument("--executable", type=Path)
     parser.add_argument("--out", type=Path, default=ROOT / "tmp/pc/monster-for-each")
     parser.add_argument("--interpreter", action="store_true", help="also run with the duel effects interpreted")
+    parser.add_argument("--reference-executable", type=Path,
+                        help="--interpreter's game, one with the MIPS interpreter (default the reference build)")
     parser.add_argument("scenarios", nargs="*", choices=[[], *SCENARIOS], default=[])
     arguments = parser.parse_args()
     out = arguments.out.resolve()
@@ -647,8 +652,12 @@ def main() -> int:
     print("cards as the game reads them:", json.dumps(manifest.get("cards"))[:300], flush=True)
     from fm_editor import disc, gamedata
     retail = gamedata.load_game(disc.find_game([ROOT / "game"]))
-    passes = [("native", {})] + [("interpreter", {"MEMORIES_DUEL_EFFECTS": "interpreter"})] * arguments.interpreter
-    runs = [run_pass(arguments.executable, out, label, env, names, retail) for label, env in passes]
+    passes = [("native", {}, arguments.executable)]
+    if arguments.interpreter:   # the interpreter is in no shipped game: the reference build's
+        passes.append(("interpreter", {"MEMORIES_DUEL_EFFECTS": "interpreter"},
+                       reference_executable(arguments.reference_executable,
+                                            subject=arguments.executable or EXECUTABLE)))
+    runs = [run_pass(executable, out, label, env, names, retail) for label, env, executable in passes]
     failed = sum(len(r.failures) for r in runs)
     for r in runs:
         print(f"{r.label}: {r.passed} passed, {len(r.failures)} failed" +

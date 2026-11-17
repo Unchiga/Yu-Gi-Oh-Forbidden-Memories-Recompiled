@@ -18,6 +18,14 @@
  *             callers must cross back to the game's (crash.c's walk)
  *   null      a write to address 0 (MEMORIES_CRASH_TEST=1, as before)
  *   spin      the game's thread spins for ever (MEMORIES_HANG_TEST=1)
+ *   overlay   a native call through a pointer into an overlay window that
+ *             holds no native function (0x80146100, inside the effect bank,
+ *             whose functions the function map leaves out): the game has no
+ *             MIPS interpreter, so it is the "no native function" report
+ *             (a reference build interprets the bytes there instead). The
+ *             fixed-address game only: the translated one reaches a guest
+ *             address through its runtime, which reports "unknown guest
+ *             function" (translated_image_backend.c)
  *   restart   the game restarts itself (the mods window's restart), and
  *             the game after it stops as "fatal" does: the monitor follows
  *             a restart
@@ -155,6 +163,12 @@ void CrashTest_Frame(void)
         }
     } else if (!strcmp(kind, "present")) {
         in_present = 1;
+#ifndef MEMORIES_TRANSLATED
+    } else if (!strcmp(kind, "overlay")) {
+        void (*volatile entry)(void) = (void (*)(void))(uintptr_t)0x80146100u;
+        entry();
+        __asm__ volatile(""); /* not a tail call: the report shows this function */
+#endif
     } else if (!strcmp(kind, "null")) {
         *(volatile int *)(uintptr_t)0 = 1;
     } else if (!strcmp(kind, "spin")) {

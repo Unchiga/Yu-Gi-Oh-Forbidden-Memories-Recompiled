@@ -37,7 +37,9 @@ Then plays it through tools/pc/yfm_control.py and takes pictures of each:
 5. at Internal 2x in a window (the OpenGL picture, with HD text), the title,
    the menu and a duel; the title's words and the notice there too (the
    port draws those over the picture);
-6. the duel again with MEMORIES_DUEL_EFFECTS=interpreter;
+6. the duel again with MEMORIES_DUEL_EFFECTS=interpreter, on the reference
+   build (the game with the MIPS interpreter: tools/pc/reference_build.py,
+   built when it is missing, or --reference-executable);
 7. without the mod, the same frames as the build given by --baseline
    (VRAM hashes from boot through the title, the menu and two turns).
 
@@ -45,6 +47,7 @@ The pictures are drawn here; nothing is kept in the repository. Shots go
 to <out>/shots, the windowed ones to <out>/shots/window.
 
     xvfb-run -a python3 tests/pc/editor_ui_runtime.py [--executable PATH] [--out DIR] [--baseline PATH]
+        [--reference-executable PATH]
 
 Needs a display for Tk (xvfb-run works) and ImageMagick's `import` for the
 window pictures.
@@ -741,6 +744,8 @@ def main():
     parser.add_argument("--out", default=str(ROOT / "tmp/pc/editor-ui"))
     parser.add_argument("--baseline", help="a build without the UI tab's game side, for the no-mod frames")
     parser.add_argument("--skip", default="", help="steps to leave out: title,duel,window,interpreter")
+    parser.add_argument("--reference-executable",
+                        help="the interpreter step's game, one with the MIPS interpreter (default the reference build)")
     args = parser.parse_args()
     os.environ.setdefault("MEMORIES_NO_MONITOR", "1")
     out = Path(args.out).resolve()
@@ -765,7 +770,10 @@ def main():
         window_shots(args.executable, out / "runs", mods, shots)
     if "interpreter" not in skip:
         print("the duel with the effects interpreted:", flush=True)
-        play_duel(args.executable, out / "runs", mods, shots, "interpreter",
+        from reference_build import reference_executable
+        reference = reference_executable(Path(args.reference_executable) if args.reference_executable else None,
+                                         subject=Path(args.executable))
+        play_duel(str(reference), out / "runs", mods, shots, "interpreter",
                   env={"MEMORIES_DUEL_EFFECTS": "interpreter"}, prefix="30")
     if args.baseline:
         print("without the mod:", flush=True)

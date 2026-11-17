@@ -117,11 +117,11 @@ STAGES = (("stance 0 slot A", False, "A", 0, 10), ("stance 0 slot B", False, "B"
 # model_module_class.h's ModelModuleClass, in its order (the C test prints the number).
 CLASSES = ("NATIVE", "RETAIL", "EMPTY", "TABLES", "CODE", "NEW", "MOD")
 CLASS_TEXT = {"NATIVE": "the disc's code, native C",
-              "RETAIL": "the disc's code, interpreted until the port has its C",
+              "RETAIL": "the disc's code the port has no C for yet, a stand-in",
               "EMPTY": "no entry, the stand-in",
-              "TABLES": "the disc's code with other tables, interpreted",
-              "CODE": "changed code, interpreted",
-              "NEW": "code no disc module has, interpreted"}
+              "TABLES": "the disc's code with other tables, MIPS code (a stand-in plays)",
+              "CODE": "changed code, MIPS code (a stand-in plays)",
+              "NEW": "code no disc module has, MIPS code (a stand-in plays)"}
 
 
 def sha(data: bytes) -> str:
@@ -193,12 +193,14 @@ def classify(image: bytes, slot: str, primary: bool, tables: Tables) -> Info:
 # --- the disc and the mod --------------------------------------------------------------
 
 class Disc:
-    """MODEL.MRG of a raw 2352-byte-sector image, as the mod's "data" leaves it."""
+    """MODEL.MRG of a raw 2352-byte-sector image, as the mod's "data" leaves it
+    (FILE and NAME: another file's, effect_migrate.py's WA_MRG.MRG)."""
+    FILE, NAME = ["DATA", "MODEL.MRG;1"], MRG
 
     def __init__(self, path: Path):
         self.path = path
         self.file = path.open("rb")
-        self.lba, self.size = self._find(["DATA", "MODEL.MRG;1"])
+        self.lba, self.size = self._find(self.FILE)
         self.records = self.size // (RECORD_SECTORS * SECTOR)
         self.replaced: bytes | None = None      # a "replace" of the whole file
         self.raw: dict[int, bytes] = {}         # sector of MODEL.MRG: a raw region's bytes
@@ -223,7 +225,7 @@ class Disc:
                         found = struct.unpack_from("<I", entry, 2)[0], struct.unpack_from("<I", entry, 10)[0]
                     at += data[at]
             if not found:
-                raise SystemExit(f"mod-migrate: {name} is not on {self.path}")
+                raise SystemExit(f"{name} is not on {self.path}")
             lba, size = found
         return lba, size
 
@@ -276,7 +278,7 @@ class Disc:
             name = str(entry.get("file", "")).upper().replace("/", "\\")
             name = ("\\" + name.lstrip("\\")).split(";")[0] if name else ""
             raw = entry.get("lba")
-            if name == MRG:
+            if name == self.NAME:
                 base = 0
             elif raw is not None:
                 base = int(str(raw), 0) - self.lba

@@ -24,7 +24,7 @@ if(BUILD_TESTING)
         set(sanitizer_args --sanitize)
     endif()
     foreach(script test_native test_guest_contracts test_arm64_mod_loader test_arm64_mod_hooks
-            test_native_call_marshalling test_direct_overlay_bridge test_libgs_sprite_guest test_macos_fonts)
+            test_direct_overlay_bridge test_libgs_sprite_guest test_macos_fonts)
         add_test(NAME pc_${script}
             COMMAND "${Python3_EXECUTABLE}" tools/pc/${script}.py ${sanitizer_args})
         set_tests_properties(pc_${script} PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"

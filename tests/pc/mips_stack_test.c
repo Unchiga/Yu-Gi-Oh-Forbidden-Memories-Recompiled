@@ -48,6 +48,7 @@ int Log_Wanted(LogChannel channel) { (void)channel; return 0; }
 int Log_Enabled(LogChannel channel) { (void)channel; return 0; }
 void Log_Printf(LogChannel channel, const char *format, ...) { (void)channel; (void)format; }
 void Crash_ReportFatal(const char *kind, const char *detail) { fprintf(stderr, "%s: %s\n", kind, detail); }
+unsigned Memories_PresentedFrames(void) { return 0; } /* mips.c: MEMORIES_MIPS_ENTRIES */
 
 enum { V0 = 2, A0 = 4, SP = 29, RA = 31 };
 #define I(op, rs, rt, imm) ((uint32_t)(op) << 26 | (uint32_t)(rs) << 21 | (uint32_t)(rt) << 16 | ((imm) & 0xffffu))

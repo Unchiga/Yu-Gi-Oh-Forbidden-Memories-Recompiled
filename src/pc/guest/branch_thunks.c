@@ -22,8 +22,8 @@
  * The contract, for the compilers' code and for mods built by build_mod.py:
  * every register is kept, the target register too (a compiler may pick a
  * callee-saved one and keep it across the call), and the stack is as it was,
- * the caller's return address on top for a call, so a native function or
- * Memories_MipsThunk starts exactly as it would from a direct call (or from
+ * the caller's return address on top for a call, so a native function (or a
+ * reference build's Memories_MipsThunk) starts exactly as it would from a direct call (or from
  * the fault handler's redirect). Flags are not kept: they are dead at an
  * indirect call or jump. Nothing is stored below the stack pointer, where the
  * Windows interrupt clock pushes while the thread is suspended.

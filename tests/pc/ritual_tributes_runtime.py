@@ -21,12 +21,13 @@ plays go through the pad as a player's do. What each checks:
 
 Each pass writes pictures to --out/<pass>/ (look at them). With
 --interpreter the scenarios run again with the duel effects interpreted
-(MEMORIES_DUEL_EFFECTS=interpreter, the disc's own MIPS): the outcome must
-be the same and nothing may crash. --editor makes the mod with the FM
+(MEMORIES_DUEL_EFFECTS=interpreter, the disc's own MIPS, on the reference
+build: tools/pc/reference_build.py, built when it is missing, or
+--reference-executable): the outcome must be the same and nothing may crash. --editor makes the mod with the FM
 Editor's model and manifest instead of writing it here.
 
     python3 tests/pc/ritual_tributes_runtime.py [--executable PATH] [--out DIR]
-        [--interpreter] [--editor] [scenarios...]
+        [--interpreter [--reference-executable PATH]] [--editor] [scenarios...]
 """
 from __future__ import annotations
 
@@ -40,7 +41,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/pc"))
-from yfm_control import Game, DUEL_PHASES  # noqa: E402
+from yfm_control import Game, DUEL_PHASES, EXECUTABLE  # noqa: E402
+from reference_build import reference_executable  # noqa: E402
 
 MOD = "ritual-tributes-test"
 SIMON = 1
@@ -457,6 +459,8 @@ def main() -> int:
     parser.add_argument("--executable", type=Path)
     parser.add_argument("--out", type=Path, default=ROOT / "tmp/pc/ritual-tributes")
     parser.add_argument("--interpreter", action="store_true", help="also run with the duel effects interpreted")
+    parser.add_argument("--reference-executable", type=Path,
+                        help="--interpreter's game, one with the MIPS interpreter (default the reference build)")
     parser.add_argument("--editor", action="store_true", help="make the mod with the FM Editor's model")
     parser.add_argument("scenarios", nargs="*", choices=[[], *SCENARIOS], default=[])
     arguments = parser.parse_args()
@@ -470,16 +474,20 @@ def main() -> int:
         shipped = (arguments.executable or ROOT / "tmp/pc/game32/memories-pc").resolve().parent / "mods/ai-hard-mode"
         shutil.rmtree(out / "mods/ai-hard-mode", ignore_errors=True)
         shutil.copytree(shipped, out / "mods/ai-hard-mode")
-    passes = [("", {})] + [("interpreter-", {"MEMORIES_DUEL_EFFECTS": "interpreter"})] * arguments.interpreter
+    passes = [("", {}, arguments.executable)]
+    if arguments.interpreter:   # the interpreter is in no shipped game: the reference build's
+        passes.append(("interpreter-", {"MEMORIES_DUEL_EFFECTS": "interpreter"},
+                       reference_executable(arguments.reference_executable,
+                                            subject=arguments.executable or EXECUTABLE)))
     runs = []
-    for prefix, env in passes:
+    for prefix, env, executable in passes:
         plain = [name for name in names if name not in SETTINGS]
         if plain:
-            runs.append(run_pass(arguments.executable, out, prefix + "native" if not prefix else "interpreter",
+            runs.append(run_pass(executable, out, prefix + "native" if not prefix else "interpreter",
                                  env, plain))
         for name in names:
             if name in SETTINGS:
-                runs.append(run_pass(arguments.executable, out, prefix + name, env, [name], SETTINGS[name]))
+                runs.append(run_pass(executable, out, prefix + name, env, [name], SETTINGS[name]))
     failed = sum(len(r.failures) for r in runs)
     for r in runs:
         print(f"{r.label}: {r.passed} passed, {len(r.failures)} failed" +

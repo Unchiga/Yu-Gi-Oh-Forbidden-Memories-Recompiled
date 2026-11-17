@@ -50,6 +50,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -372,6 +373,9 @@ def play_scripted(replay: Replay, executable: Path, out: Path, more_env: dict[st
     yfm_control.EXTRA_ENV = dict(more_env or {})   # the scenario's games get --env too
     try:
         scenario.run(executable, out)
+    except unittest.SkipTest as reason:   # what it needs is not here (a reference build): said, not failed
+        report(f"replay: {replay.name}: skipped: {reason}")
+        return True
     except AssertionError as failure:
         report(f"replay: {replay.name}: FAILED: {failure}")
         return False

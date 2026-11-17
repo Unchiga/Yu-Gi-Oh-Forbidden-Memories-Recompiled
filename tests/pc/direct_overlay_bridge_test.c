@@ -1,6 +1,5 @@
 #include "pc/guest/image.h"
 #include "pc/guest/translated_runtime.h"
-#include "pc/guest/mips.h"
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -21,10 +20,7 @@ const MemoriesGuestFunction Memories_FunctionMap[]={
  {0x8016AA6C,name_entry,0x80168000,0x15},
  {0x8016AA6C,alternate_entry,0x80168000,0x14}};
 const unsigned Memories_FunctionMapCount=4;
-uint32_t Memories_MipsThunkTarget;
-/* No interpreter allowed: unknown bank must resolve NULL, never wrong native. */
-int Memories_MipsInOverlay(uint32_t address) { (void)address; return 0; }
-uint32_t Memories_MipsThunk(uint32_t a,uint32_t b,uint32_t c,uint32_t d,uint32_t e,uint32_t f,uint32_t g,uint32_t h,uint32_t i,uint32_t j,uint32_t k,uint32_t l) {(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h;(void)i;(void)j;(void)k;(void)l;abort();}
+/* No interpreter in the translated game: an unknown bank must resolve NULL, never a wrong native. */
 int main(void) {
  MemoriesMemory *memory=calloc(1,sizeof(*memory));assert(memory && !GuestRuntime_Bind(memory));
  uint32_t *bank=Memories_Resolve(memory,0x80168000,4,4);assert(bank);

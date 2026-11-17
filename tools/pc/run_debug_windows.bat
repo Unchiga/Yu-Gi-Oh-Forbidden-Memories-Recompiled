@@ -16,7 +16,7 @@ move /y tmp\pc\crash-*.* tmp\pc\debug\previous\ >nul 2>&1
 set MEMORIES_AUTOSAVE=30
 set MEMORIES_AUTOSAVE_DIR=tmp/pc/debug/states
 set MEMORIES_LOG=tmp/pc/debug/trace.log
-set MEMORIES_TRACE=frames,state,memcard,model,duel_effects,mips_printf,window,audio,clock
+set MEMORIES_TRACE=frames,state,memcard,model,duel_effects,window,audio,clock
 echo ==== %date% %time% ==== >> tmp\pc\debug\trace.log
 echo Playing with problem reporting on. Reports go to "%cd%\tmp\pc\debug" and tmp\pc.
 for /f %%t in ('python -c "import time; print(int(time.time()))"') do set STARTED=%%t

@@ -42,7 +42,6 @@ from guest_build import (
     maps,
 )
 from llvm_guest import TranslationError, inspect, normalize, toolchain, translate
-from native_call_marshalling import emit_native_calls
 
 SOFT_GPU = "src/pc/render/soft_gpu.c"
 # Renderer caches and decoded PNGs never enter 32-bit guest storage.
@@ -542,7 +541,9 @@ def generate_function_tables(
         + "};\n"
     )
     tables += f"const unsigned Memories_FunctionMapCount = {len(mapped)};\n"
-    tables += emit_native_calls(mapped, raw_text.values(), stubs)
+    # No GuestRuntime_InvokeNative: its typed native calls were the MIPS
+    # interpreter's way out, and the translated game has no interpreter
+    # (notes/pc-build.md, "The reference build").
     shared = [(n, i, b) for n, _, i, b in MODULES if b and n not in GATED_MODULES]
     tables += (
         "const MemoriesModule Memories_Modules[] = {\n"

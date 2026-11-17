@@ -128,6 +128,7 @@ editors write, is fine):
 | `packs`, `pack_shop` | card packs sold for starchips on the Password screen, and the shop's rules, below |
 | `title`, `menu` | the title screen, and its two menus: their entries, buttons of the mod's own and their background, below |
 | `text`, `font` | a translation of the game's text, and fonts for letters it has none of, below |
+| `duel_effects` | `"own data"`: the mod changes the duel effect bank's tables only and asks for the bank's C to run them, unchecked, at its own risk ([A mod's duel effect bank](#a-mods-duel-effect-bank)); any other value is a warning, and the bank stays checked |
 
 `version`, `author` and `description` are displayed in the manager. Version
 bounds in `requires` are checked before activation. API 3 also supports
@@ -249,17 +250,24 @@ disc's map after loading, even with the mod on, until the game enters the map
 again (`Main_RunCampaignMap` reads the overworld package each time it does).
 
 The duel-effect bank is the other way round: it runs as native C only while
-its bytes are the disc's. A disc patch that changes it is seen when the
-package is read, and the delivered MIPS then runs in the interpreter, patch
-included (`notes/pc-build.md`). The check happens at that read only, so a
-code mod that writes into the bank's memory itself, after it is loaded, is
-not seen and the native C still runs; such a mod patches the disc instead,
-or sets `MEMORIES_DUEL_EFFECTS=interpreter` while it is developed. The
-credits follow the same rule: the ending's 16-sector credits module at
-`0x80180000` runs as native C only while its bytes are the disc's, a disc
-patch of it is seen when it is read and then interpreted, and a code mod
-that writes into its memory after the load is not seen; such a mod patches
-the disc or sets `MEMORIES_CREDITS=interpreter`.
+its code is the disc's, and its tables too unless the mod says otherwise
+([A mod's duel effect bank](#a-mods-duel-effect-bank), below). A disc patch
+that changes it is seen when the package is read, and the game has no MIPS
+interpreter (it is gone from the shipped game; a reference build for tests
+keeps it: `notes/pc-build.md`, "The reference build"), so the bank's effects
+then complete at once and unseen (the duel goes on as the effect would have
+left it: Raigeki still destroys every monster, Swords of Revealing Light
+still holds for its turns), and the game says so once. The check happens at
+that read only, so a code mod that writes
+into the bank's memory itself, after it is loaded, is not seen and the
+native C still runs. The credits follow the same rule: the ending's
+16-sector credits module at `0x80180000` runs as native C only while its
+bytes are the disc's; a disc patch of it is seen when it is read, and the
+credits are then skipped (said once), and a code mod that writes into its
+memory after the load is not seen. In a reference build both are
+interpreted instead (`MEMORIES_DUEL_EFFECTS=interpreter` and
+`MEMORIES_CREDITS=interpreter` force that there even for the disc's bytes;
+the game says it has no interpreter and ignores them).
 
 Named patches may address the expanded tail. They are checked against the
 final selected replacement; a shorter replacement still allows patches
@@ -288,6 +296,60 @@ Overrides stand in for the disc for every reader in the port: the drive
 model, the bulk reads a mod makes, and the file lookup itself. Nothing on the
 real disc image is touched, and removing the mod puts the game back exactly
 as it was.
+
+### A mod's duel effect bank
+
+`WA_MRG.MRG` holds the duel effect bank (the code that draws the duel's
+effects: Raigeki's bolts, the swords, the explosions) seven times, one copy
+a scene. Its bytes are code (the effects' functions, a jump table, and two
+messages the bank prints) and data (each effect's tables: sizes, colours,
+positions, timings). The game runs the bank as the port's C, which reads the
+tables where the disc put them, so it can run a mod's tables, but nothing
+in it checks them, and the game cannot tell a table changed on purpose from
+a patch that went wrong:
+
+- **Tables only, opted in.** A mod whose `mod.json` says
+  `"duel_effects": "own data"` gets its tables run by the bank's C, at its
+  own risk: a value the C divides by or indexes with can stop the game. The
+  game says once, on stderr, that the mod's data is unchecked, naming the
+  mod. Every applied mod whose `data` reaches a copy of the bank (a patch or
+  a raw region inside one, or a replacement of the whole `WA_MRG.MRG`) must
+  say so: one mod's opt-in never runs another mod's tables.
+- **Tables only, not opted in.** The effects complete at once, unseen, and
+  the game says once, naming the mods that change the tables without the
+  opt-in, how to opt in. A disc whose tables differ from the US disc's with
+  no mod changing them (a patched disc) gets the same, said so.
+- **Rewritten at setup.** A few of the bank's variables (the request's
+  position and flags, the ordering table, the texture words) are written
+  by its dispatcher before every effect: a change there has no effect.
+  `effect-migrate` labels them so.
+- **Code changed.** The effects complete at once, unseen, said once. A mod
+  that changes the bank's code has no way to run it as C yet: that needs a
+  mod API entry for the bank's code, as API 29 is for the attack modules
+  (a later release).
+
+You do not have to work out which one a mod is.
+`model_gate.py effect-migrate` reads the mod's `data`, compares each copy of
+the bank it changes with the disc's and names every changed byte: the
+function or table, code or data, the effect ids that use it and the game's
+code that starts them (`config/pc/duel_effect_bank.csv` and
+`duel_effect_ids.csv`, made from the decomp):
+
+```
+python tools/pc/model_gate.py effect-migrate mods/my-mod --disc game/rpg-yfm.bin
+```
+
+(from an SDK: `python tools/model_gate.py effect-migrate ...`). For a mod that
+changes tables only, it writes the opt-in into its `mod.json` (unless
+`--report-only`) and prints the commands that check it: the bank's C with
+the mod's tables against the MIPS interpreter running the mod's bank,
+`tools/pc/test_duel_effects.py --mod`, frame for frame, effect call for
+effect call, and the duel's life points and cards after each scenario. That
+needs a reference build (`build_game32.py --reference`; an SDK names one with
+`--reference-executable`). The scenarios it names are the ones that play the
+changed effects; an effect no scenario plays is named, to be checked in a
+duel. For a mod that changes code it names the functions and exits 1,
+writing nothing.
 
 ## Named assets: an image and the name of what it replaces
 
@@ -752,9 +814,9 @@ A record is read in seventeen stages (`func_80056D7C`,
 
 The control modules are MIPS code built for their slot's addresses
 (`0x8013A000`/`0x8013B000`, `0x8017A000`/`0x8017B000`). The port runs the
-disc's as the decomp's C (but for a few variant shapes still being ported),
-and anything else in its interpreter
-(`src/pc/guest/mips.c`), which is going away ([Attack code: C, not
+disc's as the decomp's C, and a mod's own MIPS not at all: the MIPS
+interpreter is gone from the shipped game (a reference build for tests
+keeps it), so the stand-in's sparks play in its place ([Attack code: C, not
 MIPS](#attack-code-c-not-mips)). A disc record is a starting point. Card C's (a monster: cards 301-350, 651-700 and 721 have
 none) is record number C - 1, from which take 50 when C - 1 is 350 or more,
 another 50 when it is 700 or more and another 1 when it is 721 or more; the
@@ -834,17 +896,23 @@ A save state taken with a bigger model in a battle slot carries its arena
 
 ### Attack code: C, not MIPS
 
-**The MIPS interpreter is going away.** A record's control modules (the
-table above: four variant modules and two primaries) are PlayStation code.
-The port runs the disc's modules as the decomp's C, compiled into the
-game: the variant modules (the attacks), but for a few shapes still being
-ported, and the primaries (`return 2`, or one of the five shapes of the ten
-records that have code). After that, what the interpreter runs is a mod's
-own: a module the mod changed or brought.
-A later version then removes the interpreter. After that, a battle using such a module falls back to the
-stand-in's sparks instead of the attack the mod wrote. No version is set
-for it yet, and the warning below appears for as long as a mod needs the
-interpreter.
+**The MIPS interpreter is gone from the shipped game** (a reference build
+for tests keeps it: `notes/pc-build.md`, "The reference build"). It also
+ran a changed duel effect bank: what a mod that changes the bank gets now,
+and the opt-in for one that changes only its tables, are in [A mod's duel
+effect bank](#a-mods-duel-effect-bank). A record's
+control modules (the table above: four variant modules and two primaries)
+are PlayStation code. The port runs the disc's modules as the decomp's C,
+compiled into the game: every variant module (the attacks) and the
+primaries (`return 2`, or one of the five shapes of the ten records that
+have code). A mod's own module (one the mod changed or brought) has no C
+unless the mod gives it: a battle using it plays the stand-in's sparks
+instead of the attack the mod wrote, and the game says so, once per mod and
+module, on stderr: `mod <id>: model variant module N (slot A) is MIPS code
+no native C covers, and this game has no MIPS interpreter: the stand-in (the
+spark burst) plays in its place. Move it to C with the SDK's
+tools/model_gate.py mod-migrate`. The warning below appears for as long as a
+mod has such modules.
 
 **What the game says.** When a mod is applied, the game reads every
 control module it brings or changes:
@@ -857,19 +925,20 @@ It compares each with the disc's modules (`config/pc/model_gate.csv` and
 their own C ([below](#your-own-c-for-a-module-api-29)). This runs once
 every mod has started, and again whenever a mod is applied or removed, so a
 model pack and the code mod with C for its models count together in any
-order. A mod with modules the interpreter would run shows one warning in
+order. A mod with modules that are MIPS code shows one warning in
 the Mods window, under its status, such as `3 attack modules in model
-pikachu, MODEL.MRG card 1, 40 are MIPS code, which runs on an interpreter
-that a later version removes`; the line also says how many a code mod's C
-runs (`4 attack modules run native C from mod pikachu-c`, not a warning).
-`MEMORIES_TRACE=mods` logs each of those modules and what it is:
-- `the disc's code with other tables, interpreted, bytes 0xB10-0xB60`: the
+pikachu, MODEL.MRG card 1, 40 are MIPS code, which this game has no
+interpreter for: a stand-in plays in their place until the mod moves them to
+C (sdk/tools/model_gate.py mod-migrate; ...)`; the line also says how many a
+code mod's C runs (`4 attack modules run native C from mod pikachu-c`, not a
+warning). `MEMORIES_TRACE=mods` logs each of those modules and what it is:
+- `the disc's code with other tables, MIPS code (a stand-in plays), bytes 0xB10-0xB60`: the
   code is the disc's, and the mod changed the data the decomp's C reads
   there (the tables it indexes by the attack, or divides by). Data past
   the second offset is the record's own, and the C reads it from wherever
   the mod put it.
-- `changed code, interpreted`: the code of a disc module, changed.
-- `code no disc module has, interpreted`: a first word no disc module of
+- `changed code, MIPS code (a stand-in plays)`: the code of a disc module, changed.
+- `code no disc module has, MIPS code (a stand-in plays)`: a first word no disc module of
   that slot has.
 - `native C from mod <id>`: a code mod's row covers it (not a warning).
 
@@ -878,14 +947,14 @@ changes, so a mod that patches a record another mod changed is told of
 that record's modules too. The battle logs the same for the module
 in each slot when it first runs.
 It also logs an attack whose command (a word of the record) picks an entry
-past the ones the disc's table has: the interpreter runs that attack even
+past the ones the disc's table has: the stand-in plays that attack even
 with the disc's code, and loading does not see it.
 
 **What does not warn.**
 - A module that is the disc's, unchanged.
-- A module with the disc's code of a shape the port still interprets,
+- A module with the disc's code of a shape the port has no C for yet,
   whatever data follows that code: it is the port's to finish, not the
-  mod's.
+  mod's (every disc shape has its C now).
 - A module changed only past its span. The decomp's C runs it, reading
   the mod's data.
 - A module with no entry (its second word 0, as in a model file shorter
@@ -905,7 +974,7 @@ with the disc's code, and loading does not see it.
 
 A code mod can give the game native C for a model's control module. The
 game then runs that C, not the module's MIPS, wherever the module's bytes
-hash to the row the mod registered. The C replaces the interpreter for that
+hash to the row the mod registered. The C replaces the stand-in for that
 module, so the warning above goes away.
 
 **The row.** In `MemoriesModInit`, fill a `MemoriesModelModule`
@@ -944,8 +1013,8 @@ covers, as the disc's rows do (`config/pc/model_gate.csv`, `command_table`):
   to what is stored there (4 bytes for a pointer, as MIPS's `sw` stores it).
 
 Any other call does not run this C: it gets the port's own handling of the
-module (today the interpreter; the sparks stand-in once the interpreter is
-removed). An attack your C set up finishes on your C: its updates run your C
+module (the sparks stand-in; the interpreter, in a reference build). An
+attack your C set up finishes on your C: its updates run your C
 whatever `field` holds, even if the mod is turned off before its last
 update. An attack something else set up finishes on what set it up, even if
 your mod is turned on during it. A loaded state ends that claim: the
@@ -958,8 +1027,8 @@ safe to run (below).
 2. the disc's own rows (and a primary that is `return 2`, which the game
    answers itself);
 3. the other mods' rows;
-4. the port's own handling of the module (today the interpreter; the sparks
-   stand-in once the interpreter is removed).
+4. the port's own handling of the module (the sparks stand-in; the
+   interpreter, in a reference build).
 
 Unknown `flags` bits are refused, as are more than 16,384 rows registered
 by all mods together (`MODEL_ROWS_MAX`; a `SLOT_BOTH` row counts twice).
@@ -1002,7 +1071,7 @@ they are exported under (`exports.txt` beside the SDK). In a mod, `rand` and
 `srand` are the mods' own random numbers (`mod_libc.c`). The game's, which
 a module's MIPS calls, are `Memories_Rand` and `Memories_Srand`. The
 libgte functions `ccos` and `csin` are exported as `Psx_ccos` and
-`Psx_csin`. Frames match the interpreter's only with the game's. Build the
+`Psx_csin`. Frames match the interpreter's (a reference build's) only with the game's. Build the
 port's C unoptimized, as the game does (`-O0 -fwrapv`): `#pragma clang
 optimize off` before it (GCC: `#pragma GCC optimize ("O0")`), since
 `build_mod.py` compiles a mod at `-O2`. The decomp's C keeps some of the
@@ -1015,9 +1084,9 @@ a mod this way, with a prefix header.
 **A module that is only C.** The game still needs the module in the record.
 It needs your identifier at +0 and a nonzero word at +4: for a module whose
 word at +4 is 0 the game runs the sparks stand-in and never looks at a
-mod's row. What follows is what the game runs with the mod off (today
-the interpreter; once it is removed, the sparks stand-in). Make it MIPS
-that is safe to run:
+mod's row. What follows is what a reference build runs with the mod off
+(the interpreter; the game plays the sparks stand-in). Make it MIPS that is
+safe to run:
 - **A variant** must end its attack: return 0 from the setup, 3 from an
   update to start the defender's dying animation, then 2. A variant that
   only returns 2 (`jr ra; li v0, 2`) never ends its attack, and the battle
@@ -1039,8 +1108,11 @@ the logs tell yours apart.
   the port's own handling run as without the mods' C. Use it to tell your C from
   your data.
 - `tools/pc/model_oracle.py --mod <your mod's folder>` runs battles with
-  your mod against the interpreter, frame for frame. It checks that
-  `mod:<id>` ran where your rows cover the record (notes/pc-build.md).
+  your mod against the interpreter, frame for frame, on a reference build
+  (the game with the MIPS interpreter, which no shipped game has). It checks
+  that `mod:<id>` ran where your rows cover the record (notes/pc-build.md).
+  In a checkout it builds the reference when it is missing; from an SDK,
+  name one with `--reference-executable PATH` (below).
 
 **Versions.** Set `"min_api": 29` in `mod.json` and check
 `host->api >= 29` before calling these entries. If the models are in a data
@@ -1183,8 +1255,14 @@ Four steps, here for a mod in `mods/my-mod`:
    (it loads the `x86_64-windows` object and registers nothing from an i386
    one), so build every target. In a checkout the oracle runs the 32-bit game
    it builds, and the report names `--target i386`.
-4. **Check it against the interpreter.** The report ends with the command
-   for your mod. For records of `MODEL.MRG` it is like:
+4. **Check it against the interpreter.** This needs a reference build: the
+   game with the MIPS interpreter, which no shipped game has
+   (`tools/pc/build_game32.py --reference` in a checkout, which the oracle
+   runs itself when it is missing). From an SDK, add `--reference-executable
+   PATH` naming one; without it the oracle stops and says the game beside
+   the SDK has no interpreter. **TODO: where modders get a reference build is
+   not decided yet.** The report ends with the command for your mod. For
+   records of `MODEL.MRG` it is like:
 
    ```
    python tools/pc/model_oracle.py --disc game/rpg-yfm.bin --mod mods/my-mod --records 83

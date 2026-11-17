@@ -5,8 +5,10 @@ The macOS target runs the game's existing 32-bit PS1 address model in a
 native host pointers remain 64-bit. The runtime registers PS1 address ranges independently of their host
 allocations and resolves guest data accesses into native memory. It also resolves
 indirect guest calls through a function map, so a callback stored in guest
-memory can enter translated game code or the MIPS interpreter for a loaded
-overlay.
+memory can enter translated game code; one into an overlay window with no
+native function is the runtime's "unknown guest function" report (the
+translated game has no MIPS interpreter: notes/pc-build.md, "The reference
+build").
 
 Target configuration records platform, CPU architecture, host ABI and guest
 memory model separately. Upstream's existing Android ARM64 target retains its
@@ -90,7 +92,8 @@ resolver retains its mapping-specific checks. Endian helpers and resident-functi
 lookup also share their implementations across the backends. Indirect function lookups
 use the generated map's address ordering to search logarithmically, then check
 every equal-address candidate's current overlay residency. No callable target
-is cached across a module switch; the interpreter fallback is unchanged.
+is cached across a module switch; an address no resident module has is the
+"unknown guest function" report, with no interpreter to fall back to.
 
 Texture-pack tables, resampled pixels and decoded PNG caches are exclusively
 host data with LP64 pointers. Their allocations retain native libc ownership
@@ -228,7 +231,7 @@ generated output under ignored paths.
 | Build and Mach-O linkage | `python3 tools/pc/build.py --target macos`<br>`python3 tools/pc/test_macos_linkage.py --binary tmp/pc/macos/memories-arm64` | Build the ARM64 executable; inspect its architecture, linked libraries, and font rendering. |
 | Guest storage and narrow stores | `python3 tools/pc/test_guest_storage_layout.py`<br>`python3 tools/pc/test_guest_store_canary.py` | Check guest storage layouts and 8/16-bit stores through `__ptr32` at `-O0` and `-O2`. |
 | Real guest functions, without a disc | `python3 tools/pc/test_guest_contracts.py`<br>`python3 tools/pc/test_guest_contracts.py --sanitize` | Recompile selected current game/SDK functions with pinned LLVM, then execute storage, callback, ritual/trap and variadic contracts. No existing game IR is read. Use `--case` for one contract. |
-| LLVM translation and call bridges | `python3 tools/pc/test_llvm_guest.py`<br>`python3 tools/pc/test_translated_ir.py --optimize`<br>`python3 tools/pc/test_native_call_marshalling.py`<br>`python3 tools/pc/test_direct_overlay_bridge.py` | Check IR contracts, native-call ABI handling, and direct overlay imports. |
+| LLVM translation and call bridges | `python3 tools/pc/test_llvm_guest.py`<br>`python3 tools/pc/test_translated_ir.py --optimize`<br>`python3 tools/pc/test_direct_overlay_bridge.py` | Check IR contracts and direct overlay imports. |
 | Exact console output | `make clean`<br>`MAKEFLAGS=-j"$(sysctl -n hw.ncpu)" make match`<br>`MAKEFLAGS=-j"$(sysctl -n hw.ncpu)" make match-overlays` | Compare the retail resident and configured overlay modules byte for byte. Requires all ignored retail inputs and the repository's matching toolchain. Run from the root, with the targets sequentially. |
 | Deterministic menu replay | `python3 tools/pc/replay.py play tests/pc/replays/menus --check --executable tmp/pc/macos/memories-arm64` | Replay the existing virtual-clock route through title, options, deck, Library, Password, map, and Free Duel menus. |
 | Local replay repeatability | `python3 tools/pc/test_replay_determinism.py --replay tests/pc/replays/menus --binary tmp/pc/macos/memories-arm64 --out tmp/pc/replay-determinism` | Play the same recorded input in two fresh processes and compare every H hash and the E end marker. |

@@ -21,7 +21,10 @@ jobs:
           libpng-dev libpng-dev:i386 gcc-multilib lld xvfb xauth python3-tk fonts-dejavu-core fontconfig
       - name: LIBGS packet priority regression
         run: python tools/pc/test_libgs_priority.py
-      - run: cmake -S . -B tmp/pc -DBUILD_TESTING=ON
+      # MEMORIES_REFERENCE: the MIPS interpreter's own tests (pc_mips_varargs,
+      # pc_mips_stack), the reference build's (no shipped game has it); two
+      # small 32-bit executables, no disc.
+      - run: cmake -S . -B tmp/pc -DBUILD_TESTING=ON -DMEMORIES_REFERENCE=ON
       - run: cmake --build tmp/pc --config Release
       - name: Tests including the editor GUI
         run: |
@@ -71,7 +74,7 @@ jobs:
           python -m pip install --quiet ninja
       - run: '[ -f tmp/pc/win32-deps/lib/libpng16.a ] || python tools/pc/build_win32_deps.py'
       - run: >-
-          cmake -S . -B tmp/pc/tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B tmp/pc/tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DMEMORIES_REFERENCE=ON
           -DCMAKE_C_COMPILER=i686-w64-mingw32-clang
           -DPNG_LIBRARY=$PWD/tmp/pc/win32-deps/lib/libpng16.a -DPNG_PNG_INCLUDE_DIR=$PWD/tmp/pc/win32-deps/include
           -DZLIB_LIBRARY=$PWD/tmp/pc/win32-deps/lib/libzs.a -DZLIB_INCLUDE_DIR=$PWD/tmp/pc/win32-deps/include
@@ -104,7 +107,6 @@ jobs:
           python tools/pc/test_llvm_guest.py
           python tools/pc/test_translated_ir.py --case ir
           python tools/pc/test_translated_ir.py --case ir --optimize
-          python tools/pc/test_native_call_marshalling.py
           python tools/pc/test_direct_overlay_bridge.py
           python tools/pc/test_ps1_layouts.py
           python tools/pc/test_guest_storage_layout.py
@@ -127,7 +129,6 @@ jobs:
           python tools/pc/test_arm64_mod_loader.py --sanitize
           python tools/pc/test_macos_fonts.py --sanitize
           python tools/pc/test_translated_ir.py --case ir --optimize --sanitize
-          python tools/pc/test_native_call_marshalling.py --sanitize
           python tools/pc/test_direct_overlay_bridge.py --sanitize
           python tools/pc/test_libgs_sprite_guest.py --sanitize
       - name: Source contracts
@@ -139,6 +140,6 @@ jobs:
       - run: >-
           sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install --yes --no-install-recommends
           libpng-dev libpng-dev:i386 gcc-multilib lld
-      - run: cmake -S . -B tmp/pc -DMEMORIES_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
+      - run: cmake -S . -B tmp/pc -DMEMORIES_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug -DMEMORIES_REFERENCE=ON
       - run: cmake --build tmp/pc
       - run: python tools/pc/test_path_layout.py --build tmp/pc

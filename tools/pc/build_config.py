@@ -172,8 +172,18 @@ def game_sources():
     return groups
 
 
-def native_sources(target, backend="sdl"):
-    """Select native C and assembly from a complete target descriptor."""
+INTERPRETER = "src/pc/guest/mips.c"
+
+
+def native_sources(target, backend="sdl", reference=False):
+    """Select native C and assembly from a complete target descriptor.
+
+    The MIPS interpreter (INTERPRETER) is in no game a target ships: only a
+    reference build (`reference`, build_game32.py --reference, which also
+    defines MEMORIES_REFERENCE) has it, for the tests and the oracle that
+    compare the port's C with the disc's MIPS (notes/pc-build.md, "The
+    reference build"). A fixed-address desktop target only: the translated
+    game (macOS, Android arm64) has no reference build."""
     if not isinstance(target, dict):
         raise ValueError("A complete PC target descriptor is required")
     architecture = target.get("guest_assembly")
@@ -188,6 +198,8 @@ def native_sources(target, backend="sdl"):
         )
     if backend is not None and backend not in BACKENDS:
         raise ValueError("Unsupported PC backend: " + str(backend))
+    if reference and (memory_model != "fixed-32" or target.get("platform") not in {"linux", "windows"}):
+        raise ValueError("A reference build (the MIPS interpreter) is a Windows or Linux build only")
 
     patterns = [
         "guest/*.c",
@@ -249,6 +261,8 @@ def native_sources(target, backend="sdl"):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/pc/guest").glob("translated*.S")
         )
+    if not reference:
+        sources.discard(INTERPRETER)
     return sorted(sources)
 
 

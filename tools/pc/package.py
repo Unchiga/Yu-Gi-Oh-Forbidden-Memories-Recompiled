@@ -175,6 +175,12 @@ def strip(executable):
         import build_win32_deps
         build_win32_deps.use_toolchain()
     subprocess.run(["llvm-strip", "--strip-all", executable], check=True)
+    from pe_layout import pe_layout_gaps      # beside this file (sys.path above)
+    with open(executable, "rb") as handle:
+        gaps = pe_layout_gaps(handle.read())
+    if gaps:
+        sys.exit(f"package: {executable} has a hole in its image after the strip, which Windows will not load "
+                 f"(not a valid Win32 application): {'; '.join(gaps)}")
     set_pe_checksum(executable)
 
 
@@ -381,6 +387,12 @@ def stage(system, label, exports=None, guest_ir=None):
     os.makedirs(os.path.join(folder, "game"))
     for name in [executable, "buildid", "commit"] + extras:
         shutil.copy2(os.path.join(build_dir, name), folder)
+    # Never a reference build (the MIPS interpreter in, for tests only:
+    # build_game32.py --reference). test_package.py checks the archive too.
+    with open(os.path.join(folder, executable), "rb") as handle:
+        if b"MIPS overlay" in handle.read():
+            sys.exit(f"package: {os.path.join(build_dir, executable)} has the MIPS interpreter (a reference build); "
+                     "build the game without --reference; nothing was packed")
     if system.startswith("windows"):
         strip(os.path.join(folder, executable))
     for name in ("mods", "sdk", "languages"):

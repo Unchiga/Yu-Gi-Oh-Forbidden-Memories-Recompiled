@@ -185,3 +185,26 @@ accept v0.2.0 function Model_GetViewMetricsBuffer returns ModelViewMetrics * (th
 accept v0.3.0 record ModelTintColor names each byte twice (b0/r, b1/g, b2/b, b3/blend_mode); layout unchanged
 accept v0.3.0 record ModelTintRequest holds ModelTintColor, whose bytes have two names; layout unchanged
 accept v0.3.0 function Model_GetViewMetricsBuffer returns ModelViewMetrics * (the same address) where it returned void *
+
+# The MIPS interpreter left the shipped game (notes/pc-build.md, "The
+# reference build"; a reference build for tests keeps it): the four functions
+# and the variable of it that v0.1.2, v0.2.0 and v0.3.0 lent are lent no more. They were
+# the game's own way into the interpreter (the model modules, the effect bank,
+# the credits and the guest-call fault handler), never a mod's: no shipped mod
+# and no baseline release's mod imports any of them (their objects' undefined
+# symbols), and no mod source in this tree names one.
+accept v0.1.2 export Memories_MipsCall was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.1.2 export Memories_MipsInOverlay was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.1.2 export Memories_MipsThunk was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.1.2 export Memories_MipsThunkTarget was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.1.2 export Memories_MipsTry was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.2.0 export Memories_MipsCall was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.2.0 export Memories_MipsInOverlay was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.2.0 export Memories_MipsThunk was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.2.0 export Memories_MipsThunkTarget was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.2.0 export Memories_MipsTry was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.3.0 export Memories_MipsCall was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.3.0 export Memories_MipsInOverlay was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.3.0 export Memories_MipsThunk was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.3.0 export Memories_MipsThunkTarget was the MIPS interpreter's, which no shipped game has; no mod imports it
+accept v0.3.0 export Memories_MipsTry was the MIPS interpreter's, which no shipped game has; no mod imports it

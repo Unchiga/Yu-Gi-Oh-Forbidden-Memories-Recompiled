@@ -128,8 +128,8 @@ ModelModuleInfo ModelModule_Classify(const void *image, int slot, int primary)
         return info;
     }
     /* The shape's code with other bytes after it: a native shape's tables,
-     * which its C reads (the mod's), or the data of a shape the port still
-     * interprets whatever its data (the port's). */
+     * which its C reads (the mod's), or the data of a shape the port has no
+     * C for, whatever its data (the port's). */
     for (const RetailRow *row = retail_rows; row->sha256; row++) {
         if (row->kind == kind && row->slot == slot && row->identifier == info.identifier &&
             hex_equal(digest_of(&cache, row->size), row->sha256)) {
@@ -157,11 +157,11 @@ const char *ModelModule_ClassText(ModelModuleClass kind)
 {
     switch (kind) {
     case MODEL_MODULE_NATIVE: return "the disc's code, native C";
-    case MODEL_MODULE_RETAIL: return "the disc's code, interpreted until the port has its C";
+    case MODEL_MODULE_RETAIL: return "the disc's code the port has no C for yet, a stand-in";
     case MODEL_MODULE_EMPTY: return "no entry, the stand-in";
-    case MODEL_MODULE_TABLES: return "the disc's code with other tables, interpreted";
-    case MODEL_MODULE_CODE: return "changed code, interpreted";
-    case MODEL_MODULE_NEW: return "code no disc module has, interpreted";
+    case MODEL_MODULE_TABLES: return "the disc's code with other tables, MIPS code (a stand-in plays)";
+    case MODEL_MODULE_CODE: return "changed code, MIPS code (a stand-in plays)";
+    case MODEL_MODULE_NEW: return "code no disc module has, MIPS code (a stand-in plays)";
     case MODEL_MODULE_MOD: return "native C from a code mod";
     }
     return "?";
@@ -180,7 +180,7 @@ int ModelModule_DiscShape(int primary, int slot, uint32_t identifier, uint32_t s
 }
 
 int ModelModule_StagesMips(const unsigned char *stages, char *detail, size_t size, int *mod_native,
-                           const char **mod_owner)
+                           const char **mod_owner, uint32_t *identifiers)
 {
     static const char *const names[6] = {"stance 0 slot A", "stance 0 slot B", "stance 1 slot A",
                                          "stance 1 slot B", "primary slot A", "primary slot B"};
@@ -204,6 +204,7 @@ int ModelModule_StagesMips(const unsigned char *stages, char *detail, size_t siz
             continue;
         }
         if (!ModelModule_IsModsMips(info.kind)) continue;
+        if (identifiers) identifiers[count] = info.identifier;
         count++;
         if (detail && length < size) {
             int wrote;

@@ -11,6 +11,10 @@ if(WIN32)
 endif()
 include(CTest)
 option(MEMORIES_SANITIZERS "Enable host address/undefined behavior checks" OFF)
+# The MIPS interpreter (src/pc/guest/mips.c) is in no shipped game, only in the
+# reference build (tools/pc/build_game32.py --reference): its own tests build
+# only when asked for (notes/pc-build.md, "The reference build").
+option(MEMORIES_REFERENCE "Build the MIPS interpreter's tests (the reference build's)" OFF)
 if(APPLE)
     include(tools/pc/cmake/macos.cmake)
     return()
@@ -485,12 +489,13 @@ if(BUILD_TESTING)
     endif()
     # The MIPS interpreter's call into a native function whose argument list
     # outruns the words it forwards (Model_QueueTintRequestForParts' parts).
-    # Guest addresses are 32-bit words: a 32-bit build only.
-    if(NOT MSVC AND (CMAKE_SIZEOF_VOID_P EQUAL 4 OR NOT WIN32))
+    # Guest addresses are 32-bit words: a 32-bit build only. The reference
+    # build's alone (MEMORIES_REFERENCE): no shipped game has the interpreter.
+    if(MEMORIES_REFERENCE AND NOT MSVC AND (CMAKE_SIZEOF_VOID_P EQUAL 4 OR NOT WIN32))
         add_executable(memories_mips_varargs_test tests/pc/mips_varargs_test.c src/pc/guest/mips.c
-            src/pc/guest/state_io.c src/game/func_80058838.c)
+            src/pc/guest/state_io.c src/game/func_80058838.c src/pc/compat/fs.c)
         target_include_directories(memories_mips_varargs_test PRIVATE src)
-        target_compile_definitions(memories_mips_varargs_test PRIVATE MEMORIES_PC _LANGUAGE_C LANGUAGE_C)
+        target_compile_definitions(memories_mips_varargs_test PRIVATE MEMORIES_PC MEMORIES_REFERENCE _LANGUAGE_C LANGUAGE_C)
         target_compile_options(memories_mips_varargs_test PRIVATE -Wall)
         # clock_gettime (mips.c's trace): winpthread's on MinGW
         target_link_libraries(memories_mips_varargs_test PRIVATE Threads::Threads)
@@ -504,9 +509,9 @@ if(BUILD_TESTING)
         add_test(NAME pc_mips_varargs COMMAND memories_mips_varargs_test)
         # The interpreter's stack as save states carry it (chunk "mips-stack").
         add_executable(memories_mips_stack_test tests/pc/mips_stack_test.c src/pc/guest/mips.c
-            src/pc/guest/state_io.c)
+            src/pc/guest/state_io.c src/pc/compat/fs.c)
         target_include_directories(memories_mips_stack_test PRIVATE src)
-        target_compile_definitions(memories_mips_stack_test PRIVATE MEMORIES_PC _LANGUAGE_C LANGUAGE_C)
+        target_compile_definitions(memories_mips_stack_test PRIVATE MEMORIES_PC MEMORIES_REFERENCE _LANGUAGE_C LANGUAGE_C)
         target_compile_options(memories_mips_stack_test PRIVATE -Wall)
         target_link_libraries(memories_mips_stack_test PRIVATE Threads::Threads)
         if(NOT WIN32)
@@ -1339,6 +1344,12 @@ if(Python3_Interpreter_FOUND)
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
             set_tests_properties(pc_model_migrate_class PROPERTIES SKIP_RETURN_CODE 77)
         endif()
+        # model_gate.py effect-migrate (tools/pc/effect_migrate.py): its tables
+        # are the decomp's and the game's code ranges; on the disc (MEMORIES_DISC;
+        # those cases skip without it), mods made from it at run time.
+        add_test(NAME pc_effect_migrate
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/test_effect_migrate.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         # Native units that name files reach compat/fs.h (notes/pc-build.md).
         add_test(NAME pc_utf8_paths
             COMMAND "${Python3_EXECUTABLE}" tools/pc/check_utf8_paths.py

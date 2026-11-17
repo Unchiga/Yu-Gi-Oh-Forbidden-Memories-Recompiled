@@ -16,13 +16,22 @@
  * tells a pointer from a small number by its sign; each level starts below
  * the innermost live frame. Failures (an instruction outside the subset, a
  * call to an address with no native function) unwind to the bridge that
- * started the level, which can fall back instead of stopping the game. */
+ * started the level, which can fall back instead of stopping the game.
+ *
+ * Only the reference build compiles it (tools/pc/build_game32.py --reference,
+ * MEMORIES_REFERENCE: Windows and Linux), for the tests and the oracle that
+ * compare the port's C with the disc's MIPS; no game a target ships has it
+ * (notes/pc-build.md, "The reference build"). */
+#ifndef MEMORIES_REFERENCE
+#error "mips.c is the reference build's alone (MEMORIES_REFERENCE)"
+#endif
+#ifdef MEMORIES_TRANSLATED
+#error "the translated game has no reference build"
+#endif
 #define _GNU_SOURCE
+#include "pc/compat/fs.h" /* MEMORIES_MIPS_ENTRIES's getenv and fopen: UTF-8 paths */
 #include "mips.h"
 #include "image.h"
-#ifdef MEMORIES_TRANSLATED
-#include "translated_runtime.h"
-#endif
 #include "pc/compat/gte.h"
 #include "pc/rng.h"
 #include "pc/debug/log.h"
@@ -55,14 +64,6 @@ static uint32_t current_sp;  /* the innermost interpreted frame, or 0 */
 uint32_t Memories_MipsThunkTarget;
 #include "state.h"
 #include "state_io.h"
-#ifdef MEMORIES_TRANSLATED
-void Memories_MipsState(MemoriesState *state)
-{
-    MemoriesStateField fields[] = {{&stack_top, sizeof(stack_top)}, {&current_sp, sizeof(current_sp)},
-                                  {&Memories_MipsThunkTarget, sizeof(Memories_MipsThunkTarget)}};
-    Memories_StateChunk(state, "arm64-mips", fields, sizeof(fields) / sizeof(fields[0]));
-}
-#endif
 
 /* Retail code reaches the scratchpad at 0x1F800000, which the host may not
  * let the port map; the port's view of it is 0x9F800000 (image.h). Every
@@ -142,9 +143,7 @@ void *Memories_MipsStack(size_t *size)
     return stack_memory;
 }
 
-#ifndef MEMORIES_TRANSLATED
-/* Its state chunk, "mips-stack" (the translated game keeps the stack with
- * its other mappings). A state without it, or with one of another size,
+/* Its state chunk, "mips-stack". A state without it, or with one of another size,
  * clears the stack, as at boot, so that loading such a state twice gives
  * the same game too; without a stack to carry the chunk is left out. */
 void Memories_MipsStackState(MemoriesState *state)
@@ -165,7 +164,6 @@ void Memories_MipsStackState(MemoriesState *state)
     }
     Memories_StateChunk(state, tag, &field, 1);
 }
-#endif
 
 /* The last run's instructions, for the trace (Memories_MipsTry), failed runs too. */
 static unsigned try_steps;
@@ -202,12 +200,10 @@ static const MemoriesGuestFunction *find_native(uint32_t address)
 static uint32_t call_native(State *s, uint32_t address)
 {
     const MemoriesGuestFunction *e;
-#ifndef MEMORIES_TRANSLATED
     /* uintptr_t: a 64-bit callee reads whole registers, and a guest pointer
      * argument must arrive zero-extended (the same types on i386). */
     typedef uintptr_t (*Call)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
                               uintptr_t, uintptr_t, uintptr_t, uintptr_t);
-#endif
     uint32_t sp = s->r[29], keep, result;
 
     /* libc and libmath routines linked as SDK assembly in the original and
@@ -256,14 +252,6 @@ static uint32_t call_native(State *s, uint32_t address)
     }
     keep = current_sp;
     current_sp = sp;
-#ifdef MEMORIES_TRANSLATED
-    {
-        uint32_t arguments[12] = {s->r[4], s->r[5], s->r[6], s->r[7]};
-        unsigned i;
-        for (i = 4; i < 12; i++) arguments[i] = l32(sp + i * 4);
-        result = GuestRuntime_InvokeNative((unsigned)(e - Memories_FunctionMap), arguments);
-    }
-#else
     /* Where the retail view is not mapped, a retail scratchpad pointer among
      * the arguments arrives as the port's view, as native game code writes
      * it (SCRATCHPAD_ADDR). Which words are pointers is not known here, so
@@ -273,7 +261,6 @@ static uint32_t call_native(State *s, uint32_t address)
                                        HANDED(l32(sp + 16)), HANDED(l32(sp + 20)), HANDED(l32(sp + 24)),
                                        HANDED(l32(sp + 28)), HANDED(l32(sp + 32)), HANDED(l32(sp + 36)),
                                        HANDED(l32(sp + 40)), HANDED(l32(sp + 44)));
-#endif
     current_sp = keep;
     return result;
 }
@@ -387,7 +374,13 @@ static struct {
 } modules[TRACE_MODULES];
 static uint32_t attributed;
 
-void Memories_MipsAttribute(uint32_t identifier) { attributed = identifier; }
+static unsigned entry_identifier_set;   /* the next run is a model module's (MEMORIES_MIPS_ENTRIES) */
+
+void Memories_MipsAttribute(uint32_t identifier)
+{
+    attributed = identifier;
+    entry_identifier_set = 1;
+}
 
 static int region_of(uint32_t address)
 {
@@ -446,12 +439,61 @@ void Memories_MipsFrame(unsigned frames)
 
 static int interpret(uint32_t address, const uint32_t *args, unsigned count, uint32_t *result);
 
+/* MEMORIES_MIPS_ENTRIES=<file>: one line per entry into the interpreter, at
+ * every depth, appended and flushed as it happens (a game the caller kills
+ * still has them), for measuring what still reaches it before it goes. The
+ * entry point is where the run came from: `model` (model_modules.c, the
+ * module's identifier), `duel-effect` (duel_effects.c, the effect's id and
+ * state), `credits` (Memories_MipsCall), `thunk` (Memories_MipsThunk: a
+ * native call through a pointer into an overlay window; `outer` when no
+ * interpreted frame is live, so native code alone reached it) or `other`.
+ * `frame` is the game's presented-frame count. */
+static const char *entry_from;   /* Memories_MipsCall's or Memories_MipsThunk's, for the next run */
+static uintptr_t entry_caller;   /* the thunk's return address (host) */
+extern unsigned Memories_PresentedFrames(void);
+
+static FILE *entries_file(void)
+{
+    static int opened;
+    static FILE *file;
+    if (!opened) {
+        const char *path = getenv("MEMORIES_MIPS_ENTRIES");
+        opened = 1;
+        if (path && *path && !(file = fopen(path, "a")))
+            fprintf(stderr, "memories-pc: MEMORIES_MIPS_ENTRIES: cannot open %s\n", path);
+    }
+    return file;
+}
+
+static void log_entry(uint32_t address, const uint32_t *args, unsigned count, uint32_t identifier, int attributed_run)
+{
+    FILE *file = entries_file();
+    const char *from = entry_from;
+    entry_from = NULL;
+    if (!file) return;
+    if (!from) from = attributed_run ? "model" : address == 0x801462B0u ? "duel-effect" : "other";
+    fprintf(file, "%s %s target=0x%08x", from, current_sp ? "nested" : "outer", (unsigned)address);
+    if (attributed_run)
+        fprintf(file, " module=%u slot=%c command=%d", (unsigned)identifier,
+                address >= 0x8017A000u && address < 0x80180000u ? 'B' : 'A', count > 1 ? (int)args[1] : 0);
+    else if (address == 0x801462B0u && count >= 2)
+        fprintf(file, " effect=%u state=%d", (unsigned)args[0], (int)args[1]);
+    else if (strcmp(from, "thunk") == 0)
+        fprintf(file, " caller=%p a0=0x%08x", (void *)entry_caller, (unsigned)(count ? args[0] : 0));
+    else if (count)
+        fprintf(file, " a0=0x%08x", (unsigned)args[0]);
+    fprintf(file, " frame=%u\n", Memories_PresentedFrames());
+    fflush(file);
+}
+
 int Memories_MipsTry(uint32_t address, const uint32_t *args, unsigned count, uint32_t *result)
 {
     struct timespec t0, t1;
     uint32_t identifier = attributed;
     unsigned steps;
     int done;
+    log_entry(address, args, count, identifier, entry_identifier_set);
+    entry_identifier_set = 0;
     attributed = 0;
     if (depth) {   /* inside a traced run: its instructions are the outermost's, as its time is */
         try_steps = 0;
@@ -569,6 +611,7 @@ static int interpret(uint32_t address, const uint32_t *args, unsigned count, uin
 uint32_t Memories_MipsCall(uint32_t address, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3)
 {
     uint32_t args[4] = {a0, a1, a2, a3}, result;
+    entry_from = "credits";   /* its only caller (credits.c) */
     if (Memories_MipsTry(address, args, 4, &result)) {
         char text[96];
         snprintf(text, sizeof(text), "overlay routine 0x%08x failed with no fallback", address);
@@ -587,6 +630,8 @@ uint32_t Memories_MipsThunk(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, 
 {
     uint32_t target = Memories_MipsThunkTarget, result;
     uint32_t args[12] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11};
+    entry_from = "thunk";
+    entry_caller = (uintptr_t)__builtin_return_address(0);
     if (Memories_MipsTry(target, args, 12, &result)) {
         char text[96];
         snprintf(text, sizeof(text), "guest callback 0x%08x failed with no fallback", target);

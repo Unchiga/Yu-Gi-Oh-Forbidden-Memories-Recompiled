@@ -309,7 +309,9 @@ int Memories_VSync(int mode)
         /* VBlanks that passed with no game frame for them: those that got in
          * during the game's frame, and during the present that just ran. */
         if (Platform_VBlankCount() - last_vsync > 1) late += Platform_VBlankCount() - last_vsync - 1;
-        Memories_MipsFrame(frames == 119 ? 120 : 0);   /* the interpreter's share, logged with these */
+#ifdef MEMORIES_REFERENCE
+        Memories_MipsFrame(frames == 119 ? 120 : 0);   /* the interpreter's share (a reference build's), logged with these */
+#endif
         if (++frames == 120) {
             double seconds = since.tv_sec ? (double)(t1.tv_sec - since.tv_sec) + (t1.tv_nsec - since.tv_nsec) / 1e9 : 0;
             frame_stats.game_us = game_us / 120;

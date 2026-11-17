@@ -3,6 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The MIPS interpreter (mips.c) is in no game a target ships: only the
+ * reference build has it (tools/pc/build_game32.py --reference, which
+ * defines MEMORIES_REFERENCE), for the tests and the oracle that compare the
+ * port's C with the disc's MIPS (notes/pc-build.md, "The reference build").
+ * Its declarations exist there alone, so a shipped unit that still reached
+ * for it does not compile. */
+#ifdef MEMORIES_REFERENCE
 /* Run a routine of a loaded overlay (see mips.c). `args` are the MIPS
  * arguments in order: the first four go in a0-a3, the rest on the stack.
  * Returns 0 and the routine's v0 in *result, or -1 after printing why the
@@ -19,8 +26,7 @@ uint32_t Memories_MipsCall(uint32_t address, uint32_t a0, uint32_t a1, uint32_t 
  * states carry: its bytes and *size, or NULL and 0 where guest words
  * cannot address it (host memory above 4 GiB). */
 void *Memories_MipsStack(size_t *size);
-/* Save or load it as the state chunk "mips-stack" (fixed-address builds;
- * the translated game keeps it with its mappings). */
+/* Save or load it as the state chunk "mips-stack". */
 struct MemoriesState;
 void Memories_MipsStackState(struct MemoriesState *state);
 /* Whether an address lies in a slot whose code is interpreted. */
@@ -30,4 +36,18 @@ int Memories_MipsInOverlay(uint32_t address);
 extern uint32_t Memories_MipsThunkTarget;
 uint32_t Memories_MipsThunk(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5,
                             uint32_t a6, uint32_t a7, uint32_t a8, uint32_t a9, uint32_t a10, uint32_t a11);
+#elif !defined(MEMORIES_MOD)
+#include <stdio.h>
+/* A setting that asks for the interpreter (MEMORIES_MODEL_MODULES,
+ * MEMORIES_DUEL_EFFECTS or MEMORIES_CREDITS=interpreter,
+ * MEMORIES_TRACE_MIPS_PRINTF) in a game without it: said once on stderr by
+ * the caller, which then runs its default. The game's own: an SDK's copy of
+ * this header (MEMORIES_MOD) declares nothing, and compiles on its own
+ * without a C library's stdio.h (tools/pc/check_mod_abi.py). */
+static inline void Memories_NoInterpreter(const char *setting)
+{
+    fprintf(stderr, "memories-pc: %s: this game has no MIPS interpreter (a reference build for tests has it: "
+                    "tools/pc/build_game32.py --reference); using the default\n", setting);
+}
+#endif
 #endif

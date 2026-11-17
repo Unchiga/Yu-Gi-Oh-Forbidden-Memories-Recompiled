@@ -197,9 +197,10 @@ void Memories_StateSubsystems(MemoriesState *state)
 {
 #ifdef MEMORIES_TRANSLATED
     extern void GuestRuntime_JumpState(MemoriesState *);
-    extern void Memories_MipsState(MemoriesState *);
     GuestRuntime_JumpState(state);
-    Memories_MipsState(state);
+    /* A state saved while the translated game had the MIPS interpreter holds
+     * its chunk "arm64-mips" too: no game has one now, and a load looks
+     * chunks up by tag, so it is passed over. */
 #endif
     unsigned signature = Mods_Signature();
     MemoriesStateField mod_set = {&signature, sizeof(signature)};
@@ -266,9 +267,11 @@ void Memories_StateSubsystems(MemoriesState *state)
     Memories_StateJumps(state);
 #endif
     RetailImage_State(state);
-#ifndef MEMORIES_TRANSLATED
-    /* The interpreted modules' stack (mips.c), RAM on the console: retail
-     * module code reads locals it never wrote. */
+#ifdef MEMORIES_REFERENCE
+    /* The interpreted modules' stack (mips.c, a reference build's), RAM on
+     * the console: retail module code reads locals it never wrote. A game
+     * without the interpreter neither saves the chunk ("mips-stack") nor
+     * reads it: a state saved with one loads all the same. */
     Memories_MipsStackState(state);
 #endif
     Spu_State(state);

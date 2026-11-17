@@ -58,7 +58,7 @@ static TextUnit *language_unit;
  * language and mods repeats (a state with another language or other mods
  * is refused: state.c). The card shop's menu, compiled on first use, comes
  * after the others either way. 3D Monsters' arenas sit at 0x90000000 for
- * the same reason; the interpreter's stack at 0x9FF00000. If the region
+ * the same reason; a reference build's interpreter stack at 0x9FF00000. If the region
  * cannot be had, the text stays on the heap, as before; on the 64-bit build,
  * whose heap may be above 4 GB where the game's 4-byte pointers cannot
  * reach, it goes to the low memory region instead (pc/guest/low_memory.h). */

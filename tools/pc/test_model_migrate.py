@@ -122,6 +122,8 @@ class Test:
         flags = ["--out", str(out), "--jobs", str(self.arguments.jobs), *extra]
         if self.arguments.executable:
             flags += ["--executable", str(self.arguments.executable)]
+        if self.arguments.reference_executable:   # an SDK's oracle builds no reference (reference_build.py)
+            flags += ["--reference-executable", str(self.arguments.reference_executable)]
         result = self.run(command, flags, name)
         try:
             report = json.loads((out / "report.json").read_text(encoding="utf-8"))
@@ -748,6 +750,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--disc", type=Path, default=os.environ.get("MEMORIES_DISC"))
     parser.add_argument("--executable", type=Path, help="the game (default model_oracle's)")
+    parser.add_argument("--reference-executable", type=Path,
+                        help="the oracle's reference, a game with the MIPS interpreter (default the oracle's: the "
+                             "reference build of this checkout; with --sdk one must be named)")
     parser.add_argument("--out", type=Path, default=ROOT / "tmp/pc/model-migrate")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--only", action="append", choices=CASES, help="the cases to run (default all)")
@@ -774,6 +779,11 @@ def main() -> int:
         # An SDK's build_mod builds every target (the release beside it may be the 32-bit or the 64-bit game):
         # the tool prints no --target there.
         BUILD = BUILD.replace(" --target i386", "")
+        # The game beside an SDK has no MIPS interpreter: its oracle is handed
+        # this checkout's reference build unless one is named.
+        if not arguments.reference_executable:
+            from reference_build import reference_executable
+            arguments.reference_executable = reference_executable()
     disc = model_oracle.Disc(arguments.disc)
     test = Test(arguments)
     cases = arguments.only or list(CASES)

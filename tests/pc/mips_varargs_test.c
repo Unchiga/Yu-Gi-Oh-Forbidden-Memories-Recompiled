@@ -39,6 +39,7 @@ int Log_Wanted(LogChannel channel) { (void)channel; return 0; }
 int Log_Enabled(LogChannel channel) { (void)channel; return 0; }
 void Log_Printf(LogChannel channel, const char *format, ...) { (void)channel; (void)format; }
 void Crash_ReportFatal(const char *kind, const char *detail) { fprintf(stderr, "%s: %s\n", kind, detail); }
+unsigned Memories_PresentedFrames(void) { return 0; } /* mips.c: MEMORIES_MIPS_ENTRIES */
 
 static struct {
     int calls;

@@ -157,6 +157,39 @@ class SdkTool(unittest.TestCase):
         result = run(self.sdk, "mod-migrate", str(mod), cwd=self.elsewhere)
         self.assertEqual(result.returncode, 2)
         self.assertIn("needs the disc", result.stderr)
+        result = run(self.sdk, "effect-migrate", str(mod), cwd=self.elsewhere)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("needs the disc", result.stderr)
+
+    def test_effect_migrate_from_the_sdk(self):
+        """effect-migrate's tables are the SDK's; on the disc (MEMORIES_DISC), a
+        mod made here that changes a table of the effect bank gets its opt-in
+        and the comparison's command, from the SDK."""
+        for name in ("config/pc/duel_effect_bank.csv", "config/pc/duel_effect_ids.csv",
+                     "tools/pc/effect_migrate.py", "tools/pc/test_duel_effects.py"):
+            self.assertIn(name, self.stamp["files"])
+            self.assertTrue(self.sdk_file(name).is_file(), name)
+        disc = os.environ.get("MEMORIES_DISC")
+        if not disc or not Path(disc).is_file():
+            self.skipTest("no disc (MEMORIES_DISC)")
+        sys.path.insert(0, str(HERE))
+        import effect_migrate
+        wa = effect_migrate.wa_disc(Path(disc))
+        original = wa.original(0, wa.size // effect_migrate.SECTOR)[:wa.size]
+        wa.file.close()
+        positions = 0x14C3C   # D_8015AB68[0][1], a sword of the opponent's side (Swords)
+        patches = [{"at": hex(at + positions), "bytes": f"{original[at + positions] ^ 0x10:02X}"}
+                   for at in effect_migrate.bank_copies(original)]
+        mod = self.work / "effect-data"
+        mod.mkdir()
+        (mod / "mod.json").write_text(json.dumps({"id": "effect-data", "data": [
+            {"file": "\\DATA\\WA_MRG.MRG;1", "patch": patches}]}), encoding="utf-8")
+        result = run(self.sdk, "effect-migrate", str(mod), "--disc", str(Path(disc).resolve()), cwd=self.elsewhere)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("D_8015AB68", result.stdout)
+        self.assertIn("test_duel_effects.py --mod", result.stdout)
+        self.assertIn("--reference-executable", result.stdout)
+        self.assertEqual(json.loads((mod / "mod.json").read_text(encoding="utf-8"))["duel_effects"], "own data")
 
     def broken(self, touched, change, expect: str) -> None:
         """mod-check on the SDK after `change(sdk)`, which touches the files `touched` (names in the SDK, as

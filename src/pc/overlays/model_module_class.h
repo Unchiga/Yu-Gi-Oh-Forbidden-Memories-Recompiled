@@ -4,13 +4,14 @@
 #include <stdint.h>
 
 /* What a MODEL.MRG control module is next to the disc's, so the game can say
- * which mods still need the MIPS interpreter (notes/modding.md, "Attack code:
- * C, not MIPS"). The disc's modules are the native rows of config/pc/model_gate.csv
+ * which mods' attack modules are MIPS code it cannot run, which play a stand-in
+ * in their place (notes/modding.md, "Attack code: C, not MIPS"; only a
+ * reference build for tests has the MIPS interpreter). The disc's modules are the native rows of config/pc/model_gate.csv
  * (variant) and config/pc/model_primary_gate.csv (primary), and
  * config/pc/model_retail.csv (tools/pc/model_gate.py). */
 typedef enum {
     MODEL_MODULE_NATIVE,  /* the disc's code, which the decomp's C runs; a primary that is `return 2` */
-    MODEL_MODULE_RETAIL,  /* the disc's code of a shape the port still interprets: the port's
+    MODEL_MODULE_RETAIL,  /* the disc's code of a shape the port has no C for: the port's
                            * to port, whatever data follows the code, not the mod's */
     MODEL_MODULE_EMPTY,   /* no entry (its word at +4 is 0): the stand-in runs it */
     MODEL_MODULE_TABLES,  /* a native shape's code, with other data where its C reads (code_size..span) */
@@ -44,7 +45,7 @@ const char *Memories_ModelModRowOwner(const void *image, int slot, int primary, 
 #define MODEL_MODULE_PRIMARY_SIZE 0x1000u
 ModelModuleInfo ModelModule_Classify(const void *image, int slot, int primary);
 
-/* The interpreter runs it and it is the mod's to move to C: TABLES, CODE, NEW. */
+/* MIPS code of the mod's, to move to C (a stand-in plays in its place): TABLES, CODE, NEW. */
 int ModelModule_IsModsMips(ModelModuleClass kind);
 const char *ModelModule_ClassText(ModelModuleClass kind);
 
@@ -58,9 +59,12 @@ const char *ModelModule_ClassText(ModelModuleClass kind);
 /* How many of the six modules of `stages` are the mod's MIPS
  * (ModelModule_IsModsMips), with a "; "-separated line for each in `detail`;
  * *mod_native (when not NULL) gets how many a code mod's C runs (MOD), with
- * a line each too, and *mod_owner (when not NULL) the first one's mod. */
+ * a line each too, and *mod_owner (when not NULL) the first one's mod.
+ * `identifiers` (when not NULL, room for 6) gets the first word of each of
+ * the MIPS ones, in the order counted: what the game names their mod by when
+ * a stand-in plays for one (Mods_ModuleMipsOwner). */
 int ModelModule_StagesMips(const unsigned char *stages, char *detail, size_t size, int *mod_native,
-                           const char **mod_owner);
+                           const char **mod_owner, uint32_t *identifiers);
 
 /* The shape (its slot A identifier) of the disc's row with exactly this
  * kind, slot, identifier, span and SHA-256 (64 lowercase hex digits); 0 for
