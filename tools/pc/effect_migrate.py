@@ -102,6 +102,38 @@ def _callers(root: Path) -> dict[int, list[str]]:
     return {key: sorted(value) for key, value in found.items()}
 
 
+class NoCompiler(Exception):
+    """No clang to read the decomp's types with."""
+
+
+def _sizes(root: Path, names: list[str]) -> dict[str, int]:
+    """{symbol: sizeof it}, as the bank's headers declare it, for 32-bit
+    MIPS-compatible layout (i386: the port pins these symbols at the disc's
+    addresses with this layout): clang -S of a table of sizeofs, read back.
+    MEMORIES_CHECK_CC names the clang (default: clang on PATH)."""
+    import shutil
+    import subprocess
+    import tempfile
+    compiler = os.environ.get("MEMORIES_CHECK_CC") or shutil.which("clang")
+    if not compiler:
+        raise NoCompiler("no clang (MEMORIES_CHECK_CC or clang on PATH) to read the decomp's types with")
+    source = root / "src/overlays/duel_effects"
+    code = "".join(f'#include "{path.as_posix()}"\n' for path in sorted(source.glob("*.h")))
+    code += "const unsigned memories_sizes[] = {" + ", ".join(f"sizeof({name})" for name in names) + "};\n"
+    with tempfile.TemporaryDirectory(prefix="effect-sizes-") as folder:
+        unit, out = Path(folder) / "sizes.c", Path(folder) / "sizes.s"
+        unit.write_text(code, encoding="utf-8")
+        result = subprocess.run([compiler, "--target=i686-unknown-linux-gnu", "-S", "-w", "-o", str(out),
+                                 "-I", str(root / "src"), "-I", str(root / "include"), "-DMEMORIES_PC", str(unit)],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise SystemExit(f"effect_migrate: the bank's headers do not give the sizes:\n{result.stderr[-2000:]}")
+        values = [int(value) for value in re.findall(r"\.long\s+(\d+)", out.read_text(encoding="utf-8"))]
+    if len(values) != len(names):
+        raise SystemExit(f"effect_migrate: {len(values)} sizes for {len(names)} symbols")
+    return dict(zip(names, values))
+
+
 def generate(root: Path | None = None) -> tuple[str, str]:
     """(duel_effect_bank.csv, duel_effect_ids.csv) from the decomp."""
     root = root or _repository()
@@ -146,26 +178,51 @@ def generate(root: Path | None = None) -> tuple[str, str]:
         if 0 <= offset < SIZE and not TEXT[0] <= offset < TEXT[1]:
             symbols.append((offset, match.group(1)))
     symbols.sort()
-    for index, (offset, name) in enumerate(symbols):
+    sizes = _sizes(root, [name for _, name in symbols if name in externs and not name.startswith("gNorthAmerican_")])
+
+    def users_of(name: str) -> tuple[set[int], bool]:
+        users = {effect for function, body in bodies.items() if re.search(rf"\b{name}\b", body)
+                 for effect in reached.get(function, ())}
+        return users, bool(dispatcher and re.search(rf"\b{name}\b", bodies.get(dispatcher, "")))
+
+    def writes(name: str, body: str) -> bool:
+        assigned = rf"\b{name}\b(?:\s*(?:\.|->)\s*\w+|\s*\[[^\]]*\])*\s*[-+*/|&^]?=(?!=)"
+        # setVector's first argument, and the dispatcher's texture words
+        # (func_8014F564's output: D_8015B748.pairs[i])
+        handed = rf"(?:setVector\(\s*&|func_8014F564\(\s*){name}\b"
+        return bool(re.search(assigned, body) or re.search(handed, body))
+
+    index = 0
+    while index < len(symbols):
+        offset, name = symbols[index]
         segment_end = next(end for start, end in SEGMENTS if start <= offset < end)
-        end = min(segment_end, symbols[index + 1][0] if index + 1 < len(symbols) else SIZE)
-        if externs.get(name, "").endswith("*G32") or externs.get(name, "").endswith("*"):
-            end = min(end, offset + 4)   # a pointer: what follows the last one is padding
-        users = sorted({effect for function, body in bodies.items() if re.search(rf"\b{name}\b", body)
-                        for effect in reached.get(function, ())})
-        users_all = any(re.search(rf"\b{name}\b", body) for function, body in bodies.items()
-                        if function == dispatcher)
+        following = symbols[index + 1][0] if index + 1 < len(symbols) else SIZE
+        # The decomp's type gives the extent (a symbol it does not declare,
+        # or a string, ends at the next one); a later symbol inside it is a
+        # part of it (D_8015A458 is D_8015A430's variant images).
+        end = min(segment_end, offset + sizes[name]) if name in sizes else min(segment_end, following)
+        users, users_all = users_of(name)
+        inside = []
+        index += 1
+        while index < len(symbols) and symbols[index][0] < end:
+            inside.append(symbols[index][1])
+            more, more_all = users_of(symbols[index][1])
+            users |= more
+            users_all = users_all or more_all
+            index += 1
         kind, what = "data", "table"
-        written = rf"(?:\b{name}\b(?:\s*(?:\.|->)\s*\w+|\s*\[[^\]]*\])*\s*[-+*/|&^]?=(?!=)|setVector\(\s*&{name}\b)"
-        if any(re.search(written, body) for body in bodies.values()):
+        if dispatcher and writes(name, bodies.get(dispatcher, "")):
+            what = "rewritten at setup: a change has no effect"   # the dispatcher writes it before every effect
+        elif any(writes(name, body) for body in bodies.values()):
             what = "variable"   # the bank's C writes it as it runs
         if offset == 0:
             what = "identifier"
             kind = "code"
         elif name.startswith("gNorthAmerican_") or JUMP_TABLE[0] <= offset < JUMP_TABLE[1]:
             kind, what = "code", "format string" if offset < JUMP_TABLE[0] else "jump table"
-        rows.append((offset, end, kind, what, name, "all" if users_all else " ".join(map(str, users)),
-                     externs.get(name, "")))
+        label = externs.get(name, "") + "".join(f"; holds {part}" for part in inside)
+        rows.append((offset, end, kind, what, name, "all" if users_all else " ".join(map(str, sorted(users))),
+                     label.lstrip("; ")))
     # What no symbol names: the identifier word, the jump table, and gaps.
     if not any(row[0] == 0 for row in rows):
         rows.append((0, 4, "code", "identifier", "", "", "the bank's first word, 0x18"))
@@ -214,6 +271,7 @@ def merged(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
 
 
 def check_tables(root: Path | None = None) -> list[str]:
+    """What is wrong with the tables; raises NoCompiler without clang."""
     root = root or _repository()
     bank, ids = generate(root)
     problems = []
@@ -443,7 +501,11 @@ def main(argv: list[str] | None = None) -> int:
             (root / IDS_TABLE).write_text(ids, encoding="utf-8", newline="\n")
             print(f"effect_migrate: wrote {BANK_TABLE} ({bank.count(chr(10)) - 1} ranges) and {IDS_TABLE}")
             return 0
-        problems = check_tables(root)
+        try:
+            problems = check_tables(root)
+        except NoCompiler as missing:
+            print(f"effect_migrate: check: not run: {missing}")
+            return 0
         for problem in problems:
             print("effect_migrate: " + problem, file=sys.stderr)
         print(f"effect_migrate: check: {len(problems)} problem(s)")

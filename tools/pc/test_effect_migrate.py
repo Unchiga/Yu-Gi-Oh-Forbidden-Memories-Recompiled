@@ -38,7 +38,26 @@ def table_row(symbol: str) -> effect_migrate.Row:
 
 class TableTests(unittest.TestCase):
     def test_tables_current(self):
-        self.assertEqual(effect_migrate.check_tables(), [])
+        try:
+            self.assertEqual(effect_migrate.check_tables(), [])
+        except effect_migrate.NoCompiler as missing:
+            self.skipTest(str(missing))
+
+    def test_extents_are_the_decomps(self):
+        """A symbol is as long as its type, and one inside another is a part of it."""
+        def extent(symbol):
+            row = table_row(symbol)
+            return row.end - row.start
+        self.assertEqual(extent("D_8015B7F8"), 8)       # an SVECTOR
+        self.assertEqual(extent("D_8015B748"), 0x54)    # DuelEffectTextureTable
+        self.assertEqual(extent("D_8015A430"), 0xB4)    # DuelEffectImageInputs, its variant images included
+        self.assertFalse(any(row.symbol == "D_8015A458" for row in effect_migrate.read_bank()))
+        self.assertIn("holds D_8015A458", table_row("D_8015A430").label)
+
+    def test_what_setup_rewrites_is_said(self):
+        for symbol in ("D_8015B7F8", "D_8015B800", "D_8015B748", "D_8015B7F4"):
+            self.assertEqual(table_row(symbol).what, "rewritten at setup: a change has no effect", symbol)
+        self.assertEqual(table_row("D_8015A1E4").what, "table")   # read by the dispatcher, not written
 
     def test_every_byte_once(self):
         rows = effect_migrate.read_bank()

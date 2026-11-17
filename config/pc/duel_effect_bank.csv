@@ -112,8 +112,7 @@ start,end,kind,what,symbol,effects,label
 0x1274C,0x12E84,code,function,func_80159AAC,4,effect_4.c
 0x12E84,0x14270,code,function,func_80148BA4,17,effect_17.c
 0x14270,0x144BC,data,table,D_8015A1E4,all,GsIMAGE [21]
-0x144BC,0x144E4,data,table,D_8015A430,all,DuelEffectImageInputs
-0x144E4,0x14570,data,table,D_8015A458,,
+0x144BC,0x14570,data,table,D_8015A430,all,DuelEffectImageInputs; holds D_8015A458
 0x14570,0x145A0,data,table,D_8015A4E4,11,DuelEffect11Config
 0x145A0,0x14600,data,table,D_8015B3C0,2 5 6 7 9 13,RECT [12]
 0x14600,0x146E4,data,table,D_8015A514,8,DuelEffect8Config [6]
@@ -129,22 +128,24 @@ start,end,kind,what,symbol,effects,label
 0x14F60,0x14FB0,data,table,D_8015AE94,13,DuelEffect13Config [4]
 0x14FB0,0x14FC0,data,table,D_8015AEE4,12,DuelEffect12Config
 0x14FC0,0x14FE4,data,table,D_8015AEF4,16 20,DuelEffect16Config
-0x14FE4,0x15110,data,table,D_8015AF18,2,DuelEffect2Config [7]
-0x15110,0x15144,data,table,D_8015B044,,
+0x14FE4,0x15142,data,table,D_8015AF18,2,DuelEffect2Config [7]; holds D_8015B044
+0x15142,0x15144,data,padding,,,
 0x15144,0x15180,data,table,D_8015B078,18,DuelEffect18Config [2]
 0x15180,0x153D8,data,table,D_8015B0B4,0,DuelEffect0Config [30]
 0x153D8,0x1548C,data,table,D_8015B30C,6,DuelEffect6Config [6]
 0x1548C,0x154BC,data,table,D_8015B420,1,DuelEffect1Config [2]
 0x154BC,0x15624,data,table,D_8015B450,5,DuelEffect5Config [10]
-0x15624,0x156BC,data,table,D_8015B5B8,7,DuelEffect7Config [5]
+0x15624,0x156BA,data,table,D_8015B5B8,7,DuelEffect7Config [5]
+0x156BA,0x156BC,data,padding,,,
 0x156BC,0x15770,data,table,D_8015B650,9,DuelEffect9Config [5]
 0x15770,0x157A8,data,table,D_8015B704,4,DuelEffect4Config [2]
 0x157A8,0x157C8,data,table,D_8015A60C,17,DuelEffect17Config [2]
-0x157C8,0x157D0,data,variable,D_8015B800,all,u16
-0x157D0,0x157D4,data,variable,D_8015B7F8,all,SVECTOR
-0x157D4,0x157E0,data,table,D_8015B7FC,,
-0x157E0,0x15810,data,variable,D_8015B748,all,DuelEffectTextureTable
-0x15810,0x15838,data,table,D_8015B778,,
+0x157C8,0x157CA,data,rewritten at setup: a change has no effect,D_8015B800,all,u16
+0x157CA,0x157D0,data,padding,,,
+0x157D0,0x157D8,data,rewritten at setup: a change has no effect,D_8015B7F8,all,SVECTOR; holds D_8015B7FC
+0x157D8,0x157E0,data,padding,,,
+0x157E0,0x15834,data,rewritten at setup: a change has no effect,D_8015B748,all,DuelEffectTextureTable; holds D_8015B778
+0x15834,0x15838,data,padding,,,
 0x15838,0x1588C,data,table,D_8015B7A0,15 17 22 23 24,u32 [21]
-0x1588C,0x15890,data,variable,D_8015B7F4,all,GsOT *G32
+0x1588C,0x15890,data,rewritten at setup: a change has no effect,D_8015B7F4,all,GsOT *G32
 0x15890,0x16000,data,padding,,,
