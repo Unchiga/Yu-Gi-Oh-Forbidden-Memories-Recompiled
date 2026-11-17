@@ -2546,7 +2546,7 @@ ones loaded after it.
 
 ### Internal resolution
 
-View > Console resolution / Internal 2x, 4x (the `internal_scale`
+Video > Resolution > Console resolution / Internal 2x, 4x, 8x (the `internal_scale`
 setting, `MEMORIES_INTERNAL_SCALE=N`, 1, 2, 4 or 8) shows a picture of the
 whole of VRAM at N x N pixels per VRAM word in 24-bit color instead of
 VRAM. VRAM itself stays exactly what the console's would be: the game reads
@@ -2684,6 +2684,80 @@ is identical to the 4:3 picture, with it on or off.
 
 It changes nothing at 1x, and nothing in the software picture.
 
+#### Internal 8x
+
+Video > Resolution offers Internal 8x on the desktop builds (Windows, Linux,
+macOS) with "needs a strong graphics card" beside it; the Android menu does
+not list it, as OpenGL ES refuses it (below). The picture covers all of
+VRAM, 8192x4096 RGBA: 128 MiB, and its scratch copy another 128 MiB, so the
+colour targets alone are 256 MiB and 8 samples of anti-aliasing add 1 GB.
+The texture is 8192 pixels on a side, so `GL_MAX_TEXTURE_SIZE` must be at
+least that (most cards give 16384; one that gives exactly 8192 fits).
+`internal_scale` 8 (the setting or `MEMORIES_INTERNAL_SCALE=8`) was always
+accepted; the menu now offers it.
+
+The row is for the OpenGL picture pass. With no pass (the X11 backend,
+`MEMORIES_GL_PICTURE=0`, a GL older than 3.0) the software GPU would draw
+every primitive 64 times, far too slow to play, so the row is dimmed with
+"needs OpenGL 3" (as HD text is) instead of offering it with a hint that
+does not fit. It is dimmed, not hidden, so the menu keeps its shape and says
+what is missing; a saved or scripted 8 still works there, slowly, as before.
+
+When the picture cannot be made, the game does not stop and does not show a
+black frame: a texture the driver cannot allocate (a GL error, an
+incomplete framebuffer), a size past `GL_MAX_TEXTURE_SIZE`, or OpenGL ES's
+4x limit makes the pass say so on standard error ("OpenGL picture: no room
+for the 8x picture"), free what it made and report the scale and why
+(`GlPicture_TakeRefusedScale`: `MEMORIES_REFUSED_ROOM`, `_SIZE` or `_ES`).
+The presenter then calls `Memories_ScaleRefused(8, why)`, which caps the
+internal resolution at the next scale down, 4x, for the rest of the session
+(`Memories_SetInternalScale` applies the cap to the setting, the Video menu
+and `MEMORIES_SCALE_AT` alike; the cap is the highest scale that works), and
+the frame in flight is shown from VRAM, as when the scales differ. A
+software picture that cannot allocate 8x falls back the same way (`_ROOM`).
+If 4x is refused too (a GL failure there, or no room for the software
+picture) the cap goes to 2x, and so on down to the console's resolution.
+
+The menu follows the cap (`Menu_ScaleRefused`). Every refused scale, and
+every one above it, is dimmed in Video > Resolution with the reason beside
+it: "no room on this graphics card" (`_ROOM`), "too large for this graphics
+card" (`_SIZE`, past `GL_MAX_TEXTURE_SIZE`) or "not with OpenGL ES" (`_ES`,
+on a desktop with `MEMORIES_GLES=1`). The row that is checked is the scale
+that runs, 4x after a refused 8x, while the saved setting stays as it was.
+One notice, "Internal resolution lowered", says what was refused and what
+runs instead ("This graphics card has no room for Internal 8x, so the game
+runs at Internal 4x for now. Your setting stays, and the next start tries
+again."), shown when no other notice is up; if 4x is refused before the
+notice is shown, it says "could not make Internal 8x or 4x".
+
+The saved `internal_scale` stays 8: nothing depends on it being the scale in
+force (the duel code clamps it, the menu shows the scale that runs), the
+next start tries again, which is right after a driver update or with another
+program closed, and a failure that may have been temporary does not cost the
+player their choice. A start with the card still too small shows the notice
+again; picking 4x in the menu ends it.
+
+Anti-aliasing is the extra, not the scale: a multisampled buffer that does
+not fit (a GL error, or a size beyond `GL_MAX_RENDERBUFFER_SIZE`) is dropped,
+as it always was ("no room for 8x anti-aliasing at this resolution" on
+standard error, drawn without until the setting or the scale changes), at
+the same scale; only the colour targets failing drops the scale. So 8x with
+8 samples on a card with room for 8x alone gives 8x without anti-aliasing,
+not 4x. The samples the driver allows for the setting are kept
+(`samples_given`), so a lower scale, made again by a refused 8x or by the
+menu, tries them again: after an 8x that had to go without, 4x has its
+anti-aliasing back. A widescreen target that cannot be made shows the 4:3
+picture between black sides, as before.
+
+`MEMORIES_GL_FAIL_8X=1` makes the 8x targets fail as an out-of-memory
+driver's would (after they are allocated, so the clean-up runs), and
+`MEMORIES_GL_FAIL_8X=msaa` only the 8x multisampled buffer, and
+`MEMORIES_GL_FAIL_SCALE=4` (2, 4 or 8) the picture at that scale and above, so
+that a refused 8x is followed by a refused 4x, to see the fallback, the
+anti-aliasing coming back and the cascade without a weak card. They need the
+OpenGL picture pass, so a window: the headless runs (`MEMORIES_HEADLESS`) use
+the software picture.
+
 ### OpenGL ES 3 (Android)
 
 On Android the picture pass runs on OpenGL ES 3.0 or later, so internal
@@ -2721,7 +2795,9 @@ ES 3 (or a failed context) gets the renderer SDL picks and the software
 picture, as before, and Video > HD text says "needs OpenGL ES 3".
 
 Limits on ES: internal resolution up to 4x (8x is refused: 128 MiB per
-picture texture), anti-aliasing up to 4 samples (8x is given as 4x). The
+picture texture; the menu does not list it, and a saved or scripted 8 falls
+back to 4x with the notice, "Internal 8x" above), anti-aliasing up to 4
+samples (8x is given as 4x). The
 GL version, renderer, GLSL version and any shader compile log go to
 standard error, which the app forwards to logcat (`adb logcat -s
 memories`: "OpenGL picture: OpenGL ES 3.2 ... on Adreno ..., OpenGL ES

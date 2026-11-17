@@ -32,6 +32,7 @@
 #include "pc/cards/fusion_helper.h"
 #include "update_check.h"
 #include "pc/debug/log.h"
+#include "pc/sdk/display.h"
 #include "pc/debug/monitor.h"
 #include "pc/debug/crash_test.h"
 #include "pc/debug/control.h"
@@ -3307,6 +3308,16 @@ static int replay(void)
     return drawn;
 }
 
+/* After a replay on the way to a frame being shown: a picture the pass could
+ * not make (video memory, a size limit) goes down a scale for the session,
+ * from the end of this frame (libgpu.c). The frame itself is shown from VRAM
+ * meanwhile, as when the scales differ. */
+static void take_refused_scale(void)
+{
+    int why = 0, refused = GlPicture_TakeRefusedScale(&why);
+    if (refused) Memories_ScaleRefused(refused, why);
+}
+
 /* Before a frame: input and the menu, then any window change. */
 static int pumped; /* this frame's pump ran already: the OpenGL pass could not show it (Platform_PresentPicture) */
 
@@ -3362,13 +3373,15 @@ static void finish_present(int w, int h)
 
 int HERE(Platform_PresentPicture)(const uint32_t *pixels, int stride, int x, int y, int w, int h, int at_scale)
 {
-    int j;
+    int j, drawn_ok;
     if ((!renderer && !use_gl) || w <= 0 || h <= 0 || at_scale < 1) return 0;
     if (!pixels) {
         /* The OpenGL pass's picture: replayed now, shown from its texture. */
         if (!gl_pass()) return 0;
         begin_present(w, h, at_scale);
-        if (!replay() || GlPicture_Scale() != at_scale) {
+        drawn_ok = replay();
+        take_refused_scale();
+        if (!drawn_ok || GlPicture_Scale() != at_scale) {
             pumped = 1; /* the caller shows VRAM instead: one pump a frame */
             return 0;
         }
@@ -3394,7 +3407,10 @@ int HERE(Platform_PresentPicture)(const uint32_t *pixels, int stride, int x, int
         return 1;
     }
     if (x < 0 || x + w > stride) return 0;
-    if (gl_pass()) replay(); /* keep the normal picture current during widescreen */
+    if (gl_pass()) { /* keep the normal picture current during widescreen */
+        replay();
+        take_refused_scale();
+    }
     begin_present(w, h, at_scale);
     for (j = 0; j < h; j++) { /* the picture wraps at the bottom of VRAM, as VRAM does */
         memcpy(picture_pixels + (size_t)j * (size_t)w,
@@ -3410,7 +3426,10 @@ void HERE(Platform_Present)(const uint16_t *vram, int stride, int x, int y, int 
     if ((!renderer && !use_gl) || w <= 0 || h <= 0) {
         return;
     }
-    if (gl_pass()) replay(); /* a frame shown from VRAM (a movie, a widescreen frame) still keeps the pass in step */
+    if (gl_pass()) { /* a frame shown from VRAM (a movie, a widescreen frame) still keeps the pass in step */
+        replay();
+        take_refused_scale();
+    }
     begin_present(w, h, 1);
     for (j = 0; j < h; j++) {
         const uint16_t *row = vram + ((y + j) & 511) * stride;
@@ -3448,6 +3467,7 @@ int HERE(Platform_PresentWidePicture)(int x, int y, int w, int h, int wide_w, in
     begin_present(wide_w * at_scale, h * at_scale, at_scale);
     es_enter();
     replayed = GlPicture_Replay() && GlPicture_Scale() == at_scale;
+    take_refused_scale();
     if (replayed) texture = (GLuint)GlPicture_WideTexture(x, y, w, h, &pw, &ph);
     es_leave();
     if (!texture) {

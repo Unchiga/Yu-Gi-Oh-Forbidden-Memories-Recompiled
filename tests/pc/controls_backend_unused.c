@@ -45,6 +45,7 @@ UNUSED_GAME_FUNCTION(Platform_SetVSync)
 UNUSED_GAME_FUNCTION(GlPicture_Read)
 UNUSED_GAME_FUNCTION(GlPicture_ReadShown)
 UNUSED_GAME_FUNCTION(GlPicture_Behind)
+UNUSED_GAME_FUNCTION(GlPicture_TakeRefusedScale)
 /* The software-controls fixture has no GL core presenter; as on the
  * unsupported backend, report unavailable so SDL can keep its plain path. */
 int PresentPass_InitCore(void) { return 0; }
@@ -66,6 +67,7 @@ UNUSED_GAME_FUNCTION(Menu_NoticePad)
 UNUSED_GAME_FUNCTION(HostActions_Run)
 UNUSED_GAME_FUNCTION(Platform_StepFrame)
 UNUSED_GAME_FUNCTION(Memories_StateRequest)
+UNUSED_GAME_FUNCTION(Memories_ScaleRefused)
 UNUSED_GAME_FUNCTION(Platform_ScriptedPad2)
 UNUSED_GAME_FUNCTION(Log_Drain)
 UNUSED_GAME_FUNCTION(Cheats_Frame)

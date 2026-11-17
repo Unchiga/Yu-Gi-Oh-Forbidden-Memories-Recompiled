@@ -246,6 +246,10 @@ static GLuint picture_texture, picture_scratch, picture_fbo, picture_scratch_fbo
  * copied in is drawn, as a quad. 0: the textures are drawn into straight,
  * as before. */
 static int samples, samples_scale;
+/* The samples the driver allows for the setting (set_samples), whatever the
+ * picture could make at the scale it has: `samples` drops to 0 when the
+ * multisampled buffer did not fit, and a new scale tries again with these. */
+static int samples_given;
 static GLuint picture_ms_fbo, picture_ms_buffer;
 /* A replay drew into the multisampled picture since it was last resolved
  * whole: its texture is current only where a resolve has reached since. */
@@ -903,7 +907,81 @@ static GLuint picture_draw(void)
     return picture_ms_fbo ? picture_ms_fbo : picture_fbo;
 }
 
-/* The picture and its scratch copy at the scale, made or remade. */
+/* The scale a start of the picture was refused at (0: none) and why
+ * (MEMORIES_REFUSED_*, display.h), for the platform to take
+ * (GlPicture_TakeRefusedScale) and fall back from. */
+static int refused_scale, refused_why;
+
+static void refuse_scale(int wanted, int why)
+{
+    refused_scale = wanted;
+    refused_why = why;
+}
+
+/* MEMORIES_GL_FAIL_8X=1: the 8x targets fail as an out-of-memory driver would
+ * (1); =msaa: only the 8x multisampled buffer does (2), so the picture is made
+ * without anti-aliasing and a lower scale gets it back. To see the fallback
+ * without a weak card (notes/pc-build.md). */
+static int fail_8x_asked(void)
+{
+    static int asked = -1;
+    if (asked < 0) {
+        const char *env = getenv("MEMORIES_GL_FAIL_8X");
+        asked = !env || !*env || !strcmp(env, "0") ? 0 : !strcmp(env, "msaa") ? 2 : 1;
+    }
+    return asked;
+}
+
+/* The lowest scale made to fail (0: none): MEMORIES_GL_FAIL_SCALE=N fails the
+ * picture at N and above (4: 4x and 8x, so a refused 8x is followed by a
+ * refused 4x), MEMORIES_GL_FAIL_8X=1 is N of 8. */
+static int fail_from(void)
+{
+    static int from = -1;
+    if (from < 0) {
+        const char *env = getenv("MEMORIES_GL_FAIL_SCALE");
+        from = env && *env ? atoi(env) : 0;
+        if (from != 2 && from != 4 && from != 8) from = fail_8x_asked() == 1 ? 8 : 0;
+    }
+    return from;
+}
+
+/* The multisampled buffer at the picture's size, or 0 (also past the largest
+ * renderbuffer, which make_multisampled would only learn from a GL error). A
+ * buffer that does not fit costs the picture its samples, not its scale. */
+static GLuint make_multisampled_fitting(int w, int h, GLuint *buffer_out)
+{
+    GLint largest = 0;
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &largest);
+    if (w > largest || h > largest) {
+        fprintf(stderr, "memories-pc: OpenGL picture: %dx%d is beyond the largest renderbuffer (%d); no anti-aliasing\n",
+                w, h, largest);
+        return 0;
+    }
+    if (fail_8x_asked() == 2 && w == SOFT_GPU_WIDTH * 8) {
+        fprintf(stderr, "memories-pc: OpenGL picture: no room for %dx anti-aliasing at this resolution (MEMORIES_GL_FAIL_8X)\n",
+                samples);
+        return 0;
+    }
+    return make_multisampled(w, h, buffer_out);
+}
+
+/* The picture's colour targets, freed (what a failed start must not keep:
+ * at 8x they are 128 MiB each). */
+static void free_picture_targets(void)
+{
+    if (picture_fbo) gl_DeleteFramebuffers(1, &picture_fbo);
+    if (picture_scratch_fbo) gl_DeleteFramebuffers(1, &picture_scratch_fbo);
+    if (picture_texture) glDeleteTextures(1, &picture_texture);
+    if (picture_scratch) glDeleteTextures(1, &picture_scratch);
+    picture_fbo = picture_scratch_fbo = 0;
+    picture_texture = picture_scratch = 0;
+}
+
+/* The picture and its scratch copy at the scale, made or remade. A refusal
+ * leaves no picture (scale 0) and is noted for the platform, which asks for
+ * the next scale down (refused_scale); the multisampled buffer alone failing
+ * costs samples, never the scale. */
 static int make_picture(int wanted)
 {
     int w = SOFT_GPU_WIDTH * wanted, h = SOFT_GPU_HEIGHT * wanted;
@@ -913,34 +991,53 @@ static int make_picture(int wanted)
         /* A phone's memory: at 8x the picture and its scratch copy are
          * 128 MiB each, before anti-aliasing and widescreen's targets. */
         fprintf(stderr, "memories-pc: OpenGL picture: %dx is beyond OpenGL ES's 4x\n", wanted);
+        refuse_scale(wanted, MEMORIES_REFUSED_ES);
         return 0;
     }
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &largest);
     if (w > largest || h > largest) {
         fprintf(stderr, "memories-pc: OpenGL picture: %dx is beyond the largest texture (%d)\n", wanted, largest);
+        refuse_scale(wanted, MEMORIES_REFUSED_SIZE);
         return 0;
     }
     wide_free(); /* their textures are at the old scale */
     capture_rect[2] = capture_rect[3] = 0; /* so is the capture's */
     free_multisampled(&picture_ms_fbo, &picture_ms_buffer);
     picture_unresolved = 0; /* drawn again from VRAM (resync) */
-    if (picture_fbo) gl_DeleteFramebuffers(1, &picture_fbo);
-    if (picture_scratch_fbo) gl_DeleteFramebuffers(1, &picture_scratch_fbo);
-    if (picture_texture) glDeleteTextures(1, &picture_texture);
-    if (picture_scratch) glDeleteTextures(1, &picture_scratch);
+    free_picture_targets();
+    while (glGetError() != GL_NO_ERROR) continue;
     picture_texture = make_texture(GL_RGBA8, w, h, GL_RGBA, GL_UNSIGNED_BYTE);
     picture_scratch = make_texture(GL_RGBA8, w, h, GL_RGBA, GL_UNSIGNED_BYTE);
+    if (glGetError() != GL_NO_ERROR || (fail_from() && wanted >= fail_from())) { /* out of video memory */
+        fprintf(stderr, "memories-pc: OpenGL picture: no room for the %dx picture%s\n", wanted,
+                fail_from() && wanted >= fail_from() ? " (MEMORIES_GL_FAIL_*)" : "");
+        free_picture_targets();
+        scale = 0;
+        refuse_scale(wanted, MEMORIES_REFUSED_ROOM);
+        return 0;
+    }
     picture_fbo = make_framebuffer(picture_texture);
     picture_scratch_fbo = make_framebuffer(picture_scratch);
     if (!picture_fbo || !picture_scratch_fbo) {
+        free_picture_targets();
         scale = 0;
+        refuse_scale(wanted, MEMORIES_REFUSED_ROOM);
         return 0;
     }
-    if (samples && !(picture_ms_fbo = make_multisampled(w, h, &picture_ms_buffer)))
+    samples = samples_given; /* what the last scale could not make, this one may */
+    if (samples && !(picture_ms_fbo = make_multisampled_fitting(w, h, &picture_ms_buffer)))
         samples = 0; /* no room: drawn without, until the setting or the scale changes */
     scale = wanted;
     samples_scale = wanted; /* made at this scale: set_samples has nothing to redo */
     return 1;
+}
+
+int GlPicture_TakeRefusedScale(int *why)
+{
+    int refused = refused_scale;
+    if (why) *why = refused_why;
+    refused_scale = refused_why = 0;
+    return refused;
 }
 
 static void delete_names(void); /* every name the pass holds (below) */
@@ -2934,9 +3031,9 @@ static void set_samples(int wanted)
     wide_free();
     picture_resolve_all(); /* the picture carries on from its texture */
     free_multisampled(&picture_ms_fbo, &picture_ms_buffer);
-    samples = given;
+    samples = samples_given = given;
     if (!samples || scale < 2) return;
-    picture_ms_fbo = make_multisampled(SOFT_GPU_WIDTH * scale, SOFT_GPU_HEIGHT * scale, &picture_ms_buffer);
+    picture_ms_fbo = make_multisampled_fitting(SOFT_GPU_WIDTH * scale, SOFT_GPU_HEIGHT * scale, &picture_ms_buffer);
     if (!picture_ms_fbo) {
         samples = 0; /* no room: drawn without, until the setting or the scale changes */
         return;
