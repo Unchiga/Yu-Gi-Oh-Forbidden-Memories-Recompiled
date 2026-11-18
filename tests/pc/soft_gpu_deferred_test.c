@@ -594,7 +594,12 @@ int main(int argc, char **argv)
         CHECK(SoftGpu_Gp0(area, 4) == 4);
         for (int cycle = 0; cycle < 7; cycle++) {
             SoftGpuDeferredStats s;
+            int before = holds;
             SoftGpu_Fill(0, 0, 320, 240, 0);
+            /* Cycles 1-4 start given up with nothing held: the clear changes
+             * given_up[] with the clock held all the same (the tick's fills
+             * change it too). */
+            CHECK(cycle < 1 || cycle > 4 || holds > before);
             SoftGpu_Fill(0, 0, 320, 240, 0);
             CHECK(SoftGpu_Gp0(plain, 3) == 3);
             if (cycle < 2) CHECK(SoftGpu_Gp0(banked, 7) == 7);

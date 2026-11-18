@@ -159,11 +159,11 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  *
  * The game clock's tick (MEMORIES_CLOCK=interrupt) can load, store, move or
  * fill at any instruction. It is held off (SoftGpu_HoldClock) through each
- * batch while work can be held (holding()) or is, and through every look at
- * the queues while anything is held, so it never sees a queue half made or
- * half rastered, and never finds `gpu` swapped for a held primitive's state.
- * At 2x and above, with a recorder or with a mod's VRAM, a batch neither
- * holds it nor calls hold. */
+ * batch while work can be held (holding()) or is, through every look at the
+ * queues while anything is held and through every change of given_up[], so
+ * it never sees a queue or given_up[] half made or half rastered, and never
+ * finds `gpu` swapped for a held primitive's state. At 2x and above, with a
+ * recorder or with a mod's VRAM, a batch neither holds it nor calls hold. */
 #define HELD_AREAS 2
 #define HELD_SAMPLED 48
 #define HELD_WORDS_MAX (4u << 20) /* past this an area's queue is rastered and started again */
@@ -207,32 +207,6 @@ typedef struct GivenUp {
 } GivenUp;
 static GivenUp given_up[HELD_AREAS];
 static int given_up_count;
-
-static GivenUp *area_given_up(int x, int y, int w, int h)
-{
-    for (int i = 0; i < given_up_count; i++)
-        if (given_up[i].x == x && given_up[i].y == y && given_up[i].w == w && given_up[i].h == h) return &given_up[i];
-    return NULL;
-}
-
-/* `again`: a bank, the shadow or the panel made it (they come back each
- * frame), so the next cycle starts given up too. */
-static void give_up(int x, int y, int w, int h, int again)
-{
-    GivenUp *gone = area_given_up(x, y, w, h);
-    if (!gone) {
-        if (given_up_count == HELD_AREAS) memmove(&given_up[0], &given_up[1], sizeof(given_up[0]) * (HELD_AREAS - 1));
-        else given_up_count++;
-        gone = &given_up[given_up_count - 1];
-        gone->x = x;
-        gone->y = y;
-        gone->w = w;
-        gone->h = h;
-        gone->again = 0;
-    }
-    gone->drawn = 1;
-    gone->again |= again;
-}
 #define POISON 0x7c1f /* magenta: what a reader that does not settle sees of held work */
 
 void (*SoftGpu_HoldClock)(int hold);
@@ -247,6 +221,48 @@ static void hold_clock(void)
 static void release_clock(void)
 {
     if (--clock_depth == 0 && SoftGpu_HoldClock) SoftGpu_HoldClock(0);
+}
+
+/* given_up[] is changed with the clock held: a fill from the tick
+ * (before_fill) changes it too, and one in the middle of a removal or an
+ * addition would leave a count of -1 or 3. */
+static GivenUp *area_given_up(int x, int y, int w, int h)
+{
+    for (int i = 0; i < given_up_count; i++)
+        if (given_up[i].x == x && given_up[i].y == y && given_up[i].w == w && given_up[i].h == h) return &given_up[i];
+    return NULL;
+}
+
+/* Whether the area is given up; if it is, it was drawn into this cycle. */
+static int drawn_given_up(int x, int y, int w, int h)
+{
+    GivenUp *gone;
+    hold_clock();
+    if ((gone = area_given_up(x, y, w, h)) != NULL) gone->drawn = 1;
+    release_clock();
+    return gone != NULL;
+}
+
+/* `again`: a bank, the shadow or the panel made it (they come back each
+ * frame), so the next cycle starts given up too. */
+static void give_up(int x, int y, int w, int h, int again)
+{
+    GivenUp *gone;
+    hold_clock();
+    gone = area_given_up(x, y, w, h);
+    if (!gone) {
+        if (given_up_count == HELD_AREAS) memmove(&given_up[0], &given_up[1], sizeof(given_up[0]) * (HELD_AREAS - 1));
+        else given_up_count++;
+        gone = &given_up[given_up_count - 1];
+        gone->x = x;
+        gone->y = y;
+        gone->w = w;
+        gone->h = h;
+        gone->again = 0;
+    }
+    gone->drawn = 1;
+    gone->again |= again;
+    release_clock();
 }
 
 /* Whether [a, a + la) and [b, b + lb) meet on a circle of `size`. */
@@ -463,18 +479,24 @@ static void before_write(int x, int y, int w, int h, int why, const Write *write
 static void before_fill(int x, int y, int w, int h, uint16_t color)
 {
     const Write fill = {NULL, 0, 0, 0, 1, color};
-    for (int i = 0; i < given_up_count; i++) { /* a clear: the area may hold again */
-        GivenUp *gone = &given_up[i];
-        if (!span_covers(x, w, SOFT_GPU_WIDTH, gone->x, gone->x + gone->w - 1) ||
-            !span_covers(y, h, SOFT_GPU_HEIGHT, gone->y, gone->y + gone->h - 1) || !gone->drawn)
-            continue;
-        if (gone->again) { /* a bank, the shadow or the panel will be back: not yet */
-            gone->again = gone->drawn = 0;
-            continue;
+    if (given_up_count) {
+        /* With the clock held: a fill from the tick in the middle of this
+         * would remove an entry twice. Nothing given up, nothing to hold. */
+        hold_clock();
+        for (int i = 0; i < given_up_count; i++) { /* a clear: the area may hold again */
+            GivenUp *gone = &given_up[i];
+            if (!span_covers(x, w, SOFT_GPU_WIDTH, gone->x, gone->x + gone->w - 1) ||
+                !span_covers(y, h, SOFT_GPU_HEIGHT, gone->y, gone->y + gone->h - 1) || !gone->drawn)
+                continue;
+            if (gone->again) { /* a bank, the shadow or the panel will be back: not yet */
+                gone->again = gone->drawn = 0;
+                continue;
+            }
+            memmove(&given_up[i], &given_up[i + 1], sizeof(given_up[0]) * (size_t)(given_up_count - i - 1));
+            given_up_count--;
+            i--;
         }
-        memmove(&given_up[i], &given_up[i + 1], sizeof(given_up[0]) * (size_t)(given_up_count - i - 1));
-        given_up_count--;
-        i--;
+        release_clock();
     }
     if (!held_any) return;
     hold_clock();
@@ -691,7 +713,6 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
     int x = gpu.clip_x1, y = gpu.clip_y1, w = gpu.clip_x2 - gpu.clip_x1 + 1, h = gpu.clip_y2 - gpu.clip_y1 + 1;
     int textured = uv != NULL || v != NULL, rects[2][4], n = -1, now = -1, i, slot = -1, span[4];
     HeldArea *area;
-    GivenUp *gone;
     if (replaying || target != vram || (!holding() && !held_any)) return 0;
     /* The rules that need no rectangles first: what goes at once anyway
      * (a bank, the shadow, an area given up) never scans a palette. */
@@ -705,8 +726,7 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
         now = SOFT_GPU_NOW_SHADOW;
     } else if (panel) {
         now = SOFT_GPU_NOW_PANEL;
-    } else if ((gone = area_given_up(x, y, w, h))) {
-        gone->drawn = 1;
+    } else if (given_up_count && drawn_given_up(x, y, w, h)) {
         now = SOFT_GPU_NOW_AFTER;
     } else {
         if (textured && !uv) polygon_uv(v, vertices, span), uv = span;

@@ -2966,8 +2966,11 @@ The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 interrupt clock (NULL with the cooperative clock, the default), blocks
 SIGALRM (on Windows, `Memories_SigProcMask`, which the clock thread obeys)
 through each `SoftGpu_Gp0` while work can be held (`holding()`: the switch
-on, at 1x, no recorder, no mod's VRAM) or is held, and through every load,
-store, move, fill and settle while anything is held, and puts the mask back
+on, at 1x, no recorder, no mod's VRAM) or is held, through every load,
+store, move, fill and settle while anything is held, and through every
+change of `given_up` (a clear changes it with nothing held, and a fill from
+the tick in the middle of a removal would leave the count at -1 and the
+next addition writing outside it), and puts the mask back
 as it found it; `soft_gpu.c` counts the nesting, so only the outermost call
 blocks. A tick then never finds a queue half made or half rastered, or
 `gpu` swapped for a held primitive's state. Re-entering instead was turned
@@ -2994,7 +2997,9 @@ Checks and tools:
   hook must be called balanced and never nested, nothing may be held while
   the mod binds VRAM, and each immediate cause but the panel's and
   `OTHER`'s must have occurred. A fixed case checks that with a mod's VRAM
-  or at 2x a batch holds nothing, counts nothing and never holds the clock. Each of these taken out alone fails it:
+  or at 2x a batch holds nothing, counts nothing and never holds the clock,
+  and the `again` case that a clear of an area given up, with nothing held,
+  holds the clock. Each of these taken out alone fails it:
   the load's, the move destination's and the immediate primitive's settles,
   the sampled-rectangle check, the snapshot of the state, the settle before
   a new area, the drop only on a whole cover, the poison's restore, holding
