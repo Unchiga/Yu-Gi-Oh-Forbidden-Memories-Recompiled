@@ -16,6 +16,7 @@
 #include "pc/debug/profile.h"
 #include "pc/compat/signal.h"
 #include "pc/audio/spu.h"
+#include "pc/render/soft_gpu.h"
 #include "controls_runtime.h"
 #include "settings.h"
 #include <pthread.h>
@@ -237,6 +238,25 @@ static void on_alarm(int number, siginfo_t *info, void *context)
  * backend has finished creating its own with the signal masked. With the
  * game's interrupt code running on a driver thread the main thread stalls
  * on that driver's locks. The process-wide timer is only a fallback. */
+/* The software GPU's deferred raster holds the tick off while it works on
+ * what it keeps back (soft_gpu.h, SoftGpu_HoldClock); it nests the calls
+ * itself, so the mask it found is put back as it was. */
+static sigset_t gpu_mask;
+
+static unsigned long long gpu_clock(void) { return now_us(); }
+
+static void hold_clock_for_gpu(int hold)
+{
+    sigset_t set;
+    if (hold) {
+        sigemptyset(&set);
+        sigaddset(&set, SIGALRM);
+        sigprocmask(SIG_BLOCK, &set, &gpu_mask);
+    } else {
+        sigprocmask(SIG_SETMASK, &gpu_mask, NULL);
+    }
+}
+
 int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
 {
 #ifndef _WIN32
@@ -249,6 +269,7 @@ int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
 #endif
     tick_handler = tick;
     vblank_handler = vblank;
+    SoftGpu_Clock = gpu_clock; /* the deferred raster's settles, timed (SoftGpuDeferredStats) */
     /* The virtual clock (above). The frame-dump combination is kept as it
      * was; MEMORIES_DETERMINISTIC=1 alone needs neither a dump nor speed -1. */
     deterministic_dump = (getenv("MEMORIES_HEADLESS") != NULL || getenv("MEMORIES_DETERMINISTIC") != NULL) &&
@@ -277,6 +298,7 @@ int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
         if (!cooperative) {
             fprintf(stderr, "memories-pc: interrupt clock%s\n",
                     clock && *clock ? " (MEMORIES_CLOCK=interrupt)" : ", which MEMORIES_PROFILE samples from");
+            SoftGpu_HoldClock = hold_clock_for_gpu;
         }
     }
 #ifdef _WIN32

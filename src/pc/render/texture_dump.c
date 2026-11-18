@@ -429,6 +429,8 @@ void TextureDump_Touched(int x, int y, int w, int h)
     }
 }
 
+unsigned TextureDump_TouchCount(void) { return touches; }
+
 /* The blocks a clear covers whole are clean after it. */
 static void clean_whole(int x, int y, int w, int h)
 {

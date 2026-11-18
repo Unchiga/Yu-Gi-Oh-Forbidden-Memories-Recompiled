@@ -3257,11 +3257,21 @@ static int by_name(const void *key, const void *entry)
     return strcmp(key, ((const MemoriesModExport *)entry)->name);
 }
 
+/* Code that has bound SoftGpu_Vram or SoftGpu_StateData, at load
+ * (`resolve`) or later (host->symbol): it may keep VRAM's pointer and use it
+ * whenever, which the software GPU's deferred raster cannot see, so it keeps
+ * nothing back while there is any (libgpu.c hands it this). A loaded object
+ * stays linked, so this never goes down. */
+static int vram_binders;
+
+int Mods_VramUsers(void) { return vram_binders; }
+
 void *Mods_Lookup(const char *name)
 {
     const MemoriesModExport *found;
     union { void (*function)(void); void *pointer; } libc;
     if (!name) return NULL;
+    if (!strcmp(name, "SoftGpu_Vram") || !strcmp(name, "SoftGpu_StateData")) vram_binders++;
     libc.function = Mods_LibcLookup(name);
     if (libc.function) return libc.pointer;
     found = bsearch(name, Memories_ModExports, Memories_ModExportCount, sizeof(*Memories_ModExports), by_name);
@@ -3316,6 +3326,7 @@ static void *load_object(Mod *mod, const char *path)
         note(mod, "%s %s", mod->library, error);
         return NULL;
     }
+    vram_binders++; /* the system's own loader binds it: what it binds is not seen (Mods_VramUsers) */
     mod->code_hash = mod->object.hash;
     return ObjectLoader_Symbol(&mod->object, "MemoriesModInit");
 #else

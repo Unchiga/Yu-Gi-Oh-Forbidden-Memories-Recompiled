@@ -2708,10 +2708,11 @@ first. `soft_gpu.h` has it:
   lent to code mods (`NOT_LENT_TO_MODS` in `tools/pc/build_config.py`, used
   by both export tables) and declared only outside `MEMORIES_MOD`, so the
   SDK's `soft_gpu.h` does not offer them and no release pins them.
-- The raster is still immediate: settling only calls
-  `SoftGpu_SettleObserver` (tests). Nothing a frame draws or a run hashes
-  changes. A new scale or recorder settles all of VRAM before anything
-  changes.
+- Settling calls `SoftGpu_SettleObserver` (tests) and rasters what the
+  deferred raster holds there (below, "The deferred raster"). With that off,
+  the default, the raster is immediate and nothing a frame draws or a run
+  hashes changes. A new scale or recorder settles all of VRAM before
+  anything changes.
 
 Readers that settle, by what they read:
 
@@ -2727,7 +2728,9 @@ Readers that settle, by what they read:
   4:3 fallback, through `display_words` in `libgpu.c` (a 24-bit row is half
   as many words again); the x11 backend's screenshot and window redraw,
   which read the last presented frame again later (`last_words` in
-  `x11.c`). The SDL backend copies the frame as it is presented.
+  `x11.c`). The SDL backend copies the frame as it is presented. Headless
+  (`MEMORIES_HEADLESS`) `display_words` settles nothing: neither backend's
+  `Platform_Present` reads a word without a window.
 - A rectangle: `SoftGpu_Store` (StoreImage), a move's source (not the 2x1
   move onto itself without the mask that the game makes every frame), the
   destination of a load or move while the mask bit is checked, a capture's
@@ -2789,12 +2792,13 @@ The checks, and how far they go:
   (`Platform_Present`), or `soft_gpu.c` itself.
 - Frame hashes (`Memories_VramHash`, the replays) settle all of VRAM, so
   hashes that match prove nothing once work is kept back: they would match
-  however late the settle. The change that keeps work back needs a debug
-  mode that fills held work with a poison colour instead of drawing it
-  until a settle, so a reader that does not settle shows the poison in a
-  frame dump or a hash.
+  however late the settle. The deferred raster's poison mode
+  (`MEMORIES_DEFERRED_POISON=1`) fills held work with magenta until a
+  settle, so a reader that does not settle shows the poison in a frame dump
+  or, if what it read goes back into VRAM or the game, in a hash.
 
-What the change that keeps work back must also get right:
+What the change that keeps work back had to get right (see "The deferred
+raster" for how it does):
 
 - The game clock's tick (`MEMORIES_CLOCK=interrupt`, SIGALRM) can call a
   LoadImage or StoreImage while a batch is being rastered (see
@@ -2804,7 +2808,8 @@ What the change that keeps work back must also get right:
   own only if work is kept back while a recorder draws the picture at 2x and
   above, where the software GPU does not raster them (`wide_rastered`).
   Keeping work back without a recorder (a forced mode at 1x for tests) has
-  to hold the targets' second pass too.
+  to hold the targets' second pass too; the first version keeps nothing back
+  in an area that has a target.
 
 What changes what a primitive draws without going through `load_words`,
 `move_words` or `fill_words` (which a kept-back raster sees), with the
@@ -2831,6 +2836,135 @@ matters only in a 3D battle whose background animates its texture with a
 move every frame (`func_8004E9A0.c`, the background record's kinds 1 and
 4): 12% of its frames skipped without the copies, all with them; the 3D
 battle samples neither banks nor the shadow.
+
+### The deferred raster
+
+`MEMORIES_DEFERRED_RASTER=1` (read once, at the first `ResetGraph`) keeps
+back what is drawn into a full-screen drawing area until something reads
+it, and drops it when the game clears the area first. Off by default: this
+first version runs at the console's resolution, for tests and measurement;
+turning it on at 2x and above with the OpenGL picture comes after (below).
+`SoftGpu_SetDeferred(on, poison)` in `soft_gpu.h` is the switch, which
+settles everything when it changes.
+
+What is held, and how:
+
+- A polygon, sprite or line whose drawing area is at least 256x192 words
+  (the game's two 320x240 buffers) is copied, words and all, into that
+  area's queue, with the drawing state (`GpuState`, the save state's
+  struct) it is rastered with; equal states are stored once. Two areas can
+  hold at once; a third rasters the older one.
+- What the primitive does as it comes is still done then: the state it
+  leaves (its palette, page, blend, depth: later primitives and
+  `SoftGpu_StateData(1)` see it), `TextureDump_Prepare` and
+  `TextureDump_Primitive`, the recorder's copy of the batch and its PGXP
+  vertices, the picture-only checks. A queued primitive is rastered later
+  by the same `polygon`, `rectangle` or `lines` with `replaying` set, which
+  skips all of that, samples VRAM even if a bank of its number has been
+  made since, and clears no provenance tags (it was held only if they were
+  clear, below).
+- It is rastered at the first settle that crosses its area (any
+  `SoftGpu_Settle`, and so every reader in "Settling VRAM before it is
+  read"), in the order it came, area by area; or dropped when a fill covers
+  the whole area, which overwrites every word whatever the mask (the game's
+  clear, two frames after it drew there).
+- A write rasters it first: a load, a move's destination (not the game's
+  2x1 move onto itself, which writes nothing), a fill that does not cover
+  the area, a primitive rastered at once, into its area or into a page or
+  palette row it samples (each area keeps up to 32 of those rectangles;
+  past that, any write rasters it).
+- So that areas can be rastered one by one, held areas never overlap and
+  none samples another: before an area starts a queue, the areas that meet
+  it or sample it are rastered.
+
+Rastered at once instead (after what it draws over and what it reads has
+been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
+
+- it samples a texture bank (`SoftGpu_Bank`: its writers rewrite it
+  unannounced) or the texture pack's shadow (`TextureDump_Prepare` said 1);
+- its page or palette lies in a held area or in its own;
+- its area's provenance tags or shadow cells are not all clear
+  (`TextureDump_Clean`, checked again whenever `TextureDump_TouchCount`
+  moves), so drawing would clear some;
+- it is the life-point panel's page while the opponent's name is drawn over
+  it at 1x (`SoftGpu_PanelName`, which the host answers as the panel comes);
+- a loaded code mod bound `SoftGpu_Vram` or `SoftGpu_StateData`
+  (`Mods_VramUsers` counts it in `Mods_Lookup`, which `resolve` and
+  `host->symbol` both use, and any object the system's loader loaded,
+  whose bindings are not seen; never down again, as code stays linked;
+  `flush_drawing` hands it to `SoftGpu_SetModVramUsers`);
+- a scaled picture is drawn here or by a recorder at 2x and above (whose
+  copy of VRAM would miss the held words), or the area has a widescreen
+  target the software GPU rasters (its second pass is not held);
+- an area's queue passed 4M words, or memory ran out.
+
+The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
+`SoftGpu_HoldClock`, which `platform_common.c` sets when it starts the
+interrupt clock (NULL with the cooperative clock, the default), blocks
+SIGALRM (on Windows, `Memories_SigProcMask`, which the clock thread obeys)
+through each `SoftGpu_Gp0` while deferral is on and through every load,
+store, move, fill and settle while anything is held, and puts the mask back
+as it found it; `soft_gpu.c` counts the nesting, so only the outermost call
+blocks. A tick then never finds a queue half made or half rastered, or
+`gpu` swapped for a held primitive's state. Re-entering instead was turned
+down: a tick that settled in the middle of an append would leave the queue
+with entries of a frame already drawn. With deferral off nothing is held
+and the clock is never held.
+
+Checks and tools:
+
+- `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 1000
+  random frames, three seeds, played immediate, deferred and deferred with
+  poison; two 320x240 areas cleared in turn (now and then one at 0,256),
+  polygons, sprites and lines sampling VRAM pages, the other area, a bank
+  and the "pack's" pages, between loads, moves (the 2x1 self-move too),
+  fills, stores, settles, tags and shadow cells painted, save states, a mod
+  binding VRAM and a scale change; a `TextureDump_Prepare` that loads and
+  stores in the middle of a batch, as the tick can. Every store, settled
+  rectangle, state, a present of the area just drawn (one frame in four)
+  and the final VRAM, tags, shadow and drawing state must match, the clock
+  hook must be called balanced and never nested, and each immediate cause
+  but the panel must have occurred. Each of these taken out alone fails it:
+  the load's, the move destination's and the immediate primitive's settles,
+  the sampled-rectangle check, the snapshot of the state, the settle before
+  a new area, the drop only on a whole cover, the poison's restore, holding
+  bank primitives, clearing tags in a replay, the clean check. (Not
+  checking a primitive's texture against its own area is not caught, and
+  needs not be: the queue rasters in order, so a held primitive that reads
+  its own area reads what the ones before it drew.)
+- `MEMORIES_DEFERRED_POISON=1`: an area's words become magenta (0x7c1f) as
+  its queue begins, and come back (then the queue is rastered) at the
+  settle. A reader that does not settle sees magenta; frame hashes and
+  dumps settle all of VRAM and cannot catch one. Debug only.
+- `MEMORIES_TRACE=frames` logs, beside `draws:`, a `deferred:` line per 120
+  DrawOTags: primitives held, dropped, rastered and rastered at once, areas
+  cleared and settled, and the settles' time, in the draws (a batch's) and
+  outside them (a reader's).
+
+The gate (`D:/YGO/scratch/cpu-raster/pr2-gate.py`, not in the tree): every
+replay, headless at 1x, played by one build with the switch off (with
+per-frame hashes), on (only the recording's checkpoints, so held work
+crosses buffer swaps and the clears drop it), on with per-frame hashes,
+and on with poison; the checkpoints and frame hashes of each against those
+of the run with it off, never against the stored ones.
+
+Left for turning it on at 2x and above with the OpenGL picture:
+
+- The OpenGL copy of VRAM (`upload_vram`, raw) misses held words: a settle
+  that crosses held work while a recorder is on must record the settled
+  words as an `OP_LOAD` (moves out of a drawing area, the story's image,
+  and anything sampling an area need it), and `holding()` must then allow
+  the recorder.
+- Widescreen: with a recorder at 2x the targets are not rastered here, so
+  holding them needs only `wt->drawn` kept at submit (it is: `SoftGpu_Gp0`
+  counts it); the `SoftGpu_WideMargin` refusal in `hold` must go.
+- The pack's shadow and the banks: primitives sampling either are still
+  rastered at once, which in a duel with an HD pack is every frame (step A:
+  0.3% of duel frames skip). Both need a generation that moves only when
+  their bytes do.
+- Move hazards: the 3D battle's palette move (`func_8004E9A0.c`) writes
+  texels held work samples every frame, which rasters it; copying the old
+  texels instead is step A's "+4".
 
 ### OpenGL ES 3 (Android)
 

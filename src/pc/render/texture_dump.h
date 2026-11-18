@@ -110,6 +110,9 @@ static inline uint16_t *TextureDump_Cell(int x, int y, int sub)
 #define TEXTURE_CLEAN_COLUMNS (SOFT_GPU_WIDTH / TEXTURE_CLEAN_WORDS)
 extern uint8_t TextureDump_Clean[SOFT_GPU_HEIGHT * TEXTURE_CLEAN_COLUMNS];
 void TextureDump_Touched(int x, int y, int w, int h);
+/* How many times TextureDump_Touched has been called: a block found clean
+ * stays clean while this has not changed (soft_gpu.c's deferred raster). */
+unsigned TextureDump_TouchCount(void);
 static inline int TextureDump_WholeClean(int y, int column, int end)
 {
     return !(column & (TEXTURE_CLEAN_WORDS - 1)) && end - column >= TEXTURE_CLEAN_WORDS &&

@@ -147,6 +147,10 @@ void Mods_DrawFrame(void);
 /* Whether a mod's frame callback, in the last Mods_DrawFrame, asked that
  * its frame be drawn only in the scaled picture (host->picture_only_frame). */
 int Mods_PictureOnlyFrame(void);
+/* How many times loaded mod code bound SoftGpu_Vram or SoftGpu_StateData
+ * (or code loaded by the system's loader, whose bindings are not seen): the
+ * software GPU keeps no drawing back while it is not 0 (libgpu.c). */
+int Mods_VramUsers(void);
 /* The applied mods' overlays (MemoriesMod.overlay), drawn with the port's
  * menu text; the rectangle they covered, or zeros. Their signature changes
  * whenever one of them would draw something else (`frame` for a mod that
