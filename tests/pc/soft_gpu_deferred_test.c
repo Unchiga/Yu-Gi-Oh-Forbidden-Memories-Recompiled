@@ -355,6 +355,9 @@ int main(int argc, char **argv)
         CHECK(now.gpu == held.gpu && now.gpu == poisoned.gpu);
     }
 
+    /* The fixed cases below, without the pack's prepare (and its tick). */
+    TextureDump_Prepare = NULL;
+
     /* A sprite whose texture coordinates run past 255 wraps to the page's
      * first texels: a 16-bit sprite from page 9 (576,0) at u 250, 20 wide,
      * reads 826-831 and then 576-589, inside the area at 320,0 whose
@@ -407,6 +410,69 @@ int main(int argc, char **argv)
             for (int i = 0; i < 60; i++) SoftGpu_Store(i * 4, 0, 1, 1, (deferred ? then : first) + i);
         }
         CHECK(!memcmp(first, then, sizeof(first)) && first[59] == 0x001f);
+        SoftGpu_SetDeferred(0, 0);
+    }
+
+    /* The texels a polygon reads are within its vertices' coordinates
+     * (texture_rects): every texel of the 16-bit page at 768,256 outside
+     * them is uploaded anew after it is held (and half the time the
+     * greatest u's column and v's row too, which it reads), and it must
+     * come out as when it is rastered at once. Mirrored quads read their greatest u and v at
+     * their first pixels; slivers with their texture spread across them
+     * overflow the raster's steps and read anywhere in the page. */
+    {
+        const uint32_t left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        static uint16_t page[256 * 256], first[320 * 240], then[320 * 240];
+        int differ = 0;
+        seed = 77;
+        for (int n = 0; n < 1500; n++) {
+            uint32_t quad[9];
+            int u[4], v[4], x[4], y[4], uv[4] = {255, 255, 0, 0}, sliver = n & 1;
+            for (int k = 0; k < 4; k++) {
+                u[k] = below(256);
+                v[k] = below(256);
+            }
+            if (!sliver) { /* mirrored: u and v fall as x and y grow */
+                int w = 2 + below(40), h = 2 + below(40), u0 = w + below(256 - w), v0 = h + below(256 - h);
+                x[0] = x[2] = 0, x[1] = x[3] = w, y[0] = y[1] = 0, y[2] = y[3] = h;
+                u[0] = u[2] = u0, u[1] = u[3] = u0 - w, v[0] = v[1] = v0, v[2] = v[3] = v0 - h;
+            } else {
+                for (int k = 0; k < 4; k++) {
+                    x[k] = k < 2 ? below(300) : x[k - 2] + below(3) - 1;
+                    y[k] = k < 2 ? below(200) : y[k - 2] + below(3) - 1;
+                }
+            }
+            for (int k = 0; k < 4; k++) {
+                uv[0] = u[k] < uv[0] ? u[k] : uv[0], uv[2] = u[k] > uv[2] ? u[k] : uv[2];
+                uv[1] = v[k] < uv[1] ? v[k] : uv[1], uv[3] = v[k] > uv[3] ? v[k] : uv[3];
+                quad[1 + k * 2] = (uint32_t)(y[k] << 16 | x[k]);
+                quad[2 + k * 2] = (uint32_t)(v[k] << 8 | u[k]) |
+                                  (k == 1 ? (uint32_t)(12 | 16 | (2u << 7)) << 16 : 0); /* page 768,256, 16-bit */
+            }
+            quad[0] = 0x2d808080u; /* raw textured quad */
+            for (int deferred = 0; deferred < 2; deferred++) {
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 320, 240, 0);
+                for (int i = 0; i < 256 * 256; i++) page[i] = (uint16_t)(i * 2654435761u >> 16) | 1;
+                SoftGpu_Load(768, 256, 256, 256, page);
+                SoftGpu_SetDeferred(deferred, 0);
+                CHECK(SoftGpu_Gp0(left, 4) == 4 && SoftGpu_Gp0(quad, 9) == 9);
+                /* Everything outside uv[0..2] x uv[1..3], in four bands. */
+                for (int i = 0; i < 256 * 256; i++) page[i] = (uint16_t)(i * 40503u) | 1;
+                if (uv[1] > 0) SoftGpu_Load(768, 256, 256, uv[1], page);
+                if (uv[3] < 255) SoftGpu_Load(768, 256 + uv[3] + 1, 256, 255 - uv[3], page);
+                if (uv[0] > 0) SoftGpu_Load(768, 256 + uv[1], uv[0], uv[3] - uv[1] + 1, page);
+                if (uv[2] < 255) SoftGpu_Load(768 + uv[2] + 1, 256 + uv[1], 255 - uv[2], uv[3] - uv[1] + 1, page);
+                if (n % 4 < 2) { /* and, half the time, the greatest u's column and v's row, which are read */
+                    SoftGpu_Load(768 + uv[2], 256 + uv[1], 1, uv[3] - uv[1] + 1, page + 7);
+                    SoftGpu_Load(768 + uv[0], 256 + uv[3], uv[2] - uv[0] + 1, 1, page + 11);
+                }
+                SoftGpu_Store(0, 0, 320, 240, deferred ? then : first);
+            }
+            differ |= memcmp(first, then, sizeof(first)) != 0;
+        }
+        CHECK(!differ);
         SoftGpu_SetDeferred(0, 0);
     }
 

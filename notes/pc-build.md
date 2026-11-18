@@ -2882,11 +2882,16 @@ What is held, and how:
   textures in pages that reach into the drawing areas' rows (a 256-row page
   at y 0 covers both buffers), and whole pages made a duel field's
   textured primitives look as if they read the buffers. A polygon samples
-  within its vertices' least and greatest u and v (each pixel's are a mix of
-  them, and the raster's bias keeps the rounding inside); a sprite from u,
-  v to u + w - 1, v + h - 1, all of the page's width or height if that runs
-  past 255 (it wraps) or the texture window folds it; one texel of margin
-  within the page.
+  within its vertices' least and greatest u and v (`polygon_uv`: each
+  pixel's are a mix of them, and the raster's 2^-8 bias outweighs its
+  steps' rounding); a sprite from u, v to u + w - 1, v + h - 1; all of the
+  page's width or height if that runs past 255 (it wraps) or the texture
+  window folds it. No margin: a texel past them would reach row 239 from
+  the game's strips at 240 and tie the two buffers together. A sliver whose
+  texture spreads so fast across it that the raster's 32-bit steps could
+  overflow (range x 4 x width x height >= 768 x twice its area) takes the
+  whole page; the check found no sliver that reads outside its range, so
+  this is caution, not a case seen.
 - So that areas can be rastered one by one, held areas never overlap and
   none samples another: before an area starts a queue, the areas that meet
   it or sample it are rastered.
@@ -2949,8 +2954,11 @@ Checks and tools:
   sprite's wrap (a fixed case: a sprite past u 255 reading the other,
   held, area), an upload taken as unchanged when it is not or when it sets
   the mask bit, a merged rectangle not grown (a fixed case: 60 sprites
-  reading 60 texels, the last one uploaded anew) or a rectangle taken as
-  within another when it is not. (Not
+  reading 60 texels, the last one uploaded anew), a rectangle taken as
+  within another when it is not, or a polygon's range short by a texel (a
+  fixed case: 1500 mirrored quads and slivers, every texel of their page
+  outside their range, and their greatest u's column and v's row, uploaded
+  anew while they are held). (Not
   checking a primitive's texture against its own area is not caught, and
   needs not be: the queue rasters in order, so a held primitive that reads
   its own area reads what the ones before it drew.)

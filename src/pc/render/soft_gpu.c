@@ -442,21 +442,16 @@ static int holding(void)
 /* The words of the texture the primitive reads, as rectangles: the words
  * of its page that hold the texels its coordinates span and, below 16 bits,
  * its palette row. Returns how many. `uv`: the least and greatest u and v
- * (0-255) it was given; a polygon samples within them (each pixel's
- * coordinates are a mix of its vertices', and the raster's bias keeps its
- * rounding above the lesser and below the next whole texel past the
- * greater), a sprite from u, v to u + w - 1, v + h - 1, which past 255
- * wraps around the page. One texel more each way within the page, all of
- * it on an axis the texture window folds or a sprite wraps. */
+ * it reads (polygon_uv; for a sprite u, v to u + w - 1, v + h - 1, which
+ * past 255 wraps around the page); all of the page on an axis the texture
+ * window folds or that wraps. Drawing areas end where textures begin (the
+ * buffers' last row is 239, the game's strips start at 240), so not a
+ * texel more. */
 static int texture_rects(int rects[2][4], const int uv[4])
 {
-    int shift = 2 - gpu.depth, u0 = uv[0] - 1, v0 = uv[1] - 1, u1 = uv[2] + 1, v1 = uv[3] + 1;
+    int shift = 2 - gpu.depth, u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
     if (gpu.window_mask_x || uv[2] > 255) u0 = 0, u1 = 255;
     if (gpu.window_mask_y || uv[3] > 255) v0 = 0, v1 = 255;
-    u0 = u0 < 0 ? 0 : u0;
-    v0 = v0 < 0 ? 0 : v0;
-    u1 = u1 > 255 ? 255 : u1;
-    v1 = v1 > 255 ? 255 : v1;
     rects[0][0] = gpu.page_x + (u0 >> shift);
     rects[0][1] = gpu.page_y + v0;
     rects[0][2] = (u1 >> shift) - (u0 >> shift) + 1;
@@ -1754,6 +1749,52 @@ static void set_position(Vertex *vertex, uint32_t word)
     vertex->y = (((int32_t)(word << 5)) >> 21) + gpu.offset_y;
 }
 
+/* The texture coordinates a polygon's pixels read, for the deferred
+ * raster (texture_rects): within its vertices' least and greatest. Each
+ * pixel's are a mix of the vertices' (it is inside the triangle), stepped in
+ * 12.20 with a bias of 2^-8 texel that outweighs the steps' rounding, so the
+ * whole texel taken is never below the least nor above the greatest. Unless
+ * the 32-bit steps overflow, which a sliver with its texture spread across
+ * it can do (a coordinate's value at a corner of its box is at most
+ * range * 4 * width * height / twice its area texels from a vertex's): then
+ * its whole range, 0 to 256, so all of the page. */
+static void polygon_uv(const Vertex *v, int vertices, int uv[4])
+{
+    int i, t;
+    uv[0] = uv[2] = v[0].u;
+    uv[1] = uv[3] = v[0].v;
+    for (i = 1; i < vertices; i++) {
+        if (v[i].u < uv[0]) uv[0] = v[i].u;
+        if (v[i].v < uv[1]) uv[1] = v[i].v;
+        if (v[i].u > uv[2]) uv[2] = v[i].u;
+        if (v[i].v > uv[3]) uv[3] = v[i].v;
+    }
+    for (t = 0; t + 3 <= vertices; t++) { /* (0,1,2) and, for a quad, (1,2,3) */
+        const Vertex *a = &v[t], *b = &v[t + 1], *c = &v[t + 2];
+        int64_t twice = (int64_t)(b->x - a->x) * (c->y - a->y) - (int64_t)(b->y - a->y) * (c->x - a->x);
+        int x0 = a->x, x1 = a->x, y0 = a->y, y1 = a->y, range = 0;
+        if (twice < 0) twice = -twice;
+        if (!twice) continue; /* drawn as nothing */
+        for (i = 1; i < 3; i++) {
+            const Vertex *p = &a[i];
+            x0 = p->x < x0 ? p->x : x0;
+            x1 = p->x > x1 ? p->x : x1;
+            y0 = p->y < y0 ? p->y : y0;
+            y1 = p->y > y1 ? p->y : y1;
+        }
+        for (i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) {
+                int du = a[i].u - a[j].u, dv = a[i].v - a[j].v;
+                range = du > range ? du : dv > range ? dv : range;
+            }
+        if ((int64_t)range * (x1 - x0 + 2) * (y1 - y0 + 2) * 4 >= 768 * twice) {
+            uv[0] = uv[1] = 0;
+            uv[2] = uv[3] = 256; /* past 255: all of the page */
+            return;
+        }
+    }
+}
+
 /* `polygon`: a polygon's page word, whose bit 10 names banks 16-31 (soft_gpu.h). */
 static void set_page(uint32_t value, int polygon)
 {
@@ -1877,16 +1918,7 @@ static size_t polygon(const uint32_t *words, size_t count)
         picture_triangle(v[0], v[1], v[2], flags);
         if (quad) picture_triangle(v[1], v[2], v[3], flags);
     }
-    if (textured) {
-        uv[0] = uv[2] = v[0].u;
-        uv[1] = uv[3] = v[0].v;
-        for (i = 1; i < vertices; i++) {
-            if (v[i].u < uv[0]) uv[0] = v[i].u;
-            if (v[i].v < uv[1]) uv[1] = v[i].v;
-            if (v[i].u > uv[2]) uv[2] = v[i].u;
-            if (v[i].v > uv[3]) uv[3] = v[i].v;
-        }
-    }
+    if (textured) polygon_uv(v, vertices, uv);
     if ((textured && picture_only_clut(gpu.clut_x, gpu.clut_y)) || picture_only_screen() ||
         hold(words, need, textured ? uv : NULL, textured && panel_page())) {
         fade = 0;
