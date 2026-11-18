@@ -3002,11 +3002,52 @@ off, on and on with poison without recording, hashed every 7th frame. Each
 run's checkpoints and hashes against those of the run with it off, never
 against the stored ones. On the Windows build of this change, all 16 replays
 (the three scripted state loads included) matched in all four comparisons;
-hashed every 7th frame, the 13 recorded ones kept back 0.18-5.6 million
-primitives each and dropped 36-71% of them (full duel: 3.4 of 4.8
+hashed every 7th frame, the 13 recorded ones kept back 0.12-5.6 million
+primitives each and dropped 35-71% of them (full duel: 3.4 of 4.8
 million; at most 6 frames in 7 can drop), so the drops and the late
 rasters were in what was hashed. (The scripted ones' logs are not
 collected; their hashes matched.)
+
+The same with the target load (the HD pack, HD text and a scratch folder of
+mods, a translation and every code mod among them), on a full duel's
+session hashed every 7th frame: with it off twice, on, and on with poison,
+the 2114 hashes were the same in all four (held 3.5 million primitives,
+dropped 2.4 million). A run on the interrupt clock
+(`MEMORIES_CLOCK=interrupt`, with poison) finished the menus session with
+work held and dropped (0.86 million held); its hashes cannot be compared.
+
+Measured headless at 1x (`D:/YGO/scratch/cpu-raster/pr2-*.py`, a scratch
+build with a per-frame log keyed by the game's main mode, as step A's;
+sessions: Blue-Eyes 3D battles, full duel, menus, first duel; no
+recording, hashes or shots, which would settle), the same frames with the
+switch off and on. "Dropped" is the share of areas whose held work ended
+dropped, never rastered, out of all that ended; raster time is the draws
+(SoftGpu_Gp0) with it off against the draws plus settles outside them with
+it on, per frame, on this Windows PC:
+
+| Scenario | Bare: dropped | Bare: raster off -> on | With pack and mods: dropped | Pack and mods: raster off -> on |
+|---|---|---|---|---|
+| Duel field | 99.5% | 1.03 -> 0.05 ms (-95%) | 0.3% | 1.30 -> 1.37 ms (+5%) |
+| 3D battle | 73.8% | 1.96 -> 0.61 ms (-69%) | 73.8% | 2.20 -> 0.71 ms (-68%) |
+| Menus | 99.1% | 0.74 -> 0.05 ms (-94%) | 16.3% | 0.94 -> 0.59 ms (-37%) |
+| Campaign | 99.8% | 1.21 -> 0.03 ms (-97%) | 72.4% | 1.33 -> 0.26 ms (-81%) |
+| All | 91.4% | 1.29 -> 0.22 ms (-83%) | 35.8% | 1.53 -> 0.92 ms (-40%) |
+
+- Bare, what still rasters is the 3D battle's palette move
+  (`func_8004E9A0.c`), which writes texels its held model samples every
+  frame (26% of its areas; step A's "+4", copying the old texels, would
+  keep them), and a few reads.
+- With the pack and the mods a duel frame always has primitives that
+  sample the pack's shadow or a mod's bank (4.3 million bank and 0.8
+  million shadow primitives over 17463 frames), so nearly nothing is
+  dropped and the duel field costs a few per cent more; without
+  `given_up` it cost 20% more. No loaded mod bound `SoftGpu_Vram` or
+  `SoftGpu_StateData` (no primitive was rastered at once for it). Menus
+  sample the shadow too; the 3D battle samples neither, and saves as much
+  as bare.
+- This is the headless share, which stands in for the OpenGL picture at 2x
+  and above, where nothing shows VRAM. A window at 1x presents (and so
+  settles) the buffer just drawn every frame and saves nothing.
 
 Left for turning it on at 2x and above with the OpenGL picture:
 
@@ -3025,6 +3066,17 @@ Left for turning it on at 2x and above with the OpenGL picture:
 - Move hazards: the 3D battle's palette move (`func_8004E9A0.c`) writes
   texels held work samples every frame, which rasters it; copying the old
   texels instead is step A's "+4".
+- Nothing that only happens above 1x has run with work held: the
+  picture-only palette and frame, the recorder's PGXP and capture, the
+  widescreen bookkeeping with a recorder. `SoftGpu_SetScale` and
+  `SoftGpu_SetRecorder` settle everything before they change anything.
+- The queues are safe from the clock's tick (held off), not from another
+  thread: nothing but the game thread may call the software GPU.
+- The cost of holding where little is dropped (the copies, the palette
+  scan of an 8-bit palette at x 768 on) has been measured on this PC only;
+  on a phone `given_up` matters more, and the scan may want a cache.
+- Mods: a mod that binds `SoftGpu_Vram` or `SoftGpu_StateData` turns
+  holding off for the rest of the run (`Mods_VramUsers` never goes down).
 
 ### OpenGL ES 3 (Android)
 
