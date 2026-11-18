@@ -243,10 +243,20 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
                  * as libgpu.c flushes before any transfer. */
                 SoftGpu_Gp0(batch, at);
                 at = 0;
-                if (op < 82) {
+                if (op < 80) {
                     int w = 1 + below(64), h = 1 + below(40);
                     noise(words, w * h);
                     SoftGpu_Load(column(w), below(512), w, h, words);
+                } else if (op < 82) {
+                    /* The same texels uploaded again, as the game does every
+                     * frame, now and then with one word changed, under
+                     * whatever mask state the last batch left; first as a
+                     * move onto itself. */
+                    int w = 1 + below(64), h = 1 + below(40), x = column(w), y = below(512);
+                    SoftGpu_Move(x, y, x, y, w, h);
+                    SoftGpu_Store(x, y, w, h, words);
+                    if (below(4) == 0) words[below(w * h)] ^= (uint16_t)(1 + below(0xffff));
+                    SoftGpu_Load(x, y, w, h, words);
                 } else if (op < 85) {
                     int w = 1 + below(64), h = 1 + below(40), x = column(w), y = below(512);
                     SoftGpu_Store(x, y, w, h, words);

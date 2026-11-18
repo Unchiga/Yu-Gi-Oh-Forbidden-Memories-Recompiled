@@ -364,21 +364,62 @@ static void before_read(int x, int y, int w, int h, int why)
     release_clock();
 }
 
-/* Before x,y,w,h is written: what is held there, and what is held anywhere
- * that reads it, is drawn. */
-static void before_write(int x, int y, int w, int h, int why)
+/* A transfer about to write x,y,w,h: a load's pixels, a move's source or
+ * a fill's colour. */
+typedef struct Write {
+    const uint16_t *pixels; /* a load */
+    int sx, sy, move;       /* a move */
+    int fill;               /* a fill, of `color` */
+    uint16_t color;
+} Write;
+
+/* Whether the transfer leaves every word of x,y,w,h as it is: the game
+ * uploads the same texels and palettes again frame after frame, and a
+ * write that changes nothing changes nothing a held primitive reads. */
+static int write_same(const Write *write, int x, int y, int w, int h)
 {
+    int set = gpu.mask_set ? 0x8000 : 0;
+    if (!write) return 0;
+    for (int j = 0; j < h; j++) {
+        for (int i = 0; i < w; i++) {
+            uint16_t now = vram[((y + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + ((x + i) & (SOFT_GPU_WIDTH - 1))], next;
+            if (write->fill) {
+                next = write->color; /* a fill sets no mask bit and checks none */
+            } else {
+                if (gpu.mask_check && (now & 0x8000)) continue; /* kept */
+                next = (uint16_t)((write->move ? vram[((write->sy + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH +
+                                                      ((write->sx + i) & (SOFT_GPU_WIDTH - 1))]
+                                               : write->pixels[j * w + i]) | set);
+            }
+            if (next != now) return 0;
+        }
+    }
+    return 1;
+}
+
+/* Before x,y,w,h is written: what is held there is drawn, and what is held
+ * anywhere that reads it, unless `write` (NULL: a primitive) leaves every
+ * word as it was. */
+static void before_write(int x, int y, int w, int h, int why, const Write *write)
+{
+    int same = -1;
     if (!held_any) return;
     hold_clock();
     for (int a = 0; a < HELD_AREAS; a++)
-        if (area_meets(&held[a], x, y, w, h) || area_samples(&held[a], x, y, w, h)) settle_area(&held[a], why);
+        if (area_meets(&held[a], x, y, w, h)) settle_area(&held[a], why);
+    for (int a = 0; a < HELD_AREAS; a++) {
+        if (!area_samples(&held[a], x, y, w, h)) continue;
+        if (same < 0) same = write_same(write, x, y, w, h);
+        if (!same) settle_area(&held[a], why);
+    }
     release_clock();
 }
 
 /* A fill: an area it covers whole loses what it holds, which the fill
  * would overwrite word for word (a fill does not check the mask). */
-static void before_fill(int x, int y, int w, int h)
+static void before_fill(int x, int y, int w, int h, uint16_t color)
 {
+    const Write fill = {NULL, 0, 0, 0, 1, color};
     if (!held_any) return;
     hold_clock();
     for (int a = 0; a < HELD_AREAS; a++) {
@@ -387,7 +428,7 @@ static void before_fill(int x, int y, int w, int h)
             span_covers(y, h, SOFT_GPU_HEIGHT, area->y, area->y + area->h - 1))
             drop_area(area);
     }
-    before_write(x, y, w, h, SOFT_GPU_WHY_WRITE);
+    before_write(x, y, w, h, SOFT_GPU_WHY_WRITE, &fill);
     release_clock();
 }
 
@@ -470,7 +511,7 @@ static HeldArea *held_area(void)
     for (a = 0; a < HELD_AREAS; a++)
         if (held[a].on && held[a].x == x && held[a].y == y && held[a].w == w && held[a].h == h) return &held[a];
     /* Holding here writes here: what meets the area, or reads it, first. */
-    before_write(x, y, w, h, SOFT_GPU_WHY_AREA);
+    before_write(x, y, w, h, SOFT_GPU_WHY_AREA, NULL);
     for (a = 0; a < HELD_AREAS; a++) {
         if (!held[a].on && slot < 0) slot = a;
         if (held[a].on && (oldest < 0 || held[a].stamp < held[oldest].stamp)) oldest = a;
@@ -583,7 +624,7 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
     if (held_any) {
         /* Rastered now, so after what it draws over and what it reads. */
         hold_clock();
-        before_write(x, y, w, h, SOFT_GPU_WHY_DRAW);
+        before_write(x, y, w, h, SOFT_GPU_WHY_DRAW, NULL);
         if (textured && texture_source == vram)
             for (i = 0; i < n; i++) before_read(rects[i][0], rects[i][1], rects[i][2], rects[i][3], SOFT_GPU_WHY_DRAW);
         release_clock();
@@ -971,7 +1012,10 @@ static void load_words(int x, int y, int w, int h, const uint16_t *pixels)
 {
     int i, j;
     if (gpu.mask_check) SoftGpu_Settle(x, y, w, h); /* the mask bits it keeps */
-    before_write(x, y, w, h, SOFT_GPU_WHY_WRITE);
+    {
+        const Write load = {pixels, 0, 0, 0, 0, 0};
+        before_write(x, y, w, h, SOFT_GPU_WHY_WRITE, &load);
+    }
     if (TextureDump_Tags) TextureDump_Loaded(x, y, w, h, pixels);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
@@ -1006,7 +1050,8 @@ static void move_words(int sx, int sy, int dx, int dy, int w, int h)
      * changes nothing and reads nothing. */
     if (sx != dx || sy != dy || gpu.mask_set || gpu.mask_check) {
         SoftGpu_Settle(sx, sy, w, h);
-        before_write(dx, dy, w, h, SOFT_GPU_WHY_WRITE); /* and writes nothing either */
+        const Write move = {NULL, sx, sy, 1, 0, 0};
+        before_write(dx, dy, w, h, SOFT_GPU_WHY_WRITE, &move); /* and writes nothing either */
     }
     if (gpu.mask_check) SoftGpu_Settle(dx, dy, w, h); /* the mask bits it keeps */
     if (TextureDump_Tags) TextureDump_Moved(sx, sy, dx, dy, w, h);
@@ -1055,7 +1100,7 @@ static void fill_words(int x, int y, int w, int h, uint32_t rgb24)
 {
     int i, j;
     uint16_t color = pack(rgb24);
-    before_fill(x, y, w, h);
+    before_fill(x, y, w, h, color);
     if (TextureDump_Tags) TextureDump_Cleared(x, y, w, h);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
