@@ -349,6 +349,9 @@ if(BUILD_TESTING)
     # (notes/pc-build.md, "Settling VRAM before it is read").
     add_executable(memories_soft_gpu_settle_test tests/pc/soft_gpu_settle_test.c)
     target_link_libraries(memories_soft_gpu_settle_test PRIVATE memories_pc_core)
+    if(WIN32)
+        target_link_libraries(memories_soft_gpu_settle_test PRIVATE memories_pc_fs) # setenv, for the texture dump
+    endif()
     add_test(NAME pc_soft_gpu_settle COMMAND memories_soft_gpu_settle_test)
     add_executable(memories_settings_test tests/pc/settings_test.c src/pc/platform/settings.c
         src/pc/platform/paths.c)

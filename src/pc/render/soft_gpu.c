@@ -170,7 +170,8 @@ static void resync_recorder(void)
 {
     uint32_t words[6];
     if (!recorder) return;
-    SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* the recorder takes VRAM whole */
+    /* The recorder takes VRAM whole: both callers (SoftGpu_SetRecorder,
+     * SoftGpu_PictureFromVram) have settled it. */
     SoftGpu_StateWords(words);
     recorder->resync(scale, words);
 }
@@ -423,7 +424,9 @@ int SoftGpu_WideFrameView(int x, int y, int w, int h, const uint16_t **pixels, i
     for (t = 0; t < WIDE_TARGETS; t++) {
         const WideTarget *wt = &wide[t];
         if (wt->pixels && wt->x1 == x && wt->y1 == y && wt->x2 - wt->x1 + 1 == w && wt->y2 - wt->y1 + 1 >= h) {
-            SoftGpu_Settle(x, y, w, h); /* a target is rastered with the area */
+            /* Rastered with the area, unless a recorder draws it (then
+             * these words are not shown and there is nothing to settle). */
+            if (wide_rastered()) SoftGpu_Settle(x, y, w, h);
             *pixels = wt->pixels;
             *out_x = x;
             *out_w = w + 2 * wt->margin;
@@ -442,7 +445,7 @@ int SoftGpu_WideFrame(int x, int y, int w, int h, const uint16_t **pixels, int *
     for (t = 0; t < WIDE_TARGETS; t++) {
         WideTarget *wt = &wide[t];
         if (wt->pixels && wt->x1 == x && wt->y1 == y && wt->x2 - wt->x1 + 1 == w && wt->y2 - wt->y1 + 1 >= h) {
-            SoftGpu_Settle(x, y, w, h); /* a target is rastered with the area */
+            if (wide_rastered()) SoftGpu_Settle(x, y, w, h); /* as SoftGpu_WideFrameView */
             if (!wt->drawn) {
                 /* Nothing was drawn since it was last shown (a movie, or a
                  * still loaded straight into VRAM): the sides are stale. */

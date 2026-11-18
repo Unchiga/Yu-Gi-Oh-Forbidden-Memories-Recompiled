@@ -36,12 +36,14 @@ void SoftGpu_SettleTexture(int depth, int page_x, int page_y, int clut_x, int cl
 /* VRAM, settled whole first. For any reader that does not say which words
  * it reads, a code mod's included (SoftGpu_Vram is lent to mods). */
 const uint16_t *SoftGpu_Vram(void);
+#ifndef MEMORIES_MOD /* the port's own: not lent to code mods (build_config.py, NOT_LENT_TO_MODS) */
 /* VRAM without settling: only for a reader that settled the words it reads
  * itself, or reads none that are drawn. tools/pc/check_vram_readers.py
  * lists every caller and why. */
 const uint16_t *SoftGpu_VramRaw(void);
 /* Tests: told every rectangle settled (SoftGpu_Vram's whole VRAM too). */
 extern void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
+#endif
 
 /* Texture banks: alternate VRAM that a primitive can sample instead, chosen
  * by bits 11-14 of its texture-page word, which the hardware leaves unused

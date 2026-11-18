@@ -45,7 +45,7 @@ package_android.py) with the SDK's build tools; notes/pc-build.md, "Android"."""
 import argparse, concurrent.futures, csv, filecmp, glob, hashlib, json, os, re, shutil, struct, subprocess, sys
 import build_process
 from build_config import (BACKENDS, GATED_MODULES, MODULE_CONFIG, MODULES, SOURCE_ADDRESSED_MODULES, TARGETS,
-                          game_sources, native_sources, newest_input)
+                          NOT_LENT_TO_MODS, game_sources, native_sources, newest_input)
 import model_gate
 import model_gate_port
 import ptr32_stores
@@ -612,7 +612,7 @@ def write_mod_exports(build, names, aliases):
     library functions from mod_libc.c."""
     identifier = lambda name: (name[:1].isalpha() or name[:1] == "_") and all(c.isalnum() or c == "_" for c in name)
     table = {name: name for name in names
-             if identifier(name) and name not in HOST_LIBC and name != "main"
+             if identifier(name) and name not in HOST_LIBC and name not in NOT_LENT_TO_MODS and name != "main"
              and not name.startswith(MOD_INTERNALS + ("__",))}
     table.update((name, target) for name, target in aliases.items() if target in table)
     with open(f"{build}/mod_exports.c", "w") as handle:

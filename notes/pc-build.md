@@ -2689,11 +2689,12 @@ It changes nothing at 1x, and nothing in the software picture.
 At 2x and above with the OpenGL picture, the GPU draws the picture the
 window shows, yet the software GPU still rasters every primitive into VRAM
 at 1x, which nothing shows: on the Windows PC that raster is 75-88% of the
-game thread's time in a duel (phones not measured yet). The way out is a raster that keeps a frame's primitives
-back in the two 320x240 drawing areas and draws them only when something
-reads what they would have drawn, or drops them when the game's clear
-covers the area two frames later. That needs every reader of rastered
-words to say what it reads first. `soft_gpu.h` has it:
+game thread's time in a duel (phones not measured yet). The way out is a
+raster that keeps a frame's primitives back in the two 320x240 drawing
+areas and draws them only when something reads what they would have
+drawn, or drops them when the game's clear covers the area two frames
+later. That needs every reader of rastered words to say what it reads
+first. `soft_gpu.h` has it:
 
 - `SoftGpu_Settle(x, y, w, h)`: what has been drawn in the rectangle
   (wrapping as transfers do) is in VRAM when it returns.
@@ -2703,6 +2704,10 @@ words to say what it reads first. `soft_gpu.h` has it:
 - `SoftGpu_Vram()` settles all of VRAM, so a reader that says nothing (a
   code mod: it is lent to mods) is safe. `SoftGpu_VramRaw()` settles nothing,
   for a reader that settled its own rectangle.
+- `SoftGpu_VramRaw` and `SoftGpu_SettleObserver` are the port's own: not
+  lent to code mods (`NOT_LENT_TO_MODS` in `tools/pc/build_config.py`, used
+  by both export tables) and declared only outside `MEMORIES_MOD`, so the
+  SDK's `soft_gpu.h` does not offer them and no release pins them.
 - The raster is still immediate: settling only calls
   `SoftGpu_SettleObserver` (tests). Nothing a frame draws or a run hashes
   changes. A new scale or recorder settles all of VRAM before anything
@@ -2714,18 +2719,23 @@ Readers that settle, by what they read:
   its flush; `Memories_VramHash`, the replays' and `hash`'s; the pack's
   rediscovery after a state load, `texture_pack.c` `rediscover`), save
   states (`SoftGpu_StateData(0)`), `SoftGpu_PictureFromVram` (scale changes,
-  state loads), a recorder's resync (`resync_recorder`, and `resync` in
-  `gl_picture.c`, which an overflow of the record calls too), and the
-  software picture (`SoftGpu_Picture`, when it is drawn here).
+  state loads), a new scale or recorder (`resync_recorder` relies on its
+  two callers having settled), `resync` in `gl_picture.c` (also on an
+  overflow of the record), and the software picture (`SoftGpu_Picture`,
+  when it is drawn here).
 - The display area: the 1x present, `Memories_ShowStill` and widescreen's
   4:3 fallback, through `display_words` in `libgpu.c` (a 24-bit row is half
-  as many words again).
+  as many words again); the x11 backend's screenshot and window redraw,
+  which read the last presented frame again later (`last_words` in
+  `x11.c`). The SDL backend copies the frame as it is presented.
 - A rectangle: `SoftGpu_Store` (StoreImage), a move's source (not the 2x1
   move onto itself without the mask that the game makes every frame), the
   destination of a load or move while the mask bit is checked, a capture's
-  source, a widened target and its picture (`SoftGpu_WideFrame`,
-  `SoftGpu_WideFrameView`, `SoftGpu_WidePicture`), and a primitive's texture
-  before `TextureDump_Primitive` hashes it.
+  source, a widened target and its picture while the software GPU rasters
+  them (`SoftGpu_WideFrame`, `SoftGpu_WideFrameView`, `SoftGpu_WidePicture`;
+  with a recorder at 2x and above the target's words are not shown and
+  nothing is settled), and, with the texture dump on, a primitive's texture
+  before `TextureDump_Primitive` reads it through its `source` pointer.
 - Host lookups a primitive makes, each its own rectangle: `hd_text.c`
   (`HdText_Cell` the font's page; the card title's words in
   `HdText_TitleUploaded` and `HdText_TitleCard`; the life-point panel's page
@@ -2737,17 +2747,64 @@ Readers that settle, by what they read:
   the three rectangles it copies into the slot's bank) and `menu_letters.c`
   (each sprite's texture).
 
-Raw readers that need no settling: `upload_vram` in `gl_picture.c` (the
-OpenGL copy of VRAM, for what its primitives sample: it draws the drawing
-areas itself, the game textures from them only through a move, which
-settles its source, and settling there would raster both areas at every
-replay) and `TextureDump_Primitive`'s pointer compare. `pc_vram_readers`
-(`tools/pc/check_vram_readers.py`) holds that list: a function that takes
-`SoftGpu_VramRaw()` must be in it and, unless it says why not, call a settle
-itself; writing through either pointer fails it too. `pc_soft_gpu_settle`
-(`tests/pc/soft_gpu_settle_test.c`) checks the readers inside `soft_gpu.c`
-rectangle by rectangle, and that drawing, fills, loads and banks settle
-nothing.
+`upload_vram` in `gl_picture.c` reads VRAM raw on purpose: settling at
+every replay would raster both drawing areas every frame. It is whole
+today because nothing is kept back. Once something is, the OpenGL copy of
+VRAM is stale wherever held work lies, and two things read that copy: a
+move (`record_move` records only the coordinates, and `apply_move` copies
+inside the texture the last upload made, so the CPU move's settle does not
+reach it) and any primitive that samples a drawing area. The plan for the
+change that keeps work back (or the one that hooks it to the OpenGL pass):
+while a recorder is on, a settle that crosses held work records the
+settled words as an `OP_LOAD`, so the copy has them before the move or the
+sample that follows. That the game never textures from a drawing area is
+not verified: `polygon` and `rectangle` settle their texture only while
+the texture dump is on, so a primitive sampling held work is not seen
+today; that change must check each textured primitive's page against the
+held areas (in the runs measured below no primitive sampled a word a
+full-screen primitive had drawn; the story's fading image samples a copy
+moved out of the buffer, which the move's settle covers on the CPU).
+
+The checks, and how far they go:
+
+- `pc_soft_gpu_settle` (`tests/pc/soft_gpu_settle_test.c`) covers the
+  readers inside `soft_gpu.c`: its observer stands in for a raster that
+  holds words back and writes them at the first settle that crosses them,
+  so a reader that reads before it settles, or never settles, reads the
+  old words. Each settle in `soft_gpu.c` taken out alone fails it (checked
+  one by one when it was written), with the texture dump off and on; a new
+  scale and a new recorder must settle before the scale or recorder
+  changes. It checks that drawing, fills, unmasked loads, banks and a
+  recorder's widened targets settle nothing.
+- `pc_vram_readers` (`tools/pc/check_vram_readers.py`, which tests itself
+  on each bypass first) reads `src/`, `mods/` and `examples/` (`.c`, `.h`,
+  `.inc`): a function that calls `SoftGpu_VramRaw()` must be listed and,
+  unless it says why not, settle in its own body; `SoftGpu_VramRaw` named in
+  a macro or taken as a function pointer fails, as does writing through
+  either pointer; `resync` must settle before it uploads. It cannot tell
+  whether a rectangle is the right one, or whether a listed reader settles
+  before it reads (only that it settles); it does not see a settled
+  pointer kept and read after later drawing (the x11 backend's last frame
+  was one, fixed by hand), a pointer handed to another function
+  (`Platform_Present`), or `soft_gpu.c` itself.
+- Frame hashes (`Memories_VramHash`, the replays) settle all of VRAM, so
+  hashes that match prove nothing once work is kept back: they would match
+  however late the settle. The change that keeps work back needs a debug
+  mode that fills held work with a poison colour instead of drawing it
+  until a settle, so a reader that does not settle shows the poison in a
+  frame dump or a hash.
+
+What the change that keeps work back must also get right:
+
+- The game clock's tick (`MEMORIES_CLOCK=interrupt`, SIGALRM) can call a
+  LoadImage or StoreImage while a batch is being rastered (see
+  `vram_pixel` in `soft_gpu.c`): a real settle must not re-enter a raster
+  in progress, or must run with the tick held.
+- The widened targets follow VRAM (`wide_mirror`) and need nothing of their
+  own only if work is kept back while a recorder draws the picture at 2x and
+  above, where the software GPU does not raster them (`wide_rastered`).
+  Keeping work back without a recorder (a forced mode at 1x for tests) has
+  to hold the targets' second pass too.
 
 What changes what a primitive draws without going through `load_words`,
 `move_words` or `fill_words` (which a kept-back raster sees), with the
@@ -2755,27 +2812,25 @@ lines of the commit that added settling:
 
 | Writer | Where | What a kept-back raster must do |
 |---|---|---|
-| The raster itself, `plot` (and `name_over_panel` through it) | `soft_gpu.c:703` | it is the raster; `plot` also clears the pack's tags and shadow cells it draws over (`:717`), which must happen as the primitive comes |
+| The raster itself, `plot` (and `name_over_panel` through it) | `soft_gpu.c:706` | it is the raster; `plot` also clears the pack's tags and shadow cells it draws over (`:720`), which must happen as the primitive comes |
 | A state load through `SoftGpu_StateData(0)`'s pointer | `state_subsystems.c:221`, then `SoftGpu_PictureFromVram` at `:227` | drop what is kept back (StateData settles first) |
 | Texture banks through `SoftGpu_Bank()`'s pointer (sampled, never drawn into) | `field_models.c:452`, `:2242`, `field_art.c:167`, `:349` (3D Monsters); `glyphs.c:996`, `:1020`, `:1077` (and `copy_palettes`, every call); `card_layout_art.c:185`, `:312`, `:487`, `:550`, `:696`; `battle_models.c:180` (copies VRAM in every call); `attribute_icons.c:123`; `duel_ui.c:322`; `type_icons.c:110`; `star_icons.c:165` (palettes copied every call) | raster a primitive that samples a bank at once, until banks carry a generation that changes only when their bytes do (the writers rewrite the same bytes every frame) |
 | The pack's shadow cells and tags | `texture_pack.c:1343` `paint` (every cell, the between-frames repaints at `:2821` and `:2828` included), `:1627` `tag_block`, `:2847` (unload); `texture_dump.c:356`, `:398`, `:450` (with each transfer), `:505` (a state load's tags) | raster a primitive that samples the shadow at once, until the shadow has the same generation |
-| State taken when the list is flushed | `SoftGpu_PanelName`/`SoftGpu_PanelCut` (`libgpu.c` `flush_drawing`), `SoftGpu_PictureOnlyFrame` (`soft_gpu.c:1197`), `SoftGpu_PictureOnlyClut` (`:1173`), `SoftGpu_SetPrecise` (`:1441`) | keep the value each primitive came with |
+| State taken when the list is flushed | `SoftGpu_PanelName`/`SoftGpu_PanelCut` (`libgpu.c` `flush_drawing`), `SoftGpu_PictureOnlyFrame` (`soft_gpu.c:1200`), `SoftGpu_PictureOnlyClut` (`:1176`), `SoftGpu_SetPrecise` (`:1444`) | keep the value each primitive came with |
 | Code mods | `SoftGpu_StateData` and `SoftGpu_Vram` are lent to mods, and a mod may keep VRAM's pointer and write through it whenever; `SoftGpu_Bank` is lent too (the bank row above covers it) | raster at once while a loaded mod imports `SoftGpu_StateData` or `SoftGpu_Vram` (mods must just work); banks keep the per-primitive rule |
-
-The widened targets follow VRAM (`wide_mirror`) and need nothing of their
-own.
 
 Measured with the target load (an HD pack, HD text, a translation and every
 code mod in `mods/`), headless at 1x on an instrumented build (not in the
-tree) that simulates the kept-back raster beside the real one: a raster that rasters bank and shadow primitives at once
-skips almost no duel field or menu frame (the pack's shadow is sampled in
-every duel frame, a texture bank in 78%), while one that also keeps them
-back skips 99.6-99.9% (an upper bound: banks were taken as changed only
-when their bytes changed, compared at the end of each frame). Copying the
-texels a move overwrites matters only in a 3D battle whose background
-animates its texture with a move every frame (`func_8004E9A0.c`, the
-background record's kinds 1 and 4): 12% of its frames skipped without the
-copies, all with them; the 3D battle samples neither banks nor the shadow.
+tree) that simulates the kept-back raster beside the real one: a raster
+that rasters bank and shadow primitives at once skips almost no duel field
+or menu frame (the pack's shadow is sampled in every duel frame, a texture
+bank in 78%), while one that also keeps them back skips 99.6-99.9% (an
+upper bound: banks were taken as changed only when their bytes changed,
+compared at the end of each frame). Copying the texels a move overwrites
+matters only in a 3D battle whose background animates its texture with a
+move every frame (`func_8004E9A0.c`, the background record's kinds 1 and
+4): 12% of its frames skipped without the copies, all with them; the 3D
+battle samples neither banks nor the shadow.
 
 ### OpenGL ES 3 (Android)
 

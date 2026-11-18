@@ -20,6 +20,7 @@
 #include "controls_window.h"
 #include "quit_prompt.h"
 #include "host_actions.h"
+#include "pc/render/soft_gpu.h"
 #include <X11/XKBlib.h>
 #include "settings.h"
 #include <X11/Xlib.h>
@@ -56,6 +57,17 @@ static Atom close_atom;
 static int scale = 4, pending_scale, image_w, image_h, quit;
 static MenuCanvas canvas;
 static struct { const uint16_t *vram; int stride, x, y, w, h, rgb24; } last;
+
+/* The words last presented, read again after that frame (a screenshot, a
+ * redraw of the window): VRAM, or a widened target rastered with it, so
+ * settled again (soft_gpu.h); libgpu.c's sides buffer (twice VRAM's
+ * stride) is the present's own copy. */
+static const uint16_t *last_words(void)
+{
+    if (last.vram && last.stride == SOFT_GPU_WIDTH)
+        SoftGpu_Settle(last.x, last.y, last.rgb24 ? (last.w * 3 + 1) / 2 : last.w, last.h);
+    return last.vram;
+}
 static struct { int x, y, w, h; } shown_menu; /* the menu's bounds as last painted */
 static volatile uint16_t scripted_bits2, scripted_bits;
 static int state_slot = 1;
@@ -198,8 +210,9 @@ void Platform_Screenshot(int window_image)
         return;
     }
     fprintf(file, "P6\n%d %d\n255\n", last.w, last.h);
+    const uint16_t *words = last_words();
     for (j = 0; j < last.h; j++) {
-        const uint16_t *row = last.vram + ((last.y + j) & 511) * last.stride;
+        const uint16_t *row = words + ((last.y + j) & 511) * last.stride;
         for (i = 0; i < last.w; i++) {
             if (last.rgb24) {
                 fwrite((const uint8_t *)(row + last.x) + i * 3, 1, 3, file);
@@ -305,8 +318,9 @@ static void scale_game(int top, int bottom)
     if (bottom > menu + last.h * scale) {
         bottom = menu + last.h * scale;
     }
+    const uint16_t *words = last_words();
     for (j = (top - menu) / scale; j * scale + menu < bottom; j++) {
-        const uint16_t *row = last.vram + ((last.y + j) & 511) * last.stride;
+        const uint16_t *row = words + ((last.y + j) & 511) * last.stride;
         int first = menu + j * scale, k, i;
         uint32_t *line = canvas.pixels + (size_t)first * (size_t)canvas.stride, *at = line;
         for (i = 0; i < last.w; i++) {
