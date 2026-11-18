@@ -2941,12 +2941,18 @@ Checks and tools:
   cleared and settled, and the settles' time, in the draws (a batch's) and
   outside them (a reader's).
 
+- `MEMORIES_FRAME_HASHES_EVERY=<n>` hashes every n-th frame only. Every
+  hash (and every checkpoint a recording writes, one a frame) settles all
+  of VRAM, so a run hashed every frame never drops anything; a sparse one
+  does, and still sees in its hashes what a wrong drop or a late raster
+  left.
+
 The gate (`D:/YGO/scratch/cpu-raster/pr2-gate.py`, not in the tree): every
-replay, headless at 1x, played by one build with the switch off (with
-per-frame hashes), on (only the recording's checkpoints, so held work
-crosses buffer swaps and the clears drop it), on with per-frame hashes,
-and on with poison; the checkpoints and frame hashes of each against those
-of the run with it off, never against the stored ones.
+replay, headless at 1x, played by one build five ways: with the switch off
+and on while recording (a checkpoint a frame) with per-frame hashes, and
+off, on and on with poison without recording, hashed every 7th frame. Each
+run's checkpoints and hashes against those of the run with it off, never
+against the stored ones.
 
 Left for turning it on at 2x and above with the OpenGL picture:
 

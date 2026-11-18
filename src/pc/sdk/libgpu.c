@@ -363,12 +363,17 @@ static void frame_hash(void)
 {
     static FILE *out;
     static int opened;
+    static unsigned every = 1;
     if (!opened) {
-        const char *path = getenv("MEMORIES_FRAME_HASHES");
+        /* MEMORIES_FRAME_HASHES_EVERY=<n>: every n-th frame only. A hash
+         * settles all of VRAM, so a sparse one lets the deferred raster drop
+         * what the frames between draw, and still sees what it got wrong. */
+        const char *path = getenv("MEMORIES_FRAME_HASHES"), *step = getenv("MEMORIES_FRAME_HASHES_EVERY");
         opened = 1;
         out = path && *path ? fopen(path, "w") : NULL;
+        if (step && atoi(step) > 1) every = (unsigned)atoi(step);
     }
-    if (!out) return;
+    if (!out || (unsigned)frames_presented % every) return;
     fprintf(out, "%u %016llx\n", (unsigned)frames_presented, Memories_VramHash());
     fflush(out);
 }
