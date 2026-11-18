@@ -758,6 +758,94 @@ int main(int argc, char **argv)
         SoftGpu_SetDeferred(0, 0);
     }
 
+    /* Widescreen with deferral on, at 1x: a full-screen area has a target
+     * beside it that the primitive is drawn into a second time, so it is
+     * rastered at once (SOFT_GPU_NOW_OTHER), and the target and VRAM are what
+     * rastering it as it comes makes. With widescreen off the same two
+     * primitives are held (the control: the case could not tell otherwise). */
+    {
+        const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t sprite[] = {0x60ffffffu, 0x00100010u, 0x00040004u};  /* white, 4x4 at 16,16 */
+        const uint32_t quad[] = {0x28ffffffu, 0x000a07ecu, 0x000a000au, 0x000c07ecu, 0x000c000au}; /* from x -20 */
+        uint64_t seen[2][2][2]; /* [wide][deferred][VRAM, the widened picture] */
+        for (int wide = 0; wide < 2; wide++) {
+            for (int deferred = 0; deferred < 2; deferred++) {
+                SoftGpuDeferredStats s;
+                const uint16_t *pixels;
+                int x, w;
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_SetWidescreen(wide);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 1024, 512, 0);
+                SoftGpu_SetDeferred(deferred, 1);
+                CHECK(SoftGpu_Gp0(area, 4) == 4);
+                SoftGpu_Fill(0, 0, 320, 240, 0);
+                CHECK(SoftGpu_Gp0(sprite, 3) == 3 && SoftGpu_Gp0(quad, 5) == 5);
+                SoftGpu_DeferredStats(&s);
+                if (deferred && wide) {
+                    CHECK(s.held == 0 && s.immediate == 2 && s.now[SOFT_GPU_NOW_OTHER] == 2);
+                } else if (deferred) {
+                    CHECK(s.held == 2 && s.immediate == 0 && s.now[SOFT_GPU_NOW_OTHER] == 0);
+                }
+                /* Before any settle: rastered at once, or magenta (the poison). */
+                CHECK(SoftGpu_VramRaw()[17 * SOFT_GPU_WIDTH + 17] == (deferred && !wide ? 0x7c1f : 0x7fff));
+                CHECK(SoftGpu_VramRaw()[11 * SOFT_GPU_WIDTH + 5] == (deferred && !wide ? 0x7c1f : 0x7fff));
+                SoftGpu_Settle(0, 0, 320, 240);
+                seen[wide][deferred][0] = fnv(1469598103934665603ull, SoftGpu_Vram(), (size_t)SOFT_GPU_WIDTH * 512 * 2);
+                seen[wide][deferred][1] = 0;
+                if (wide) {
+                    CHECK(SoftGpu_WideFrame(0, 0, 320, 240, &pixels, &x, &w) && x == 0 && w == 428);
+                    for (int row = 0; row < 240; row++)
+                        seen[wide][deferred][1] = fnv(seen[wide][deferred][1] + 1, pixels + row * SOFT_GPU_WIDTH, 428 * 2);
+                    CHECK(pixels[11 * SOFT_GPU_WIDTH + 54 - 10] == 0x7fff); /* the quad's left side, in the target */
+                }
+            }
+            CHECK(seen[wide][0][0] == seen[wide][1][0] && seen[wide][0][1] == seen[wide][1][1]);
+        }
+        SoftGpu_SetWidescreen(0);
+        SoftGpu_SetDeferred(0, 0);
+    }
+
+    /* An area whose queue would pass HELD_WORDS_MAX (4M words) rasters what
+     * it holds and goes on holding. 2.2 million dots of two words each pass
+     * it once: the first, written to a place no later one touches, is in
+     * VRAM before any settle, and the many overwrites after it end as they
+     * do rastered as they come. (No hook lowers the limit; the run takes
+     * about a second.) */
+    {
+        const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        enum { DOTS = 2200000 };
+        uint64_t seen[2];
+        for (int deferred = 0; deferred < 2; deferred++) {
+            SoftGpuDeferredStats s;
+            SoftGpu_SetDeferred(0, 0);
+            SoftGpu_Reset();
+            SoftGpu_Fill(0, 0, 1024, 512, 0);
+            SoftGpu_SetDeferred(deferred, 0);
+            CHECK(SoftGpu_Gp0(area, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0);
+            for (uint32_t k = 0; k < DOTS; k++) {
+                uint32_t dot[2];
+                if (k == 0) { /* green at 300,230: no later dot reaches x 250 or y 200 */
+                    dot[0] = 0x6800ff00u;
+                    dot[1] = 230u << 16 | 300u;
+                } else {
+                    dot[0] = 0x68000000u | ((k * 0x010305u) & 0xffffffu);
+                    dot[1] = ((k * 13u) % 200u) << 16 | ((k * 7u) % 250u);
+                }
+                CHECK(SoftGpu_Gp0(dot, 2) == 2);
+            }
+            SoftGpu_DeferredStats(&s);
+            if (deferred) {
+                CHECK(s.held == DOTS && s.immediate == 0 && s.why[SOFT_GPU_WHY_ALL] == 1);
+                CHECK(SoftGpu_VramRaw()[230 * SOFT_GPU_WIDTH + 300] == 0x03e0); /* settled on the way, not by a read */
+            }
+            seen[deferred] = fnv(1469598103934665603ull, SoftGpu_Vram(), (size_t)SOFT_GPU_WIDTH * 512 * 2);
+        }
+        CHECK(seen[0] == seen[1]);
+        SoftGpu_SetDeferred(0, 0);
+    }
+
     /* The poison: held work shows as magenta to a reader that does not
      * settle, and as drawn to one that does. */
     {
