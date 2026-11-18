@@ -277,7 +277,8 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
                     if (s.held > s.dropped + s.rastered) out->states_held++;
                     vram = SoftGpu_StateData(0, &size);
                     out->stores = fnv(out->stores, vram, size);
-                    out->stores = fnv(out->stores, SoftGpu_StateData(1, &size), size);
+                    vram = SoftGpu_StateData(1, &size); /* size first: not in the same call */
+                    out->stores = fnv(out->stores, vram, size);
                 } else {
                     SoftGpu_SettleTexture(below(3), column(256) & ~63, below(2) * 256, column(256) & ~15, below(512));
                 }
@@ -303,7 +304,8 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     out->vram = fnv(1469598103934665603ull, vram, (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 2);
     out->tags = fnv(1469598103934665603ull, TextureDump_Tags, (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 4);
     out->shadow = fnv(1469598103934665603ull, TextureDump_Shadow, (size_t)TEXTURE_SHADOW_WIDTH * SOFT_GPU_HEIGHT * 2);
-    out->gpu = fnv(1469598103934665603ull, SoftGpu_StateData(1, &size), size);
+    vram = SoftGpu_StateData(1, &size);
+    out->gpu = fnv(1469598103934665603ull, vram, size);
     SoftGpu_SetDeferred(0, 0);
     return 0;
 }
