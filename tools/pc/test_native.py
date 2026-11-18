@@ -284,6 +284,14 @@ def main():
             [None],
         ),
         (
+            # The mixer's golden stream (CMakeLists.txt pc_spu_mix): the
+            # same digests on Apple Clang for arm64, with the game's -fwrapv.
+            "spu-mix",
+            ["tests/pc/spu_mix_test.c", "src/pc/audio/spu.c"],
+            ["-O2", "-fwrapv"],
+            [None],
+        ),
+        (
             "libpress-contract-fast",
             ["tests/pc/libpress_test.c", "src/pc/sdk/libpress.c"],
             ["-O2", "-Wno-strict-prototypes", "-ffp-contract=fast"],
