@@ -64,6 +64,7 @@ typedef struct Outcome {
     uint64_t stores;   /* every store's words, every state, in order */
     uint64_t vram, tags, shadow, gpu;
     int states_held;   /* states taken while work was held */
+    int held_by_mod;   /* primitives held while a mod bound VRAM (must be none) */
     SoftGpuDeferredStats stats;
 } Outcome;
 
@@ -205,8 +206,14 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
         size_t at = 0;
         if (frame % 4 == 0) calm_run = below(4) != 0;
         calm = calm_run;
-        if (frame % 97 == 50) SoftGpu_SetModVramUsers(1); /* a mod binds VRAM for a while */
-        if (frame % 97 == 60) SoftGpu_SetModVramUsers(0);
+        if (frame % 97 == 50 || frame % 97 == 60) { /* a mod binds VRAM for a while: nothing is held */
+            SoftGpuDeferredStats s;
+            static unsigned long long held_then;
+            SoftGpu_DeferredStats(&s);
+            if (frame % 97 == 60) out->held_by_mod += (int)(s.held - held_then);
+            held_then = s.held;
+            SoftGpu_SetModVramUsers(frame % 97 == 50);
+        }
         if (frame % 41 == 7) { /* a drawing area of another shape for a frame */
             x0 = 0;
             y0 = 256;
@@ -354,8 +361,11 @@ int main(int argc, char **argv)
         CHECK(held.stats.held > (unsigned)frames && held.stats.dropped > (unsigned)frames / 40 && held.stats.rastered > (unsigned)frames);
         CHECK(held.stats.held == held.stats.dropped + held.stats.rastered);
         CHECK(held.states_held > 0);
+        CHECK(held.held_by_mod == 0 && poisoned.held_by_mod == 0);
+        /* Every rule was met but the panel's and OTHER's (memory, 4M words,
+         * widescreen: a mod's VRAM or a scale raster at once without a look). */
         for (int why = 0; why < SOFT_GPU_NOW_COUNT; why++)
-            if (why != SOFT_GPU_NOW_PANEL) CHECK(held.stats.now[why] > 0); /* every rule was met */
+            if (why != SOFT_GPU_NOW_PANEL && why != SOFT_GPU_NOW_OTHER) CHECK(held.stats.now[why] > 0);
         CHECK(now.stores == held.stores && now.stores == poisoned.stores);
         CHECK(now.vram == held.vram && now.vram == poisoned.vram);
         CHECK(now.tags == held.tags && now.tags == poisoned.tags);
@@ -683,17 +693,23 @@ int main(int argc, char **argv)
         CHECK(SoftGpu_VramRaw()[17 * SOFT_GPU_WIDTH + 17] == 0x7c1f && SoftGpu_VramRaw()[200 * SOFT_GPU_WIDTH] == 0x7c1f);
         SoftGpu_Settle(0, 0, 1, 1);
         CHECK(SoftGpu_VramRaw()[17 * SOFT_GPU_WIDTH + 17] == 0x7fff && SoftGpu_VramRaw()[200 * SOFT_GPU_WIDTH] == 0);
-        /* A mod that binds VRAM: nothing is kept back. */
+        /* A mod that binds VRAM, or a scaled picture: nothing is kept back,
+         * and a batch does not even look (no clock held, nothing counted). */
         SoftGpu_SetDeferred(0, 0);
-        SoftGpu_SetDeferred(1, 0);
-        SoftGpu_SetModVramUsers(1);
-        CHECK(SoftGpu_Gp0(sprite, 3) == 3);
-        {
+        SoftGpu_SetDeferred(1, 1);
+        for (int why = 0; why < 2; why++) {
             SoftGpuDeferredStats s;
+            if (why) CHECK(SoftGpu_SetScale(2));
+            else SoftGpu_SetModVramUsers(1);
+            SoftGpu_Fill(0, 0, 320, 240, 0);
+            holds = 0;
+            CHECK(SoftGpu_Gp0(sprite, 3) == 3);
+            CHECK(SoftGpu_VramRaw()[17 * SOFT_GPU_WIDTH + 17] == 0x7fff && holds == 0);
             SoftGpu_DeferredStats(&s);
-            CHECK(s.held == 0 && s.immediate == 1 && s.now[SOFT_GPU_NOW_OTHER] == 1);
+            CHECK(s.held == 0 && s.immediate == 0);
+            if (why) CHECK(SoftGpu_SetScale(1));
+            else SoftGpu_SetModVramUsers(0);
         }
-        SoftGpu_SetModVramUsers(0);
         SoftGpu_SetDeferred(0, 0);
     }
     puts("Software GPU deferred raster checks passed");

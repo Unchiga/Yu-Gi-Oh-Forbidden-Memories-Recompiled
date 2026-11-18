@@ -159,9 +159,11 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  *
  * The game clock's tick (MEMORIES_CLOCK=interrupt) can load, store, move or
  * fill at any instruction. It is held off (SoftGpu_HoldClock) through each
- * batch while deferral is on and through every look at the queues while
- * anything is held, so it never sees a queue half made or half rastered,
- * and never finds `gpu` swapped for a held primitive's state. */
+ * batch while work can be held (holding()) or is, and through every look at
+ * the queues while anything is held, so it never sees a queue half made or
+ * half rastered, and never finds `gpu` swapped for a held primitive's state.
+ * At 2x and above, with a recorder or with a mod's VRAM, a batch neither
+ * holds it nor calls hold. */
 #define HELD_AREAS 2
 #define HELD_SAMPLED 48
 #define HELD_WORDS_MAX (4u << 20) /* past this an area's queue is rastered and started again */
@@ -690,7 +692,7 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
     int textured = uv != NULL || v != NULL, rects[2][4], n = -1, now = -1, i, slot = -1, span[4];
     HeldArea *area;
     GivenUp *gone;
-    if (replaying || target != vram || (!deferred_on && !held_any)) return 0;
+    if (replaying || target != vram || (!holding() && !held_any)) return 0;
     /* The rules that need no rectangles first: what goes at once anyway
      * (a bank, the shadow, an area given up) never scans a palette. */
     if (w < 256 || h < 192 || x + w > SOFT_GPU_WIDTH || y + h > SOFT_GPU_HEIGHT) {
@@ -2210,7 +2212,7 @@ static size_t lines(const uint32_t *words, size_t count)
     if (count < (shaded ? 4u : 3u)) {
         return 0;
     }
-    if (!replaying && (deferred_on || held_any)) {
+    if (!replaying && (holding() || held_any)) {
         size_t used = lines_length(words, count); /* 0: cut off, drawn as far as it goes */
         if (hold(words, used, NULL, NULL, 0, 0)) return used;
     }
@@ -2254,7 +2256,7 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
     if (count) words = GuestRuntime_ResolveData((void *)words, count * sizeof(*words));
 #endif
     size_t at = 0;
-    int clock_held = deferred_on || held_any;
+    int clock_held = holding() || held_any; /* at 2x and above, with a recorder or a mod's VRAM: never */
     if (recorder && scale > 1) {
         if (precise_count && recorder->precise) recorder->precise(precise, precise_count);
         recorder->gp0(words, count);

@@ -2930,8 +2930,13 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   whose bindings are not seen; never down again, as code stays linked;
   `flush_drawing` hands it to `SoftGpu_SetModVramUsers`);
 - a scaled picture is drawn here or by a recorder at 2x and above (whose
-  copy of VRAM would miss the held words), or the area has a widescreen
-  target the software GPU rasters (its second pass is not held);
+  copy of VRAM would miss the held words);
+- (these two are not counted: while either holds, `holding()` is false and
+  a batch neither holds the clock nor calls `hold`, so with the switch on
+  at 2x and above, with a recorder or with such a mod, drawing costs and
+  times what it does with the switch off;)
+- the area has a widescreen target the software GPU rasters (its second
+  pass is not held);
 - an area's queue passed 4M words, or memory ran out;
 - a primitive was rastered at once into its area, for one of the reasons
   above but the last two, since the area's last whole clear: until the
@@ -2949,7 +2954,7 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   the duel field than not holding (measured below). A cycle given up for
   the other reasons (a texture in held work, tags) is not carried over.
 
-The rules that need no rectangles (the area's size, the switch, a bank,
+The rules that need no rectangles (the area's size, `holding()`, a bank,
 the shadow, the panel, given up) come first; a polygon's span
 (`polygon_uv`), `texture_rects` and its palette scan are taken only for a
 primitive that passes them (or, rastered at once while work is held, for
@@ -2960,14 +2965,16 @@ The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 `SoftGpu_HoldClock`, which `platform_common.c` sets when it starts the
 interrupt clock (NULL with the cooperative clock, the default), blocks
 SIGALRM (on Windows, `Memories_SigProcMask`, which the clock thread obeys)
-through each `SoftGpu_Gp0` while deferral is on and through every load,
+through each `SoftGpu_Gp0` while work can be held (`holding()`: the switch
+on, at 1x, no recorder, no mod's VRAM) or is held, and through every load,
 store, move, fill and settle while anything is held, and puts the mask back
 as it found it; `soft_gpu.c` counts the nesting, so only the outermost call
 blocks. A tick then never finds a queue half made or half rastered, or
 `gpu` swapped for a held primitive's state. Re-entering instead was turned
 down: a tick that settled in the middle of an append would leave the queue
 with entries of a frame already drawn. With deferral off nothing is held
-and the clock is never held.
+and the clock is never held; nor with it on while `holding()` is false (2x
+and above, a recorder, a mod's VRAM).
 
 Checks and tools:
 
@@ -2984,8 +2991,10 @@ Checks and tools:
   stores in the middle of a batch, as the tick can. Every store, settled
   rectangle, state, a present of the area just drawn (one frame in four)
   and the final VRAM, tags, shadow and drawing state must match, the clock
-  hook must be called balanced and never nested, and each immediate cause
-  but the panel must have occurred. Each of these taken out alone fails it:
+  hook must be called balanced and never nested, nothing may be held while
+  the mod binds VRAM, and each immediate cause but the panel's and
+  `OTHER`'s must have occurred. A fixed case checks that with a mod's VRAM
+  or at 2x a batch holds nothing, counts nothing and never holds the clock. Each of these taken out alone fails it:
   the load's, the move destination's and the immediate primitive's settles,
   the sampled-rectangle check, the snapshot of the state, the settle before
   a new area, the drop only on a whole cover, the poison's restore, holding
@@ -3095,8 +3104,8 @@ its time with it off. Menus and the campaign drop as much work as before
   million shadow primitives over 17463 frames), so nearly nothing can be
   dropped; `given_up` and `again` make it cost what not holding costs
   (without `given_up` it cost 20% more, with it alone 4%). No loaded mod
-  bound `SoftGpu_Vram` or `SoftGpu_StateData` (no primitive was rastered
-  at once for it). Menus
+  bound `SoftGpu_Vram` or `SoftGpu_StateData` (the build measured counted
+  such primitives as `OTHER`: there were none). Menus
   sample the shadow too; the 3D battle samples neither, and saves as much
   as bare.
 - This is the headless share, which stands in for the OpenGL picture at 2x

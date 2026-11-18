@@ -81,7 +81,8 @@ enum {
     SOFT_GPU_NOW_TAGS,      /* would clear provenance tags or shadow cells */
     SOFT_GPU_NOW_TEXTURE,   /* its texture or palette lies in held work */
     SOFT_GPU_NOW_PANEL,     /* the life-point panel the opponent's name goes over */
-    SOFT_GPU_NOW_OTHER,     /* widescreen's second pass, too much held, ... */
+    SOFT_GPU_NOW_OTHER,     /* widescreen's second pass, too much held, no memory (not a mod's VRAM or a
+                             * scale: then nothing is looked at, or counted) */
     SOFT_GPU_NOW_AFTER,     /* one of the above drew into its area since the area's last clear, or a bank,
                              * the shadow or the panel in the cycle before (soft_gpu.c, `again`) */
     SOFT_GPU_NOW_COUNT
