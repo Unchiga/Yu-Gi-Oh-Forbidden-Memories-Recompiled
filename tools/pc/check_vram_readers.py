@@ -18,7 +18,9 @@ mods/ and examples/, .c, .h and .inc), so it runs on any host:
 - each function that calls SoftGpu_StateData() is listed in STATE_USERS:
   its index 0 is VRAM itself, settled whole as it is handed out but
   writable, so a caller that kept the pointer, or wrote through it while
-  work is held, would get past every settle;
+  work is held, would get past every settle; and SoftGpu_StateData is only
+  ever called, inside a function body: not named in a macro, not taken as
+  a function pointer, not called in an initializer outside a function;
 - VRAM is never written through SoftGpu_Vram's or SoftGpu_VramRaw's pointer.
 
 What it cannot see (notes/pc-build.md lists it too): whether a rectangle is
@@ -82,6 +84,7 @@ SETTLE = re.compile(r"\bSoftGpu_(Settle|SettleTexture|Vram)\s*\(")
 RAW = re.compile(r"\bSoftGpu_VramRaw\s*\(")
 STATE = re.compile(r"\bSoftGpu_StateData\s*\(")
 RAW_NAME = re.compile(r"\bSoftGpu_VramRaw\b(?!\s*\()")
+STATE_NAME = re.compile(r"\bSoftGpu_StateData\b(?!\s*\()")
 DEFINE = re.compile(r"^[ \t]*#[ \t]*define\b.*(?:\\\n.*)*", re.M)
 WRITE = re.compile(r"\(\s*(?:u?int16_t|u16|unsigned\s+short|void)\s*\*\s*\)\s*&?\s*SoftGpu_Vram(?:Raw)?\s*\(")
 FUNCTION = re.compile(r"(\w+)\s*\([^;{}]*\)\s*$")
@@ -90,7 +93,7 @@ SKIPPED = ("src/pc/render/soft_gpu.c", "src/pc/render/soft_gpu.h")
 
 
 def functions(code: str):
-    """Top-level function bodies: (name, first line, body text)."""
+    """Top-level function bodies: (name, first line, body text, offset)."""
     depth, start, header_end = 0, None, 0
     for at, char in enumerate(code):
         if char == "{":
@@ -103,7 +106,7 @@ def functions(code: str):
             if depth == 0 and start is not None:
                 match = FUNCTION.search(header.rstrip())
                 if match and not header.rstrip().endswith("="):
-                    yield match[1], code.count("\n", 0, start) + 1, code[start:at + 1]
+                    yield match[1], code.count("\n", 0, start) + 1, code[start:at + 1], start
                 start, header_end = None, at + 1
         elif char == ";" and depth == 0:
             header_end = at + 1
@@ -121,7 +124,15 @@ def problems_in(relative: str, code: str, found: set) -> list[str]:
                             "cannot follow it: call it in the function that settles")
     for match in RAW_NAME.finditer(code):
         problems.append(f"{relative}:{line(match.start())}: SoftGpu_VramRaw taken as a pointer, not called")
-    for name, first, body in functions(code):
+    for match in DEFINE.finditer(code):
+        if "SoftGpu_StateData" in match[0]:
+            problems.append(f"{relative}:{line(match.start())}: SoftGpu_StateData in a macro, where this check "
+                            "cannot follow it: call it in a function listed in STATE_USERS")
+    for match in STATE_NAME.finditer(code):
+        problems.append(f"{relative}:{line(match.start())}: SoftGpu_StateData taken as a pointer, not called")
+    bodies = []
+    for name, first, body, start in functions(code):
+        bodies.append((start, start + len(body)))
         key = (relative, name)
         if key in MUST_SETTLE:
             found.add(key)
@@ -142,6 +153,11 @@ def problems_in(relative: str, code: str, found: set) -> list[str]:
                             "tools/pc/check_vram_readers.py: settle what it reads, or say why it needs not")
         elif why == SETTLES and not SETTLE.search(body):
             problems.append(f"{relative}:{first}: {name}() takes SoftGpu_VramRaw() but settles nothing")
+    macros = [match.span() for match in DEFINE.finditer(code)]  # reported above
+    for match in STATE.finditer(code):
+        if not any(start <= match.start() < end for start, end in bodies + macros):
+            problems.append(f"{relative}:{line(match.start())}: SoftGpu_StateData() called outside a function "
+                            "body (an initializer), where no STATE_USERS entry can vouch for it")
     return problems
 
 
@@ -184,6 +200,21 @@ static void f(void)
     use(SoftGpu_StateData(0, &size));
 }
 """),
+        "state in a macro": ("x.c", """
+#define VRAM_OF(size) SoftGpu_StateData(0, size)
+static void f(void)
+{
+    size_t size;
+    use(VRAM_OF(&size));
+}
+"""),
+        "state as a function pointer": ("x.c", """
+static void *(*state)(int, size_t *) = SoftGpu_StateData;
+"""),
+        "state in a global initializer": ("x.c", """
+static size_t size;
+static struct { void *vram; } kept = { SoftGpu_StateData(0, &size) };
+"""),
         "settle after the read": ("src/pc/render/gl_picture.c", """
 static void resync(int w)
 {
@@ -203,6 +234,15 @@ static void read_cell(void)
 """
     if problems_in(listed, clean, set()):
         failed.append("a clean listed reader")
+    state_user = """
+void Memories_StateSubsystems(void *state)
+{
+    size_t size;
+    chunk(state, SoftGpu_StateData(0, &size), size);
+}
+"""
+    if problems_in("src/pc/guest/state_subsystems.c", state_user, set()):
+        failed.append("a listed state user")
     return [f"self-test: not caught as it should be: {name}" for name in failed]
 
 

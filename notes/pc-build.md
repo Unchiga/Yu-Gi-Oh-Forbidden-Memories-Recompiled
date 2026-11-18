@@ -2794,7 +2794,11 @@ The checks, and how far they go:
   either pointer; `resync` must settle before it uploads; a function that
   calls `SoftGpu_StateData` (whose index 0 is VRAM, settled as it is handed
   out but writable) must be listed with why its use is safe (the save
-  state's, which reads or writes it whole in the same call). It cannot tell
+  state's, which reads or writes it whole in the same call), and
+  `SoftGpu_StateData` named in a macro, taken as a function pointer or
+  called in an initializer outside a function fails as `SoftGpu_VramRaw`
+  does (its self-test has each of these, and a listed user that passes;
+  each rule taken out alone fails its own case). It cannot tell
   whether a rectangle is the right one, or whether a listed reader settles
   before it reads (only that it settles); it does not see a settled
   pointer kept and read after later drawing (the x11 backend's last frame
