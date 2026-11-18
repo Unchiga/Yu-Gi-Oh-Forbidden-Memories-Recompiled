@@ -3018,7 +3018,14 @@ Checks and tools:
   and the final VRAM, tags, shadow and drawing state must match, the clock
   hook must be called balanced and never nested, nothing may be held while
   the mod binds VRAM, and each immediate cause but the panel's and
-  `OTHER`'s must have occurred. A fixed case checks that with a mod's VRAM
+  `OTHER`'s must have occurred. `OTHER` has two fixed cases of its own:
+  widescreen on at 1x (a sprite and a quad into a full-screen area are
+  rastered at once, VRAM and the widened picture equal the immediate run's,
+  and with widescreen off the same two are held) and 2.2 million two-word
+  dots, which pass the 4M-word queue limit once (the first dot is in VRAM
+  before any settle, the end equals the immediate run's); they fail with
+  the `SoftGpu_WideMargin` arm of `hold` or the re-settle at the limit
+  taken out. A fixed case checks that with a mod's VRAM
   or at 2x a batch holds nothing, counts nothing and never holds the clock,
   and the `again` case that a clear of an area given up, with nothing held,
   holds the clock. Each of these taken out alone fails it:

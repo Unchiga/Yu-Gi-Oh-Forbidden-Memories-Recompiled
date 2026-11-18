@@ -390,7 +390,8 @@ int main(int argc, char **argv)
         CHECK(held.over_held[0] > 0 && held.over_held[1] > 0); /* both areas' held work met a busy frame */
         CHECK(held.held_by_mod == 0 && poisoned.held_by_mod == 0);
         /* Every rule was met but the panel's and OTHER's (memory, 4M words,
-         * widescreen: a mod's VRAM or a scale raster at once without a look). */
+         * widescreen: the fixed cases below take the last two; a mod's VRAM
+         * or a scale raster at once without a look). */
         for (int why = 0; why < SOFT_GPU_NOW_COUNT; why++)
             if (why != SOFT_GPU_NOW_PANEL && why != SOFT_GPU_NOW_OTHER) CHECK(held.stats.now[why] > 0);
         CHECK(now.stores == held.stores && now.stores == poisoned.stores);
