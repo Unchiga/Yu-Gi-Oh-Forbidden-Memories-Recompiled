@@ -3019,8 +3019,10 @@ Checks and tools:
   before a primitive; the random frames alone catch neither), and a
   sampled rectangle one word wide, without its palette or without a
   sprite's wrap (a fixed case: a sprite past u 255 reading the other,
-  held, area), an upload taken as unchanged when it is not or when it sets
-  the mask bit, a merged rectangle not grown (a fixed case: 60 sprites
+  held, area), an upload taken as unchanged when it is not, or when it
+  sets the mask bit (a fixed case: zeros uploaded again under E6's mask
+  bit while a held sprite reads them; the random frames as they are now
+  do not meet it), a merged rectangle not grown (a fixed case: 60 sprites
   reading 60 texels, the last one uploaded anew), two merged to make room
   and not grown (a fixed case: 48 strip texels and one from the right half,
   each strip texel uploaded anew in a run of its own), a rectangle taken as

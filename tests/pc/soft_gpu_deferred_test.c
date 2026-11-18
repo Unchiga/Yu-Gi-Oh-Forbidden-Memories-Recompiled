@@ -663,6 +663,34 @@ int main(int argc, char **argv)
         SoftGpu_SetDeferred(0, 0);
     }
 
+    /* The same texels uploaded again with the mask bit set (E6 bit 0) are
+     * not the same: zeros become 0x8000, which a sprite draws as black where
+     * 0 was transparent. A held sprite reading them must be rastered before
+     * the upload, as it was drawn before it. */
+    {
+        const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u,
+                                 0xe1000000u | 10 | (2u << 7)}; /* page 10 (640,0), 16-bit */
+        const uint32_t sprite[] = {0x65808080u, 0x00100010u, 0x00000000u, 0x00040004u}; /* 4x4 at 16,16 */
+        const uint32_t mask_set[] = {0xe6000001u};
+        const uint16_t zeros[16] = {0};
+        uint16_t first[16], then[16];
+        for (int deferred = 0; deferred < 2; deferred++) {
+            SoftGpuDeferredStats s;
+            SoftGpu_SetDeferred(0, 0);
+            SoftGpu_Reset();
+            SoftGpu_Fill(0, 0, 1024, 512, 0xffffff);
+            SoftGpu_Load(640, 0, 4, 4, zeros);
+            SoftGpu_SetDeferred(deferred, 0);
+            CHECK(SoftGpu_Gp0(area, 5) == 5 && SoftGpu_Gp0(sprite, 4) == 4 && SoftGpu_Gp0(mask_set, 1) == 1);
+            SoftGpu_DeferredStats(&s);
+            CHECK(!deferred || s.held == 1); /* the sprite is held */
+            SoftGpu_Load(640, 0, 4, 4, zeros);
+            SoftGpu_Store(16, 16, 4, 4, deferred ? then : first);
+        }
+        CHECK(!memcmp(first, then, sizeof(first)) && first[0] == 0x7fff);
+        SoftGpu_SetDeferred(0, 0);
+    }
+
     /* An area that starts holding where another held area samples: the
      * other is rastered first. The area at 320,0 holds a sprite reading
      * 0..3,0..3, in the area at 0,0, which then holds a white sprite over
