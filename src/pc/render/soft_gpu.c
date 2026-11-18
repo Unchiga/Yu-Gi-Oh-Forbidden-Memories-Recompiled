@@ -162,8 +162,9 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  * batch while work can be held (holding()) or is, through every look at the
  * queues while anything is held and through every change of given_up[], so
  * it never sees a queue or given_up[] half made or half rastered, and never
- * finds `gpu` swapped for a held primitive's state. At 2x and above, with a
- * recorder or with a mod's VRAM, a batch neither holds it nor calls hold. */
+ * finds `gpu` swapped for a held primitive's state. With a mod's VRAM, at 2x
+ * and above, or with a recorder at 2x and above (not at 1x: holding() is
+ * false only for those), a batch neither holds it nor calls hold. */
 #define HELD_AREAS SOFT_GPU_QUEUES
 #define HELD_SAMPLED 48
 #define HELD_WORDS_MAX (4u << 20) /* past this an area's queue is rastered and started again */
@@ -2301,7 +2302,7 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
     if (count) words = GuestRuntime_ResolveData((void *)words, count * sizeof(*words));
 #endif
     size_t at = 0;
-    int clock_held = holding() || held_any; /* at 2x and above, with a recorder or a mod's VRAM: never */
+    int clock_held = holding() || held_any; /* never with a mod's VRAM, at 2x and above, or with a recorder at 2x and above */
     if (recorder && scale > 1) {
         if (precise_count && recorder->precise) recorder->precise(precise, precise_count);
         recorder->gp0(words, count);

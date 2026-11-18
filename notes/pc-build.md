@@ -2822,7 +2822,8 @@ raster" for how it does):
 - The widened targets follow VRAM (`wide_mirror`) and need nothing of their
   own only if work is kept back while a recorder draws the picture at 2x and
   above, where the software GPU does not raster them (`wide_rastered`).
-  Keeping work back without a recorder (a forced mode at 1x for tests) has
+  Keeping work back without a recorder at 2x and above (at 1x, with or
+  without one) has
   to hold the targets' second pass too; the first version keeps nothing back
   in an area that has a target.
 
@@ -2951,8 +2952,8 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   copy of VRAM would miss the held words);
 - (these two are not counted: while either holds, `holding()` is false and
   a batch neither holds the clock nor calls `hold`, so with the switch on
-  at 2x and above, with a recorder or with such a mod, drawing costs and
-  times what it does with the switch off;)
+  at 2x and above, with a recorder at 2x and above (not at 1x) or with such
+  a mod, drawing costs and times what it does with the switch off;)
 - the area has a widescreen target the software GPU rasters (its second
   pass is not held);
 - an area's queue passed 4M words, or memory ran out;
@@ -2985,8 +2986,8 @@ The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 interrupt clock (NULL with the cooperative clock, the default), blocks
 SIGALRM (on Windows, `Memories_SigProcMask`, which the clock thread obeys)
 through each `SoftGpu_Gp0` while work can be held (`holding()`: the switch
-on, at 1x, no recorder, no mod's VRAM) or is held, through every load,
-store, move, fill and settle while anything is held, and through every
+on, no mod's VRAM, no scaled picture, no recorder at 2x and above) or is
+held, through every load, store, move, fill and settle while anything is held, and through every
 change of `given_up` (a clear changes it with nothing held, and a fill from
 the tick in the middle of a removal would leave the count at -1 and the
 next addition writing outside it), and puts the mask back
@@ -2996,7 +2997,7 @@ blocks. A tick then never finds a queue half made or half rastered, or
 down: a tick that settled in the middle of an append would leave the queue
 with entries of a frame already drawn. With deferral off nothing is held
 and the clock is never held; nor with it on while `holding()` is false (2x
-and above, a recorder, a mod's VRAM).
+and above, a recorder at 2x and above, a mod's VRAM).
 
 Checks and tools:
 
@@ -3180,7 +3181,7 @@ Left for turning it on at 2x and above with the OpenGL picture:
   that crosses held work while a recorder is on must record the settled
   words as an `OP_LOAD` (moves out of a drawing area, the story's image,
   and anything sampling an area need it), and `holding()` must then allow
-  the recorder.
+  a recorder at 2x and above.
 - Widescreen: with a recorder at 2x the targets are not rastered here, so
   holding them needs only `wt->drawn` kept at submit (it is: `SoftGpu_Gp0`
   counts it); the `SoftGpu_WideMargin` refusal in `hold` must go.
@@ -3193,7 +3194,7 @@ Left for turning it on at 2x and above with the OpenGL picture:
   texels instead is step A's "+4".
 - Nothing that only happens above 1x has run with work held: the
   picture-only palette and frame, the recorder's PGXP and capture, the
-  widescreen bookkeeping with a recorder. `SoftGpu_SetScale` and
+  widescreen bookkeeping with a recorder at 2x and above. `SoftGpu_SetScale` and
   `SoftGpu_SetRecorder` settle everything before they change anything.
 - The queues are safe from the clock's tick (held off), not from another
   thread: nothing but the game thread may call the software GPU.
