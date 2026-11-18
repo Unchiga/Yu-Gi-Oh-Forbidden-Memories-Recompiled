@@ -2968,7 +2968,8 @@ the shadow, the panel, given up) come first; a polygon's span
 (`polygon_uv`), `texture_rects` and its palette scan are taken only for a
 primitive that passes them (or, rastered at once while work is held, for
 the texels it reads), so none of them costs anything with the switch off
-or in an area given up.
+or in an area given up. That the switch off costs nothing is measured, not
+only read from the code (below).
 
 The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 `SoftGpu_HoldClock`, which `platform_common.c` sets when it starts the
@@ -3052,7 +3053,16 @@ Checks and tools:
   rose from 15-18 thousand a seed to 24-29 thousand. (Not
   checking a primitive's texture against its own area is not caught, and
   needs not be: the queue rasters in order, so a held primitive that reads
-  its own area reads what the ones before it drew.)
+  its own area reads what the ones before it drew.) Of the 27 removals a
+  scratch mutation script (not in the repo) makes, on this test: 15 fail
+  the random frames' equality (two of them, holding bank primitives and
+  the clean check, fail their cause counts first, and the equality
+  without those); 10 only a fixed case (the settle before a new area,
+  `again` three ways, the batch's clock gate, the clock around a clear of
+  `given_up`, forgetting `given_up` at a state load, clearing tags in a
+  replay, the mask bit's upload, an 8-bit palette counted only to VRAM's
+  edge); one, `queued` left empty, only the count of held work busy frames
+  met; and one, the own-area check above, nothing.
 - `MEMORIES_DEFERRED_POISON=1`: an area's words become magenta (0x7c1f) as
   its queue begins, and come back (then the queue is rastered) at the
   settle. A reader that does not settle sees magenta; frame hashes and
@@ -3068,8 +3078,8 @@ Checks and tools:
   does, and still sees in its hashes what a wrong drop or a late raster
   left.
 
-The gate (`D:/YGO/scratch/cpu-raster/pr2-gate.py`, not in the tree): every
-replay, headless at 1x, played by one build five ways: with the switch off
+The gate (a scratch script, not in the repo): every replay, headless at
+1x on this Windows PC, played by one build five ways: with the switch off
 and on while recording (a checkpoint a frame) with per-frame hashes, and
 off, on and on with poison without recording, hashed every 7th frame. Each
 run's checkpoints and hashes against those of the run with it off, never
@@ -3091,8 +3101,9 @@ dropped 2.4 million; with `again`). A run on the interrupt clock
 (`MEMORIES_CLOCK=interrupt`, with poison) finished the menus session with
 work held and dropped (0.86 million held); its hashes cannot be compared.
 
-Measured headless at 1x (`D:/YGO/scratch/cpu-raster/pr2-*.py`, a scratch
-build with a per-frame log keyed by the game's main mode, as step A's;
+Measured headless at 1x, on this Windows PC only (scratch scripts, not in
+the repo, and a scratch build with a per-frame log keyed by the game's
+main mode, as step A's;
 sessions: Blue-Eyes 3D battles, full duel, menus, first duel; no
 recording, hashes or shots, which would settle), the same frames with the
 switch off and on, each session three times off and three times on,
@@ -3121,6 +3132,17 @@ shadow primitive, nearly every frame (0.3% of its areas dropped); now it
 holds in 73 cycles of 17463 frames, and its time with the switch on is
 its time with it off. Menus and the campaign drop as much work as before
 (18.3 thousand and 432 thousand primitives) and hold far less in vain.
+
+With the switch off (`MEMORIES_DEFERRED_RASTER` unset), measured on
+`59ad1683e1` against the change it builds on (`07623c60e4`, settling), headless at 1x on this
+Windows PC only: three interleaved runs of each build, the duel field and
+the 3D battle, bare and with the pack and the mods. The draws'
+(`SoftGpu_Gp0`) time per frame differs by -4.2% to +1.5% between the two
+builds, within the noise (two runs of the same build differ by up to
+5% either way), and the frame hashes of five runs (about 40 thousand
+frames) are identical between them. The off path has changed since only
+where it tests `holding()` instead of the switch, and in a clear that
+looks at `given_up` only when something is in it (never, off).
 
 - Bare, what still rasters is the 3D battle's palette move
   (`func_8004E9A0.c`), which writes texels its held model samples every
