@@ -2759,22 +2759,14 @@ Readers that settle, by what they read:
   (each sprite's texture).
 
 `upload_vram` in `gl_picture.c` reads VRAM raw on purpose: settling at
-every replay would raster both drawing areas every frame. It is whole
-today because nothing is kept back. Once something is, the OpenGL copy of
-VRAM is stale wherever held work lies, and two things read that copy: a
-move (`record_move` records only the coordinates, and `apply_move` copies
-inside the texture the last upload made, so the CPU move's settle does not
-reach it) and any primitive that samples a drawing area. The plan for the
-change that keeps work back (or the one that hooks it to the OpenGL pass):
-while a recorder is on, a settle that crosses held work records the
-settled words as an `OP_LOAD`, so the copy has them before the move or the
-sample that follows. That the game never textures from a drawing area is
-not verified: `polygon` and `rectangle` settle their texture only while
-the texture dump is on, so a primitive sampling held work is not seen
-today; that change must check each textured primitive's page against the
-held areas (in the runs measured below no primitive sampled a word a
-full-screen primitive had drawn; the story's fading image samples a copy
-moved out of the buffer, which the move's settle covers on the CPU).
+every replay would raster both drawing areas every frame. So the OpenGL
+copy of VRAM misses what the deferred raster holds when it is taken, and
+gets it back as patches ("The deferred raster", "At 2x and above with the
+OpenGL picture"): a move out of a drawing area (`apply_move` copies
+inside the copy) and a primitive sampling one read it, and their CPU
+counterparts settle what they read, which makes the patch. The raster
+checks each textured primitive's texels against the held areas as it
+comes (`texture_rects`), so a primitive sampling held work is seen.
 
 The checks, and how far they go:
 
@@ -2948,14 +2940,16 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   hand could still bind it, as it could `SoftGpu_HoldClock` and
   `SoftGpu_SetDeferred` already, and a mod that set it would keep the
   software GPU from hearing of its VRAM binding;
-- a scaled picture is drawn here or by a recorder at 2x and above (whose
-  copy of VRAM would miss the held words);
+- a scaled picture is drawn here (the software picture at 2x and above),
+  or a recorder draws it at 2x and above that keeps no copy of VRAM the
+  patches can reach (`patch` NULL, or its copy not taken yet since it was
+  set: below), or the switch is AUTO below 2x;
 - (these two are not counted: while either holds, `holding()` is false and
-  a batch neither holds the clock nor calls `hold`, so with the switch on
-  at 2x and above, with a recorder at 2x and above (not at 1x) or with such
-  a mod, drawing costs and times what it does with the switch off;)
+  a batch neither holds the clock nor calls `hold`, so then drawing costs
+  and times what it does with the switch off;)
 - the area has a widescreen target the software GPU rasters (its second
-  pass is not held);
+  pass is not held; with a recorder at 2x and above the recorder draws the
+  targets, and the area holds as any other);
 - an area's queue passed 4M words, or memory ran out;
 - a primitive was rastered at once into its area, for one of the reasons
   above but the last two, since the area's last whole clear: until the
@@ -2986,7 +2980,8 @@ The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 interrupt clock (NULL with the cooperative clock, the default), blocks
 SIGALRM (on Windows, `Memories_SigProcMask`, which the clock thread obeys)
 through each `SoftGpu_Gp0` while work can be held (`holding()`: the switch
-on, no mod's VRAM, no scaled picture, no recorder at 2x and above) or is
+on, no mod's VRAM, no software scaled picture, no recorder at 2x and above
+without its copy, not AUTO below 2x) or is
 held, through every load, store, move, fill and settle while anything is held, and through every
 change of `given_up` (a clear changes it with nothing held, and a fill from
 the tick in the middle of a removal would leave the count at -1 and the
@@ -2996,8 +2991,9 @@ blocks. A tick then never finds a queue half made or half rastered, or
 `gpu` swapped for a held primitive's state. Re-entering instead was turned
 down: a tick that settled in the middle of an append would leave the queue
 with entries of a frame already drawn. With deferral off nothing is held
-and the clock is never held; nor with it on while `holding()` is false (2x
-and above, a recorder at 2x and above, a mod's VRAM).
+and the clock is never held; nor with it on while `holding()` is false
+(the cases above). At 2x and above the OpenGL picture also takes its copy
+with the tick held off (below).
 
 Checks and tools:
 
@@ -3080,6 +3076,31 @@ Checks and tools:
   replay, the mask bit's upload, an 8-bit palette counted only to VRAM's
   edge); one, `queued` left empty, only the count of held work busy frames
   met; and one, the own-area check above, nothing.
+- The same test's copy runs (2x): two seeds of the random frames at 2x
+  with a model of the OpenGL picture's recorder and copy of VRAM (loads,
+  moves and fills cut at VRAM's edges as `gl_picture.c` cuts them,
+  primitives that only sample), replayed at the end of three frames in
+  four, with settles of its own in the middle of a replay (the host
+  lookups), widescreen on two frames in three, picture-only frames and
+  palettes, the scale to 4x and back; played off, AUTO and AUTO with
+  poison. Every word of the copy a textured primitive or a move reads in
+  the drawing areas, and everything the 1x runs compare, must match, and
+  held work must have outlived takes of the copy and made patches (about
+  150 areas and 100 patches a seed). Fixed cases: a take between two
+  sprites at one place (the patch is the first: rastered only up to the
+  take), a fill that covers an area only by wrapping past x 1023, a
+  replay's own settle after its last draw (its patch must not come back),
+  a picture-only sprite reading held work the copy missed, a frame and a
+  palette made picture-only while work is held, and what lets work be held
+  (AUTO at 1x, a recorder without `patch`, one before its first take,
+  widescreen). Each of these taken out alone fails it (a scratch mutation
+  script, not in the repo, PR 3's list): the patch, rastering only up to
+  the take, the take's marks, forgetting the patches at a take, the
+  wrapped fill, `picture_only_reads` (both callers, and each), the
+  picture-only checks while replaying (both, and each), `copy_on()` in
+  `holding()` (refused, or unconditional), AUTO at 1x, the widescreen
+  refusal, forgetting the copy at a new recorder, and `patch` in
+  `copy_on()`.
 - `MEMORIES_DEFERRED_POISON=1`: an area's words become magenta (0x7c1f) as
   its queue begins, and come back (then the queue is rastered) at the
   settle. A reader that does not settle sees magenta; frame hashes and
@@ -3182,27 +3203,85 @@ switch off, and none of the changes was measured on its own.
   and above, where nothing shows VRAM. A window at 1x presents (and so
   settles) the buffer just drawn every frame and saves nothing.
 
-Left for turning it on at 2x and above with the OpenGL picture:
+#### At 2x and above with the OpenGL picture
 
-- The OpenGL copy of VRAM (`upload_vram`, raw) misses held words: a settle
-  that crosses held work while a recorder is on must record the settled
-  words as an `OP_LOAD` (moves out of a drawing area, the story's image,
-  and anything sampling an area need it), and `holding()` must then allow
-  a recorder at 2x and above.
-- Widescreen: with a recorder at 2x the targets are not rastered here, so
-  holding them needs only `wt->drawn` kept at submit (it is: `SoftGpu_Gp0`
-  counts it); the `SoftGpu_WideMargin` refusal in `hold` must go.
+There the CPU's raster at 1x is drawn only for what reads VRAM back (the
+picture is the GPU's), which is why AUTO holds there and only there. What
+it takes:
+
+- The OpenGL copy of VRAM. `gl_picture.c` draws its primitives into the
+  scaled picture only; its copy of VRAM (`vram_texture`, which they sample
+  and `apply_move` copies inside) is VRAM taken whole and raw after each
+  replay (`upload_vram`), then changed by the record's loads, moves and
+  fills. So it misses what is held when it is taken. `upload_vram` calls
+  `SoftGpu_CopyTaken` right after it reads VRAM, which notes for each held
+  area how many primitives it held then (`HeldArea.copied`). When such an
+  area is settled, those are rastered first and the area's words kept as a
+  patch (the area as the copy should have had it), then the rest. The
+  recorder takes the patches (`SoftGpu_CopyPatches`, its `patch` callback,
+  which writes the copy only, never the picture) at the start of its next
+  replay, before anything in the record, and in `flush_runs` before each
+  draw (the replay's own host lookups, `HdText_Hud` and the others, settle
+  too). Why this is exact, and why not an `OP_LOAD` in the record: a
+  patch is the area as it was at the last take, which is what the copy
+  holds with the switch off from the replay's start until the first write
+  into the area in the record; and every write or read of the area in the
+  record has a CPU counterpart (a load, move, fill or primitive) that
+  settles it first (or drops it, for a whole clear), so the patch exists
+  before the replay reaches it, and an area is patched at most once a take
+  (its next queue starts after it). In the record, a patch would land
+  after its reader: `SoftGpu_Gp0` records a batch whole before rastering
+  it, and loads, moves and fills are recorded before they settle. A
+  patch the recorder has not taken when it takes the copy again is
+  forgotten (the copy then has those words, rastered further). The tick is
+  held off from the copy's read to `SoftGpu_CopyTaken`. A patch that cannot
+  be kept (no memory) makes the next replay a resync, as an overflow of
+  the record does (that frame shows the picture made from VRAM at 1x).
+  `tools/pc/check_vram_readers.py` checks the two calls' places in
+  `upload_vram`, `GlPicture_Replay` and `flush_runs` (`COPY_KEEPING`).
+- Only a recorder with `patch` that has taken its copy since it was set
+  lets work be held (`copy_on()`); so a test's recorder, a mod's (none
+  exists: `SoftGpu_CopyTaken` and `SoftGpu_CopyPatches` are not lent) or
+  the OpenGL picture before its first replay hold nothing.
+- A fill that covers a held area only by wrapping past VRAM's edge settles
+  it instead of dropping it while the copy misses it (`fill_reaches`):
+  `apply_fill` cuts a fill at the edge, so the copy keeps the old words
+  there.
+- Picture-only primitives (`SoftGpu_PictureOnlyClut`,
+  `SoftGpu_PictureOnlyFrame`) are drawn by the recorder alone and never
+  held; what they sample is settled as they come (`picture_only_reads`),
+  so the copy gets it. A held primitive was not picture-only as it came,
+  so it is rastered whatever the two say when it is settled (the checks
+  are false while replaying).
+- Widescreen: with a recorder at 2x and above the recorder draws the
+  targets and the software GPU's are neither rastered nor shown
+  (`SoftGpu_WideFrame` settles nothing then), so an area with a target
+  holds as any other; `wt->drawn` is counted as a primitive comes.
+- PGXP is the recorder's alone (the raster never reads `precise`); a
+  capture settles its source as it comes; the life-point panel's name is a
+  1x matter (`panel_page`); a new scale or recorder, a state load and a
+  resync settle everything first. A lost OpenGL ES context
+  (`GlPicture_Lost`) keeps the recorder and asks for a resync, which
+  settles everything and takes the copy whole again.
+- The replay's host lookups (`HdText_*` in `gl_picture.c`) read VRAM at
+  replay time and settle what they read, which rasters a held area they
+  cross for nothing but correctness.
+- Reads the OpenGL pass makes beyond what the raster checks: texture xBR's
+  centre texel is not clamped to the primitive's `bounds` (a pixel past the
+  edge, with anti-aliasing), and HD text's ink indexes a palette by the
+  glyph atlas, not the texels. Next to a held area either could read words
+  the copy missed; the gate below ran with xBR and anti-aliasing to look
+  for it.
+
+What is left:
+
 - The pack's shadow and the banks: primitives sampling either are still
   rastered at once, which in a duel with an HD pack is every frame (step A:
-  0.3% of duel frames skip). Both need a generation that moves only when
-  their bytes do.
+  0.3% of duel frames skip), at 2x as at 1x. Both need a generation that
+  moves only when their bytes do.
 - Move hazards: the 3D battle's palette move (`func_8004E9A0.c`) writes
   texels held work samples every frame, which rasters it; copying the old
   texels instead is step A's "+4".
-- Nothing that only happens above 1x has run with work held: the
-  picture-only palette and frame, the recorder's PGXP and capture, the
-  widescreen bookkeeping with a recorder at 2x and above. `SoftGpu_SetScale` and
-  `SoftGpu_SetRecorder` settle everything before they change anything.
 - The queues are safe from the clock's tick (held off), not from another
   thread: nothing but the game thread may call the software GPU.
 - The cost of holding where little is dropped (the copies, the palette

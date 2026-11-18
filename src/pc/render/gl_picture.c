@@ -218,8 +218,9 @@ static void record_resync(int scale, const uint32_t state[6])
     memcpy(at + 2, state, 6 * sizeof(uint32_t));
 }
 
+static void apply_patch(int x, int y, int w, int h, const uint16_t *words); /* replay: GL (below) */
 static const SoftGpuRecorder recorder = {record_gp0, record_load, record_move, record_fill, record_resync,
-                                          record_precise, record_capture};
+                                          record_precise, record_capture, apply_patch};
 
 /* --- GL objects ---------------------------------------------------------- */
 /* What the replays cost the GPU beyond the primitives, summed over 120 of
@@ -229,7 +230,7 @@ static const SoftGpuRecorder recorder = {record_gp0, record_load, record_move, r
  * replay (upload_vram) and the texture pack's two maps whenever they
  * changed (sync_pack), as counts: the log turns them into bytes. */
 static struct {
-    unsigned resolves, blits, copies, quads, draws, vram_uploads, map_uploads;
+    unsigned resolves, blits, copies, quads, draws, vram_uploads, map_uploads, patches;
     double resolve_px, blit_px, copy_px, quad_px;
 } stats;
 static int scale;                 /* of the picture in the framebuffer, 0 before the first resync */
@@ -2614,6 +2615,10 @@ static void flush_runs(void)
     sync_banks();
     sync_pack();
     if (hd_text || hd_hud || opponent_name) sync_glyphs();
+    /* A host lookup made for these primitives (HdText_Hud, ...) may have
+     * settled held work the last upload missed: its patch, before they draw
+     * (upload_vram). */
+    if (SoftGpu_CopyPatches() < 0) want_resync = 1;
     gl_ActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, vram_texture);
     gl_UseProgram(program);
@@ -2876,21 +2881,45 @@ static void apply_capture(int sx, int sy, int dx, int dy, int w, int h)
 /* VRAM as the software GPU has it, whole, into its texture. Not settled
  * (soft_gpu.h, SoftGpu_VramRaw): the replay draws the drawing areas'
  * picture itself, and settling here would raster both areas at every
- * replay. Nothing is kept back yet, so the copy is whole. Once a raster
- * keeps work back, the copy is stale where that work lies, and a move
- * (apply_move copies inside this texture, from the last upload) or a
- * primitive sampling there would read it: the plan (notes/pc-build.md,
- * "Settling VRAM before it is read") is to record the settled words as an
- * OP_LOAD when a settle crosses held work while a recorder is on. A resync
- * settles first. */
+ * replay. So the copy misses what the deferred raster holds now, and
+ * SoftGpu_CopyTaken notes which: when such an area is settled, its words as
+ * they would have been now come back as a patch, which the next replay
+ * applies before anything in its record reads the copy (apply_patch). The
+ * tick is held off from the read to the note: a settle in between would
+ * leave the area half old here and no patch for it. A resync settles
+ * first. */
 static void upload_vram(void)
 {
+    sigset_t held, previous;
+    sigemptyset(&held);
+    sigaddset(&held, SIGALRM);
+    sigprocmask(SIG_BLOCK, &held, &previous);
     glBindTexture(GL_TEXTURE_2D, vram_texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT, GL_RED_INTEGER, GL_UNSIGNED_SHORT,
                     SoftGpu_VramRaw());
+    SoftGpu_CopyTaken();
+    sigprocmask(SIG_SETMASK, &previous, NULL);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     stats.vram_uploads++;
+}
+
+/* A patch (soft_gpu.h, SoftGpu_CopyPatches): words x,y,w,h of VRAM's
+ * texture as the last upload_vram should have taken them, had the deferred
+ * raster not held them back. Only VRAM's texture: the picture was drawn from
+ * the primitives as they came. Without a picture (a lost context, before the
+ * first resync) there is no copy: the resync to come makes it whole. */
+static void apply_patch(int x, int y, int w, int h, const uint16_t *words)
+{
+    if (scale < 2 || !vram_texture) return;
+    gl_ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, vram_texture);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, w);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RED_INTEGER, GL_UNSIGNED_SHORT, words);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    stats.patches++;
 }
 
 /* The state words, then VRAM whole into its texture and the picture. At a
@@ -3031,6 +3060,11 @@ int GlPicture_Replay(void)
     set_samples(Settings_Get(SET_MSAA));
     hd_hud = HdText_HudEnabled();
     opponent_name = HdText_NameEnabled();
+    /* What the last upload missed of the deferred raster's held work and has
+     * been settled since, into VRAM's texture before anything here reads it
+     * (upload_vram). A patch lost (no memory): VRAM whole again, as for an
+     * overflow. */
+    if (SoftGpu_CopyPatches() < 0) overflow = 1;
     if (overflow || wanted_resync) {
         /* Too much for the arena: from VRAM as it is now, with the state
          * as it is now; the record is superseded. */
@@ -3114,9 +3148,12 @@ int GlPicture_Replay(void)
                 stats.blit_px / 120e6, stats.copies / 120.0, stats.copy_px / 120e6, stats.quads / 120.0,
                 stats.quad_px / 120e6, stats.draws / 120.0);
             /* VRAM is 1024 x 512 16-bit words; the maps 16 and 32 bits a word. */
-            LOG(LOG_FRAMES, "OpenGL picture uploads per replay: VRAM %.2f MB, texture pack maps %.2f MB (%u in 120)",
+            LOG(LOG_FRAMES,
+                "OpenGL picture uploads per replay: VRAM %.2f MB, texture pack maps %.2f MB (%u in 120), "
+                "%u deferred raster patches in 120",
                 stats.vram_uploads * (SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 2.0) / 120e6,
-                stats.map_uploads * (SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 6.0) / 120e6, stats.map_uploads);
+                stats.map_uploads * (SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 6.0) / 120e6, stats.map_uploads,
+                stats.patches);
             memset(&stats, 0, sizeof(stats));
             replays = total_us = 0;
         }

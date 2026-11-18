@@ -37,7 +37,7 @@ accept v0.1.2 function RotAverageNclip3_nom returns long (the flag word) where i
 # PR #105 (the burning card keeps its HD pack image): the recorder gained
 # `capture` at its end. Only the port's own OpenGL picture installs a
 # recorder; none of v0.1.2's mods calls SoftGpu_SetRecorder.
-accept v0.1.2 record SoftGpuRecorder grew by one callback at its end
+accept v0.1.2 record SoftGpuRecorder grew by callbacks at its end (capture; patch, below)
 # The Game list (host actions: Exit game, save states, the other shortcuts):
 # every controls profile gained its host bindings at its end, which moves
 # what follows a profile. No v0.1.2 mod imports a Controls or
@@ -167,3 +167,10 @@ accept v0.3.0 function ModsWindow_SetImport takes a fetch callback with the prog
 accept v0.3.0 record TitleBackground holds an animation's frames
 accept v0.3.0 record TitleConfig gained fade, smooth_slide and the larger TitleBackground and TitleItem
 accept v0.3.0 record TitleItem gained font_game before action
+
+# The deferred raster at 2x and above with the OpenGL picture: the recorder
+# gained `patch` at its end (the words its copy of VRAM missed). Only the
+# port's own OpenGL picture installs a recorder (v0.1.2's line above covers
+# that release); no mod calls SoftGpu_SetRecorder.
+accept v0.2.0 record SoftGpuRecorder grew by the patch callback at its end
+accept v0.3.0 record SoftGpuRecorder grew by the patch callback at its end

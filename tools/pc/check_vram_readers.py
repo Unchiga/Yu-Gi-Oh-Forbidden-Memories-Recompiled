@@ -15,6 +15,9 @@ mods/ and examples/, .c, .h and .inc), so it runs on any host:
 - SoftGpu_VramRaw is only ever called: not named in a macro, not taken as a
   function pointer;
 - the functions in MUST_SETTLE settle before their first read;
+- the OpenGL picture's raw copy of VRAM notes what it missed right after it
+  takes it (SoftGpu_CopyTaken), and its replay takes the patches for that
+  (SoftGpu_CopyPatches) before anything in its record (COPY_KEEPING);
 - each function that calls SoftGpu_StateData() is listed in STATE_USERS:
   its index 0 is VRAM itself, settled whole as it is handed out but
   writable, so a caller that kept the pointer, or wrote through it while
@@ -46,8 +49,8 @@ RAW_READERS = {
     ("src/pc/sdk/libgpu.c", "displayed_picture"): SETTLES,
     ("src/pc/render/gl_picture.c", "upload_vram"):
         "the OpenGL picture's copy of VRAM: settling at every replay would raster both drawing areas each frame; "
-        "nothing is kept back yet, and once something is, a settle crossing held work while a recorder is on is "
-        "to record the settled words (OP_LOAD), as apply_move copies inside this copy; a resync settles first",
+        "what it misses of held work comes back as patches (SoftGpu_CopyTaken right after the read, "
+        "SoftGpu_CopyPatches at the next replay's start: COPY_KEEPING below); a resync settles first",
     ("src/pc/render/texture_dump.c", "TextureDump_Primitive"):
         "reads the primitive's texels through `source`, which soft_gpu.c settles (SoftGpu_SettleTexture) "
         "before calling; the raw pointer is only compared",
@@ -79,6 +82,22 @@ STATE_USERS = {
 # rests on resync's).
 MUST_SETTLE = {
     ("src/pc/render/gl_picture.c", "resync"): re.compile(r"\b(upload_vram|picture_from_words)\s*\("),
+}
+# The OpenGL picture's copy of VRAM, taken raw, and the deferred raster's
+# patches for what it missed (soft_gpu.h, SoftGpu_CopyTaken): (file,
+# function) -> (the call it must make, the anchor, "after" or "before" the
+# anchor's first match). upload_vram notes what the copy missed right after
+# it reads VRAM; the replay hands the patches over before anything in its
+# record reads the copy.
+COPY_KEEPING = {
+    ("src/pc/render/gl_picture.c", "upload_vram"): (re.compile(r"\bSoftGpu_CopyTaken\s*\("),
+                                                     re.compile(r"\bSoftGpu_VramRaw\s*\("), "after"),
+    ("src/pc/render/gl_picture.c", "GlPicture_Replay"): (re.compile(r"\bSoftGpu_CopyPatches\s*\("),
+                                                          re.compile(r"\b(gp0|apply_\w+|resync)\s*\("), "before"),
+    # The replay's own host lookups settle too (HdText_Hud and the others,
+    # inside the replay): their patches before the primitives draw.
+    ("src/pc/render/gl_picture.c", "flush_runs"): (re.compile(r"\bSoftGpu_CopyPatches\s*\("),
+                                                    re.compile(r"\bgl_UseProgram\s*\(\s*program\b"), "before"),
 }
 SETTLE = re.compile(r"\bSoftGpu_(Settle|SettleTexture|Vram)\s*\(")
 RAW = re.compile(r"\bSoftGpu_VramRaw\s*\(")
@@ -139,6 +158,13 @@ def problems_in(relative: str, code: str, found: set) -> list[str]:
             settle, read = SETTLE.search(body), MUST_SETTLE[key].search(body)
             if not settle or (read and read.start() < settle.start()):
                 problems.append(f"{relative}:{first}: {name}() reads VRAM before it settles it")
+        if key in COPY_KEEPING:
+            found.add(key)
+            call, anchor, where = COPY_KEEPING[key]
+            made, at = call.search(body), anchor.search(body)
+            if not made or not at or (made.start() < at.start()) != (where == "before"):
+                problems.append(f"{relative}:{first}: {name}() must call /{call.pattern}/ {where} its first "
+                                f"/{anchor.pattern}/ (the copy of VRAM and the deferred raster's patches)")
         if STATE.search(body):
             found.add(("state", relative, name))
             if key not in STATE_USERS:
@@ -222,6 +248,32 @@ static void resync(int w)
     SoftGpu_Settle(0, 0, 1, 1);
 }
 """),
+        "copy taken unnoted": ("src/pc/render/gl_picture.c", """
+static void upload_vram(void)
+{
+    upload(SoftGpu_VramRaw());
+}
+"""),
+        "copy noted before it is taken": ("src/pc/render/gl_picture.c", """
+static void upload_vram(void)
+{
+    SoftGpu_CopyTaken();
+    upload(SoftGpu_VramRaw());
+}
+"""),
+        "patches after the record": ("src/pc/render/gl_picture.c", """
+int GlPicture_Replay(void)
+{
+    gp0(words, 6);
+    SoftGpu_CopyPatches();
+}
+"""),
+        "no patches": ("src/pc/render/gl_picture.c", """
+int GlPicture_Replay(void)
+{
+    apply_load(0, 0, 1, 1, words);
+}
+"""),
     }
     failed = [name for name, (path, code) in cases.items() if not problems_in(path, code, set())]
     clean = """
@@ -243,6 +295,22 @@ void Memories_StateSubsystems(void *state)
 """
     if problems_in("src/pc/guest/state_subsystems.c", state_user, set()):
         failed.append("a listed state user")
+    keeper = """
+static void upload_vram(void)
+{
+    upload(SoftGpu_VramRaw());
+    SoftGpu_CopyTaken();
+}
+int GlPicture_Replay(void)
+{
+    if (SoftGpu_CopyPatches() < 0) overflow = 1;
+    if (overflow) resync(1, words);
+    gp0(words, 6);
+    upload_vram();
+}
+"""
+    if problems_in("src/pc/render/gl_picture.c", keeper, set()):
+        failed.append("a copy kept as it should be")
     return [f"self-test: not caught as it should be: {name}" for name in failed]
 
 
@@ -259,7 +327,7 @@ def main() -> int:
         if relative in SKIPPED:
             continue
         problems += problems_in(relative, mask_noncode(unit.read_text(encoding="utf-8", errors="replace")), found)
-    for key in sorted((set(RAW_READERS) | set(MUST_SETTLE)) - found):
+    for key in sorted((set(RAW_READERS) | set(MUST_SETTLE) | set(COPY_KEEPING)) - found):
         problems.append(f"{key[0]}: {key[1]}() is listed but no longer found as listed")
     for key in sorted(set(STATE_USERS) - {(entry[1], entry[2]) for entry in found if entry[0] == "state"}):
         problems.append(f"{key[0]}: {key[1]}() is listed in STATE_USERS but no longer found")
