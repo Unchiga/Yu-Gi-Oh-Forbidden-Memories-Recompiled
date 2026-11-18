@@ -2737,15 +2737,22 @@ Readers that settle, by what they read:
   source, a widened target and its picture while the software GPU rasters
   them (`SoftGpu_WideFrame`, `SoftGpu_WideFrameView`, `SoftGpu_WidePicture`;
   with a recorder at 2x and above the target's words are not shown and
-  nothing is settled), and, with the texture dump on, a primitive's texture
-  before `TextureDump_Primitive` reads it through its `source` pointer.
+  nothing is settled), with the texture dump on, a primitive's texture
+  before `TextureDump_Primitive` reads it through its `source` pointer, and
+  the life-point panel's palette, which `name_over_panel` reads at 1x (the
+  panel is always rastered at once, which settles it already, and the
+  game's palettes there lie outside the drawing areas; settled all the
+  same, so no reader goes without).
 - Host lookups a primitive makes, each its own rectangle: `hd_text.c`
   (`HdText_Cell` the font's page; the card title's words in
   `HdText_TitleUploaded` and `HdText_TitleCard`; the life-point panel's page
   in `HdText_NameBox`; the primitive's texture in `HdText_Hud` and
-  `HdText_FieldWord`, another label's page in `read_label`, each palette
-  entry in `color`), `glyphs.c` (`read_cell`'s cell, `copy_palettes`'
-  rows), `star_icons.c` (the stars' palette and page), `card_layout_art.c`
+  `HdText_FieldWord`, only once the sprite is found to be the panel, a label
+  or a digit sheet (`gl_picture.c` asks them for every textured sprite and
+  quad, and a settle of a page that reaches into a buffer would raster held
+  work for nothing), another label's page in `read_label`, each palette
+  entry in `color`), `glyphs.c` (`read_cell`'s cell, `copy_palettes`' rows),
+  `star_icons.c` (the stars' palette and page), `card_layout_art.c`
   (`CardLayoutArt_TitleCell`'s source page), `battle_models.c` (`textures`,
   the three rectangles it copies into the slot's bank) and `menu_letters.c`
   (each sprite's texture).
@@ -2784,7 +2791,10 @@ The checks, and how far they go:
   `.inc`): a function that calls `SoftGpu_VramRaw()` must be listed and,
   unless it says why not, settle in its own body; `SoftGpu_VramRaw` named in
   a macro or taken as a function pointer fails, as does writing through
-  either pointer; `resync` must settle before it uploads. It cannot tell
+  either pointer; `resync` must settle before it uploads; a function that
+  calls `SoftGpu_StateData` (whose index 0 is VRAM, settled as it is handed
+  out but writable) must be listed with why its use is safe (the save
+  state's, which reads or writes it whole in the same call). It cannot tell
   whether a rectangle is the right one, or whether a listed reader settles
   before it reads (only that it settles); it does not see a settled
   pointer kept and read after later drawing (the x11 backend's last frame

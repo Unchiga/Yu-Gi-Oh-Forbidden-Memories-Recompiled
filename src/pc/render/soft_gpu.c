@@ -2036,6 +2036,11 @@ static void name_over_panel(int x, int y, int width, int height, int u0, int v0,
                             int flags)
 {
     int which, bx, by, bw, bh, stride, i, j;
+    /* The panel's 4-bit palette, read below word by word. The panel is
+     * always rastered at once (`hold`), which settled it, and the game's
+     * (736 or 752, 252) lies outside the drawing areas; settled here all the
+     * same, so no reader of VRAM in this file goes without. */
+    before_read(gpu.clut_x, gpu.clut_y, 16, 1, SOFT_GPU_WHY_READ);
     for (which = 0; which < 2; which++) {
         const uint8_t *box = SoftGpu_PanelName(which, &bx, &by, &bw, &bh, &stride);
         int left, top, right, bottom;
