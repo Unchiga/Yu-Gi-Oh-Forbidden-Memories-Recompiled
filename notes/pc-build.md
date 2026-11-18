@@ -2706,8 +2706,9 @@ first. `soft_gpu.h` has it:
   for a reader that settled its own rectangle.
 - `SoftGpu_VramRaw` and `SoftGpu_SettleObserver` are the port's own: not
   lent to code mods (`NOT_LENT_TO_MODS` in `tools/pc/build_config.py`, used
-  by both export tables) and declared only outside `MEMORIES_MOD`, so the
-  SDK's `soft_gpu.h` does not offer them and no release pins them.
+  by both export tables, so enforced at build time only: see the mod's VRAM
+  binding below) and declared only outside `MEMORIES_MOD`, so the SDK's
+  `soft_gpu.h` does not offer them and no release pins them.
 - Settling calls `SoftGpu_SettleObserver` (tests) and rasters what the
   deferred raster holds there (below, "The deferred raster"). With that off,
   the default, the raster is immediate and nothing a frame draws or a run
@@ -2938,8 +2939,14 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   is held is rastered before the mod can keep VRAM's pointer or call
   `SoftGpu_Gp0` itself; told only at the next non-empty flush, it could see
   held or poisoned words until then (`pc_mods` checks the call). The hook
-  is not lent to mods (`NOT_LENT_TO_MODS`: the arm64 table lends `Mods_`
-  names the 32-bit one leaves out);
+  is not lent to mods, but only at build time: `NOT_LENT_TO_MODS`
+  (`tools/pc/build_config.py`) keeps it out of the export table (the 32-bit
+  table has no `Mods_` names at all; the arm64 one would have lent this one),
+  and the official mod build (`build_mod_arm64.py`) rejects an import that
+  `exports.txt` lacks. Nothing checks at run time: a macOS dylib built by
+  hand could still bind it, as it could `SoftGpu_HoldClock` and
+  `SoftGpu_SetDeferred` already, and a mod that set it would keep the
+  software GPU from hearing of its VRAM binding;
 - a scaled picture is drawn here or by a recorder at 2x and above (whose
   copy of VRAM would miss the held words);
 - (these two are not counted: while either holds, `holding()` is false and
