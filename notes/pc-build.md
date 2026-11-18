@@ -2939,6 +2939,22 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   bank a duel frame cannot be held whole, and holding the rest only to
   raster it at the next such primitive cost 20% more raster time than not
   holding at all (the copies, and the palette scan of `texture_rects`).
+- the area met a bank, the shadow or the panel in its last cycle (clear to
+  clear; the game's second clear right after the first ends none): it is
+  still given up after that clear (`again`), until a cycle that meets none
+  of the three, after which it holds again. With the pack and the mods a
+  duel frame meets a bank or the shadow nearly every time (about 14
+  primitives in), so with `given_up` alone each held those 14 only to
+  raster them at the first such primitive: 4% more raster time on
+  the duel field than not holding (measured below). A cycle given up for
+  the other reasons (a texture in held work, tags) is not carried over.
+
+The rules that need no rectangles (the area's size, the switch, a bank,
+the shadow, the panel, given up) come first; a polygon's span
+(`polygon_uv`), `texture_rects` and its palette scan are taken only for a
+primitive that passes them (or, rastered at once while work is held, for
+the texels it reads), so none of them costs anything with the switch off
+or in an area given up.
 
 The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 `SoftGpu_HoldClock`, which `platform_common.c` sets when it starts the
@@ -2986,7 +3002,16 @@ Checks and tools:
   12,100 and uploaded anew), or a polygon's range short by a texel (a
   fixed case: 900 mirrored quads, turned ones and slivers, every texel of their page
   outside their range, and their greatest u's column and v's row, uploaded
-  anew while they are held). (Not
+  anew while they are held), or the settle before a new area (a fixed
+  case: an area holds a sprite reading words of the other area, which then
+  starts holding over them with no clear first and is settled first; the
+  random frames clear first, which settles the reader, so only this case
+  catches it). A fixed case checks `again`: an area that met a bank holds
+  nothing after its next clear (made twice), nor after the one after a
+  cycle with a bank, and holds again after a cycle without, or after one
+  given up for its own texture. Calm frames come four at a time (two
+  cycles of each area), or with `again` too few held areas would be
+  dropped for the test's own check. (Not
   checking a primitive's texture against its own area is not caught, and
   needs not be: the queue rasters in order, so a held primitive that reads
   its own area reads what the ones before it drew.)
@@ -3012,17 +3037,19 @@ off, on and on with poison without recording, hashed every 7th frame. Each
 run's checkpoints and hashes against those of the run with it off, never
 against the stored ones. On the Windows build of this change, all 16 replays
 (the three scripted state loads included) matched in all four comparisons;
-hashed every 7th frame, the 13 recorded ones kept back 0.12-5.6 million
-primitives each and dropped 35-71% of them (full duel: 3.4 of 4.8
+hashed every 7th frame, the 13 recorded ones kept back 0.06-5.6 million
+primitives each and dropped 68-71% of them (full duel: 3.4 of 4.8
 million; at most 6 frames in 7 can drop), so the drops and the late
 rasters were in what was hashed. (The scripted ones' logs are not
-collected; their hashes matched.)
+collected; their hashes matched.) Without `again` the replays with a
+mod's bank held more only to raster it (3D Monsters 0.83 million instead
+of 0.57, the x64 data mods 0.12 instead of 0.06, dropping as many).
 
 The same with the target load (the HD pack, HD text and a scratch folder of
 mods, a translation and every code mod among them), on a full duel's
 session hashed every 7th frame: with it off twice, on, and on with poison,
-the 2114 hashes were the same in all four (held 3.5 million primitives,
-dropped 2.4 million). A run on the interrupt clock
+the 2114 hashes were the same in all four (held 3.4 million primitives,
+dropped 2.4 million; with `again`). A run on the interrupt clock
 (`MEMORIES_CLOCK=interrupt`, with poison) finished the menus session with
 work held and dropped (0.86 million held); its hashes cannot be compared.
 
@@ -3030,18 +3057,32 @@ Measured headless at 1x (`D:/YGO/scratch/cpu-raster/pr2-*.py`, a scratch
 build with a per-frame log keyed by the game's main mode, as step A's;
 sessions: Blue-Eyes 3D battles, full duel, menus, first duel; no
 recording, hashes or shots, which would settle), the same frames with the
-switch off and on. "Dropped" is the share of areas whose held work ended
-dropped, never rastered, out of all that ended; raster time is the draws
-(SoftGpu_Gp0) with it off against the draws plus settles outside them with
-it on, per frame, on this Windows PC:
+switch off and on, each session three times off and three times on,
+interleaved, on this Windows PC while it was in use. "Dropped" is the
+share of areas whose held work ended dropped, never rastered, out of all
+that held any (one run); raster time is the draws (SoftGpu_Gp0) with it
+off against the draws plus settles outside them with it on, per frame,
+each frame's least of its three runs (the PC's own spikes, up to 80 ms a
+frame, otherwise decide a few per cent either way: by their means two
+runs with the switch off differed by up to 10% on the duel field, and by
+far more on the campaign's few frames):
 
 | Scenario | Bare: dropped | Bare: raster off -> on | With pack and mods: dropped | Pack and mods: raster off -> on |
 |---|---|---|---|---|
-| Duel field | 99.5% | 1.03 -> 0.05 ms (-95%) | 0.3% | 1.30 -> 1.37 ms (+5%) |
-| 3D battle | 73.8% | 1.96 -> 0.61 ms (-69%) | 73.8% | 2.20 -> 0.71 ms (-68%) |
-| Menus | 99.1% | 0.74 -> 0.05 ms (-94%) | 16.3% | 0.94 -> 0.59 ms (-37%) |
-| Campaign | 99.8% | 1.21 -> 0.03 ms (-97%) | 72.4% | 1.33 -> 0.26 ms (-81%) |
-| All | 91.4% | 1.29 -> 0.22 ms (-83%) | 35.8% | 1.53 -> 0.92 ms (-40%) |
+| Duel field | 99.5% | 0.89 -> 0.05 ms (-95%) | 53 of 73 areas | 1.10 -> 1.10 ms (-0.5%) |
+| 3D battle | 73.8% | 1.75 -> 0.59 ms (-66%) | 73.7% | 1.83 -> 0.60 ms (-67%) |
+| Menus | 99.1% | 0.71 -> 0.05 ms (-94%) | 99.5% | 0.77 -> 0.58 ms (-25%) |
+| Campaign | 99.8% | 1.17 -> 0.03 ms (-97%) | 98.3% | 1.25 -> 0.27 ms (-78%) |
+| All | 91.4% | 1.16 -> 0.21 ms (-82%) | 80.4% | 1.29 -> 0.77 ms (-41%) |
+
+The build before (no `again`, every primitive's rectangles taken first),
+measured the same way: pack and mods, duel field 1.14 -> 1.18 ms (+4.2%), 3D battle -67%,
+menus -27%, campaign -80%, all -39%; bare as above. The duel field then
+held about 14 primitives a frame and rastered them at its first bank or
+shadow primitive, nearly every frame (0.3% of its areas dropped); now it
+holds in 73 cycles of 17463 frames, and its time with the switch on is
+its time with it off. Menus and the campaign drop as much work as before
+(18.3 thousand and 432 thousand primitives) and hold far less in vain.
 
 - Bare, what still rasters is the 3D battle's palette move
   (`func_8004E9A0.c`), which writes texels its held model samples every
@@ -3049,10 +3090,11 @@ it on, per frame, on this Windows PC:
   keep them), and a few reads.
 - With the pack and the mods a duel frame always has primitives that
   sample the pack's shadow or a mod's bank (4.3 million bank and 0.8
-  million shadow primitives over 17463 frames), so nearly nothing is
-  dropped and the duel field costs a few per cent more; without
-  `given_up` it cost 20% more. No loaded mod bound `SoftGpu_Vram` or
-  `SoftGpu_StateData` (no primitive was rastered at once for it). Menus
+  million shadow primitives over 17463 frames), so nearly nothing can be
+  dropped; `given_up` and `again` make it cost what not holding costs
+  (without `given_up` it cost 20% more, with it alone 4%). No loaded mod
+  bound `SoftGpu_Vram` or `SoftGpu_StateData` (no primitive was rastered
+  at once for it). Menus
   sample the shadow too; the 3D battle samples neither, and saves as much
   as bare.
 - This is the headless share, which stands in for the OpenGL picture at 2x
@@ -3084,7 +3126,9 @@ Left for turning it on at 2x and above with the OpenGL picture:
   thread: nothing but the game thread may call the software GPU.
 - The cost of holding where little is dropped (the copies, the palette
   scan of an 8-bit palette at x 768 on) has been measured on this PC only;
-  on a phone `given_up` matters more, and the scan may want a cache.
+  on a phone `given_up` and `again` matter more, and the scan may want a
+  cache. `again` costs a cycle's drops where a bank or the shadow comes
+  in one frame and not the next (the first cycle without one is not held).
 - Mods: a mod that binds `SoftGpu_Vram` or `SoftGpu_StateData` turns
   holding off for the rest of the run (`Mods_VramUsers` never goes down).
 

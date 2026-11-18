@@ -193,25 +193,43 @@ static SoftGpuDeferredStats deferred_stats;
 /* Drawing areas a primitive was rastered at once into since their last
  * clear: they hold nothing until it (with a texture pack or a mod's bank,
  * most of a frame cannot be held, and holding the rest only to raster it at
- * the next such primitive costs the time it would save). */
-static int given_up[HELD_AREAS][4], given_up_count;
+ * the next such primitive costs the time it would save). One that met a
+ * bank, the shadow or the panel since its last clear holds nothing after
+ * the next clear either (`again`): with the pack a duel frame always meets
+ * one, and holding its first primitives only to raster them at it cost more
+ * than not holding. A cycle that meets none lets it hold again after it.
+ * `drawn`: a primitive came into it since the last clear (a clear right
+ * after a clear, as the game's, ends no cycle). */
+typedef struct GivenUp {
+    int x, y, w, h, again, drawn;
+} GivenUp;
+static GivenUp given_up[HELD_AREAS];
+static int given_up_count;
 
-static int area_given_up(int x, int y, int w, int h)
+static GivenUp *area_given_up(int x, int y, int w, int h)
 {
     for (int i = 0; i < given_up_count; i++)
-        if (given_up[i][0] == x && given_up[i][1] == y && given_up[i][2] == w && given_up[i][3] == h) return 1;
-    return 0;
+        if (given_up[i].x == x && given_up[i].y == y && given_up[i].w == w && given_up[i].h == h) return &given_up[i];
+    return NULL;
 }
 
-static void give_up(int x, int y, int w, int h)
+/* `again`: a bank, the shadow or the panel made it (they come back each
+ * frame), so the next cycle starts given up too. */
+static void give_up(int x, int y, int w, int h, int again)
 {
-    if (area_given_up(x, y, w, h)) return;
-    if (given_up_count == HELD_AREAS) memmove(given_up[0], given_up[1], sizeof(given_up[0]) * (HELD_AREAS - 1));
-    else given_up_count++;
-    given_up[given_up_count - 1][0] = x;
-    given_up[given_up_count - 1][1] = y;
-    given_up[given_up_count - 1][2] = w;
-    given_up[given_up_count - 1][3] = h;
+    GivenUp *gone = area_given_up(x, y, w, h);
+    if (!gone) {
+        if (given_up_count == HELD_AREAS) memmove(&given_up[0], &given_up[1], sizeof(given_up[0]) * (HELD_AREAS - 1));
+        else given_up_count++;
+        gone = &given_up[given_up_count - 1];
+        gone->x = x;
+        gone->y = y;
+        gone->w = w;
+        gone->h = h;
+        gone->again = 0;
+    }
+    gone->drawn = 1;
+    gone->again |= again;
 }
 #define POISON 0x7c1f /* magenta: what a reader that does not settle sees of held work */
 
@@ -444,12 +462,17 @@ static void before_fill(int x, int y, int w, int h, uint16_t color)
 {
     const Write fill = {NULL, 0, 0, 0, 1, color};
     for (int i = 0; i < given_up_count; i++) { /* a clear: the area may hold again */
-        if (span_covers(x, w, SOFT_GPU_WIDTH, given_up[i][0], given_up[i][0] + given_up[i][2] - 1) &&
-            span_covers(y, h, SOFT_GPU_HEIGHT, given_up[i][1], given_up[i][1] + given_up[i][3] - 1)) {
-            memmove(given_up[i], given_up[i + 1], sizeof(given_up[0]) * (size_t)(given_up_count - i - 1));
-            given_up_count--;
-            i--;
+        GivenUp *gone = &given_up[i];
+        if (!span_covers(x, w, SOFT_GPU_WIDTH, gone->x, gone->x + gone->w - 1) ||
+            !span_covers(y, h, SOFT_GPU_HEIGHT, gone->y, gone->y + gone->h - 1) || !gone->drawn)
+            continue;
+        if (gone->again) { /* a bank, the shadow or the panel will be back: not yet */
+            gone->again = gone->drawn = 0;
+            continue;
         }
+        memmove(&given_up[i], &given_up[i + 1], sizeof(given_up[0]) * (size_t)(given_up_count - i - 1));
+        given_up_count--;
+        i--;
     }
     if (!held_any) return;
     hold_clock();
@@ -470,23 +493,31 @@ static int holding(void)
     return deferred_on && !mod_vram_users && !picture && !(recorder && scale > 1);
 }
 
-/* The words of the texture the primitive reads, as rectangles: the words
- * of its page that hold the texels its coordinates span and, below 16 bits,
- * its palette row. Returns how many. `uv`: the least and greatest u and v
+/* The words of the texture the primitive reads (texture_rects, as
+ * rectangles): the words of its page that hold the texels its coordinates
+ * span and, below 16 bits, its palette row. `uv`: the least and greatest u and v
  * it reads (polygon_uv; for a sprite u, v to u + w - 1, v + h - 1, which
  * past 255 wraps around the page); all of the page on an axis the texture
  * window folds or that wraps. Drawing areas end where textures begin (the
  * buffers' last row is 239, the game's strips start at 240), so not a
  * texel more. */
-static int texture_rects(int rects[2][4], const int uv[4])
+static void texel_rect(int rect[4], const int uv[4])
 {
     int shift = 2 - gpu.depth, u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
     if (gpu.window_mask_x || uv[2] > 255) u0 = 0, u1 = 255;
     if (gpu.window_mask_y || uv[3] > 255) v0 = 0, v1 = 255;
-    rects[0][0] = gpu.page_x + (u0 >> shift);
-    rects[0][1] = gpu.page_y + v0;
-    rects[0][2] = (u1 >> shift) - (u0 >> shift) + 1;
-    rects[0][3] = v1 - v0 + 1;
+    rect[0] = gpu.page_x + (u0 >> shift);
+    rect[1] = gpu.page_y + v0;
+    rect[2] = (u1 >> shift) - (u0 >> shift) + 1;
+    rect[3] = v1 - v0 + 1;
+}
+
+/* texel_rect's words and, below 16 bits, the palette row's (counted only
+ * as far as the texels' indices reach past VRAM's edge, below). Returns
+ * how many rectangles. */
+static int texture_rects(int rects[2][4], const int uv[4])
+{
+    texel_rect(rects[0], uv);
     if (gpu.depth >= 2) return 1;
     rects[1][0] = gpu.clut_x;
     rects[1][1] = gpu.clut_y;
@@ -648,14 +679,20 @@ static HeldArea *held_area(void)
  * and before it rasters: 1 when it is held (it is not rastered now), 0 when
  * it is to be rastered now, what it follows having been rastered first.
  * `uv`: NULL, or the texture coordinates it spans (texture_rects) in the
- * state's page and palette; `panel`: it is the life-point panel the
- * opponent's name goes over. */
-static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
+ * state's page and palette; a textured polygon passes NULL and its
+ * vertices instead (`v`, `vertices`), whose span (polygon_uv) is taken only
+ * if a rule needs it; `panel`: it is the life-point panel the opponent's name goes
+ * over. */
+static void polygon_uv(const Vertex *v, int vertices, int uv[4]);
+static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex *v, int vertices, int panel)
 {
     int x = gpu.clip_x1, y = gpu.clip_y1, w = gpu.clip_x2 - gpu.clip_x1 + 1, h = gpu.clip_y2 - gpu.clip_y1 + 1;
-    int textured = uv != NULL, rects[2][4], n = textured ? texture_rects(rects, uv) : 0, now = -1, i, slot = -1;
+    int textured = uv != NULL || v != NULL, rects[2][4], n = -1, now = -1, i, slot = -1, span[4];
     HeldArea *area;
+    GivenUp *gone;
     if (replaying || target != vram || (!deferred_on && !held_any)) return 0;
+    /* The rules that need no rectangles first: what goes at once anyway
+     * (a bank, the shadow, an area given up) never scans a palette. */
     if (w < 256 || h < 192 || x + w > SOFT_GPU_WIDTH || y + h > SOFT_GPU_HEIGHT) {
         now = SOFT_GPU_NOW_COUNT; /* not a full screen: not counted */
     } else if (!holding() || SoftGpu_WideMargin(gpu.clip_x1, gpu.clip_y1, gpu.clip_x2, gpu.clip_y2)) {
@@ -666,9 +703,12 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
         now = SOFT_GPU_NOW_SHADOW;
     } else if (panel) {
         now = SOFT_GPU_NOW_PANEL;
-    } else if (area_given_up(x, y, w, h)) {
+    } else if ((gone = area_given_up(x, y, w, h))) {
+        gone->drawn = 1;
         now = SOFT_GPU_NOW_AFTER;
     } else {
+        if (textured && !uv) polygon_uv(v, vertices, span), uv = span;
+        n = textured ? texture_rects(rects, uv) : 0;
         for (int a = 0; a < HELD_AREAS; a++)
             if (held[a].on && held[a].x == x && held[a].y == y && held[a].w == w && held[a].h == h) slot = a;
         for (i = 0; i < n; i++) {
@@ -709,7 +749,8 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
     if (now < SOFT_GPU_NOW_COUNT) {
         deferred_stats.immediate++;
         deferred_stats.now[now < 0 ? SOFT_GPU_NOW_OTHER : now]++;
-        if (now >= 0 && now < SOFT_GPU_NOW_OTHER && holding()) give_up(x, y, w, h);
+        if (now >= 0 && now < SOFT_GPU_NOW_OTHER && holding())
+            give_up(x, y, w, h, now == SOFT_GPU_NOW_BANK || now == SOFT_GPU_NOW_SHADOW || now == SOFT_GPU_NOW_PANEL);
     }
     if (held_any) {
         /* Rastered now, so after what it draws over and what it reads. */
@@ -717,8 +758,12 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
         before_write(x, y, w, h, SOFT_GPU_WHY_DRAW, NULL);
         if (textured && texture_source == vram) {
             /* Its palette whole: the texels that bound it may have been held. */
+            if (n < 0) {
+                if (!uv) polygon_uv(v, vertices, span), uv = span;
+                texel_rect(rects[0], uv);
+            }
             before_read(rects[0][0], rects[0][1], rects[0][2], rects[0][3], SOFT_GPU_WHY_DRAW);
-            if (n > 1) before_read(gpu.clut_x, gpu.clut_y, gpu.depth == 0 ? 16 : 256, 1, SOFT_GPU_WHY_DRAW);
+            if (gpu.depth < 2) before_read(gpu.clut_x, gpu.clut_y, gpu.depth == 0 ? 16 : 256, 1, SOFT_GPU_WHY_DRAW);
         }
         release_clock();
     }
@@ -1924,7 +1969,7 @@ static size_t polygon(const uint32_t *words, size_t count)
     int vertices = quad ? 4 : 3, i;
     size_t need = (size_t)vertices * (1 + (textured ? 1 : 0)) + (shaded ? (size_t)vertices : 1);
     size_t at = 0;
-    int flags = (command & 3) | (textured ? 4 : 0), uv[4];
+    int flags = (command & 3) | (textured ? 4 : 0);
     Vertex v[4];
     if (count < need) {
         return 0;
@@ -1981,9 +2026,8 @@ static size_t polygon(const uint32_t *words, size_t count)
         picture_triangle(v[0], v[1], v[2], flags);
         if (quad) picture_triangle(v[1], v[2], v[3], flags);
     }
-    if (textured) polygon_uv(v, vertices, uv);
     if ((textured && picture_only_clut(gpu.clut_x, gpu.clut_y)) || picture_only_screen() ||
-        hold(words, need, textured ? uv : NULL, textured && panel_page())) {
+        hold(words, need, NULL, textured ? v : NULL, vertices, textured && panel_page())) {
         fade = 0;
         return need;
     }
@@ -2112,7 +2156,8 @@ static size_t rectangle(const uint32_t *words, size_t count)
     }
     {
         const int uv[4] = {base.u, base.v, base.u + (w ? w - 1 : 0), base.v + (h ? h - 1 : 0)};
-        if (!picture_only_screen() && hold(words, need, textured ? uv : NULL, textured && panel_page())) return need;
+        if (!picture_only_screen() && hold(words, need, textured ? uv : NULL, NULL, 0, textured && panel_page()))
+            return need;
     }
     const Plotter p = plotter();
     switch (picture_only_screen() ? -1 : flags) {
@@ -2167,7 +2212,7 @@ static size_t lines(const uint32_t *words, size_t count)
     }
     if (!replaying && (deferred_on || held_any)) {
         size_t used = lines_length(words, count); /* 0: cut off, drawn as far as it goes */
-        if (hold(words, used, NULL, 0)) return used;
+        if (hold(words, used, NULL, NULL, 0, 0)) return used;
     }
     set_color(&previous, words[at++]);
     set_position(&previous, words[at++]);

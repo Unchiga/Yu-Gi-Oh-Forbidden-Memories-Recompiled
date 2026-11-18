@@ -37,8 +37,11 @@ static int below(int n) { return (int)(rnd() % (unsigned)n); }
 /* Three frames in four are calm, as most of the game's are: what they load,
  * move, fill, store, settle, tag and sample lies right of the drawing areas
  * (x 640 on), so the held work lives until its area's next clear and is
- * dropped there. The others put all of it anywhere. */
-static int calm;
+ * dropped there. The others put all of it anywhere. They come four at a
+ * time (two cycles of each area), as the game's stretches do: a cycle that
+ * met a bank leaves the next one given up (`again`), so calm frames one by
+ * one would rarely hold. */
+static int calm, calm_run;
 static int column(int w) { return calm ? 640 + below(384 - w) : below(1024); }
 
 /* The "tick" inside TextureDump_Prepare draws its numbers from a stream of
@@ -200,7 +203,8 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     for (int frame = 0; frame < frames; frame++) {
         int area = frame & 1, x0 = area ? 320 : 0, y0 = 0, count = 0, busy;
         size_t at = 0;
-        calm = below(4) != 0;
+        if (frame % 4 == 0) calm_run = below(4) != 0;
+        calm = calm_run;
         if (frame % 97 == 50) SoftGpu_SetModVramUsers(1); /* a mod binds VRAM for a while */
         if (frame % 97 == 60) SoftGpu_SetModVramUsers(0);
         if (frame % 41 == 7) { /* a drawing area of another shape for a frame */
@@ -558,6 +562,72 @@ int main(int argc, char **argv)
             SoftGpu_Store(320, 0, 4, 4, deferred ? then : first);
         }
         CHECK(!memcmp(first, then, sizeof(first)) && first[0] == 0x200c);
+        SoftGpu_SetDeferred(0, 0);
+    }
+
+    /* An area a bank made go at once stays given up past its next clear
+     * (twice, as the game clears) while each cycle meets a bank, and holds
+     * again after a cycle that met none; one given up for a texture in its
+     * own area (any reason but a bank, the shadow or the panel) holds again
+     * after its next clear. */
+    {
+        const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t plain[] = {0x60ffffffu, 0x00100010u, 0x00040004u}; /* white, 4x4 at 16,16 */
+        const uint32_t banked[] = {0x25808080u, 0x00000000u, 0x00000000u, 0x00000010u, /* raw textured triangle */
+                                   (uint32_t)(10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(3)) << 16 | 0x0010u,
+                                   0x00100000u, 0x1000u};
+        const uint32_t own[] = {0xe1000000u | (2u << 7), 0x65808080u, 0x00200020u, 0x00000000u,
+                                0x00040004u}; /* 16-bit page 0: the area's own words */
+        static const unsigned long long held_after[7] = {1, 1, 1, 2, 3, 4, 5};
+        SoftGpu_Reset();
+        SoftGpu_SetDeferred(1, 0);
+        CHECK(SoftGpu_Gp0(area, 4) == 4);
+        for (int cycle = 0; cycle < 7; cycle++) {
+            SoftGpuDeferredStats s;
+            SoftGpu_Fill(0, 0, 320, 240, 0);
+            SoftGpu_Fill(0, 0, 320, 240, 0);
+            CHECK(SoftGpu_Gp0(plain, 3) == 3);
+            if (cycle < 2) CHECK(SoftGpu_Gp0(banked, 7) == 7);
+            if (cycle == 5) CHECK(SoftGpu_Gp0(own, 5) == 5 && SoftGpu_Gp0(plain, 3) == 3); /* given up: not held */
+            SoftGpu_DeferredStats(&s);
+            /* Cycle 0 holds its sprite; 1 (after a bank) and 2 (after a
+             * bank again) hold nothing; 3 (after a cycle without), 4, 5 and
+             * 6 (after a cycle given up for its own texture) do. */
+            CHECK(s.held == held_after[cycle]);
+        }
+        {
+            SoftGpuDeferredStats s;
+            SoftGpu_DeferredStats(&s);
+            CHECK(s.now[SOFT_GPU_NOW_TEXTURE] == 1 && s.now[SOFT_GPU_NOW_AFTER] == 3);
+        }
+        SoftGpu_SetDeferred(0, 0);
+    }
+
+    /* An area that starts holding where another held area samples: the
+     * other is rastered first. The area at 320,0 holds a sprite reading
+     * 0..3,0..3, in the area at 0,0, which then holds a white sprite over
+     * those words with no clear before; that one is settled first, then the
+     * first: it must read the words as they were. */
+    {
+        const uint32_t right[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                  0xe6000000u, 0xe1000000u | (2u << 7)};          /* page 0, 16-bit */
+        const uint32_t left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t reader[] = {0x65808080u, 0x00000000u, 0x00000000u, 0x00040004u}; /* u, v 0: 4x4 at 0,0 */
+        const uint32_t white[] = {0x60ffffffu, 0x00000000u, 0x00040004u};
+        uint16_t first[16], then[16], pattern[16];
+        for (int i = 0; i < 16; i++) pattern[i] = (uint16_t)(0x0421 * (i + 1));
+        for (int deferred = 0; deferred < 2; deferred++) {
+            SoftGpu_SetDeferred(0, 0);
+            SoftGpu_Reset();
+            SoftGpu_Fill(0, 0, 1024, 512, 0);
+            SoftGpu_Load(0, 0, 4, 4, pattern);
+            SoftGpu_SetDeferred(deferred, 0);
+            CHECK(SoftGpu_Gp0(right, 5) == 5 && SoftGpu_Gp0(reader, 4) == 4);
+            CHECK(SoftGpu_Gp0(left, 4) == 4 && SoftGpu_Gp0(white, 3) == 3);
+            SoftGpu_Settle(0, 0, 4, 4);
+            SoftGpu_Store(320, 0, 4, 4, deferred ? then : first);
+        }
+        CHECK(!memcmp(first, then, sizeof(first)) && first[5] == pattern[5]);
         SoftGpu_SetDeferred(0, 0);
     }
 
