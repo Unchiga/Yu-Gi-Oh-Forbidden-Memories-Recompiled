@@ -40,10 +40,18 @@ static size_t pending_words;
 static void flush_drawing(void);
 
 /* VRAM for showing the display area, w x h words from where it starts
- * (a 24-bit row is one and a half times as many), settled there. */
+ * (a 24-bit row is one and a half times as many), settled there. Without a
+ * window (MEMORIES_HEADLESS) both backends' Platform_Present return before
+ * reading a word, so nothing is settled: the deferred raster's held work
+ * then lives on to be dropped, as with the OpenGL picture. */
 static const uint16_t *display_words(int w, int h)
 {
-    SoftGpu_Settle(disp_env.disp.x, disp_env.disp.y, disp_env.isrgb24 ? (w * 3 + 1) / 2 : w, h);
+    static int headless = -1;
+    if (headless < 0) {
+        const char *value = getenv("MEMORIES_HEADLESS");
+        headless = value && *value && strcmp(value, "0") != 0;
+    }
+    if (!headless) SoftGpu_Settle(disp_env.disp.x, disp_env.disp.y, disp_env.isrgb24 ? (w * 3 + 1) / 2 : w, h);
     return SoftGpu_VramRaw();
 }
 #define MAX_FRAME_PRECISE 65536
@@ -52,9 +60,23 @@ static size_t pending_precise;
 
 int ResetGraph(int mode)
 {
+    static int deferred_read;
     flush_drawing();
     if (mode == 0 || mode == 3) {
         SoftGpu_Reset();
+    }
+    if (!deferred_read) {
+        /* MEMORIES_DEFERRED_RASTER=1: keep the drawing areas' primitives
+         * back until something reads them (soft_gpu.h, SoftGpu_SetDeferred);
+         * MEMORIES_DEFERRED_POISON=1 also shows what is held as magenta to
+         * any reader that does not settle it. */
+        const char *on = getenv("MEMORIES_DEFERRED_RASTER"), *poison = getenv("MEMORIES_DEFERRED_POISON");
+        deferred_read = 1;
+        /* A mod's VRAM binding is told as it is made, and the ones made
+         * before now are told here; flush_drawing tells it again. */
+        Mods_VramUsersChanged = SoftGpu_SetModVramUsers;
+        SoftGpu_SetModVramUsers(Mods_VramUsers());
+        SoftGpu_SetDeferred(on && *on && strcmp(on, "0") != 0, poison && *poison && strcmp(poison, "0") != 0);
     }
     return 0;
 }
@@ -345,12 +367,17 @@ static void frame_hash(void)
 {
     static FILE *out;
     static int opened;
+    static unsigned every = 1;
     if (!opened) {
-        const char *path = getenv("MEMORIES_FRAME_HASHES");
+        /* MEMORIES_FRAME_HASHES_EVERY=<n>: every n-th frame only. A hash
+         * settles all of VRAM, so a sparse one lets the deferred raster drop
+         * what the frames between draw, and still sees what it got wrong. */
+        const char *path = getenv("MEMORIES_FRAME_HASHES"), *step = getenv("MEMORIES_FRAME_HASHES_EVERY");
         opened = 1;
         out = path && *path ? fopen(path, "w") : NULL;
+        if (step && atoi(step) > 1) every = (unsigned)atoi(step);
     }
-    if (!out) return;
+    if (!out || (unsigned)frames_presented % every) return;
     fprintf(out, "%u %016llx\n", (unsigned)frames_presented, Memories_VramHash());
     fflush(out);
 }
@@ -487,6 +514,7 @@ static void flush_drawing(void)
     SoftGpu_SetPrecise(frame_precise, pending_precise);
     pending_precise = 0;
     SoftGpu_PictureOnlyFrame(Mods_PictureOnlyFrame());
+    SoftGpu_SetModVramUsers(Mods_VramUsers());
     SoftGpu_Gp0(frame_words, count);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     {
@@ -497,6 +525,23 @@ static void flush_drawing(void)
         if (++draws == 120) {
             LOG(LOG_FRAMES, "draws: %u us, %u words per DrawOTag", total_us / 120, total_words / 120);
             draws = total_us = total_words = 0;
+            if (SoftGpu_Deferred()) {
+                /* The deferred raster, over the same 120 DrawOTags: what
+                 * it kept back and what became of it, and the time its
+                 * settles took: in the draws above when the batch caused
+                 * them, else outside them (a reader's). */
+                static SoftGpuDeferredStats last;
+                SoftGpuDeferredStats now;
+                SoftGpu_DeferredStats(&now);
+                LOG(LOG_FRAMES, "deferred: %u held, %u dropped, %u rastered, %u at once; areas %u cleared, "
+                    "%u settled; settles %u us, %u of them outside the draws",
+                    (unsigned)(now.held - last.held), (unsigned)(now.dropped - last.dropped),
+                    (unsigned)(now.rastered - last.rastered), (unsigned)(now.immediate - last.immediate),
+                    (unsigned)(now.cleared - last.cleared), (unsigned)(now.settled - last.settled),
+                    (unsigned)(now.settle_us - last.settle_us),
+                    (unsigned)(now.settle_outside_us - last.settle_outside_us));
+                last = now;
+            }
         }
     }
 }

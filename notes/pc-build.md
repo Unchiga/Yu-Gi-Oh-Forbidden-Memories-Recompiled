@@ -2706,12 +2706,14 @@ first. `soft_gpu.h` has it:
   for a reader that settled its own rectangle.
 - `SoftGpu_VramRaw` and `SoftGpu_SettleObserver` are the port's own: not
   lent to code mods (`NOT_LENT_TO_MODS` in `tools/pc/build_config.py`, used
-  by both export tables) and declared only outside `MEMORIES_MOD`, so the
-  SDK's `soft_gpu.h` does not offer them and no release pins them.
-- The raster is still immediate: settling only calls
-  `SoftGpu_SettleObserver` (tests). Nothing a frame draws or a run hashes
-  changes. A new scale or recorder settles all of VRAM before anything
-  changes.
+  by both export tables, so enforced at build time only: see the mod's VRAM
+  binding below) and declared only outside `MEMORIES_MOD`, so the SDK's
+  `soft_gpu.h` does not offer them and no release pins them.
+- Settling calls `SoftGpu_SettleObserver` (tests) and rasters what the
+  deferred raster holds there (below, "The deferred raster"). With that off,
+  the default, the raster is immediate and nothing a frame draws or a run
+  hashes changes. A new scale or recorder settles all of VRAM before
+  anything changes.
 
 Readers that settle, by what they read:
 
@@ -2727,22 +2729,31 @@ Readers that settle, by what they read:
   4:3 fallback, through `display_words` in `libgpu.c` (a 24-bit row is half
   as many words again); the x11 backend's screenshot and window redraw,
   which read the last presented frame again later (`last_words` in
-  `x11.c`). The SDL backend copies the frame as it is presented.
+  `x11.c`). The SDL backend copies the frame as it is presented. Headless
+  (`MEMORIES_HEADLESS`) `display_words` settles nothing: neither backend's
+  `Platform_Present` reads a word without a window.
 - A rectangle: `SoftGpu_Store` (StoreImage), a move's source (not the 2x1
   move onto itself without the mask that the game makes every frame), the
   destination of a load or move while the mask bit is checked, a capture's
   source, a widened target and its picture while the software GPU rasters
   them (`SoftGpu_WideFrame`, `SoftGpu_WideFrameView`, `SoftGpu_WidePicture`;
   with a recorder at 2x and above the target's words are not shown and
-  nothing is settled), and, with the texture dump on, a primitive's texture
-  before `TextureDump_Primitive` reads it through its `source` pointer.
+  nothing is settled), with the texture dump on, a primitive's texture
+  before `TextureDump_Primitive` reads it through its `source` pointer, and
+  the life-point panel's palette, which `name_over_panel` reads at 1x (the
+  panel is always rastered at once, which settles it already, and the
+  game's palettes there lie outside the drawing areas; settled all the
+  same, so no reader goes without).
 - Host lookups a primitive makes, each its own rectangle: `hd_text.c`
   (`HdText_Cell` the font's page; the card title's words in
   `HdText_TitleUploaded` and `HdText_TitleCard`; the life-point panel's page
   in `HdText_NameBox`; the primitive's texture in `HdText_Hud` and
-  `HdText_FieldWord`, another label's page in `read_label`, each palette
-  entry in `color`), `glyphs.c` (`read_cell`'s cell, `copy_palettes`'
-  rows), `star_icons.c` (the stars' palette and page), `card_layout_art.c`
+  `HdText_FieldWord`, only once the sprite is found to be the panel, a label
+  or a digit sheet (`gl_picture.c` asks them for every textured sprite and
+  quad, and a settle of a page that reaches into a buffer would raster held
+  work for nothing), another label's page in `read_label`, each palette
+  entry in `color`), `glyphs.c` (`read_cell`'s cell, `copy_palettes`' rows),
+  `star_icons.c` (the stars' palette and page), `card_layout_art.c`
   (`CardLayoutArt_TitleCell`'s source page), `battle_models.c` (`textures`,
   the three rectangles it copies into the slot's bank) and `menu_letters.c`
   (each sprite's texture).
@@ -2781,7 +2792,14 @@ The checks, and how far they go:
   `.inc`): a function that calls `SoftGpu_VramRaw()` must be listed and,
   unless it says why not, settle in its own body; `SoftGpu_VramRaw` named in
   a macro or taken as a function pointer fails, as does writing through
-  either pointer; `resync` must settle before it uploads. It cannot tell
+  either pointer; `resync` must settle before it uploads; a function that
+  calls `SoftGpu_StateData` (whose index 0 is VRAM, settled as it is handed
+  out but writable) must be listed with why its use is safe (the save
+  state's, which reads or writes it whole in the same call), and
+  `SoftGpu_StateData` named in a macro, taken as a function pointer or
+  called in an initializer outside a function fails as `SoftGpu_VramRaw`
+  does (its self-test has each of these, and a listed user that passes;
+  each rule taken out alone fails its own case). It cannot tell
   whether a rectangle is the right one, or whether a listed reader settles
   before it reads (only that it settles); it does not see a settled
   pointer kept and read after later drawing (the x11 backend's last frame
@@ -2789,12 +2807,13 @@ The checks, and how far they go:
   (`Platform_Present`), or `soft_gpu.c` itself.
 - Frame hashes (`Memories_VramHash`, the replays) settle all of VRAM, so
   hashes that match prove nothing once work is kept back: they would match
-  however late the settle. The change that keeps work back needs a debug
-  mode that fills held work with a poison colour instead of drawing it
-  until a settle, so a reader that does not settle shows the poison in a
-  frame dump or a hash.
+  however late the settle. The deferred raster's poison mode
+  (`MEMORIES_DEFERRED_POISON=1`) fills held work with magenta until a
+  settle, so a reader that does not settle shows the poison in a frame dump
+  or, if what it read goes back into VRAM or the game, in a hash.
 
-What the change that keeps work back must also get right:
+What the change that keeps work back had to get right (see "The deferred
+raster" for how it does):
 
 - The game clock's tick (`MEMORIES_CLOCK=interrupt`, SIGALRM) can call a
   LoadImage or StoreImage while a batch is being rastered (see
@@ -2803,8 +2822,10 @@ What the change that keeps work back must also get right:
 - The widened targets follow VRAM (`wide_mirror`) and need nothing of their
   own only if work is kept back while a recorder draws the picture at 2x and
   above, where the software GPU does not raster them (`wide_rastered`).
-  Keeping work back without a recorder (a forced mode at 1x for tests) has
-  to hold the targets' second pass too.
+  Keeping work back without a recorder at 2x and above (at 1x, with or
+  without one) has
+  to hold the targets' second pass too; the first version keeps nothing back
+  in an area that has a target.
 
 What changes what a primitive draws without going through `load_words`,
 `move_words` or `fill_words` (which a kept-back raster sees), with the
@@ -2831,6 +2852,372 @@ matters only in a 3D battle whose background animates its texture with a
 move every frame (`func_8004E9A0.c`, the background record's kinds 1 and
 4): 12% of its frames skipped without the copies, all with them; the 3D
 battle samples neither banks nor the shadow.
+
+### The deferred raster
+
+`MEMORIES_DEFERRED_RASTER=1` (read once, at the first `ResetGraph`) keeps
+back what is drawn into a full-screen drawing area until something reads
+it, and drops it when the game clears the area first. Off by default: this
+first version runs at the console's resolution, for tests and measurement;
+turning it on at 2x and above with the OpenGL picture comes after (below).
+`SoftGpu_SetDeferred(on, poison)` in `soft_gpu.h` is the switch, which
+settles everything when it changes.
+
+What is held, and how:
+
+- A polygon, sprite or line whose drawing area is at least 256x192 words
+  (the game's two 320x240 buffers) is copied, words and all, into that
+  area's queue, with the drawing state (`GpuState`, the save state's
+  struct) it is rastered with; equal states are stored once. Two areas can
+  hold at once; a third rasters the older one.
+- What the primitive does as it comes is still done then: the state it
+  leaves (its palette, page, blend, depth: later primitives and
+  `SoftGpu_StateData(1)` see it), `TextureDump_Prepare` and
+  `TextureDump_Primitive`, the recorder's copy of the batch and its PGXP
+  vertices, the picture-only checks. A queued primitive is rastered later
+  by the same `polygon`, `rectangle` or `lines` with `replaying` set, which
+  skips all of that, samples VRAM even if a bank of its number has been
+  made since, and clears no provenance tags (it was held only if they were
+  clear, below).
+- It is rastered at the first settle that crosses its area (any
+  `SoftGpu_Settle`, and so every reader in "Settling VRAM before it is
+  read"), in the order it came, area by area; or dropped when a fill covers
+  the whole area, which overwrites every word whatever the mask (the game's
+  clear, two frames after it drew there).
+- A write rasters it first: a load, a move's destination (not the game's
+  2x1 move onto itself, which writes nothing), a fill that does not cover
+  the area, a primitive rastered at once, into its area or into the texels
+  or palette row it samples, unless every word the write would write is
+  already there (the game uploads the same texels and palettes frame after
+  frame; checked under the mask state, only for what is sampled, never for
+  a held area itself). Each area keeps 48 such rectangles; past that a new
+  one is merged into the one it grows least, as long as that does not
+  reach into an area held now or before (the buffers); failing that the
+  two that grow least are merged to make room (a menu's strips below the
+  buffers fill the 48, then a glyph from the right half comes); else any
+  write rasters the area.
+- What a primitive samples is the part of its page its texture
+  coordinates span, not the whole page (`texture_rects`): the game keeps
+  textures in pages that reach into the drawing areas' rows (a 256-row page
+  at y 0 covers both buffers), and whole pages made a duel field's
+  textured primitives look as if they read the buffers. A polygon samples
+  within its vertices' least and greatest u and v (`polygon_uv`: each
+  pixel's are a mix of them, and the raster's 2^-8 bias outweighs its
+  steps' rounding); a sprite from u, v to u + w - 1, v + h - 1; all of the
+  page's width or height if that runs past 255 (it wraps) or the texture
+  window folds it. No margin: a texel past them would reach row 239 from
+  the game's strips at 240 and tie the two buffers together. A sliver whose
+  texture spreads so fast across it that the raster's 32-bit steps could
+  overflow (range x 4 x width x height >= 768 x twice its area) takes the
+  whole page; the check found no sliver that reads outside its range, so
+  this is caution, not a case seen. An 8-bit palette from x 768 on runs
+  past VRAM's edge into the first buffer's columns (the game's at 896 hold
+  128 colours): it counts up to the greatest index the texels it reads
+  hold, found by reading them as the primitive comes (they are then not
+  held, or it would be rastered at once, which reads the whole palette).
+- So that areas can be rastered one by one, held areas never overlap and
+  none samples another: before an area starts a queue, the areas that meet
+  it or sample it are rastered.
+
+Rastered at once instead (after what it draws over and what it reads has
+been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
+
+- it samples a texture bank (`SoftGpu_Bank`: its writers rewrite it
+  unannounced) or the texture pack's shadow (`TextureDump_Prepare` said 1);
+- the texels it samples or its palette lie in a held area or in its own;
+- its area's provenance tags or shadow cells are not all clear
+  (`TextureDump_Clean`, checked again whenever `TextureDump_TouchCount`
+  moves), so drawing would clear some;
+- it is the life-point panel's page while the opponent's name is drawn over
+  it at 1x (`SoftGpu_PanelName`, which the host answers as the panel comes);
+- a loaded code mod bound `SoftGpu_Vram` or `SoftGpu_StateData`
+  (`Mods_VramUsers` counts it in `Mods_Lookup`, which `resolve` and
+  `host->symbol` both use, and any object the system's loader loaded,
+  whose bindings are not seen; never down again, as code stays linked).
+  The software GPU is told as each binding is made (`Mods_VramUsersChanged`,
+  which the first `ResetGraph` points at `SoftGpu_SetModVramUsers`, telling
+  it of the bindings made before; `flush_drawing` tells it again), so what
+  is held is rastered before the mod can keep VRAM's pointer or call
+  `SoftGpu_Gp0` itself; told only at the next non-empty flush, it could see
+  held or poisoned words until then (`pc_mods` checks the call). The hook
+  is not lent to mods, but only at build time: `NOT_LENT_TO_MODS`
+  (`tools/pc/build_config.py`) keeps it out of the export table (the 32-bit
+  table has no `Mods_` names at all; the arm64 one would have lent this one),
+  and the official mod build (`build_mod_arm64.py`) rejects an import that
+  `exports.txt` lacks. Nothing checks at run time: a macOS dylib built by
+  hand could still bind it, as it could `SoftGpu_HoldClock` and
+  `SoftGpu_SetDeferred` already, and a mod that set it would keep the
+  software GPU from hearing of its VRAM binding;
+- a scaled picture is drawn here or by a recorder at 2x and above (whose
+  copy of VRAM would miss the held words);
+- (these two are not counted: while either holds, `holding()` is false and
+  a batch neither holds the clock nor calls `hold`, so with the switch on
+  at 2x and above, with a recorder at 2x and above (not at 1x) or with such
+  a mod, drawing costs and times what it does with the switch off;)
+- the area has a widescreen target the software GPU rasters (its second
+  pass is not held);
+- an area's queue passed 4M words, or memory ran out;
+- a primitive was rastered at once into its area, for one of the reasons
+  above but the last two, since the area's last whole clear: until the
+  next, the area holds nothing (`given_up`). With a texture pack or a mod's
+  bank a duel frame cannot be held whole, and holding the rest only to
+  raster it at the next such primitive cost 20% more raster time than not
+  holding at all (the copies, and the palette scan of `texture_rects`).
+- the area met a bank, the shadow or the panel in its last cycle (clear to
+  clear; the game's second clear right after the first ends none): it is
+  still given up after that clear (`again`), until a cycle that meets none
+  of the three, after which it holds again. With the pack and the mods a
+  duel frame meets a bank or the shadow nearly every time (about 14
+  primitives in), so with `given_up` alone each held those 14 only to
+  raster them at the first such primitive: 4% more raster time on
+  the duel field than not holding (measured below). A cycle given up for
+  the other reasons (a texture in held work, tags) is not carried over.
+
+The rules that need no rectangles (the area's size, `holding()`, a bank,
+the shadow, the panel, given up) come first; a polygon's span
+(`polygon_uv`), `texture_rects` and its palette scan are taken only for a
+primitive that passes them (or, rastered at once while work is held, for
+the texels it reads), so none of them costs anything with the switch off
+or in an area given up. That the switch off costs nothing is measured, not
+only read from the code (below).
+
+The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
+`SoftGpu_HoldClock`, which `platform_common.c` sets when it starts the
+interrupt clock (NULL with the cooperative clock, the default), blocks
+SIGALRM (on Windows, `Memories_SigProcMask`, which the clock thread obeys)
+through each `SoftGpu_Gp0` while work can be held (`holding()`: the switch
+on, no mod's VRAM, no scaled picture, no recorder at 2x and above) or is
+held, through every load, store, move, fill and settle while anything is held, and through every
+change of `given_up` (a clear changes it with nothing held, and a fill from
+the tick in the middle of a removal would leave the count at -1 and the
+next addition writing outside it), and puts the mask back
+as it found it; `soft_gpu.c` counts the nesting, so only the outermost call
+blocks. A tick then never finds a queue half made or half rastered, or
+`gpu` swapped for a held primitive's state. Re-entering instead was turned
+down: a tick that settled in the middle of an append would leave the queue
+with entries of a frame already drawn. With deferral off nothing is held
+and the clock is never held; nor with it on while `holding()` is false (2x
+and above, a recorder at 2x and above, a mod's VRAM).
+
+Checks and tools:
+
+- `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 600
+  random frames (one in five busy, a few hundred primitives; three in four
+  calm, sampling and writing only right of the buffers, a page or 8-bit
+  palette that would wrap past x 1023 into the first buffer's columns
+  taken from rows below them), three seeds, played immediate, deferred and deferred with
+  poison; two 320x240 areas cleared in turn (now and then one at 0,256),
+  polygons, sprites and lines sampling VRAM pages, the other area, a bank
+  and the "pack's" pages, between loads, moves (the 2x1 self-move too),
+  fills, stores, the same texels uploaded again (one word changed now and
+  then, under any mask state), settles, tags and shadow cells painted,
+  save states, a mod
+  binding VRAM and a scale change; a `TextureDump_Prepare` that loads and
+  stores in the middle of a batch, as the tick can. Every store, settled
+  rectangle, state, a present of the area just drawn (one frame in four)
+  and the final VRAM, tags, shadow and drawing state must match, the clock
+  hook must be called balanced and never nested, nothing may be held while
+  the mod binds VRAM, and each immediate cause but the panel's and
+  `OTHER`'s must have occurred. `OTHER` has two fixed cases of its own:
+  widescreen on at 1x (a sprite and a quad into a full-screen area are
+  rastered at once, VRAM and the widened picture equal the immediate run's,
+  and with widescreen off the same two are held) and 2.2 million two-word
+  dots, which pass the 4M-word queue limit once (the first dot is in VRAM
+  before any settle, the end equals the immediate run's); they fail with
+  the `SoftGpu_WideMargin` arm of `hold` or the re-settle at the limit
+  taken out. A fixed case checks that with a mod's VRAM
+  or at 2x a batch holds nothing, counts nothing and never holds the clock,
+  and the `again` case that a clear of an area given up, with nothing held,
+  holds the clock. Each of these taken out alone fails it:
+  the load's, the move destination's and the immediate primitive's settles,
+  the sampled-rectangle check, the snapshot of the state, the settle before
+  a new area, the drop only on a whole cover, the poison's restore, holding
+  bank primitives, clearing tags in a replay and the clean check (a fixed
+  case each: tags painted over held work, and tags painted in the area
+  before a primitive; the random frames alone catch neither), and a
+  sampled rectangle one word wide, without its palette or without a
+  sprite's wrap (a fixed case: a sprite past u 255 reading the other,
+  held, area), an upload taken as unchanged when it is not, or when it
+  sets the mask bit (a fixed case: zeros uploaded again under E6's mask
+  bit while a held sprite reads them; the random frames as they are now
+  do not meet it), a merged rectangle not grown (a fixed case: 60 sprites
+  reading 60 texels, the last one uploaded anew), two merged to make room
+  and not grown (a fixed case: 48 strip texels and one from the right half,
+  each strip texel uploaded anew in a run of its own), a rectangle taken as
+  within another when it is not, an 8-bit palette counted short or not
+  past VRAM's edge (a fixed case: index 140 of a palette at 896, read at
+  12,100 and uploaded anew), or a polygon's range short by a texel (a
+  fixed case: 900 mirrored quads, turned ones and slivers, every texel of their page
+  outside their range, and their greatest u's column and v's row, uploaded
+  anew while they are held), or the settle before a new area (a fixed
+  case: an area holds a sprite reading words of the other area, which then
+  starts holding over them with no clear first and is settled first; the
+  random frames clear first, which settles the reader, so only this case
+  catches it). A fixed case checks `again`: an area that met a bank holds
+  nothing after its next clear (made twice), nor after the one after a
+  cycle with a bank, and holds again after a cycle without, or after one
+  given up for its own texture. Calm frames come four or five at a time
+  (two cycles of each area or so), or with `again` too few held areas
+  would be dropped for the test's own check; four or five so that a busy
+  stretch starts on either area, and the test requires that each area's
+  held work was still held when a busy frame's load, move, fill, store,
+  settle, tags or state came (`SoftGpuDeferredStats.queued` says what each
+  queue holds). Before, the stretches came four at a time and so always
+  began on the first area, and calm frames' textures past x 1023 and 8-bit
+  palettes wrapped into it and gave it up every cycle: the first area held
+  no calm queue while a busy frame ran, which is where the x wrap, the
+  8-bit palettes at x 768 on and the 2x1 self-move land; held primitives
+  rose from 15-18 thousand a seed to 24-29 thousand. (Not
+  checking a primitive's texture against its own area is not caught, and
+  needs not be: the queue rasters in order, so a held primitive that reads
+  its own area reads what the ones before it drew.) Of the 27 removals a
+  scratch mutation script (not in the repo) makes, on this test: 15 fail
+  the random frames' equality (two of them, holding bank primitives and
+  the clean check, fail their cause counts first, and the equality
+  without those); 10 only a fixed case (the settle before a new area,
+  `again` three ways, the batch's clock gate, the clock around a clear of
+  `given_up`, forgetting `given_up` at a state load, clearing tags in a
+  replay, the mask bit's upload, an 8-bit palette counted only to VRAM's
+  edge); one, `queued` left empty, only the count of held work busy frames
+  met; and one, the own-area check above, nothing.
+- `MEMORIES_DEFERRED_POISON=1`: an area's words become magenta (0x7c1f) as
+  its queue begins, and come back (then the queue is rastered) at the
+  settle. A reader that does not settle sees magenta; frame hashes and
+  dumps settle all of VRAM and cannot catch one. Debug only.
+- `MEMORIES_TRACE=frames` logs, beside `draws:`, a `deferred:` line per 120
+  DrawOTags: primitives held, dropped, rastered and rastered at once, areas
+  cleared and settled, and the settles' time, in the draws (a batch's) and
+  outside them (a reader's).
+
+- `MEMORIES_FRAME_HASHES_EVERY=<n>` hashes every n-th frame only. Every
+  hash (and every checkpoint a recording writes, one a frame) settles all
+  of VRAM, so a run hashed every frame never drops anything; a sparse one
+  does, and still sees in its hashes what a wrong drop or a late raster
+  left.
+
+The gate (a scratch script, not in the repo): every replay, headless at
+1x on this Windows PC, played by one build five ways: with the switch off
+and on while recording (a checkpoint a frame) with per-frame hashes, and
+off, on and on with poison without recording, hashed every 7th frame. Each
+run's checkpoints and hashes against those of the run with it off, never
+against the stored ones. On the Windows build of this change, all 16 replays
+(the three scripted state loads included) matched in all four comparisons;
+hashed every 7th frame, the 13 recorded ones kept back 0.06-5.6 million
+primitives each and dropped 68-71% of them (full duel: 3.4 of 4.8
+million; at most 6 frames in 7 can drop), so the drops and the late
+rasters were in what was hashed. (The scripted ones' logs are not
+collected; their hashes matched.) Without `again` the replays with a
+mod's bank held more only to raster it (3D Monsters 0.83 million instead
+of 0.57, the x64 data mods 0.12 instead of 0.06, dropping as many).
+
+The same with the target load (the HD pack, HD text and a scratch folder of
+mods, a translation and every code mod among them), on a full duel's
+session hashed every 7th frame: with it off twice, on, and on with poison,
+the 2114 hashes were the same in all four (held 3.4 million primitives,
+dropped 2.4 million; with `again`). A run on the interrupt clock
+(`MEMORIES_CLOCK=interrupt`, with poison) finished the menus session with
+work held and dropped (0.86 million held); its hashes cannot be compared.
+
+Measured headless at 1x, on this Windows PC only (scratch scripts, not in
+the repo, and a scratch build with a per-frame log keyed by the game's
+main mode, as step A's;
+sessions: Blue-Eyes 3D battles, full duel, menus, first duel; no
+recording, hashes or shots, which would settle), the same frames with the
+switch off and on, each session three times off and three times on,
+interleaved, on this Windows PC while it was in use. "Dropped" is the
+share of areas whose held work ended dropped, never rastered, out of all
+that held any (one run); raster time is the draws (SoftGpu_Gp0) with it
+off against the draws plus settles outside them with it on, per frame,
+each frame's least of its three runs (the PC's own spikes, up to 80 ms a
+frame, otherwise decide a few per cent either way: by their means two
+runs with the switch off differed by up to 10% on the duel field, and by
+far more on the campaign's few frames):
+
+| Scenario | Bare: dropped | Bare: raster off -> on | With pack and mods: dropped | Pack and mods: raster off -> on |
+|---|---|---|---|---|
+| Duel field | 99.5% | 0.89 -> 0.05 ms (-95%) | 53 of 73 areas | 1.10 -> 1.10 ms (-0.5%) |
+| 3D battle | 73.8% | 1.75 -> 0.59 ms (-66%) | 73.7% | 1.83 -> 0.60 ms (-67%) |
+| Menus | 99.1% | 0.71 -> 0.05 ms (-94%) | 99.5% | 0.77 -> 0.58 ms (-25%) |
+| Campaign | 99.8% | 1.17 -> 0.03 ms (-97%) | 98.3% | 1.25 -> 0.27 ms (-78%) |
+| All | 91.4% | 1.16 -> 0.21 ms (-82%) | 80.4% | 1.29 -> 0.77 ms (-41%) |
+
+The build before (no `again`, every primitive's rectangles taken first),
+measured the same way: pack and mods, duel field 1.14 -> 1.18 ms (+4.2%), 3D battle -67%,
+menus -27%, campaign -80%, all -39%; bare as above. The duel field then
+held about 14 primitives a frame and rastered them at its first bank or
+shadow primitive, nearly every frame (0.3% of its areas dropped); now it
+holds in 73 cycles of 17463 frames, and its time with the switch on is
+its time with it off. Menus and the campaign drop as much work as before
+(18.3 thousand and 432 thousand primitives) and hold far less in vain.
+
+With the switch off (`MEMORIES_DEFERRED_RASTER` unset), measured on
+`59ad1683e1` against the change it builds on (`07623c60e4`, settling), headless at 1x on this
+Windows PC only: three interleaved runs of each build, the duel field and
+the 3D battle, bare and with the pack and the mods. The draws'
+(`SoftGpu_Gp0`) time per frame differs by -4.2% to +1.5% between the two
+builds, within the noise (two runs of the same build differ by up to
+5% either way), and the frame hashes of five runs (about 40 thousand
+frames) are identical between them. The off path has changed since only
+where it tests `holding()` instead of the switch, in a clear that
+looks at `given_up` only when something is in it (never, off), in the
+`forget_given_up()` calls (a reset, a state load, a new scale, a new
+recorder, the switch, a mod's first VRAM binding), and in the per-binding
+hook call (`Mods_VramUsersChanged`): the last two return at once with the
+switch off, and none of the changes was measured on its own.
+
+- Bare, what still rasters is the 3D battle's palette move
+  (`func_8004E9A0.c`), which writes texels its held model samples every
+  frame (26% of its areas; step A's "+4", copying the old texels, would
+  keep them), and a few reads.
+- With the pack and the mods a duel frame always has primitives that
+  sample the pack's shadow or a mod's bank (4.3 million bank and 0.8
+  million shadow primitives over 17463 frames), so nearly nothing can be
+  dropped; `given_up` and `again` make it cost what not holding costs
+  (without `given_up` it cost 20% more, with it alone 4%). No loaded mod
+  bound `SoftGpu_Vram` or `SoftGpu_StateData` (the build measured counted
+  such primitives as `OTHER`: there were none). Menus
+  sample the shadow too; the 3D battle samples neither, and saves as much
+  as bare.
+- This is the headless share, which stands in for the OpenGL picture at 2x
+  and above, where nothing shows VRAM. A window at 1x presents (and so
+  settles) the buffer just drawn every frame and saves nothing.
+
+Left for turning it on at 2x and above with the OpenGL picture:
+
+- The OpenGL copy of VRAM (`upload_vram`, raw) misses held words: a settle
+  that crosses held work while a recorder is on must record the settled
+  words as an `OP_LOAD` (moves out of a drawing area, the story's image,
+  and anything sampling an area need it), and `holding()` must then allow
+  a recorder at 2x and above.
+- Widescreen: with a recorder at 2x the targets are not rastered here, so
+  holding them needs only `wt->drawn` kept at submit (it is: `SoftGpu_Gp0`
+  counts it); the `SoftGpu_WideMargin` refusal in `hold` must go.
+- The pack's shadow and the banks: primitives sampling either are still
+  rastered at once, which in a duel with an HD pack is every frame (step A:
+  0.3% of duel frames skip). Both need a generation that moves only when
+  their bytes do.
+- Move hazards: the 3D battle's palette move (`func_8004E9A0.c`) writes
+  texels held work samples every frame, which rasters it; copying the old
+  texels instead is step A's "+4".
+- Nothing that only happens above 1x has run with work held: the
+  picture-only palette and frame, the recorder's PGXP and capture, the
+  widescreen bookkeeping with a recorder at 2x and above. `SoftGpu_SetScale` and
+  `SoftGpu_SetRecorder` settle everything before they change anything.
+- The queues are safe from the clock's tick (held off), not from another
+  thread: nothing but the game thread may call the software GPU.
+- The cost of holding where little is dropped (the copies, the palette
+  scan of an 8-bit palette at x 768 on) has been measured on this PC only;
+  on a phone `given_up` and `again` matter more, and the scan may want a
+  cache. `again` costs a cycle's drops where a bank or the shadow comes
+  in one frame and not the next (the first cycle without one is not held).
+- `given_up` is forgotten whenever the switch changes, at a reset
+  (`SoftGpu_Reset`), a state load or a new scale (`SoftGpu_PictureFromVram`),
+  a new recorder and a mod's first VRAM binding: what was given up belongs
+  to frames before them. It only decides what holding costs, never what is
+  drawn (a fixed case checks that the next primitive holds after a state
+  load and after a reset).
+- Mods: a mod that binds `SoftGpu_Vram` or `SoftGpu_StateData` turns
+  holding off for the rest of the run (`Mods_VramUsers` never goes down).
 
 ### OpenGL ES 3 (Android)
 

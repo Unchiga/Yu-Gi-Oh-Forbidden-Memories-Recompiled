@@ -127,8 +127,12 @@ MODULES += MODEL_MODULES
 # that reads VRAM raw would see what a kept-back raster has not drawn yet,
 # and the settle observer is the tests'. soft_gpu.h declares them only
 # outside MEMORIES_MOD. Left out of the exports, they are never pinned
-# (tools/pc/check_mod_abi.py).
-NOT_LENT_TO_MODS = {"SoftGpu_VramRaw", "SoftGpu_SettleObserver"}
+# (tools/pc/check_mod_abi.py). Mods_VramUsersChanged: the 32-bit table
+# leaves every Mods_ name out, the arm64 one only these; a mod that set it
+# would keep the software GPU from hearing of its VRAM binding.
+NOT_LENT_TO_MODS = {"SoftGpu_VramRaw", "SoftGpu_SettleObserver", "SoftGpu_SetDeferred", "SoftGpu_Deferred",
+                    "SoftGpu_SetModVramUsers", "SoftGpu_HoldClock", "SoftGpu_Clock", "SoftGpu_DeferredStats",
+                    "Mods_VramUsersChanged"}
 MODULE_CONFIG = {"overworld": "overworld_before_coup"}
 GATED_MODULES = {"duel_effects", "credits"} | {name for name, _, _, _ in MODEL_MODULES}
 # The modules that have no retail ELF or function list in config/slus_01411.

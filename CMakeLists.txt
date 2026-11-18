@@ -353,6 +353,11 @@ if(BUILD_TESTING)
         target_link_libraries(memories_soft_gpu_settle_test PRIVATE memories_pc_fs) # setenv, for the texture dump
     endif()
     add_test(NAME pc_soft_gpu_settle COMMAND memories_soft_gpu_settle_test)
+    # Kept back or rastered as it comes, the same VRAM, stores, states, tags
+    # (notes/pc-build.md, "The deferred raster").
+    add_executable(memories_soft_gpu_deferred_test tests/pc/soft_gpu_deferred_test.c)
+    target_link_libraries(memories_soft_gpu_deferred_test PRIVATE memories_pc_core)
+    add_test(NAME pc_soft_gpu_deferred COMMAND memories_soft_gpu_deferred_test)
     add_executable(memories_settings_test tests/pc/settings_test.c src/pc/platform/settings.c
         src/pc/platform/paths.c)
     target_include_directories(memories_settings_test PRIVATE src)

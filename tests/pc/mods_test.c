@@ -128,6 +128,10 @@ static int find(const char *id)
 
 static void preview_probe(MemoriesModEvent *event) { (void)event; }
 
+/* The software GPU's side of a VRAM binding (libgpu.c sets it). */
+static int vram_users_told = -1;
+static void vram_users_changed(int users) { vram_users_told = users; }
+
 int main(void)
 {
     unsigned char sector[2048], replacement[3000];
@@ -151,6 +155,15 @@ int main(void)
     assert(Mods_LibcLookup("memcpy") == (void (*)(void))memcpy);
     assert(Mods_Lookup("vsnprintf") && Mods_Lookup("strtol"));
     assert(!Mods_Lookup("fopen") && !Mods_Lookup("system") && !Mods_Lookup("getenv"));
+    /* Binding VRAM is told as it happens, not at the next drawing: a mod
+     * keeps the pointer, or calls SoftGpu_Gp0, before then. */
+    assert(Mods_VramUsers() == 0);
+    Mods_Lookup("SoftGpu_Vram"); /* not in this table: counted all the same */
+    assert(Mods_VramUsers() == 1 && vram_users_told == -1);
+    Mods_VramUsersChanged = vram_users_changed;
+    Mods_Lookup("SoftGpu_StateData");
+    assert(Mods_VramUsers() == 2 && vram_users_told == 2);
+    Mods_VramUsersChanged = NULL;
 
     assert(scratch_dir(root, sizeof(root), "memories-mods"));
     make_dir("mods");

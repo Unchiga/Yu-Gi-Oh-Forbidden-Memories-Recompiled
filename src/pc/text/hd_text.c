@@ -1780,9 +1780,9 @@ int HdText_NameBox(int wanted, int which, int *atlas_u, int *atlas_v, int *x, in
     const char *label = which >= 0 && which <= 1 ? DuelUi_Label(which) : NULL;
     if (!label && !Settings_Get(SET_OPPONENT_NAME)) return 0;
     if (label && !which) name = label;
+    if (!name || which < 0 || which > 1 || wanted < 1 || wanted > MAX_FACTOR || !words) return 0;
     SoftGpu_Settle(PANEL_PAGE_X, PANEL_PAGE_Y, 64, 256); /* the panel; color() its palette */
-    if (!name || which < 0 || which > 1 || wanted < 1 || wanted > MAX_FACTOR || !words ||
-        panel_sum(words) != PANEL_SUM) {
+    if (panel_sum(words) != PANEL_SUM) {
         return 0;
     }
     if (wanted != factor && !make_atlas(wanted)) return 0;
@@ -1892,7 +1892,6 @@ int HdText_FieldWord(int depth, int page_x, int page_y, int clut_x, int clut_y, 
     if (active < 0 || !Fields_HasCustomName(active) || wanted < 2 || wanted > MAX_FACTOR || !words || w < 1 || h < 1) {
         return 0;
     }
-    SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y); /* read_label settles the others' */
     make_labels();
     for (i = 0; i < (unsigned)label_count; i++) {
         Label *l = &labels[i];
@@ -1901,6 +1900,10 @@ int HdText_FieldWord(int depth, int page_x, int page_y, int clut_x, int clut_y, 
             clut_y < l->clut_y || clut_y > l->clut_y2) {
             continue;
         }
+        /* Only a sprite of a terrain word's page and palette is read: any
+         * other settles nothing (with the deferred raster on, a settle of a
+         * page that reaches into a buffer rasters what is held there). */
+        SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y); /* read_label settles the others' */
         result = label_match(words, l, u, v, w, h, Fields_Name(active), wanted, atlas_u, atlas_v);
         if (result < 0) continue;
         return result;
@@ -1914,9 +1917,12 @@ int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u,
     const uint16_t *words = SoftGpu_VramRaw();
     unsigned i;
     if (wanted < 2 || wanted > MAX_FACTOR || !words || w < 1 || h < 1) return 0;
-    /* The panel, a label or a digit sheet, all on this page; color() and
-     * read_label settle palettes and other labels' pages. */
-    SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y);
+    /* The panel, a label or a digit sheet, all on this page, settled only
+     * once the sprite is found to be one of them (with the deferred raster
+     * on, a settle of a page that reaches into a buffer rasters what is
+     * held there, and gl_picture.c asks for every textured sprite and
+     * quad); color() and read_label settle palettes and other labels'
+     * pages. */
     /* The whole panel or a piece of it: a mod's "limits" past 9999 LP draw
      * its right half again beside a copy to widen it
      * (duel_draw_status_numbers.c, LIFE_POINT_PANEL_SPLIT), and a mod's "ui"
@@ -1930,6 +1936,7 @@ int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u,
                            : v == PANEL_V && h == PANEL_H &&
                                  ((u == PANEL_U && w == PANEL_W) ||
                                   (u == PANEL_U + PANEL_SPLIT && w == PANEL_W - PANEL_SPLIT)))) {
+        SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y);
         if (panel_sum(words) != PANEL_SUM) return 0;
         if (wanted != factor && !make_atlas(wanted)) return 0;
         if (panel_made != generation) {
@@ -1949,6 +1956,7 @@ int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u,
             clut_y < l->clut_y || clut_y > l->clut_y2) {
             continue;
         }
+        SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y);
         result = label_match(words, l, u, v, w, h, field_label_text(l), wanted, atlas_u, atlas_v);
         if (result < 0) continue;
         return result;
@@ -1964,6 +1972,7 @@ int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u,
         }
         d = (u - s->u) / s->step;
         if (d > 9 || u != s->u + d * s->step || w > s->width || h > s->height) return 0;
+        SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y);
         if (wanted != factor && !make_atlas(wanted)) return 0;
         if (sheet_unchanged(words, s)) {
             sum = s->sum;

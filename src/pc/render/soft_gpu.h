@@ -43,6 +43,66 @@ const uint16_t *SoftGpu_Vram(void);
 const uint16_t *SoftGpu_VramRaw(void);
 /* Tests: told every rectangle settled (SoftGpu_Vram's whole VRAM too). */
 extern void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
+
+/* The deferred raster (notes/pc-build.md, "The deferred raster"): while on,
+ * a primitive drawn into a full-screen drawing area is kept back with the
+ * state it came with and rastered at the first settle that crosses the
+ * area, in the order it came, or dropped when a fill covers the whole area
+ * (the game's clear). What it cannot keep back is rastered as it comes, as
+ * ever. Off by default (MEMORIES_DEFERRED_RASTER=1, libgpu.c). Turning it
+ * off settles everything. `poison`: a held area reads as a loud colour to
+ * anyone who reads it without settling (a debug aid). */
+void SoftGpu_SetDeferred(int on, int poison);
+int SoftGpu_Deferred(void);
+/* How many applied code mods bind SoftGpu_Vram or SoftGpu_StateData (mods.c):
+ * such a mod may keep VRAM's pointer and write or read through it at any
+ * time, so nothing is kept back while there is one. Told as each binding is
+ * made (Mods_VramUsersChanged, set in libgpu.c) and at every flush. */
+void SoftGpu_SetModVramUsers(int users);
+/* Holds off the game clock's tick (SIGALRM, MEMORIES_CLOCK=interrupt) while
+ * held work is queued, rastered or looked up: set by the platform when the
+ * interrupt clock runs (platform_common.c), NULL otherwise. hold 1, 0. */
+extern void (*SoftGpu_HoldClock)(int hold);
+/* Microseconds from any fixed point, to time the deferred raster's settles
+ * (SoftGpuDeferredStats.settle_us): set by the platform (platform_common.c);
+ * NULL, not timed. */
+extern unsigned long long (*SoftGpu_Clock)(void);
+/* What the deferred raster did since SoftGpu_SetDeferred turned it on. */
+enum {
+    SOFT_GPU_WHY_READ,      /* a reader settled it (a store, a move's source, a host lookup, a hash...) */
+    SOFT_GPU_WHY_WRITE,     /* a load, move or fill wrote into it, or into a texture it samples */
+    SOFT_GPU_WHY_DRAW,      /* a primitive rastered at once drew into it, or samples it */
+    SOFT_GPU_WHY_AREA,      /* another drawing area took its place */
+    SOFT_GPU_WHY_ALL,       /* all of VRAM: a state, a scale, the switch, a mod */
+    SOFT_GPU_WHY_COUNT
+};
+enum {
+    SOFT_GPU_NOW_BANK,      /* samples a texture bank */
+    SOFT_GPU_NOW_SHADOW,    /* samples the texture pack's shadow */
+    SOFT_GPU_NOW_TAGS,      /* would clear provenance tags or shadow cells */
+    SOFT_GPU_NOW_TEXTURE,   /* its texture or palette lies in held work */
+    SOFT_GPU_NOW_PANEL,     /* the life-point panel the opponent's name goes over */
+    SOFT_GPU_NOW_OTHER,     /* widescreen's second pass, too much held, no memory (not a mod's VRAM or a
+                             * scale: then nothing is looked at, or counted) */
+    SOFT_GPU_NOW_AFTER,     /* one of the above drew into its area since the area's last clear, or a bank,
+                             * the shadow or the panel in the cycle before (soft_gpu.c, `again`) */
+    SOFT_GPU_NOW_COUNT
+};
+#define SOFT_GPU_QUEUES 2
+typedef struct SoftGpuDeferredStats {
+    unsigned long long held, dropped, rastered; /* primitives kept back; of them, dropped and rastered */
+    unsigned long long immediate;               /* into a full-screen area, rastered at once */
+    unsigned long long cleared, settled;        /* areas' held work dropped whole / rastered */
+    unsigned long long settle_us;               /* time spent rastering held work */
+    unsigned long long settle_outside_us;       /* of it, outside SoftGpu_Gp0 (a reader's) */
+    unsigned long long why[SOFT_GPU_WHY_COUNT];  /* settles, by cause */
+    unsigned long long now[SOFT_GPU_NOW_COUNT];  /* immediate primitives, by cause */
+    /* Held now, queue by queue (two drawing areas can hold at once): the
+     * area's corner (-1, -1 for none) and how many primitives it holds. */
+    int queue_x[SOFT_GPU_QUEUES], queue_y[SOFT_GPU_QUEUES];
+    unsigned long long queued[SOFT_GPU_QUEUES];
+} SoftGpuDeferredStats;
+void SoftGpu_DeferredStats(SoftGpuDeferredStats *out);
 #endif
 
 /* Texture banks: alternate VRAM that a primitive can sample instead, chosen
