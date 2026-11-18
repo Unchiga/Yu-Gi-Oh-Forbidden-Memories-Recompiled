@@ -82,6 +82,7 @@ enum {
     SOFT_GPU_NOW_TEXTURE,   /* its texture or palette lies in held work */
     SOFT_GPU_NOW_PANEL,     /* the life-point panel the opponent's name goes over */
     SOFT_GPU_NOW_OTHER,     /* widescreen's second pass, too much held, ... */
+    SOFT_GPU_NOW_AFTER,     /* one of the above drew into its area since the area's last clear */
     SOFT_GPU_NOW_COUNT
 };
 typedef struct SoftGpuDeferredStats {

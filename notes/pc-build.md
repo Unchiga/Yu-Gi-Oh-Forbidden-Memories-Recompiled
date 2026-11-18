@@ -2922,7 +2922,13 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
 - a scaled picture is drawn here or by a recorder at 2x and above (whose
   copy of VRAM would miss the held words), or the area has a widescreen
   target the software GPU rasters (its second pass is not held);
-- an area's queue passed 4M words, or memory ran out.
+- an area's queue passed 4M words, or memory ran out;
+- a primitive was rastered at once into its area, for one of the reasons
+  above but the last two, since the area's last whole clear: until the
+  next, the area holds nothing (`given_up`). With a texture pack or a mod's
+  bank a duel frame cannot be held whole, and holding the rest only to
+  raster it at the next such primitive cost 20% more raster time than not
+  holding at all (the copies, and the palette scan of `texture_rects`).
 
 The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 `SoftGpu_HoldClock`, which `platform_common.c` sets when it starts the
@@ -2940,7 +2946,8 @@ and the clock is never held.
 Checks and tools:
 
 - `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 600
-  random frames (one in five busy, a few hundred primitives), three seeds, played immediate, deferred and deferred with
+  random frames (one in five busy, a few hundred primitives; three in four
+  calm, sampling and writing only right of the buffers), three seeds, played immediate, deferred and deferred with
   poison; two 320x240 areas cleared in turn (now and then one at 0,256),
   polygons, sprites and lines sampling VRAM pages, the other area, a bank
   and the "pack's" pages, between loads, moves (the 2x1 self-move too),
@@ -2967,7 +2974,7 @@ Checks and tools:
   within another when it is not, an 8-bit palette counted short or not
   past VRAM's edge (a fixed case: index 140 of a palette at 896, read at
   12,100 and uploaded anew), or a polygon's range short by a texel (a
-  fixed case: 1500 mirrored quads and slivers, every texel of their page
+  fixed case: 900 mirrored quads, turned ones and slivers, every texel of their page
   outside their range, and their greatest u's column and v's row, uploaded
   anew while they are held). (Not
   checking a primitive's texture against its own area is not caught, and
@@ -2993,7 +3000,13 @@ replay, headless at 1x, played by one build five ways: with the switch off
 and on while recording (a checkpoint a frame) with per-frame hashes, and
 off, on and on with poison without recording, hashed every 7th frame. Each
 run's checkpoints and hashes against those of the run with it off, never
-against the stored ones.
+against the stored ones. On the Windows build of this change, all 16 replays
+(the three scripted state loads included) matched in all four comparisons;
+hashed every 7th frame, the 13 recorded ones kept back 0.18-5.6 million
+primitives each and dropped 36-71% of them (full duel: 3.4 of 4.8
+million; at most 6 frames in 7 can drop), so the drops and the late
+rasters were in what was hashed. (The scripted ones' logs are not
+collected; their hashes matched.)
 
 Left for turning it on at 2x and above with the OpenGL picture:
 

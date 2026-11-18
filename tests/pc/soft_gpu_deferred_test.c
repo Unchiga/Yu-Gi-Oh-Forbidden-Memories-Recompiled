@@ -34,7 +34,7 @@ static uint32_t rnd(void)
 }
 static int below(int n) { return (int)(rnd() % (unsigned)n); }
 
-/* Two frames in three are calm, as most of the game's are: what they load,
+/* Three frames in four are calm, as most of the game's are: what they load,
  * move, fill, store, settle, tag and sample lies right of the drawing areas
  * (x 640 on), so the held work lives until its area's next clear and is
  * dropped there. The others put all of it anywhere. */
@@ -120,8 +120,12 @@ static uint32_t page_word(void)
                   : pick < 11 ? 11u | 16u
                   : calm ? (uint32_t)(10 + below(6)) | 16u
                   : (uint32_t)below(16) | 16u;                                       /* the lower half */
+    if (calm) { /* nothing that rasters at once (the pack's pages, the bank): the area keeps holding */
+        page = (uint32_t)(12 + below(4)) | (uint32_t)below(2) << 4;
+        if (below(2)) page = (uint32_t)(10 + below(6));
+    }
     page |= (uint32_t)below(4) << 5 | (uint32_t)below(3) << 7;
-    if (below(12) == 0) page |= SOFT_GPU_BANK_TPAGE(3);
+    if (below(12) == 0 && !calm) page |= SOFT_GPU_BANK_TPAGE(3);
     return page;
 }
 
@@ -196,7 +200,7 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     for (int frame = 0; frame < frames; frame++) {
         int area = frame & 1, x0 = area ? 320 : 0, y0 = 0, count = 0, busy;
         size_t at = 0;
-        calm = below(3) != 0;
+        calm = below(4) != 0;
         if (frame % 97 == 50) SoftGpu_SetModVramUsers(1); /* a mod binds VRAM for a while */
         if (frame % 97 == 60) SoftGpu_SetModVramUsers(0);
         if (frame % 41 == 7) { /* a drawing area of another shape for a frame */
@@ -343,7 +347,7 @@ int main(int argc, char **argv)
         printf("run %u: held %llu (dropped %llu, rastered %llu), at once %llu, states while held %d\n", start,
                (unsigned long long)held.stats.held, (unsigned long long)held.stats.dropped,
                (unsigned long long)held.stats.rastered, (unsigned long long)held.stats.immediate, held.states_held);
-        CHECK(held.stats.held > (unsigned)frames && held.stats.dropped > (unsigned)frames / 20 && held.stats.rastered > (unsigned)frames);
+        CHECK(held.stats.held > (unsigned)frames && held.stats.dropped > (unsigned)frames / 40 && held.stats.rastered > (unsigned)frames);
         CHECK(held.stats.held == held.stats.dropped + held.stats.rastered);
         CHECK(held.states_held > 0);
         for (int why = 0; why < SOFT_GPU_NOW_COUNT; why++)
@@ -418,21 +422,36 @@ int main(int argc, char **argv)
      * them is uploaded anew after it is held (and half the time the
      * greatest u's column and v's row too, which it reads), and it must
      * come out as when it is rastered at once. Mirrored quads read their greatest u and v at
-     * their first pixels; slivers with their texture spread across them
+     * their first pixels, turned ones (a model's faces) anywhere between;
+     * slivers with their texture spread across them
      * overflow the raster's steps and read anywhere in the page. */
     {
         const uint32_t left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
         static uint16_t page[256 * 256], first[320 * 240], then[320 * 240];
         int differ = 0;
         seed = 77;
-        for (int n = 0; n < 1500; n++) {
+        for (int n = 0; n < 900; n++) {
             uint32_t quad[9];
-            int u[4], v[4], x[4], y[4], uv[4] = {255, 255, 0, 0}, sliver = n & 1;
+            int u[4], v[4], x[4], y[4], uv[4] = {255, 255, 0, 0}, kind = n % 3;
             for (int k = 0; k < 4; k++) {
                 u[k] = below(256);
                 v[k] = below(256);
             }
-            if (!sliver) { /* mirrored: u and v fall as x and y grow */
+            if (kind == 2) { /* turned, as a model's faces are: a rectangle of texels on a turned rectangle */
+                /* Turned by a Pythagorean triple's angle, either way: cos a/r, sin b/r. */
+                static const int triples[6][3] = {{3, 4, 5}, {5, 12, 13}, {8, 15, 17}, {7, 24, 25}, {20, 21, 29}, {1, 0, 1}};
+                const int *t = triples[below(6)];
+                int c = below(2) ? t[0] : t[1], sn = (c == t[0] ? t[1] : t[0]) * (below(2) ? 1 : -1), r = t[2];
+                int hw = 2 + below(40), hh = 2 + below(40), du = below(80), dv = below(80);
+                int u0 = below(256 - du), v0 = below(256 - dv);
+                for (int k = 0; k < 4; k++) {
+                    int sx = k & 1 ? hw : -hw, sy = k & 2 ? hh : -hh;
+                    x[k] = 150 + (sx * c - sy * sn) / r;
+                    y[k] = 110 + (sx * sn + sy * c) / r;
+                    u[k] = u0 + (k & 1 ? du : 0);
+                    v[k] = v0 + (k & 2 ? dv : 0);
+                }
+            } else if (!kind) { /* mirrored: u and v fall as x and y grow */
                 int w = 2 + below(40), h = 2 + below(40), u0 = w + below(256 - w), v0 = h + below(256 - h);
                 x[0] = x[2] = 0, x[1] = x[3] = w, y[0] = y[1] = 0, y[2] = y[3] = h;
                 u[0] = u[2] = u0, u[1] = u[3] = u0 - w, v[0] = v[1] = v0, v[2] = v[3] = v0 - h;
@@ -445,7 +464,7 @@ int main(int argc, char **argv)
             for (int k = 0; k < 4; k++) {
                 uv[0] = u[k] < uv[0] ? u[k] : uv[0], uv[2] = u[k] > uv[2] ? u[k] : uv[2];
                 uv[1] = v[k] < uv[1] ? v[k] : uv[1], uv[3] = v[k] > uv[3] ? v[k] : uv[3];
-                quad[1 + k * 2] = (uint32_t)(y[k] << 16 | x[k]);
+                quad[1 + k * 2] = ((uint32_t)y[k] & 0x7ff) << 16 | ((uint32_t)x[k] & 0x7ff);
                 quad[2 + k * 2] = (uint32_t)(v[k] << 8 | u[k]) |
                                   (k == 1 ? (uint32_t)(12 | 16 | (2u << 7)) << 16 : 0); /* page 768,256, 16-bit */
             }

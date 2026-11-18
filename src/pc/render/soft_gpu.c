@@ -190,6 +190,29 @@ static unsigned held_clock;
 static unsigned clean_touches[HELD_AREAS];
 static const uint32_t *clean_tags[HELD_AREAS];
 static SoftGpuDeferredStats deferred_stats;
+/* Drawing areas a primitive was rastered at once into since their last
+ * clear: they hold nothing until it (with a texture pack or a mod's bank,
+ * most of a frame cannot be held, and holding the rest only to raster it at
+ * the next such primitive costs the time it would save). */
+static int given_up[HELD_AREAS][4], given_up_count;
+
+static int area_given_up(int x, int y, int w, int h)
+{
+    for (int i = 0; i < given_up_count; i++)
+        if (given_up[i][0] == x && given_up[i][1] == y && given_up[i][2] == w && given_up[i][3] == h) return 1;
+    return 0;
+}
+
+static void give_up(int x, int y, int w, int h)
+{
+    if (area_given_up(x, y, w, h)) return;
+    if (given_up_count == HELD_AREAS) memmove(given_up[0], given_up[1], sizeof(given_up[0]) * (HELD_AREAS - 1));
+    else given_up_count++;
+    given_up[given_up_count - 1][0] = x;
+    given_up[given_up_count - 1][1] = y;
+    given_up[given_up_count - 1][2] = w;
+    given_up[given_up_count - 1][3] = h;
+}
 #define POISON 0x7c1f /* magenta: what a reader that does not settle sees of held work */
 
 void (*SoftGpu_HoldClock)(int hold);
@@ -420,6 +443,14 @@ static void before_write(int x, int y, int w, int h, int why, const Write *write
 static void before_fill(int x, int y, int w, int h, uint16_t color)
 {
     const Write fill = {NULL, 0, 0, 0, 1, color};
+    for (int i = 0; i < given_up_count; i++) { /* a clear: the area may hold again */
+        if (span_covers(x, w, SOFT_GPU_WIDTH, given_up[i][0], given_up[i][0] + given_up[i][2] - 1) &&
+            span_covers(y, h, SOFT_GPU_HEIGHT, given_up[i][1], given_up[i][1] + given_up[i][3] - 1)) {
+            memmove(given_up[i], given_up[i + 1], sizeof(given_up[0]) * (size_t)(given_up_count - i - 1));
+            given_up_count--;
+            i--;
+        }
+    }
     if (!held_any) return;
     hold_clock();
     for (int a = 0; a < HELD_AREAS; a++) {
@@ -635,6 +666,8 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
         now = SOFT_GPU_NOW_SHADOW;
     } else if (panel) {
         now = SOFT_GPU_NOW_PANEL;
+    } else if (area_given_up(x, y, w, h)) {
+        now = SOFT_GPU_NOW_AFTER;
     } else {
         for (int a = 0; a < HELD_AREAS; a++)
             if (held[a].on && held[a].x == x && held[a].y == y && held[a].w == w && held[a].h == h) slot = a;
@@ -676,6 +709,7 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
     if (now < SOFT_GPU_NOW_COUNT) {
         deferred_stats.immediate++;
         deferred_stats.now[now < 0 ? SOFT_GPU_NOW_OTHER : now]++;
+        if (now >= 0 && now < SOFT_GPU_NOW_OTHER && holding()) give_up(x, y, w, h);
     }
     if (held_any) {
         /* Rastered now, so after what it draws over and what it reads. */
@@ -697,6 +731,7 @@ void SoftGpu_SetDeferred(int on, int poison)
     if (on && !deferred_on) memset(&deferred_stats, 0, sizeof(deferred_stats));
     deferred_on = on != 0;
     deferred_poison = on && poison;
+    given_up_count = 0;
     for (int a = 0; a < HELD_AREAS; a++) {
         free(held[a].before);
         held[a].before = NULL;
