@@ -72,6 +72,10 @@ int ResetGraph(int mode)
          * any reader that does not settle it. */
         const char *on = getenv("MEMORIES_DEFERRED_RASTER"), *poison = getenv("MEMORIES_DEFERRED_POISON");
         deferred_read = 1;
+        /* A mod's VRAM binding is told as it is made, and the ones made
+         * before now are told here; flush_drawing tells it again. */
+        Mods_VramUsersChanged = SoftGpu_SetModVramUsers;
+        SoftGpu_SetModVramUsers(Mods_VramUsers());
         SoftGpu_SetDeferred(on && *on && strcmp(on, "0") != 0, poison && *poison && strcmp(poison, "0") != 0);
     }
     return 0;

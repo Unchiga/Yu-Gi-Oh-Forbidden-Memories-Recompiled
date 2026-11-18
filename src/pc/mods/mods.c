@@ -3259,19 +3259,29 @@ static int by_name(const void *key, const void *entry)
 
 /* Code that has bound SoftGpu_Vram or SoftGpu_StateData, at load
  * (`resolve`) or later (host->symbol): it may keep VRAM's pointer and use it
- * whenever, which the software GPU's deferred raster cannot see, so it keeps
- * nothing back while there is any (libgpu.c hands it this). A loaded object
- * stays linked, so this never goes down. */
+ * whenever, or call SoftGpu_Gp0 itself, which the software GPU's deferred
+ * raster cannot see, so it keeps nothing back while there is any. It is told
+ * as the binding is made (Mods_VramUsersChanged, which libgpu.c sets to
+ * SoftGpu_SetModVramUsers; NULL in the tests that link no software GPU), so
+ * nothing held is left for the pointer to see. A loaded object stays
+ * linked, so this never goes down. */
 static int vram_binders;
+void (*Mods_VramUsersChanged)(int users);
 
 int Mods_VramUsers(void) { return vram_binders; }
+
+static void vram_bound(void)
+{
+    vram_binders++;
+    if (Mods_VramUsersChanged) Mods_VramUsersChanged(vram_binders);
+}
 
 void *Mods_Lookup(const char *name)
 {
     const MemoriesModExport *found;
     union { void (*function)(void); void *pointer; } libc;
     if (!name) return NULL;
-    if (!strcmp(name, "SoftGpu_Vram") || !strcmp(name, "SoftGpu_StateData")) vram_binders++;
+    if (!strcmp(name, "SoftGpu_Vram") || !strcmp(name, "SoftGpu_StateData")) vram_bound();
     libc.function = Mods_LibcLookup(name);
     if (libc.function) return libc.pointer;
     found = bsearch(name, Memories_ModExports, Memories_ModExportCount, sizeof(*Memories_ModExports), by_name);
@@ -3326,7 +3336,7 @@ static void *load_object(Mod *mod, const char *path)
         note(mod, "%s %s", mod->library, error);
         return NULL;
     }
-    vram_binders++; /* the system's own loader binds it: what it binds is not seen (Mods_VramUsers) */
+    vram_bound(); /* the system's own loader binds it: what it binds is not seen (Mods_VramUsers) */
     mod->code_hash = mod->object.hash;
     return ObjectLoader_Symbol(&mod->object, "MemoriesModInit");
 #else

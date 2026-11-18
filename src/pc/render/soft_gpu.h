@@ -56,7 +56,8 @@ void SoftGpu_SetDeferred(int on, int poison);
 int SoftGpu_Deferred(void);
 /* How many applied code mods bind SoftGpu_Vram or SoftGpu_StateData (mods.c):
  * such a mod may keep VRAM's pointer and write or read through it at any
- * time, so nothing is kept back while there is one. */
+ * time, so nothing is kept back while there is one. Told as each binding is
+ * made (Mods_VramUsersChanged, set in libgpu.c) and at every flush. */
 void SoftGpu_SetModVramUsers(int users);
 /* Holds off the game clock's tick (SIGALRM, MEMORIES_CLOCK=interrupt) while
  * held work is queued, rastered or looked up: set by the platform when the
