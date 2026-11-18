@@ -631,6 +631,45 @@ int main(int argc, char **argv)
         SoftGpu_SetDeferred(0, 0);
     }
 
+    /* The pack's tags. Painted over held work after it is held, they stay:
+     * the primitive drew (and cleared the tags under it) before they were
+     * painted, so its replay clears none. Painted in the area before a
+     * primitive comes, they make it go at once, and it clears them as it
+     * draws. */
+    {
+        const uint32_t left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t white[] = {0x60ffffffu, 0x00100010u, 0x00040004u}; /* 4x4 at 16,16 */
+        uint32_t first[2][16], then[2][16];
+        for (int deferred = 0; deferred < 2; deferred++) {
+            for (int before = 0; before < 2; before++) {
+                SoftGpuDeferredStats s;
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                memset(TextureDump_Tags, 0, (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * sizeof(*TextureDump_Tags));
+                SoftGpu_SetDeferred(deferred, 0);
+                CHECK(SoftGpu_Gp0(left, 4) == 4);
+                SoftGpu_Fill(0, 0, 320, 240, 0); /* its blocks clean */
+                for (int pass = 0; pass < 2; pass++) {
+                    if (pass == 1 - before) { /* the pack tags the sprite's words */
+                        for (int j = 0; j < 4; j++)
+                            for (int i = 0; i < 4; i++) TextureDump_Tags[(16 + j) * SOFT_GPU_WIDTH + 16 + i] = 0x1234567u;
+                        TextureDump_Touched(16, 16, 4, 4);
+                    } else {
+                        CHECK(SoftGpu_Gp0(white, 3) == 3);
+                    }
+                }
+                SoftGpu_DeferredStats(&s);
+                if (deferred) CHECK(before ? s.held == 0 && s.now[SOFT_GPU_NOW_TAGS] == 1 : s.held == 1);
+                SoftGpu_Settle(0, 0, 320, 240);
+                for (int j = 0; j < 4; j++)
+                    for (int i = 0; i < 4; i++)
+                        (deferred ? then : first)[before][j * 4 + i] = TextureDump_Tags[(16 + j) * SOFT_GPU_WIDTH + 16 + i];
+            }
+        }
+        CHECK(!memcmp(first, then, sizeof(first)) && first[0][0] == 0x1234567u && first[1][0] == 0);
+        SoftGpu_SetDeferred(0, 0);
+    }
+
     /* The poison: held work shows as magenta to a reader that does not
      * settle, and as drawn to one that does. */
     {

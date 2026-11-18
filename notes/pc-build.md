@@ -2989,7 +2989,9 @@ Checks and tools:
   the load's, the move destination's and the immediate primitive's settles,
   the sampled-rectangle check, the snapshot of the state, the settle before
   a new area, the drop only on a whole cover, the poison's restore, holding
-  bank primitives, clearing tags in a replay, the clean check, and a
+  bank primitives, clearing tags in a replay and the clean check (a fixed
+  case each: tags painted over held work, and tags painted in the area
+  before a primitive; the random frames alone catch neither), and a
   sampled rectangle one word wide, without its palette or without a
   sprite's wrap (a fixed case: a sprite past u 255 reading the other,
   held, area), an upload taken as unchanged when it is not or when it sets
