@@ -265,6 +265,17 @@ static void give_up(int x, int y, int w, int h, int again)
     release_clock();
 }
 
+/* Every area may hold again from its next primitive: when the switch
+ * changes, at a reset, a state load, a new scale or recorder, a mod's VRAM.
+ * Only what holding costs depends on given_up[], never what is drawn. */
+static void forget_given_up(void)
+{
+    if (!given_up_count) return;
+    hold_clock();
+    given_up_count = 0;
+    release_clock();
+}
+
 /* Whether [a, a + la) and [b, b + lb) meet on a circle of `size`. */
 static int spans_meet(int a, int la, int b, int lb, int size)
 {
@@ -798,7 +809,7 @@ void SoftGpu_SetDeferred(int on, int poison)
     if (on && !deferred_on) memset(&deferred_stats, 0, sizeof(deferred_stats));
     deferred_on = on != 0;
     deferred_poison = on && poison;
-    given_up_count = 0;
+    forget_given_up();
     for (int a = 0; a < HELD_AREAS; a++) {
         free(held[a].before);
         held[a].before = NULL;
@@ -809,7 +820,10 @@ int SoftGpu_Deferred(void) { return deferred_on; }
 
 void SoftGpu_SetModVramUsers(int users)
 {
-    if (users && !mod_vram_users) settle_all(SOFT_GPU_WHY_ALL);
+    if (users && !mod_vram_users) {
+        settle_all(SOFT_GPU_WHY_ALL);
+        forget_given_up();
+    }
     mod_vram_users = users;
 }
 
@@ -879,6 +893,7 @@ void SoftGpu_Reset(void)
 {
     settle_all(SOFT_GPU_WHY_ALL); /* drawn with the state it came with, before the tags start again */
     memset(clean_tags, 0, sizeof(clean_tags));
+    forget_given_up();
     memset(&gpu, 0, sizeof(gpu));
     texture_source = vram;
     texture_bank = 0;
@@ -947,6 +962,7 @@ const uint32_t *SoftGpu_Picture(void)
 void SoftGpu_PictureFromVram(void)
 {
     SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
+    forget_given_up(); /* a state load, a new scale: whatever was given up is another frame's */
     if (picture) picture_from_words(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     resync_recorder();
 }
@@ -958,6 +974,7 @@ void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
 #endif
     if (wanted == recorder) return;
     SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* as SetScale */
+    forget_given_up();
     recorder = wanted;
     if (recorder) {
         free(picture);

@@ -3145,6 +3145,12 @@ Left for turning it on at 2x and above with the OpenGL picture:
   on a phone `given_up` and `again` matter more, and the scan may want a
   cache. `again` costs a cycle's drops where a bank or the shadow comes
   in one frame and not the next (the first cycle without one is not held).
+- `given_up` is forgotten whenever the switch changes, at a reset
+  (`SoftGpu_Reset`), a state load or a new scale (`SoftGpu_PictureFromVram`),
+  a new recorder and a mod's first VRAM binding: what was given up belongs
+  to frames before them. It only decides what holding costs, never what is
+  drawn (a fixed case checks that the next primitive holds after a state
+  load and after a reset).
 - Mods: a mod that binds `SoftGpu_Vram` or `SoftGpu_StateData` turns
   holding off for the rest of the run (`Mods_VramUsers` never goes down).
 

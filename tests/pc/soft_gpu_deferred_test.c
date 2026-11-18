@@ -615,6 +615,24 @@ int main(int argc, char **argv)
             SoftGpu_DeferredStats(&s);
             CHECK(s.now[SOFT_GPU_NOW_TEXTURE] == 1 && s.now[SOFT_GPU_NOW_AFTER] == 3);
         }
+        /* A state load (SoftGpu_PictureFromVram) or a reset forgets what was
+         * given up: the next primitive holds, with no clear first. */
+        for (int how = 0; how < 2; how++) {
+            SoftGpuDeferredStats s;
+            unsigned long long held_before;
+            CHECK(SoftGpu_Gp0(banked, 7) == 7 && SoftGpu_Gp0(plain, 3) == 3); /* given up: not held */
+            SoftGpu_DeferredStats(&s);
+            held_before = s.held;
+            if (how) {
+                SoftGpu_Reset();
+                CHECK(SoftGpu_Gp0(area, 4) == 4);
+            } else {
+                SoftGpu_PictureFromVram();
+            }
+            CHECK(SoftGpu_Gp0(plain, 3) == 3);
+            SoftGpu_DeferredStats(&s);
+            CHECK(s.held == held_before + 1);
+        }
         SoftGpu_SetDeferred(0, 0);
     }
 
