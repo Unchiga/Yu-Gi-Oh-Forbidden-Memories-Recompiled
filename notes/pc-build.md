@@ -2876,7 +2876,8 @@ What is held, and how:
   frame; checked under the mask state, only for what is sampled, never for
   a held area itself). Each area keeps 48 such rectangles; past that a new
   one is merged into the one it grows least, as long as that does not
-  reach into a held area, else any write rasters the area.
+  reach into an area held now or before (the buffers), else any write
+  rasters the area.
 - What a primitive samples is the part of its page its texture
   coordinates span, not the whole page (`texture_rects`): the game keeps
   textures in pages that reach into the drawing areas' rows (a 256-row page
@@ -2891,7 +2892,11 @@ What is held, and how:
   texture spreads so fast across it that the raster's 32-bit steps could
   overflow (range x 4 x width x height >= 768 x twice its area) takes the
   whole page; the check found no sliver that reads outside its range, so
-  this is caution, not a case seen.
+  this is caution, not a case seen. An 8-bit palette from x 768 on runs
+  past VRAM's edge into the first buffer's columns (the game's at 896 hold
+  128 colours): it counts up to the greatest index the texels it reads
+  hold, found by reading them as the primitive comes (they are then not
+  held, or it would be rastered at once, which reads the whole palette).
 - So that areas can be rastered one by one, held areas never overlap and
   none samples another: before an area starts a queue, the areas that meet
   it or sample it are rastered.
@@ -2955,7 +2960,9 @@ Checks and tools:
   held, area), an upload taken as unchanged when it is not or when it sets
   the mask bit, a merged rectangle not grown (a fixed case: 60 sprites
   reading 60 texels, the last one uploaded anew), a rectangle taken as
-  within another when it is not, or a polygon's range short by a texel (a
+  within another when it is not, an 8-bit palette counted short or not
+  past VRAM's edge (a fixed case: index 140 of a palette at 896, read at
+  12,100 and uploaded anew), or a polygon's range short by a texel (a
   fixed case: 1500 mirrored quads and slivers, every texel of their page
   outside their range, and their greatest u's column and v's row, uploaded
   anew while they are held). (Not

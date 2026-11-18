@@ -461,6 +461,22 @@ static int texture_rects(int rects[2][4], const int uv[4])
     rects[1][1] = gpu.clut_y;
     rects[1][2] = gpu.depth == 0 ? 16 : 256;
     rects[1][3] = 1;
+    if (gpu.clut_x + rects[1][2] > SOFT_GPU_WIDTH) {
+        /* An 8-bit palette from x 768 on runs past VRAM's edge, into the
+         * first buffer's columns, for indices the texels never hold (the
+         * game's palettes at 896 have 128 colours): only up to the greatest
+         * index the texels it reads hold (a 4-bit one, 16 from a multiple
+         * of 16, never wraps). */
+        int greatest = 0;
+        for (int j = 0; j < rects[0][3]; j++)
+            for (int i = 0; i < rects[0][2]; i++) {
+                uint16_t word = vram[((rects[0][1] + j) & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH +
+                                     ((rects[0][0] + i) & (SOFT_GPU_WIDTH - 1))];
+                int high = word >> 8, low = word & 0xff;
+                greatest = high > greatest ? high : low > greatest ? low : greatest;
+            }
+        rects[1][2] = greatest + 1;
+    }
     return 2;
 }
 
@@ -523,9 +539,8 @@ static void add_sampled(HeldArea *area, const int rect[4])
             long long more = (long long)(x1 - x0) * (y1 - y0) - (long long)s[2] * s[3];
             int a, clear = s[0] + s[2] <= SOFT_GPU_WIDTH && s[1] + s[3] <= SOFT_GPU_HEIGHT;
             for (a = 0; a < HELD_AREAS && clear; a++)
-                if ((held[a].on || &held[a] == area) &&
-                    rects_meet(x0, y0, x1 - x0, y1 - y0, held[a].x, held[a].y, held[a].w, held[a].h))
-                    clear = 0;
+                if (rects_meet(x0, y0, x1 - x0, y1 - y0, held[a].x, held[a].y, held[a].w, held[a].h))
+                    clear = 0; /* held now or before: the buffers */
             if (clear && (best < 0 || more < growth)) {
                 best = k;
                 growth = more;
@@ -656,8 +671,11 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
         /* Rastered now, so after what it draws over and what it reads. */
         hold_clock();
         before_write(x, y, w, h, SOFT_GPU_WHY_DRAW, NULL);
-        if (textured && texture_source == vram)
-            for (i = 0; i < n; i++) before_read(rects[i][0], rects[i][1], rects[i][2], rects[i][3], SOFT_GPU_WHY_DRAW);
+        if (textured && texture_source == vram) {
+            /* Its palette whole: the texels that bound it may have been held. */
+            before_read(rects[0][0], rects[0][1], rects[0][2], rects[0][3], SOFT_GPU_WHY_DRAW);
+            if (n > 1) before_read(gpu.clut_x, gpu.clut_y, gpu.depth == 0 ? 16 : 256, 1, SOFT_GPU_WHY_DRAW);
+        }
         release_clock();
     }
     return 0;

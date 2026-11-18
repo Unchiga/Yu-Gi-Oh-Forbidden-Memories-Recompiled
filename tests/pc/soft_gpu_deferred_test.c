@@ -476,6 +476,35 @@ int main(int argc, char **argv)
         SoftGpu_SetDeferred(0, 0);
     }
 
+    /* An 8-bit palette at 896 runs past VRAM's edge into the first buffer's
+     * columns: a sprite whose texels hold index 140 reads 12,100, which is
+     * uploaded anew while it is held in the other buffer. */
+    {
+        const uint32_t right[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                  0xe6000000u, 0xe1000000u | 12 | 16 | (1u << 7)}; /* page 768,256, 8-bit */
+        const uint32_t sprite[] = {0x65808080u, 0x00000000u, (uint32_t)((100 << 6) | (896 / 16)) << 16, 0x00040004u};
+        static uint16_t texels[64 * 64], palette[128], first[16], then[16];
+        uint16_t entry = 0x1111;
+        for (int i = 0; i < 64 * 64; i++) texels[i] = 140 | (140 << 8);
+        for (int i = 0; i < 128; i++) palette[i] = (uint16_t)(0x0400 + i);
+        for (int deferred = 0; deferred < 2; deferred++) {
+            uint16_t wrapped[13];
+            SoftGpu_SetDeferred(0, 0);
+            SoftGpu_Reset();
+            SoftGpu_Fill(0, 0, 1024, 512, 0);
+            SoftGpu_Load(768, 256, 64, 64, texels);
+            SoftGpu_Load(896, 100, 128, 1, palette);
+            for (int i = 0; i < 13; i++) wrapped[i] = (uint16_t)(0x2000 + i);
+            SoftGpu_Load(0, 100, 13, 1, wrapped);
+            SoftGpu_SetDeferred(deferred, 0);
+            CHECK(SoftGpu_Gp0(right, 5) == 5 && SoftGpu_Gp0(sprite, 4) == 4);
+            SoftGpu_Load(12, 100, 1, 1, &entry);
+            SoftGpu_Store(320, 0, 4, 4, deferred ? then : first);
+        }
+        CHECK(!memcmp(first, then, sizeof(first)) && first[0] == 0x200c);
+        SoftGpu_SetDeferred(0, 0);
+    }
+
     /* The poison: held work shows as magenta to a reader that does not
      * settle, and as drawn to one that does. */
     {
