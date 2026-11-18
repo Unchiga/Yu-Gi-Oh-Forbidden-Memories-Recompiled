@@ -66,17 +66,22 @@ int ResetGraph(int mode)
         SoftGpu_Reset();
     }
     if (!deferred_read) {
-        /* MEMORIES_DEFERRED_RASTER=1: keep the drawing areas' primitives
-         * back until something reads them (soft_gpu.h, SoftGpu_SetDeferred);
-         * MEMORIES_DEFERRED_POISON=1 also shows what is held as magenta to
-         * any reader that does not settle it. */
+        /* The deferred raster keeps the drawing areas' primitives back until
+         * something reads them (soft_gpu.h, SoftGpu_SetDeferred). Unset, it
+         * is on while the OpenGL picture draws at 2x and above, where
+         * nothing shows the words (SOFT_GPU_DEFERRED_AUTO);
+         * MEMORIES_DEFERRED_RASTER=0 turns it off, any other value on at
+         * every scale (1x included, for tests). MEMORIES_DEFERRED_POISON=1
+         * also shows what is held as magenta to any reader that does not
+         * settle it. */
         const char *on = getenv("MEMORIES_DEFERRED_RASTER"), *poison = getenv("MEMORIES_DEFERRED_POISON");
+        int mode = !on || !*on ? SOFT_GPU_DEFERRED_AUTO : strcmp(on, "0") != 0;
         deferred_read = 1;
         /* A mod's VRAM binding is told as it is made, and the ones made
          * before now are told here; flush_drawing tells it again. */
         Mods_VramUsersChanged = SoftGpu_SetModVramUsers;
         SoftGpu_SetModVramUsers(Mods_VramUsers());
-        SoftGpu_SetDeferred(on && *on && strcmp(on, "0") != 0, poison && *poison && strcmp(poison, "0") != 0);
+        SoftGpu_SetDeferred(mode, poison && *poison && strcmp(poison, "0") != 0);
     }
     return 0;
 }
@@ -534,12 +539,19 @@ static void flush_drawing(void)
                 SoftGpuDeferredStats now;
                 SoftGpu_DeferredStats(&now);
                 LOG(LOG_FRAMES, "deferred: %u held, %u dropped, %u rastered, %u at once; areas %u cleared, "
-                    "%u settled; settles %u us, %u of them outside the draws",
+                    "%u settled (read %u, write %u, draw %u, area %u, all %u); settles %u us, %u of them outside "
+                    "the draws; the OpenGL copy missed %u areas, %u patches",
                     (unsigned)(now.held - last.held), (unsigned)(now.dropped - last.dropped),
                     (unsigned)(now.rastered - last.rastered), (unsigned)(now.immediate - last.immediate),
                     (unsigned)(now.cleared - last.cleared), (unsigned)(now.settled - last.settled),
+                    (unsigned)(now.why[SOFT_GPU_WHY_READ] - last.why[SOFT_GPU_WHY_READ]),
+                    (unsigned)(now.why[SOFT_GPU_WHY_WRITE] - last.why[SOFT_GPU_WHY_WRITE]),
+                    (unsigned)(now.why[SOFT_GPU_WHY_DRAW] - last.why[SOFT_GPU_WHY_DRAW]),
+                    (unsigned)(now.why[SOFT_GPU_WHY_AREA] - last.why[SOFT_GPU_WHY_AREA]),
+                    (unsigned)(now.why[SOFT_GPU_WHY_ALL] - last.why[SOFT_GPU_WHY_ALL]),
                     (unsigned)(now.settle_us - last.settle_us),
-                    (unsigned)(now.settle_outside_us - last.settle_outside_us));
+                    (unsigned)(now.settle_outside_us - last.settle_outside_us),
+                    (unsigned)(now.copy_missed - last.copy_missed), (unsigned)(now.patches - last.patches));
                 last = now;
             }
         }

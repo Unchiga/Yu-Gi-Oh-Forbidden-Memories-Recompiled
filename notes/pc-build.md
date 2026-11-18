@@ -2847,13 +2847,18 @@ battle samples neither banks nor the shadow.
 
 ### The deferred raster
 
-`MEMORIES_DEFERRED_RASTER=1` (read once, at the first `ResetGraph`) keeps
-back what is drawn into a full-screen drawing area until something reads
-it, and drops it when the game clears the area first. Off by default: this
-first version runs at the console's resolution, for tests and measurement;
-turning it on at 2x and above with the OpenGL picture comes after (below).
-`SoftGpu_SetDeferred(on, poison)` in `soft_gpu.h` is the switch, which
-settles everything when it changes.
+The deferred raster keeps back what is drawn into a full-screen drawing
+area until something reads it, and drops it when the game clears the area
+first. `MEMORIES_DEFERRED_RASTER` (read once, at the first `ResetGraph`):
+unset, it is on while the OpenGL picture draws at internal 2x and above
+(`SOFT_GPU_DEFERRED_AUTO`), where nothing shows VRAM's words and the CPU's
+raster at 1x is drawn only for what reads it back; `0` turns it off;
+any other value turns it on at every scale (1x included, where a window
+shows the words every frame: for tests and measurement). Android takes the
+same default: its OpenGL ES picture at 2x and 4x holds, and
+`MEMORIES_DEFERRED_RASTER=0` in `environment.txt` (the player's folder,
+read at start) turns it off. `SoftGpu_SetDeferred(mode, poison)` in
+`soft_gpu.h` is the switch, which settles everything when it changes.
 
 What is held, and how:
 
