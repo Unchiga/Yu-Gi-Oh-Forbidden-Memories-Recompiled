@@ -3150,8 +3150,12 @@ the 3D battle, bare and with the pack and the mods. The draws'
 builds, within the noise (two runs of the same build differ by up to
 5% either way), and the frame hashes of five runs (about 40 thousand
 frames) are identical between them. The off path has changed since only
-where it tests `holding()` instead of the switch, and in a clear that
-looks at `given_up` only when something is in it (never, off).
+where it tests `holding()` instead of the switch, in a clear that
+looks at `given_up` only when something is in it (never, off), in the
+`forget_given_up()` calls (a reset, a state load, a new scale, a new
+recorder, the switch, a mod's first VRAM binding), and in the per-binding
+hook call (`Mods_VramUsersChanged`): the last two return at once with the
+switch off, and none of the changes was measured on its own.
 
 - Bare, what still rasters is the 3D battle's palette move
   (`func_8004E9A0.c`), which writes texels its held model samples every
