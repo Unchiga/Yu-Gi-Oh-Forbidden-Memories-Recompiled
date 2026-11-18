@@ -139,9 +139,10 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  *
  * - it samples VRAM: not a texture bank (whose writers rewrite it unseen),
  *   not the texture pack's shadow (painted between frames);
- * - its page and palette lie outside every held area, its own included, so
- *   nothing it reads is waiting; and once held, any write into what it reads
- *   (a load, a move, a fill, a primitive rastered at once) rasters it first;
+ * - the texels its coordinates span (texture_rects) and its palette lie
+ *   outside every held area, its own included, so nothing it reads is
+ *   waiting; and once held, any write into what it reads (a load, a move, a
+ *   fill, a primitive rastered at once) rasters it first;
  * - the provenance tags and shadow cells it would clear are already clear
  *   (TextureDump_Clean), so not clearing them later changes nothing;
  * - it is not the life-point panel the opponent's name is drawn over (the
@@ -397,14 +398,28 @@ static int holding(void)
     return deferred_on && !mod_vram_users && !picture && !(recorder && scale > 1);
 }
 
-/* The words of the texture the primitive reads, as rectangles: its page
- * and, below 16 bits, its palette row. Returns how many. */
-static int texture_rects(int rects[2][4])
+/* The words of the texture the primitive reads, as rectangles: the words
+ * of its page that hold the texels its coordinates span and, below 16 bits,
+ * its palette row. Returns how many. `uv`: the least and greatest u and v
+ * (0-255) it was given; a polygon samples within them (each pixel's
+ * coordinates are a mix of its vertices', and the raster's bias keeps its
+ * rounding above the lesser and below the next whole texel past the
+ * greater), a sprite from u, v to u + w - 1, v + h - 1, which past 255
+ * wraps around the page. One texel more each way within the page, all of
+ * it on an axis the texture window folds or a sprite wraps. */
+static int texture_rects(int rects[2][4], const int uv[4])
 {
-    rects[0][0] = gpu.page_x;
-    rects[0][1] = gpu.page_y;
-    rects[0][2] = gpu.depth == 0 ? 64 : gpu.depth == 1 ? 128 : 256;
-    rects[0][3] = 256;
+    int shift = 2 - gpu.depth, u0 = uv[0] - 1, v0 = uv[1] - 1, u1 = uv[2] + 1, v1 = uv[3] + 1;
+    if (gpu.window_mask_x || uv[2] > 255) u0 = 0, u1 = 255;
+    if (gpu.window_mask_y || uv[3] > 255) v0 = 0, v1 = 255;
+    u0 = u0 < 0 ? 0 : u0;
+    v0 = v0 < 0 ? 0 : v0;
+    u1 = u1 > 255 ? 255 : u1;
+    v1 = v1 > 255 ? 255 : v1;
+    rects[0][0] = gpu.page_x + (u0 >> shift);
+    rects[0][1] = gpu.page_y + v0;
+    rects[0][2] = (u1 >> shift) - (u0 >> shift) + 1;
+    rects[0][3] = v1 - v0 + 1;
     if (gpu.depth >= 2) return 1;
     rects[1][0] = gpu.clut_x;
     rects[1][1] = gpu.clut_y;
@@ -489,12 +504,13 @@ static HeldArea *held_area(void)
 /* Called by a primitive as it comes, once what it does as it comes is done
  * and before it rasters: 1 when it is held (it is not rastered now), 0 when
  * it is to be rastered now, what it follows having been rastered first.
- * `textured`: it reads its texture (the state's page and palette); `panel`:
- * it is the life-point panel the opponent's name goes over. */
-static int hold(const uint32_t *words, size_t count, int textured, int panel)
+ * `uv`: NULL, or the texture coordinates it spans (texture_rects) in the
+ * state's page and palette; `panel`: it is the life-point panel the
+ * opponent's name goes over. */
+static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
 {
     int x = gpu.clip_x1, y = gpu.clip_y1, w = gpu.clip_x2 - gpu.clip_x1 + 1, h = gpu.clip_y2 - gpu.clip_y1 + 1;
-    int rects[2][4], n = textured ? texture_rects(rects) : 0, now = -1, i, slot = -1;
+    int textured = uv != NULL, rects[2][4], n = textured ? texture_rects(rects, uv) : 0, now = -1, i, slot = -1;
     HeldArea *area;
     if (replaying || target != vram || (!deferred_on && !held_any)) return 0;
     if (w < 256 || h < 192 || x + w > SOFT_GPU_WIDTH || y + h > SOFT_GPU_HEIGHT) {
@@ -1723,7 +1739,7 @@ static size_t polygon(const uint32_t *words, size_t count)
     int vertices = quad ? 4 : 3, i;
     size_t need = (size_t)vertices * (1 + (textured ? 1 : 0)) + (shaded ? (size_t)vertices : 1);
     size_t at = 0;
-    int flags = (command & 3) | (textured ? 4 : 0);
+    int flags = (command & 3) | (textured ? 4 : 0), uv[4];
     Vertex v[4];
     if (count < need) {
         return 0;
@@ -1780,8 +1796,18 @@ static size_t polygon(const uint32_t *words, size_t count)
         picture_triangle(v[0], v[1], v[2], flags);
         if (quad) picture_triangle(v[1], v[2], v[3], flags);
     }
+    if (textured) {
+        uv[0] = uv[2] = v[0].u;
+        uv[1] = uv[3] = v[0].v;
+        for (i = 1; i < vertices; i++) {
+            if (v[i].u < uv[0]) uv[0] = v[i].u;
+            if (v[i].v < uv[1]) uv[1] = v[i].v;
+            if (v[i].u > uv[2]) uv[2] = v[i].u;
+            if (v[i].v > uv[3]) uv[3] = v[i].v;
+        }
+    }
     if ((textured && picture_only_clut(gpu.clut_x, gpu.clut_y)) || picture_only_screen() ||
-        hold(words, need, textured, textured && panel_page())) {
+        hold(words, need, textured ? uv : NULL, textured && panel_page())) {
         fade = 0;
         return need;
     }
@@ -1903,7 +1929,10 @@ static size_t rectangle(const uint32_t *words, size_t count)
             }
         }
     }
-    if (!picture_only_screen() && hold(words, need, textured, textured && panel_page())) return need;
+    {
+        const int uv[4] = {base.u, base.v, base.u + (w ? w - 1 : 0), base.v + (h ? h - 1 : 0)};
+        if (!picture_only_screen() && hold(words, need, textured ? uv : NULL, textured && panel_page())) return need;
+    }
     const Plotter p = plotter();
     switch (picture_only_screen() ? -1 : flags) {
 #define CASE(n) case n: \
@@ -1957,7 +1986,7 @@ static size_t lines(const uint32_t *words, size_t count)
     }
     if (!replaying && (deferred_on || held_any)) {
         size_t used = lines_length(words, count); /* 0: cut off, drawn as far as it goes */
-        if (hold(words, used, 0, 0)) return used;
+        if (hold(words, used, NULL, 0)) return used;
     }
     set_color(&previous, words[at++]);
     set_position(&previous, words[at++]);

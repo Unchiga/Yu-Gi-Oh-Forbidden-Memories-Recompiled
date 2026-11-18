@@ -340,6 +340,32 @@ int main(int argc, char **argv)
         CHECK(now.gpu == held.gpu && now.gpu == poisoned.gpu);
     }
 
+    /* A sprite whose texture coordinates run past 255 wraps to the page's
+     * first texels: a 16-bit sprite from page 9 (576,0) at u 250, 20 wide,
+     * reads 826-831 and then 576-589, inside the area at 320,0 whose
+     * drawing is held. It must see that drawing, as when it is rastered at
+     * once. */
+    {
+        const uint32_t left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t right[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                  0xe6000000u};
+        const uint32_t white[] = {0x60ffffffu, 0x00000100u, 0x00100100u}; /* 256x16 at 256,0 of the area */
+        const uint32_t page[] = {0xe1000000u | 9 | (2u << 7)};               /* page 9, 16-bit */
+        const uint32_t sprite[] = {0x65808080u, 0x00000000u, 0x000000fau, 0x00040014u}; /* u 250, 20x4 at 0,0 */
+        uint16_t first[20 * 4], then[20 * 4];
+        for (int deferred = 0; deferred < 2; deferred++) {
+            SoftGpu_SetDeferred(0, 0);
+            SoftGpu_Reset();
+            SoftGpu_Fill(0, 0, 1024, 512, 0);
+            SoftGpu_SetDeferred(deferred, 0);
+            CHECK(SoftGpu_Gp0(right, 4) == 4 && SoftGpu_Gp0(white, 3) == 3);
+            CHECK(SoftGpu_Gp0(left, 4) == 4 && SoftGpu_Gp0(page, 1) == 1 && SoftGpu_Gp0(sprite, 4) == 4);
+            SoftGpu_Store(0, 0, 20, 4, deferred ? then : first);
+        }
+        CHECK(!memcmp(first, then, sizeof(first)) && first[19] == 0x7fff); /* u 13: 589, white */
+        SoftGpu_SetDeferred(0, 0);
+    }
+
     /* The poison: held work shows as magenta to a reader that does not
      * settle, and as drawn to one that does. */
     {

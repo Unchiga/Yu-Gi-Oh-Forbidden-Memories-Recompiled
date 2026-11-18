@@ -2870,9 +2870,19 @@ What is held, and how:
   clear, two frames after it drew there).
 - A write rasters it first: a load, a move's destination (not the game's
   2x1 move onto itself, which writes nothing), a fill that does not cover
-  the area, a primitive rastered at once, into its area or into a page or
-  palette row it samples (each area keeps up to 32 of those rectangles;
+  the area, a primitive rastered at once, into its area or into the texels
+  or palette row it samples (each area keeps up to 32 of those rectangles;
   past that, any write rasters it).
+- What a primitive samples is the part of its page its texture
+  coordinates span, not the whole page (`texture_rects`): the game keeps
+  textures in pages that reach into the drawing areas' rows (a 256-row page
+  at y 0 covers both buffers), and whole pages made a duel field's
+  textured primitives look as if they read the buffers. A polygon samples
+  within its vertices' least and greatest u and v (each pixel's are a mix of
+  them, and the raster's bias keeps the rounding inside); a sprite from u,
+  v to u + w - 1, v + h - 1, all of the page's width or height if that runs
+  past 255 (it wraps) or the texture window folds it; one texel of margin
+  within the page.
 - So that areas can be rastered one by one, held areas never overlap and
   none samples another: before an area starts a queue, the areas that meet
   it or sample it are rastered.
@@ -2882,7 +2892,7 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
 
 - it samples a texture bank (`SoftGpu_Bank`: its writers rewrite it
   unannounced) or the texture pack's shadow (`TextureDump_Prepare` said 1);
-- its page or palette lies in a held area or in its own;
+- the texels it samples or its palette lie in a held area or in its own;
 - its area's provenance tags or shadow cells are not all clear
   (`TextureDump_Clean`, checked again whenever `TextureDump_TouchCount`
   moves), so drawing would clear some;
@@ -2928,7 +2938,10 @@ Checks and tools:
   the load's, the move destination's and the immediate primitive's settles,
   the sampled-rectangle check, the snapshot of the state, the settle before
   a new area, the drop only on a whole cover, the poison's restore, holding
-  bank primitives, clearing tags in a replay, the clean check. (Not
+  bank primitives, clearing tags in a replay, the clean check, and a
+  sampled rectangle one word wide, without its palette or without a
+  sprite's wrap (a fixed case: a sprite past u 255 reading the other,
+  held, area). (Not
   checking a primitive's texture against its own area is not caught, and
   needs not be: the queue rasters in order, so a held primitive that reads
   its own area reads what the ones before it drew.)
