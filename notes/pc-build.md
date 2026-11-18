@@ -2876,8 +2876,10 @@ What is held, and how:
   frame; checked under the mask state, only for what is sampled, never for
   a held area itself). Each area keeps 48 such rectangles; past that a new
   one is merged into the one it grows least, as long as that does not
-  reach into an area held now or before (the buffers), else any write
-  rasters the area.
+  reach into an area held now or before (the buffers); failing that the
+  two that grow least are merged to make room (a menu's strips below the
+  buffers fill the 48, then a glyph from the right half comes); else any
+  write rasters the area.
 - What a primitive samples is the part of its page its texture
   coordinates span, not the whole page (`texture_rects`): the game keeps
   textures in pages that reach into the drawing areas' rows (a 256-row page
@@ -2959,7 +2961,9 @@ Checks and tools:
   sprite's wrap (a fixed case: a sprite past u 255 reading the other,
   held, area), an upload taken as unchanged when it is not or when it sets
   the mask bit, a merged rectangle not grown (a fixed case: 60 sprites
-  reading 60 texels, the last one uploaded anew), a rectangle taken as
+  reading 60 texels, the last one uploaded anew), two merged to make room
+  and not grown (a fixed case: 48 strip texels and one from the right half,
+  each strip texel uploaded anew in a run of its own), a rectangle taken as
   within another when it is not, an 8-bit palette counted short or not
   past VRAM's edge (a fixed case: index 140 of a palette at 896, read at
   12,100 and uploaded anew), or a polygon's range short by a texel (a

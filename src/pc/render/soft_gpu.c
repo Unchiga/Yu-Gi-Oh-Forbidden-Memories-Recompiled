@@ -512,15 +512,34 @@ static int grow(void **items, size_t *room, size_t need, size_t size)
     return 1;
 }
 
+/* The union of two sampled rectangles into `out`, and how much larger it is
+ * than the two: -1 if either wraps, or the union reaches into a drawing area
+ * held now or before (the buffers: a rectangle there would tie them). */
+static long long sampled_union(const int a[4], const int b[4], int out[4])
+{
+    int k;
+    if (a[0] + a[2] > SOFT_GPU_WIDTH || a[1] + a[3] > SOFT_GPU_HEIGHT || b[0] + b[2] > SOFT_GPU_WIDTH ||
+        b[1] + b[3] > SOFT_GPU_HEIGHT)
+        return -1;
+    out[0] = a[0] < b[0] ? a[0] : b[0];
+    out[1] = a[1] < b[1] ? a[1] : b[1];
+    out[2] = (a[0] + a[2] > b[0] + b[2] ? a[0] + a[2] : b[0] + b[2]) - out[0];
+    out[3] = (a[1] + a[3] > b[1] + b[3] ? a[1] + a[3] : b[1] + b[3]) - out[1];
+    for (k = 0; k < HELD_AREAS; k++)
+        if (rects_meet(out[0], out[1], out[2], out[3], held[k].x, held[k].y, held[k].w, held[k].h)) return -1;
+    return (long long)out[2] * out[3] - (long long)a[2] * a[3] - (long long)b[2] * b[3];
+}
+
 /* What a held primitive samples, added to its area's rectangles: kept as
- * it is while there is room, else grown into the one it grows least (a
- * write there then rasters the area when it need not, never the other way),
- * as long as that does not reach into a held area or its own; else any
- * write at all rasters the area. */
+ * it is while there is room; else merged into the one it grows least, or,
+ * if every such union reaches into a buffer, the two that grow least
+ * merged to make room (a write in a merged rectangle then rasters the area
+ * when it need not, never the other way); else any write at all rasters
+ * the area. */
 static void add_sampled(HeldArea *area, const int rect[4])
 {
-    int k, best = -1;
-    long long growth = 0;
+    int k, j, best = -1, pair = -1, joined[4];
+    long long growth = 0, more;
     for (k = 0; k < area->sampled_count; k++) {
         const int *s = area->sampled[k];
         if (s[0] <= rect[0] && s[1] <= rect[1] && rect[0] + rect[2] <= s[0] + s[2] && rect[1] + rect[3] <= s[1] + s[3])
@@ -530,36 +549,27 @@ static void add_sampled(HeldArea *area, const int rect[4])
         memcpy(area->sampled[area->sampled_count++], rect, 4 * sizeof(int));
         return;
     }
-    if (rect[0] + rect[2] <= SOFT_GPU_WIDTH && rect[1] + rect[3] <= SOFT_GPU_HEIGHT) {
-        for (k = 0; k < area->sampled_count; k++) {
-            const int *s = area->sampled[k];
-            int x0 = s[0] < rect[0] ? s[0] : rect[0], y0 = s[1] < rect[1] ? s[1] : rect[1];
-            int x1 = s[0] + s[2] > rect[0] + rect[2] ? s[0] + s[2] : rect[0] + rect[2];
-            int y1 = s[1] + s[3] > rect[1] + rect[3] ? s[1] + s[3] : rect[1] + rect[3];
-            long long more = (long long)(x1 - x0) * (y1 - y0) - (long long)s[2] * s[3];
-            int a, clear = s[0] + s[2] <= SOFT_GPU_WIDTH && s[1] + s[3] <= SOFT_GPU_HEIGHT;
-            for (a = 0; a < HELD_AREAS && clear; a++)
-                if (rects_meet(x0, y0, x1 - x0, y1 - y0, held[a].x, held[a].y, held[a].w, held[a].h))
-                    clear = 0; /* held now or before: the buffers */
-            if (clear && (best < 0 || more < growth)) {
-                best = k;
-                growth = more;
-            }
-        }
+    for (k = 0; k < area->sampled_count; k++) {
+        more = sampled_union(area->sampled[k], rect, joined);
+        if (more >= 0 && (best < 0 || more < growth)) best = k, growth = more;
     }
+    if (best >= 0) {
+        sampled_union(area->sampled[best], rect, joined);
+        memcpy(area->sampled[best], joined, sizeof(joined));
+        return;
+    }
+    for (k = 0; k < area->sampled_count; k++)
+        for (j = k + 1; j < area->sampled_count; j++) {
+            more = sampled_union(area->sampled[k], area->sampled[j], joined);
+            if (more >= 0 && (best < 0 || more < growth)) best = k, pair = j, growth = more;
+        }
     if (best < 0) {
         area->sampled_all = 1; /* any write at all rasters it */
         return;
     }
-    {
-        int *s = area->sampled[best];
-        int x1 = s[0] + s[2] > rect[0] + rect[2] ? s[0] + s[2] : rect[0] + rect[2];
-        int y1 = s[1] + s[3] > rect[1] + rect[3] ? s[1] + s[3] : rect[1] + rect[3];
-        s[0] = s[0] < rect[0] ? s[0] : rect[0];
-        s[1] = s[1] < rect[1] ? s[1] : rect[1];
-        s[2] = x1 - s[0];
-        s[3] = y1 - s[1];
-    }
+    sampled_union(area->sampled[best], area->sampled[pair], joined);
+    memcpy(area->sampled[best], joined, sizeof(joined));
+    memcpy(area->sampled[pair], rect, 4 * sizeof(int));
 }
 
 /* The held area for the current drawing area, its queue begun if it was

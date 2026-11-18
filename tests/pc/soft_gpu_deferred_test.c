@@ -476,6 +476,43 @@ int main(int argc, char **argv)
         SoftGpu_SetDeferred(0, 0);
     }
 
+    /* 48 one-texel sprites from the strip below the buffers (16-bit page
+     * 0,256), then one from 700,10, which no strip rectangle can take in
+     * without reaching into a buffer: two strip ones are merged to make
+     * room. Each strip texel uploaded anew, one run each, must still raster
+     * the sprites first. */
+    {
+        const uint32_t right[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                  0xe6000000u, 0xe1000000u | 0 | 16 | (2u << 7)}; /* page 0,256, 16-bit */
+        const uint32_t far[] = {0xe1000000u | 10 | (2u << 7), 0x6d808080u, (uint32_t)(60 << 16), (10 << 8) | 60};
+        const uint32_t left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t dot[] = {0x60ffffffu, 0x00640064u, 0x00010001u};
+        uint32_t sprites[48 * 3];
+        uint16_t first[64], then[64], texel = 0x1234;
+        for (int i = 0; i < 48; i++) {
+            sprites[i * 3] = 0x6d808080u;                       /* raw textured 1x1 */
+            sprites[i * 3 + 1] = (uint32_t)i;                   /* at i,0 of the area */
+            sprites[i * 3 + 2] = (uint32_t)(i << 8 | (i * 5));  /* u 5i, v i */
+        }
+        for (int t = 0; t < 48; t++) {
+            for (int deferred = 0; deferred < 2; deferred++) {
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 1024, 512, 0x0000ff);
+                SoftGpu_SetDeferred(deferred, 0);
+                SoftGpu_Fill(0, 0, 320, 240, 0);
+                CHECK(SoftGpu_Gp0(left, 4) == 4 && SoftGpu_Gp0(dot, 3) == 3); /* the first buffer holds too */
+                CHECK(SoftGpu_Gp0(right, 5) == 5);
+                for (int i = 0; i < 48; i++) CHECK(SoftGpu_Gp0(sprites + i * 3, 3) == 3);
+                CHECK(SoftGpu_Gp0(far, 4) == 4);
+                SoftGpu_Load(t * 5, 256 + t, 1, 1, &texel);
+                SoftGpu_Store(320, 0, 64, 1, deferred ? then : first);
+            }
+            CHECK(!memcmp(first, then, sizeof(first)) && first[t] == 0x001f);
+        }
+        SoftGpu_SetDeferred(0, 0);
+    }
+
     /* An 8-bit palette at 896 runs past VRAM's edge into the first buffer's
      * columns: a sprite whose texels hold index 140 reads 12,100, which is
      * uploaded anew while it is held in the other buffer. */
