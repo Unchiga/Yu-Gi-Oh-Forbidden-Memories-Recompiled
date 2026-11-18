@@ -2937,7 +2937,9 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   it of the bindings made before; `flush_drawing` tells it again), so what
   is held is rastered before the mod can keep VRAM's pointer or call
   `SoftGpu_Gp0` itself; told only at the next non-empty flush, it could see
-  held or poisoned words until then (`pc_mods` checks the call);
+  held or poisoned words until then (`pc_mods` checks the call). The hook
+  is not lent to mods (`NOT_LENT_TO_MODS`: the arm64 table lends `Mods_`
+  names the 32-bit one leaves out);
 - a scaled picture is drawn here or by a recorder at 2x and above (whose
   copy of VRAM would miss the held words);
 - (these two are not counted: while either holds, `holding()` is false and
