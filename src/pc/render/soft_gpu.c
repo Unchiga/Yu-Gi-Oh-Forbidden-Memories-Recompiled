@@ -163,7 +163,7 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  * anything is held, so it never sees a queue half made or half rastered,
  * and never finds `gpu` swapped for a held primitive's state. */
 #define HELD_AREAS 2
-#define HELD_SAMPLED 32
+#define HELD_SAMPLED 48
 #define HELD_WORDS_MAX (4u << 20) /* past this an area's queue is rastered and started again */
 typedef struct HeldEntry {
     uint32_t at, count, state;
@@ -177,7 +177,7 @@ typedef struct HeldArea {
     size_t count, room;
     GpuState *states;
     size_t state_count, state_room;
-    struct { int x, y, w, h; } sampled[HELD_SAMPLED]; /* pages and palette rows its work reads */
+    int sampled[HELD_SAMPLED][4];  /* x, y, w, h: the texels and palette rows its work reads */
     int sampled_count, sampled_all;
     uint16_t *before;              /* poison: the area's words as the queue began */
 } HeldArea;
@@ -263,7 +263,7 @@ static int area_samples(const HeldArea *a, int x, int y, int w, int h)
     if (!a->on) return 0;
     if (a->sampled_all) return 1;
     for (int i = 0; i < a->sampled_count; i++)
-        if (rects_meet(a->sampled[i].x, a->sampled[i].y, a->sampled[i].w, a->sampled[i].h, x, y, w, h)) return 1;
+        if (rects_meet(a->sampled[i][0], a->sampled[i][1], a->sampled[i][2], a->sampled[i][3], x, y, w, h)) return 1;
     return 0;
 }
 
@@ -501,6 +501,57 @@ static int grow(void **items, size_t *room, size_t need, size_t size)
     return 1;
 }
 
+/* What a held primitive samples, added to its area's rectangles: kept as
+ * it is while there is room, else grown into the one it grows least (a
+ * write there then rasters the area when it need not, never the other way),
+ * as long as that does not reach into a held area or its own; else any
+ * write at all rasters the area. */
+static void add_sampled(HeldArea *area, const int rect[4])
+{
+    int k, best = -1;
+    long long growth = 0;
+    for (k = 0; k < area->sampled_count; k++) {
+        const int *s = area->sampled[k];
+        if (s[0] <= rect[0] && s[1] <= rect[1] && rect[0] + rect[2] <= s[0] + s[2] && rect[1] + rect[3] <= s[1] + s[3])
+            return; /* within one already (rectangles that wrap are only ever equal) */
+    }
+    if (area->sampled_count < HELD_SAMPLED) {
+        memcpy(area->sampled[area->sampled_count++], rect, 4 * sizeof(int));
+        return;
+    }
+    if (rect[0] + rect[2] <= SOFT_GPU_WIDTH && rect[1] + rect[3] <= SOFT_GPU_HEIGHT) {
+        for (k = 0; k < area->sampled_count; k++) {
+            const int *s = area->sampled[k];
+            int x0 = s[0] < rect[0] ? s[0] : rect[0], y0 = s[1] < rect[1] ? s[1] : rect[1];
+            int x1 = s[0] + s[2] > rect[0] + rect[2] ? s[0] + s[2] : rect[0] + rect[2];
+            int y1 = s[1] + s[3] > rect[1] + rect[3] ? s[1] + s[3] : rect[1] + rect[3];
+            long long more = (long long)(x1 - x0) * (y1 - y0) - (long long)s[2] * s[3];
+            int a, clear = s[0] + s[2] <= SOFT_GPU_WIDTH && s[1] + s[3] <= SOFT_GPU_HEIGHT;
+            for (a = 0; a < HELD_AREAS && clear; a++)
+                if ((held[a].on || &held[a] == area) &&
+                    rects_meet(x0, y0, x1 - x0, y1 - y0, held[a].x, held[a].y, held[a].w, held[a].h))
+                    clear = 0;
+            if (clear && (best < 0 || more < growth)) {
+                best = k;
+                growth = more;
+            }
+        }
+    }
+    if (best < 0) {
+        area->sampled_all = 1; /* any write at all rasters it */
+        return;
+    }
+    {
+        int *s = area->sampled[best];
+        int x1 = s[0] + s[2] > rect[0] + rect[2] ? s[0] + s[2] : rect[0] + rect[2];
+        int y1 = s[1] + s[3] > rect[1] + rect[3] ? s[1] + s[3] : rect[1] + rect[3];
+        s[0] = s[0] < rect[0] ? s[0] : rect[0];
+        s[1] = s[1] < rect[1] ? s[1] : rect[1];
+        s[2] = x1 - s[0];
+        s[3] = y1 - s[1];
+    }
+}
+
 /* The held area for the current drawing area, its queue begun if it was
  * not: NULL if it cannot be (no memory). */
 static HeldArea *held_area(void)
@@ -593,22 +644,7 @@ static int hold(const uint32_t *words, size_t count, const int *uv, int panel)
             e->count = (uint32_t)count;
             memcpy(area->words + area->word_count, words, count * sizeof(uint32_t));
             area->word_count += count;
-            for (i = 0; i < n && !area->sampled_all; i++) {
-                int k;
-                for (k = 0; k < area->sampled_count; k++)
-                    if (area->sampled[k].x == rects[i][0] && area->sampled[k].y == rects[i][1] &&
-                        area->sampled[k].w == rects[i][2] && area->sampled[k].h == rects[i][3]) break;
-                if (k < area->sampled_count) continue;
-                if (area->sampled_count == HELD_SAMPLED) {
-                    area->sampled_all = 1; /* any write at all rasters it */
-                    break;
-                }
-                area->sampled[k].x = rects[i][0];
-                area->sampled[k].y = rects[i][1];
-                area->sampled[k].w = rects[i][2];
-                area->sampled[k].h = rects[i][3];
-                area->sampled_count++;
-            }
+            for (i = 0; i < n && !area->sampled_all; i++) add_sampled(area, rects[i]);
             deferred_stats.held++;
             release_clock();
             return 1;

@@ -194,7 +194,7 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     noise(SoftGpu_Bank(3), 1024 * 512);
     SoftGpu_SetDeferred(deferred, poison);
     for (int frame = 0; frame < frames; frame++) {
-        int area = frame & 1, x0 = area ? 320 : 0, y0 = 0, count = 0;
+        int area = frame & 1, x0 = area ? 320 : 0, y0 = 0, count = 0, busy;
         size_t at = 0;
         calm = below(3) != 0;
         if (frame % 97 == 50) SoftGpu_SetModVramUsers(1); /* a mod binds VRAM for a while */
@@ -214,9 +214,12 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
             SoftGpu_Fill(x0, y0, 320, 240, rnd() & 0xffffff);
             if (below(2)) SoftGpu_Fill(x0, y0, 320, 240, rnd() & 0xffffff);
         }
-        count = 20 + below(80);
+        /* One frame in five is busy, as a duel's is: a few hundred
+         * primitives and state words, more texels than an area keeps apart. */
+        busy = below(5) == 0;
+        count = busy ? 150 + below(250) : 20 + below(80);
         for (int n = 0; n < count; n++) {
-            int op = below(100);
+            int op = below(busy ? 74 : 100);
             if (at > (sizeof(batch) / sizeof(batch[0])) - 64) {
                 SoftGpu_Gp0(batch, at);
                 at = 0;
@@ -322,7 +325,7 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
 
 int main(int argc, char **argv)
 {
-    int frames = argc > 1 ? atoi(argv[1]) : 1000;
+    int frames = argc > 1 ? atoi(argv[1]) : 600;
     Outcome now, held, poisoned;
     SoftGpu_HoldClock = hold_clock;
     if (!TextureDump_EnableShadow()) {
@@ -375,6 +378,35 @@ int main(int argc, char **argv)
             SoftGpu_Store(0, 0, 20, 4, deferred ? then : first);
         }
         CHECK(!memcmp(first, then, sizeof(first)) && first[19] == 0x7fff); /* u 13: 589, white */
+        SoftGpu_SetDeferred(0, 0);
+    }
+
+    /* More texels apart than an area keeps: 60 one-texel sprites from 60
+     * places of the 16-bit page at 640,0, then the last one's texel
+     * uploaded anew. The area keeps the last ones merged into others, and
+     * the upload must still raster them first. */
+    {
+        const uint32_t left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u,
+                                 0xe1000000u | 10 | (2u << 7)};
+        uint32_t sprites[60 * 4];
+        uint16_t first[60], then[60], texel = 0x1234;
+        for (int i = 0; i < 60; i++) {
+            sprites[i * 4] = 0x6d808080u;                          /* raw textured 1x1 */
+            sprites[i * 4 + 1] = (uint32_t)(i * 4);                /* at 4i,0 */
+            sprites[i * 4 + 2] = (uint32_t)(i << 8 | (i * 3));    /* u 3i, v i */
+            sprites[i * 4 + 3] = 0;                               /* (no size word: 1x1) */
+        }
+        for (int deferred = 0; deferred < 2; deferred++) {
+            SoftGpu_SetDeferred(0, 0);
+            SoftGpu_Reset();
+            SoftGpu_Fill(0, 0, 1024, 512, 0x0000ff);
+            SoftGpu_SetDeferred(deferred, 0);
+            CHECK(SoftGpu_Gp0(left, 5) == 5);
+            for (int i = 0; i < 60; i++) CHECK(SoftGpu_Gp0(sprites + i * 4, 3) == 3);
+            SoftGpu_Load(640 + 59 * 3, 59, 1, 1, &texel);
+            for (int i = 0; i < 60; i++) SoftGpu_Store(i * 4, 0, 1, 1, (deferred ? then : first) + i);
+        }
+        CHECK(!memcmp(first, then, sizeof(first)) && first[59] == 0x001f);
         SoftGpu_SetDeferred(0, 0);
     }
 

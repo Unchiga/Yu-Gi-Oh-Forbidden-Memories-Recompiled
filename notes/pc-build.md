@@ -2871,8 +2871,12 @@ What is held, and how:
 - A write rasters it first: a load, a move's destination (not the game's
   2x1 move onto itself, which writes nothing), a fill that does not cover
   the area, a primitive rastered at once, into its area or into the texels
-  or palette row it samples (each area keeps up to 32 of those rectangles;
-  past that, any write rasters it).
+  or palette row it samples, unless every word the write would write is
+  already there (the game uploads the same texels and palettes frame after
+  frame; checked under the mask state, only for what is sampled, never for
+  a held area itself). Each area keeps 48 such rectangles; past that a new
+  one is merged into the one it grows least, as long as that does not
+  reach into a held area, else any write rasters the area.
 - What a primitive samples is the part of its page its texture
   coordinates span, not the whole page (`texture_rects`): the game keeps
   textures in pages that reach into the drawing areas' rows (a 256-row page
@@ -2923,12 +2927,14 @@ and the clock is never held.
 
 Checks and tools:
 
-- `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 1000
-  random frames, three seeds, played immediate, deferred and deferred with
+- `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 600
+  random frames (one in five busy, a few hundred primitives), three seeds, played immediate, deferred and deferred with
   poison; two 320x240 areas cleared in turn (now and then one at 0,256),
   polygons, sprites and lines sampling VRAM pages, the other area, a bank
   and the "pack's" pages, between loads, moves (the 2x1 self-move too),
-  fills, stores, settles, tags and shadow cells painted, save states, a mod
+  fills, stores, the same texels uploaded again (one word changed now and
+  then, under any mask state), settles, tags and shadow cells painted,
+  save states, a mod
   binding VRAM and a scale change; a `TextureDump_Prepare` that loads and
   stores in the middle of a batch, as the tick can. Every store, settled
   rectangle, state, a present of the area just drawn (one frame in four)
@@ -2941,7 +2947,10 @@ Checks and tools:
   bank primitives, clearing tags in a replay, the clean check, and a
   sampled rectangle one word wide, without its palette or without a
   sprite's wrap (a fixed case: a sprite past u 255 reading the other,
-  held, area). (Not
+  held, area), an upload taken as unchanged when it is not or when it sets
+  the mask bit, a merged rectangle not grown (a fixed case: 60 sprites
+  reading 60 texels, the last one uploaded anew) or a rectangle taken as
+  within another when it is not. (Not
   checking a primitive's texture against its own area is not caught, and
   needs not be: the queue rasters in order, so a held primitive that reads
   its own area reads what the ones before it drew.)
