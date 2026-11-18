@@ -2992,7 +2992,9 @@ Checks and tools:
 
 - `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 600
   random frames (one in five busy, a few hundred primitives; three in four
-  calm, sampling and writing only right of the buffers), three seeds, played immediate, deferred and deferred with
+  calm, sampling and writing only right of the buffers, a page or 8-bit
+  palette that would wrap past x 1023 into the first buffer's columns
+  taken from rows below them), three seeds, played immediate, deferred and deferred with
   poison; two 320x240 areas cleared in turn (now and then one at 0,256),
   polygons, sprites and lines sampling VRAM pages, the other area, a bank
   and the "pack's" pages, between loads, moves (the 2x1 self-move too),
@@ -3034,9 +3036,18 @@ Checks and tools:
   catches it). A fixed case checks `again`: an area that met a bank holds
   nothing after its next clear (made twice), nor after the one after a
   cycle with a bank, and holds again after a cycle without, or after one
-  given up for its own texture. Calm frames come four at a time (two
-  cycles of each area), or with `again` too few held areas would be
-  dropped for the test's own check. (Not
+  given up for its own texture. Calm frames come four or five at a time
+  (two cycles of each area or so), or with `again` too few held areas
+  would be dropped for the test's own check; four or five so that a busy
+  stretch starts on either area, and the test requires that each area's
+  held work was still held when a busy frame's load, move, fill, store,
+  settle, tags or state came (`SoftGpuDeferredStats.queued` says what each
+  queue holds). Before, the stretches came four at a time and so always
+  began on the first area, and calm frames' textures past x 1023 and 8-bit
+  palettes wrapped into it and gave it up every cycle: the first area held
+  no calm queue while a busy frame ran, which is where the x wrap, the
+  8-bit palettes at x 768 on and the 2x1 self-move land; held primitives
+  rose from 15-18 thousand a seed to 24-29 thousand. (Not
   checking a primitive's texture against its own area is not caught, and
   needs not be: the queue rasters in order, so a held primitive that reads
   its own area reads what the ones before it drew.)

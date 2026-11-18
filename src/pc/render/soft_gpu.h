@@ -88,6 +88,7 @@ enum {
                              * the shadow or the panel in the cycle before (soft_gpu.c, `again`) */
     SOFT_GPU_NOW_COUNT
 };
+#define SOFT_GPU_QUEUES 2
 typedef struct SoftGpuDeferredStats {
     unsigned long long held, dropped, rastered; /* primitives kept back; of them, dropped and rastered */
     unsigned long long immediate;               /* into a full-screen area, rastered at once */
@@ -96,6 +97,10 @@ typedef struct SoftGpuDeferredStats {
     unsigned long long settle_outside_us;       /* of it, outside SoftGpu_Gp0 (a reader's) */
     unsigned long long why[SOFT_GPU_WHY_COUNT];  /* settles, by cause */
     unsigned long long now[SOFT_GPU_NOW_COUNT];  /* immediate primitives, by cause */
+    /* Held now, queue by queue (two drawing areas can hold at once): the
+     * area's corner (-1, -1 for none) and how many primitives it holds. */
+    int queue_x[SOFT_GPU_QUEUES], queue_y[SOFT_GPU_QUEUES];
+    unsigned long long queued[SOFT_GPU_QUEUES];
 } SoftGpuDeferredStats;
 void SoftGpu_DeferredStats(SoftGpuDeferredStats *out);
 #endif

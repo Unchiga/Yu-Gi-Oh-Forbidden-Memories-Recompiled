@@ -36,11 +36,16 @@ static int below(int n) { return (int)(rnd() % (unsigned)n); }
 
 /* Three frames in four are calm, as most of the game's are: what they load,
  * move, fill, store, settle, tag and sample lies right of the drawing areas
- * (x 640 on), so the held work lives until its area's next clear and is
- * dropped there. The others put all of it anywhere. They come four at a
- * time (two cycles of each area), as the game's stretches do: a cycle that
- * met a bank leaves the next one given up (`again`), so calm frames one by
- * one would rarely hold. */
+ * (x 640 on; a texture page or 8-bit palette that would wrap past x 1023
+ * into the first area's columns is taken from rows below the areas), so the
+ * held work lives until its area's next clear and is dropped there. The
+ * others put all of it anywhere. They come four or five at a time (two
+ * cycles of each area or so), as the game's stretches do: a cycle that met
+ * a bank leaves the next one given up (`again`), so calm frames one by one
+ * would rarely hold. Four or five, so that a busy stretch starts on either
+ * area, and either area's calm queue is held while a busy frame's loads,
+ * moves, fills and the rest run (Outcome.over_held: four at a time, the
+ * first area's never was). */
 static int calm, calm_run;
 static int column(int w) { return calm ? 640 + below(384 - w) : below(1024); }
 
@@ -65,6 +70,8 @@ typedef struct Outcome {
     uint64_t vram, tags, shadow, gpu;
     int states_held;   /* states taken while work was held */
     int held_by_mod;   /* primitives held while a mod bound VRAM (must be none) */
+    int over_held[2];  /* a busy frame's loads, moves, fills, stores, settles, tags and states
+                        * made while the other area (0,0 or 320,0) held work */
     SoftGpuDeferredStats stats;
 } Outcome;
 
@@ -129,6 +136,10 @@ static uint32_t page_word(void)
         if (below(2)) page = (uint32_t)(10 + below(6));
     }
     page |= (uint32_t)below(4) << 5 | (uint32_t)below(3) << 7;
+    /* A page whose texels run past x 1023 wraps into the first area's
+     * columns (16 bits from 832 on, 8 from 960): a calm frame's takes the
+     * lower half, so the wrap lands below the areas. */
+    if (calm && (page & 15) * 64 + (64 << ((page >> 7) & 3)) > 1024) page |= 16;
     if (below(12) == 0 && !calm) page |= SOFT_GPU_BANK_TPAGE(3);
     return page;
 }
@@ -136,6 +147,9 @@ static uint32_t page_word(void)
 static uint32_t clut_word(void)
 {
     int x = below(4) == 0 && !calm ? below(40) : 40 + below(24), y = below(4) == 0 ? below(240) : 480 + below(32);
+    /* A calm frame's 8-bit palette from x 768 on wraps past VRAM's edge
+     * into the first area's columns: only in rows below the areas. */
+    if (calm && y < 240 && x > 48) x = 40 + below(9);
     return (uint32_t)(y << 6 | x);
 }
 
@@ -201,10 +215,13 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     SoftGpu_Load(0, 0, 1024, 512, words);
     noise(SoftGpu_Bank(3), 1024 * 512);
     SoftGpu_SetDeferred(deferred, poison);
-    for (int frame = 0; frame < frames; frame++) {
+    for (int frame = 0, run_end = 0; frame < frames; frame++) {
         int area = frame & 1, x0 = area ? 320 : 0, y0 = 0, count = 0, busy;
         size_t at = 0;
-        if (frame % 4 == 0) calm_run = below(4) != 0;
+        if (frame == run_end) { /* four or five: a run may start on either area */
+            calm_run = below(4) != 0;
+            run_end = frame + 4 + below(2);
+        }
         calm = calm_run;
         if (frame % 97 == 50 || frame % 97 == 60) { /* a mod binds VRAM for a while: nothing is held */
             SoftGpuDeferredStats s;
@@ -261,6 +278,13 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
                  * as libgpu.c flushes before any transfer. */
                 SoftGpu_Gp0(batch, at);
                 at = 0;
+                if (!calm && y0 == 0) {
+                    SoftGpuDeferredStats s;
+                    SoftGpu_DeferredStats(&s);
+                    for (int q = 0; q < SOFT_GPU_QUEUES; q++)
+                        if (s.queued[q] && s.queue_y[q] == 0 && s.queue_x[q] == (area ? 0 : 320))
+                            out->over_held[!area]++;
+                }
                 if (op < 80) {
                     int w = 1 + below(64), h = 1 + below(40);
                     noise(words, w * h);
@@ -355,12 +379,15 @@ int main(int argc, char **argv)
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
         CHECK(run(start * 2654435761u, frames, 1, 1, &poisoned) == 0);
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
-        printf("run %u: held %llu (dropped %llu, rastered %llu), at once %llu, states while held %d\n", start,
+        printf("run %u: held %llu (dropped %llu, rastered %llu), at once %llu, states while held %d, "
+               "busy over held 0,0 %d, 320,0 %d\n", start,
                (unsigned long long)held.stats.held, (unsigned long long)held.stats.dropped,
-               (unsigned long long)held.stats.rastered, (unsigned long long)held.stats.immediate, held.states_held);
+               (unsigned long long)held.stats.rastered, (unsigned long long)held.stats.immediate, held.states_held,
+               held.over_held[0], held.over_held[1]);
         CHECK(held.stats.held > (unsigned)frames && held.stats.dropped > (unsigned)frames / 40 && held.stats.rastered > (unsigned)frames);
         CHECK(held.stats.held == held.stats.dropped + held.stats.rastered);
         CHECK(held.states_held > 0);
+        CHECK(held.over_held[0] > 0 && held.over_held[1] > 0); /* both areas' held work met a busy frame */
         CHECK(held.held_by_mod == 0 && poisoned.held_by_mod == 0);
         /* Every rule was met but the panel's and OTHER's (memory, 4M words,
          * widescreen: a mod's VRAM or a scale raster at once without a look). */

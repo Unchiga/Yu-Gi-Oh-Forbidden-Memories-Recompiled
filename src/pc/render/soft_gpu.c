@@ -164,7 +164,7 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  * it never sees a queue or given_up[] half made or half rastered, and never
  * finds `gpu` swapped for a held primitive's state. At 2x and above, with a
  * recorder or with a mod's VRAM, a batch neither holds it nor calls hold. */
-#define HELD_AREAS 2
+#define HELD_AREAS SOFT_GPU_QUEUES
 #define HELD_SAMPLED 48
 #define HELD_WORDS_MAX (4u << 20) /* past this an area's queue is rastered and started again */
 typedef struct HeldEntry {
@@ -832,7 +832,15 @@ void SoftGpu_DeferredStats(SoftGpuDeferredStats *out)
 #if defined(MEMORIES_TRANSLATED) && !defined(MEMORIES_INSTRUMENT_SOFTGPU)
     out = GuestRuntime_ResolveData(out, sizeof(*out));
 #endif
+    int took = held_any;
     *out = deferred_stats;
+    if (took) hold_clock(); /* the queues as they stand, not half made by the tick */
+    for (int a = 0; a < HELD_AREAS; a++) {
+        out->queue_x[a] = held[a].on ? held[a].x : -1;
+        out->queue_y[a] = held[a].on ? held[a].y : -1;
+        out->queued[a] = held[a].on ? held[a].count : 0;
+    }
+    if (took) release_clock();
 }
 
 void SoftGpu_Settle(int x, int y, int w, int h)
