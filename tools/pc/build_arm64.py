@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 
 from build_config import (
+    NOT_LENT_TO_MODS,
     GATED_MODULES,
     MODULE_CONFIG,
     MODULES,
@@ -569,7 +570,7 @@ def generate_mod_exports(
     exports = {
         name: name
         for name in public_symbols
-        if not name.startswith(("GuestRuntime_RegisterUnit_", "Memories_Unhooked_"))
+        if not name.startswith(("GuestRuntime_RegisterUnit_", "Memories_Unhooked_")) and name not in NOT_LENT_TO_MODS
     }
     exports.update(
         {alias: target for alias, target in aliases.items() if target in linked_defs}

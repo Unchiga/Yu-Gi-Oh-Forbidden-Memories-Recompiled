@@ -48,7 +48,7 @@ uint32_t GuestRuntime_EncodePointer(void *pointer)
     return registered_region.guest + (uint32_t)(host - base);
 }
 
-const uint16_t *SoftGpu_Vram(void) { return NULL; }
+const uint16_t *SoftGpu_VramRaw(void) { return NULL; }
 
 static uint16_t *source(void)
 {

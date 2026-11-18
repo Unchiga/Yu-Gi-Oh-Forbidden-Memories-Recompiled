@@ -65,15 +65,17 @@ static void store(uint16_t *bank, int star, const unsigned char *pixels)
 /* The disc's stars' palette, as the boot sheet loaded it. */
 static void star_palette(unsigned short palette[16])
 {
-    memcpy(palette, &SoftGpu_Vram()[STAR_CLUT_Y * SOFT_GPU_WIDTH + STAR_CLUT_X], 16 * sizeof(*palette));
+    SoftGpu_Settle(STAR_CLUT_X, STAR_CLUT_Y, 16, 1);
+    memcpy(palette, &SoftGpu_VramRaw()[STAR_CLUT_Y * SOFT_GPU_WIDTH + STAR_CLUT_X], 16 * sizeof(*palette));
 }
 
 /* A star with no icon: a disc in the stars' colors, its edge in the one
  * the disc's icons outline with and its face in the one they fill with. */
 static void plain_disc(unsigned char *pixels)
 {
-    const uint16_t *vram = SoftGpu_Vram();
+    const uint16_t *vram = SoftGpu_VramRaw();
     int edge_count[16] = {0}, fill_count[16] = {0}, edge = 1, fill = 2, star, x, y, i;
+    SoftGpu_Settle(RETAIL_PAGE_X, 0, 64, 256); /* the disc's icons, on their page */
     /* Count, over the ten icons, which index borders the transparent and
      * which is inside. */
     for (star = 0; star < STARS_RETAIL; star++) {
@@ -165,10 +167,12 @@ int Stars_IconCell(unsigned code, int *tpage, int *u, int *v, int *clut_x, int *
     if (made[star] != 1) return 0;
     /* The bank's palettes are its own: the stars' is copied in each time,
      * as the game may have changed it (a fade). */
+    SoftGpu_Settle(STAR_CLUT_X, STAR_CLUT_Y, 16, 1);
+    SoftGpu_Settle(544, 0xFF, 16, 1);
     memcpy(&bank[STAR_CLUT_Y * SOFT_GPU_WIDTH + STAR_CLUT_X],
-           &SoftGpu_Vram()[STAR_CLUT_Y * SOFT_GPU_WIDTH + STAR_CLUT_X], 16 * sizeof(uint16_t));
+           &SoftGpu_VramRaw()[STAR_CLUT_Y * SOFT_GPU_WIDTH + STAR_CLUT_X], 16 * sizeof(uint16_t));
     /* And the one func_80035E20's shaded pass (GT4) draws over it with. */
-    memcpy(&bank[0xFF * SOFT_GPU_WIDTH + 544], &SoftGpu_Vram()[0xFF * SOFT_GPU_WIDTH + 544], 16 * sizeof(uint16_t));
+    memcpy(&bank[0xFF * SOFT_GPU_WIDTH + 544], &SoftGpu_VramRaw()[0xFF * SOFT_GPU_WIDTH + 544], 16 * sizeof(uint16_t));
     *tpage = ICON_PAGE | (ICON_BANK << 11);
     *u = (star - 1) * SIDE;
     *v = 0;

@@ -326,7 +326,7 @@ static int tiny_index(int code)
 
 static void read_cell(int font_page, char letter, int size, Cell *cell)
 {
-    const uint16_t *vram = SoftGpu_Vram();
+    const uint16_t *vram = SoftGpu_VramRaw();
     int u, v, x, y, large = size == FONT_LARGE;
     memset(cell, 0, sizeof(*cell));
     cell->width = large ? 16 : 8;
@@ -341,6 +341,7 @@ static void read_cell(int font_page, char letter, int size, Cell *cell)
     } else if (!retail_cell(character_sjis((unsigned char)letter), large, &u, &v)) {
         return;
     }
+    SoftGpu_Settle(page_x(font_page) + u / 4, page_y(font_page) + v, (u % 4 + cell->width + 3) / 4, cell->height);
     for (y = 0; y < cell->height; y++) {
         for (x = 0; x < cell->width; x++) {
             int tu = u + x;
@@ -884,8 +885,11 @@ static void store(uint16_t *bank, int n, int size, const Cell *cell)
  * VRAM-shaped and a primitive sampling it takes its palette from it too. */
 static void copy_palettes(uint16_t *bank)
 {
-    const uint16_t *vram = SoftGpu_Vram();
+    const uint16_t *vram = SoftGpu_VramRaw();
     int y;
+    SoftGpu_Settle(640, 0xE8, 16, 0xFF - 0xE8 + 1);
+    SoftGpu_Settle(544, 0xFF, 16, 1);
+    SoftGpu_Settle(656, 0xFA, 256, 1);
     for (y = 0xE8; y <= 0xFF; y++) {
         memcpy(&bank[y * SOFT_GPU_WIDTH + 640], &vram[y * SOFT_GPU_WIDTH + 640], 16 * sizeof(uint16_t));
     }

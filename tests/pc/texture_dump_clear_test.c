@@ -15,7 +15,7 @@ static uint16_t shadow[WORDS * 4 + 2];
 static unsigned char cleared[WORDS];
 static int forget_calls, expected_x, expected_y, expected_w, expected_h, touch_in_forget;
 
-const uint16_t *SoftGpu_Vram(void) { return NULL; }
+const uint16_t *SoftGpu_VramRaw(void) { return NULL; }
 
 static void forget(int x, int y, int w, int h)
 {

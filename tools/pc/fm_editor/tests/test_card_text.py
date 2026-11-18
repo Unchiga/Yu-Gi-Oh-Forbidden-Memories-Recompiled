@@ -344,6 +344,8 @@ PARITY_HARNESS = r"""
 #include "pc/text/glyphs.c"
 static uint16_t vram[SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT];
 const uint16_t *SoftGpu_Vram(void) { return vram; }
+const uint16_t *SoftGpu_VramRaw(void) { return vram; }
+void SoftGpu_Settle(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
 uint16_t *SoftGpu_Bank(int bank) { (void)bank; return NULL; }
 int Log_Wanted(LogChannel c) { (void)c; return 0; }
 void Log_Printf(LogChannel c, const char *f, ...) { (void)c; (void)f; }

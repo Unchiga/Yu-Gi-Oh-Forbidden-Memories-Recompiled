@@ -2873,13 +2873,22 @@ static void apply_capture(int sx, int sy, int dx, int dy, int w, int h)
     capture_uniform();
 }
 
-/* VRAM as the software GPU has it, whole, into its texture. */
+/* VRAM as the software GPU has it, whole, into its texture. Not settled
+ * (soft_gpu.h, SoftGpu_VramRaw): the replay draws the drawing areas'
+ * picture itself, and settling here would raster both areas at every
+ * replay. Nothing is kept back yet, so the copy is whole. Once a raster
+ * keeps work back, the copy is stale where that work lies, and a move
+ * (apply_move copies inside this texture, from the last upload) or a
+ * primitive sampling there would read it: the plan (notes/pc-build.md,
+ * "Settling VRAM before it is read") is to record the settled words as an
+ * OP_LOAD when a settle crosses held work while a recorder is on. A resync
+ * settles first. */
 static void upload_vram(void)
 {
     glBindTexture(GL_TEXTURE_2D, vram_texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT, GL_RED_INTEGER, GL_UNSIGNED_SHORT,
-                    SoftGpu_Vram());
+                    SoftGpu_VramRaw());
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     stats.vram_uploads++;
 }
@@ -2888,6 +2897,7 @@ static void upload_vram(void)
  * scale of 1 there is no picture: the state words still count. */
 static void resync(int wanted, const uint32_t words[6])
 {
+    SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* read whole, as it is now */
     vertex_count = 0;
     run_count = 0;
     capture_rect[2] = capture_rect[3] = 0; /* VRAM may be anything now */

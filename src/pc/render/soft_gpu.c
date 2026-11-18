@@ -120,7 +120,29 @@ static void picture_from_words(int x, int y, int w, int h)
 static const int8_t dither_matrix[4][4] = {
     {-4, 0, -3, 1}, {2, -2, 3, -1}, {-3, 1, -4, 0}, {3, -1, 2, -2}};
 
+void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
+
+/* Nothing is kept back yet: every primitive is rastered as it comes
+ * (soft_gpu.h). The readers already say what they read. */
+void SoftGpu_Settle(int x, int y, int w, int h)
+{
+    if (w <= 0 || h <= 0) return;
+    if (SoftGpu_SettleObserver) SoftGpu_SettleObserver(x, y, w, h);
+}
+
+void SoftGpu_SettleTexture(int depth, int page_x, int page_y, int clut_x, int clut_y)
+{
+    SoftGpu_Settle(page_x, page_y, depth == 0 ? 64 : depth == 1 ? 128 : 256, 256);
+    if (depth < 2) SoftGpu_Settle(clut_x, clut_y, depth == 0 ? 16 : 256, 1);
+}
+
 const uint16_t *SoftGpu_Vram(void)
+{
+    SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
+    return vram;
+}
+
+const uint16_t *SoftGpu_VramRaw(void)
 {
     return vram;
 }
@@ -148,6 +170,8 @@ static void resync_recorder(void)
 {
     uint32_t words[6];
     if (!recorder) return;
+    /* The recorder takes VRAM whole: both callers (SoftGpu_SetRecorder,
+     * SoftGpu_PictureFromVram) have settled it. */
     SoftGpu_StateWords(words);
     recorder->resync(scale, words);
 }
@@ -188,6 +212,9 @@ int SoftGpu_SetScale(int wanted)
     int rastered;
     if (wanted != 1 && wanted != 2 && wanted != 4 && wanted != 8) return 0;
     if (wanted == scale) return 1;
+    /* Before the picture and the scale change: what was kept back is drawn
+     * the way it came. */
+    SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     rastered = wide_rastered();
     if (wanted > 1 && !recorder) {
         made = calloc((size_t)SOFT_GPU_WIDTH * wanted * SOFT_GPU_HEIGHT * wanted, sizeof(*made));
@@ -209,10 +236,16 @@ int SoftGpu_SetScale(int wanted)
 
 int SoftGpu_Scale(void) { return scale; }
 
-const uint32_t *SoftGpu_Picture(void) { return picture; }
+/* The software picture is drawn with the words: settled with them. */
+const uint32_t *SoftGpu_Picture(void)
+{
+    if (picture) SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
+    return picture;
+}
 
 void SoftGpu_PictureFromVram(void)
 {
+    SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     if (picture) picture_from_words(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     resync_recorder();
 }
@@ -223,6 +256,7 @@ void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
     if (wanted) wanted = GuestRuntime_ResolveData((void *)wanted, sizeof(*wanted));
 #endif
     if (wanted == recorder) return;
+    SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* as SetScale */
     recorder = wanted;
     if (recorder) {
         free(picture);
@@ -373,7 +407,10 @@ const uint32_t *SoftGpu_WidePicture(int x, int y, int w, int h)
     for (int t = 0; t < WIDE_TARGETS; t++) {
         WideTarget *wt = &wide[t];
         if (wt->pixels && wt->x1 == x && wt->y1 == y && wt->x2 - wt->x1 + 1 == w &&
-            wt->y2 - wt->y1 + 1 >= h) return wt->picture;
+            wt->y2 - wt->y1 + 1 >= h) {
+            if (wt->picture) SoftGpu_Settle(x, y, w, h); /* drawn with the area's words */
+            return wt->picture;
+        }
     }
     return NULL;
 }
@@ -387,6 +424,9 @@ int SoftGpu_WideFrameView(int x, int y, int w, int h, const uint16_t **pixels, i
     for (t = 0; t < WIDE_TARGETS; t++) {
         const WideTarget *wt = &wide[t];
         if (wt->pixels && wt->x1 == x && wt->y1 == y && wt->x2 - wt->x1 + 1 == w && wt->y2 - wt->y1 + 1 >= h) {
+            /* Rastered with the area, unless a recorder draws it (then
+             * these words are not shown and there is nothing to settle). */
+            if (wide_rastered()) SoftGpu_Settle(x, y, w, h);
             *pixels = wt->pixels;
             *out_x = x;
             *out_w = w + 2 * wt->margin;
@@ -405,6 +445,7 @@ int SoftGpu_WideFrame(int x, int y, int w, int h, const uint16_t **pixels, int *
     for (t = 0; t < WIDE_TARGETS; t++) {
         WideTarget *wt = &wide[t];
         if (wt->pixels && wt->x1 == x && wt->y1 == y && wt->x2 - wt->x1 + 1 == w && wt->y2 - wt->y1 + 1 >= h) {
+            if (wide_rastered()) SoftGpu_Settle(x, y, w, h); /* as SoftGpu_WideFrameView */
             if (!wt->drawn) {
                 /* Nothing was drawn since it was last shown (a movie, or a
                  * still loaded straight into VRAM): the sides are stale. */
@@ -430,6 +471,7 @@ int SoftGpu_WideFrame(int x, int y, int w, int h, const uint16_t **pixels, int *
 static void load_words(int x, int y, int w, int h, const uint16_t *pixels)
 {
     int i, j;
+    if (gpu.mask_check) SoftGpu_Settle(x, y, w, h); /* the mask bits it keeps */
     if (TextureDump_Tags) TextureDump_Loaded(x, y, w, h, pixels);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
@@ -449,6 +491,7 @@ void SoftGpu_Store(int x, int y, int w, int h, uint16_t *pixels)
     if (w > 0 && h > 0) pixels = GuestRuntime_ResolveData(pixels, (size_t)w * (size_t)h * sizeof(*pixels));
 #endif
     int i, j;
+    SoftGpu_Settle(x, y, w, h);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
             pixels[j * w + i] = *vram_pixel(x + i, y + j);
@@ -459,6 +502,10 @@ void SoftGpu_Store(int x, int y, int w, int h, uint16_t *pixels)
 static void move_words(int sx, int sy, int dx, int dy, int w, int h)
 {
     int i, j;
+    /* Onto itself without the mask (the game's 2x1 at 0,0 every frame) it
+     * changes nothing and reads nothing. */
+    if (sx != dx || sy != dy || gpu.mask_set || gpu.mask_check) SoftGpu_Settle(sx, sy, w, h);
+    if (gpu.mask_check) SoftGpu_Settle(dx, dy, w, h); /* the mask bits it keeps */
     if (TextureDump_Tags) TextureDump_Moved(sx, sy, dx, dy, w, h);
     for (j = 0; j < h; j++) {
         /* Overlapping copies read each row forwards, as the hardware does. */
@@ -535,6 +582,8 @@ void SoftGpu_Move(int sx, int sy, int dx, int dy, int w, int h)
 
 void SoftGpu_Capture(int sx, int sy, int dx, int dy, int w, int h)
 {
+    /* The copy stands for what the StoreImage before it read there. */
+    SoftGpu_Settle(sx, sy, w, h);
     if (recorder && scale > 1 && recorder->capture) recorder->capture(sx, sy, dx, dy, w, h);
 }
 
@@ -1207,6 +1256,8 @@ static size_t polygon(const uint32_t *words, size_t count)
             if (v[i].v < v0) v0 = v[i].v;
             if (v[i].v > v1) v1 = v[i].v;
         }
+        /* It reads the texels as the primitive comes, not as it is drawn. */
+        if (texture_source == vram) SoftGpu_SettleTexture(gpu.depth, gpu.page_x, gpu.page_y, gpu.clut_x, gpu.clut_y);
         TextureDump_Primitive(texture_source, gpu.page_x, gpu.page_y, gpu.depth, gpu.clut_x, gpu.clut_y, u0, v0,
                               u1 > u0 ? u1 - 1 : u1, v1 > v0 ? v1 - 1 : v1);
     }
@@ -1321,6 +1372,7 @@ static size_t rectangle(const uint32_t *words, size_t count)
                     ? TextureDump_Prepare(gpu.page_x, gpu.page_y, gpu.depth, gpu.clut_x, gpu.clut_y, base.u, base.v)
                     : 0;
     if (textured && TextureDump_Enabled && w && h) {
+        if (texture_source == vram) SoftGpu_SettleTexture(gpu.depth, gpu.page_x, gpu.page_y, gpu.clut_x, gpu.clut_y);
         TextureDump_Primitive(texture_source, gpu.page_x, gpu.page_y, gpu.depth, gpu.clut_x, gpu.clut_y, base.u,
                               base.v, base.u + w - 1, base.v + h - 1);
     }
@@ -1513,5 +1565,8 @@ void *SoftGpu_StateData(int index, size_t *size)
     size = GuestRuntime_ResolveData(size, sizeof(*size));
 #endif
     *size = index ? sizeof(gpu) : sizeof(vram);
+    /* Saved as it is drawn; a load writes it whole (and then calls
+     * SoftGpu_PictureFromVram). */
+    if (!index) SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
     return index ? (void *)&gpu : (void *)vram;
 }
