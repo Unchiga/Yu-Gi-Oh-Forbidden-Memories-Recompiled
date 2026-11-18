@@ -320,7 +320,9 @@ def process(operation, text, **options):
     return json.loads(result) if operation == "inspect" else result
 
 
-def translate(text, pinned=None, registration=None, *, game_unit=False, hooks=False):
+def translate(text, pinned=None, registration=None, *, game_unit=False, hooks=False, lower=True):
+    """`lower` False: the accesses are left as they are and only the globals are
+    registered (guest_ir.cpp keepUnlowered; build_arm64.py UNLOWERED)."""
     return process(
         "translate",
         text,
@@ -328,6 +330,7 @@ def translate(text, pinned=None, registration=None, *, game_unit=False, hooks=Fa
         game_unit=game_unit,
         hooks=hooks,
         **({"registration": registration} if registration else {}),
+        **({} if lower else {"lower": False}),
     )
 
 

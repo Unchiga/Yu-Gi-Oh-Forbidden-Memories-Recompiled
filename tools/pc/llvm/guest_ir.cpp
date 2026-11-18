@@ -4,6 +4,7 @@
 // the IR it writes, so an SDK ships a copy built against its own clang's LLVM
 // (tools/pc/build_sdk_guest_ir.py).
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
@@ -23,6 +24,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <string>
 #include "../../../src/pc/memory_map.h"
 
@@ -503,11 +505,95 @@ class GuestMemoryPass : public PassInfoMixin<GuestMemoryPass> {
       }
     }
   }
+  // A unit translated with "lower": false (build_arm64.py UNLOWERED) keeps its
+  // code as compiled: every access goes straight to the host address it has,
+  // as in an ordinary unit. It still registers its globals as a lowered unit
+  // does (same globals, order, sizes, identities and flags), so every guest
+  // token handed out after it, and the region table a save state records,
+  // stay where they were. What the pass would have lowered is refused here,
+  // since the code would use it raw: a guest-width pointer; a guest address
+  // (a pinned symbol, applyPins), in the code or in a global's initializer;
+  // a pointer narrowed to a guest word (ptrtoint or trunc to 32 bits or
+  // less); a pointer made from a runtime integer (inttoptr); an indirect
+  // call (the pass resolves its target); and the hooks option (the pass
+  // builds hooks only when it lowers).
+  void keepUnlowered(Module &module) {
+    if (options.getBoolean("hooks").value_or(false))
+      fail("unlowered unit with hooks: they are built only for a lowered unit");
+    auto guestPointer = [](Type *type) {
+      auto *pointer = dyn_cast<PointerType>(type->getScalarType());
+      return pointer && pointer->getAddressSpace() != 0;
+    };
+    auto narrow = [](Type *type) {
+      auto *integer = dyn_cast<IntegerType>(type->getScalarType());
+      return integer && integer->getBitWidth() <= 32;
+    };
+    auto fromPointer = [](const Value *value) {
+      auto *op = dyn_cast<Operator>(value);
+      return op && op->getOpcode() == Instruction::PtrToInt;
+    };
+    SmallPtrSet<const Constant *, 32> seen;
+    std::function<const char *(const Constant *)> guestConstant = [&](const Constant *constant) -> const char * {
+      if (isa<GlobalValue>(constant) || !seen.insert(constant).second) return nullptr;
+      if (auto *expression = dyn_cast<ConstantExpr>(constant)) {
+        if (expression->getOpcode() == Instruction::IntToPtr)
+          if (auto *address = dyn_cast<ConstantInt>(expression->getOperand(0)))
+            if (address->getValue().getActiveBits() <= 32) return "a guest address";
+        if (narrow(expression->getType()) && (expression->getOpcode() == Instruction::PtrToInt ||
+            (expression->getOpcode() == Instruction::Trunc && fromPointer(expression->getOperand(0)))))
+          return "a pointer narrowed to a guest word";
+      }
+      for (auto &use : constant->operands())
+        if (auto *operand = dyn_cast<Constant>(use.get()))
+          if (auto *found = guestConstant(operand)) return found;
+      return nullptr;
+    };
+    for (auto &global : module.globals())
+      if (global.hasInitializer())
+        if (auto *found = guestConstant(global.getInitializer()))
+          fail(std::string("unlowered unit with ") + found + " in the initializer of " + global.getName().str());
+    for (auto &function : module) {
+      std::string name = function.getName().str();
+      if (guestPointer(function.getReturnType()) ||
+          any_of(function.args(), [&](Argument &argument) { return guestPointer(argument.getType()); }))
+        fail("unlowered unit with a guest pointer: " + name);
+      for (auto &instruction : instructions(function)) {
+        if (guestPointer(instruction.getType()) ||
+            any_of(instruction.operands(), [&](Use &use) { return guestPointer(use->getType()); }))
+          fail("unlowered unit with a guest pointer: " + name);
+        for (auto &use : instruction.operands())
+          if (auto *constant = dyn_cast<Constant>(use.get()))
+            if (auto *found = guestConstant(constant))
+              fail(std::string("unlowered unit with ") + found + ": " + name);
+        if (narrow(instruction.getType()) && (isa<PtrToIntInst>(instruction) ||
+            (isa<TruncInst>(instruction) && fromPointer(instruction.getOperand(0)))))
+          fail("unlowered unit with a pointer narrowed to a guest word: " + name);
+        if (isa<IntToPtrInst>(instruction))
+          fail("unlowered unit with a pointer made from an integer: " + name);
+        if (auto *call = dyn_cast<CallBase>(&instruction))
+          if (!call->getCalledFunction() && !call->isInlineAsm())
+            fail("unlowered unit with an indirect call: " + name);
+      }
+      // Clang's -O0 marks every function optnone and noinline (the guest
+      // frontend's -O0): both go, so the code is optimized as an ordinary
+      // unit's is. A noinline written in the source cannot be told from
+      // -O0's and goes too.
+      if (function.hasFnAttribute(Attribute::OptimizeNone)) {
+        function.removeFnAttr(Attribute::OptimizeNone);
+        function.removeFnAttr(Attribute::NoInline);
+      }
+    }
+  }
 public:
   explicit GuestMemoryPass(const json::Object &options) : options(options) {}
   PreservedAnalyses run(Module &module, ModuleAnalysisManager &) {
     validateMod(module);
     applyPins(module);
+    if (!options.getBoolean("lower").value_or(true)) {
+      keepUnlowered(module);
+      registerGlobals(module, {});
+      return PreservedAnalyses::none();
+    }
     auto originals = prepareInstructions(module);
     rewriteInstructions(module, originals);
     auto hooks = buildHooks(module);

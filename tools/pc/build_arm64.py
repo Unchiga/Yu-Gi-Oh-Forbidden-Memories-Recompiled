@@ -87,6 +87,27 @@ ORDINARY = {
     "src/pc/debug/symbols.c",
 }
 
+# Ordinary code that keeps its guest tokens: the unit goes through the guest
+# pass with "lower": false (guest_ir.cpp keepUnlowered), so its accesses are
+# plain host loads and stores at O2, as an ORDINARY unit's, while its globals
+# are registered just as a lowered unit's are, in the same place in the
+# registration order. Every token handed out after it, and the region table
+# an Android save state records (translated_state_memory.c), stay as they
+# were, so states saved before a unit moved here still load. Its exports and
+# their signatures for mods are unchanged too (though their pointer
+# arguments are now host pointers only, as an ordinary unit's are). Both
+# arm64 translated builds, Android and macOS. A unit belongs here when it
+# holds nothing the pass would have lowered (the pass refuses it: guest
+# pointers and addresses, pointers narrowed to 32 bits, inttoptr, indirect
+# calls, hooks) and every pointer it is handed is a host one
+# (notes/pc-build.md, "Unlowered units").
+UNLOWERED = {
+    # The audio thread's mixer, Spu_Mix: on a Galaxy A22, 7.6% of the app's
+    # cycles on the duel field and 20% in a 3D battle when every access went
+    # through GuestRuntime_ResolveData; 2.9% and 7.4% unlowered.
+    "src/pc/audio/spu.c",
+}
+
 
 def definitions(ir):
     return set(inspect(ir)["definitions"])
@@ -402,6 +423,7 @@ def compile_guest_units(jobs, ordinary, raw_text, pin_maps, path_for, cc, sdk, a
                 routine,
                 game_unit=group != "native",
                 hooks=group != "native" or "/overrides/" in source,
+                lower=source not in UNLOWERED,
             )
         except TranslationError as error:
             path_for("logs", source, ".transform.log").write_text(str(error))
@@ -818,6 +840,15 @@ def main():
         ordinary.add("src/pc/compat/gte.c")
         # This adapter already resolves complete guest OT spans explicitly.
         ordinary.add("src/pc/compat/libgs_ot.c")
+    # A misspelt or moved UNLOWERED entry would leave its unit lowered without
+    # a word, and one that is also ordinary would lose its tokens.
+    for source in sorted(UNLOWERED):
+        if not (ROOT / source).is_file():
+            raise SystemExit(f"UNLOWERED: {source} does not exist")
+        if source not in natives:
+            raise SystemExit(f"UNLOWERED: {source} is not one of this target's native units")
+        if source in ordinary or source in ORDINARY:
+            raise SystemExit(f"UNLOWERED: {source} is ordinary too; a unit is one or the other")
     # Local independent runtime helpers must never resolve their own accesses.
     flags = [
         *guest_frontend_flags(sdk),
