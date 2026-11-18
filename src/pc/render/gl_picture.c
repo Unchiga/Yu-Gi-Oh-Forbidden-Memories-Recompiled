@@ -2873,13 +2873,18 @@ static void apply_capture(int sx, int sy, int dx, int dy, int w, int h)
     capture_uniform();
 }
 
-/* VRAM as the software GPU has it, whole, into its texture. */
+/* VRAM as the software GPU has it, whole, into its texture. Not settled
+ * (soft_gpu.h, SoftGpu_VramRaw): the texture is for what primitives
+ * sample, and the replay draws the drawing areas' picture itself; settling
+ * here would raster every frame's areas at every replay. The game never
+ * textures from an area it draws in except through a move, which settles
+ * its source before copying. A resync settles first. */
 static void upload_vram(void)
 {
     glBindTexture(GL_TEXTURE_2D, vram_texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT, GL_RED_INTEGER, GL_UNSIGNED_SHORT,
-                    SoftGpu_Vram());
+                    SoftGpu_VramRaw());
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     stats.vram_uploads++;
 }
@@ -2888,6 +2893,7 @@ static void upload_vram(void)
  * scale of 1 there is no picture: the state words still count. */
 static void resync(int wanted, const uint32_t words[6])
 {
+    SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* read whole, as it is now */
     vertex_count = 0;
     run_count = 0;
     capture_rect[2] = capture_rect[3] = 0; /* VRAM may be anything now */

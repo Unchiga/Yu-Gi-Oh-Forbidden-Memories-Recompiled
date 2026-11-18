@@ -694,7 +694,7 @@ int CardLayoutArt_TitleCell(int source_tpage, int source_u, int source_v, int so
                             int *tpage, int *u, int *v, int *clut, int *w, int *h)
 {
     uint16_t *bank = SoftGpu_Bank(FRAME_BANK);
-    const uint16_t *vram = SoftGpu_Vram();
+    const uint16_t *vram = SoftGpu_VramRaw();
     int page_x, page_y = TITLE_PAGE_Y, slot;
     int depth = (source_tpage >> 7) & 3;
     int src_x = (source_tpage & 0xF) * 64, src_y = ((source_tpage >> 4) & 1) * 256;
@@ -715,6 +715,8 @@ int CardLayoutArt_TitleCell(int source_tpage, int source_u, int source_v, int so
         return 0;
     }
     title_unavailable_reported = 0;
+    /* The title's texels, in the source page (title_source_fits). */
+    SoftGpu_Settle(src_x, src_y, depth == 0 ? 64 : depth == 1 ? 128 : 256, 256);
     hash = title_source_hash(vram, src_x, src_y, depth, source_u, source_v);
     for (slot = 0; slot < TITLE_SLOTS; slot++) {
         TitleMaskCache *mask = &title_masks[slot];

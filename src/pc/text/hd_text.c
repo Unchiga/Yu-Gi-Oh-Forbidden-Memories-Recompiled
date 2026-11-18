@@ -759,13 +759,14 @@ static int make_atlas(int wanted)
 
 int HdText_Cell(int bank, int page_x, int page_y, int large, int u, int v, int wanted, int *atlas_u, int *atlas_v)
 {
-    const uint16_t *words = bank ? SoftGpu_BankPixels(bank) : SoftGpu_Vram();
+    const uint16_t *words = bank ? SoftGpu_BankPixels(bank) : SoftGpu_VramRaw();
     unsigned char cell[CELL][CELL];
     uint32_t key, sum;
     unsigned at;
     int seen = 1;
     Entry *entry;
     if (wanted < 2 || wanted > MAX_FACTOR || !words || (bank && bank != GLYPHS_BANK)) return 0;
+    if (!bank) SoftGpu_Settle(page_x, page_y, 64, 256); /* the cell, and the font measured over its page */
     if (wanted != factor && !make_atlas(wanted)) return 0;
     key = 0x8000000u | (uint32_t)bank << 22 | (uint32_t)(page_x / 64) << 18 | (uint32_t)(page_y / 256) << 17 |
           (uint32_t)(large != 0) << 16 | (uint32_t)(u & 255) << 8 | (uint32_t)(v & 255);
@@ -855,7 +856,7 @@ static uint32_t title_sum(const uint16_t *words, int x, int y)
 
 void HdText_TitleUploaded(int card, int x, int y)
 {
-    const uint16_t *words = SoftGpu_Vram();
+    const uint16_t *words = SoftGpu_VramRaw();
     TitleUpload *upload = NULL;
     unsigned i;
     /* A card pack's plate (Cards_OverrideArt) is not the card's name: it
@@ -866,6 +867,7 @@ void HdText_TitleUploaded(int card, int x, int y)
         if (title_uploads[i].card && title_uploads[i].x == x && title_uploads[i].y == y) upload = &title_uploads[i];
     }
     if (!upload) upload = &title_uploads[title_upload_next++ % TITLE_UPLOADS];
+    SoftGpu_Settle(x, y, CARD_TITLE_WIDTH / 4, CARD_TITLE_HEIGHT);
     upload->x = x;
     upload->y = y;
     upload->sum = title_sum(words, x, y);
@@ -881,7 +883,7 @@ int HdText_Title(int page_x, int page_y, int u, int v, int wanted, int *atlas_u,
 int HdText_TitleCard(int page_x, int page_y, int u, int v, int wanted, int *atlas_u, int *atlas_v, int *title_u,
                      int *title_v, int *card)
 {
-    const uint16_t *words = SoftGpu_Vram();
+    const uint16_t *words = SoftGpu_VramRaw();
     int vx = page_x + (u & 255) / 4, vy = page_y + (v & 255), i, place = -1, oldest = 0;
     const TitleUpload *upload = NULL;
     char name[128];
@@ -896,6 +898,7 @@ int HdText_TitleCard(int page_x, int page_y, int u, int v, int wanted, int *atla
         }
     }
     /* Words written over since are not a title any more. */
+    if (upload) SoftGpu_Settle(upload->x, upload->y, CARD_TITLE_WIDTH / 4, CARD_TITLE_HEIGHT);
     if (!upload || title_sum(words, upload->x, upload->y) != upload->sum) return 0;
     if (!Cards_NameUtf8(upload->card, name, sizeof(name))) return 0;
     for (c = name; *c; c++) hash = (hash ^ (unsigned char)*c) * 16777619u;
@@ -940,6 +943,7 @@ static int texel(const uint16_t *words, int depth, int page_x, int page_y, int u
 /* A palette entry as 0-255 red, green, blue. */
 static void color(const uint16_t *words, int clut_x, int clut_y, int index, double rgb[3])
 {
+    SoftGpu_Settle(clut_x + index, clut_y, 1, 1);
     uint16_t word = words[(clut_y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + ((clut_x + index) & (SOFT_GPU_WIDTH - 1))];
     rgb[0] = (word & 31) * 8.0;
     rgb[1] = ((word >> 5) & 31) * 8.0;
@@ -1513,6 +1517,7 @@ static uint32_t read_label(const uint16_t *words, const Label *l, unsigned char 
 {
     uint32_t sum = 2166136261u;
     int i, x, y, at = 0;
+    SoftGpu_Settle(l->page_x, l->page_y, l->depth ? 128 : 64, 256);
     memset(texels, 0, 16 * 64);
     for (i = 0; i < l->pieces; i++) {
         for (y = 0; y < l->rect[i][3]; y++) {
@@ -1766,7 +1771,7 @@ static int make_name(const uint16_t *words, const char *name, int which, int *wi
 
 int HdText_NameBox(int wanted, int which, int *atlas_u, int *atlas_v, int *x, int *y, int *width, int *height)
 {
-    const uint16_t *words = SoftGpu_Vram();
+    const uint16_t *words = SoftGpu_VramRaw();
     int duelist = Tables_OpponentId();
     const char *name = Text_OpponentName(duelist);
     /* A mod's "ui" may put words of its own in place of COM or YOU
@@ -1775,6 +1780,7 @@ int HdText_NameBox(int wanted, int which, int *atlas_u, int *atlas_v, int *x, in
     const char *label = which >= 0 && which <= 1 ? DuelUi_Label(which) : NULL;
     if (!label && !Settings_Get(SET_OPPONENT_NAME)) return 0;
     if (label && !which) name = label;
+    SoftGpu_Settle(PANEL_PAGE_X, PANEL_PAGE_Y, 64, 256); /* the panel; color() its palette */
     if (!name || which < 0 || which > 1 || wanted < 1 || wanted > MAX_FACTOR || !words ||
         panel_sum(words) != PANEL_SUM) {
         return 0;
@@ -1880,12 +1886,13 @@ static int label_match(const uint16_t *words, Label *l, int u, int v, int w, int
 int HdText_FieldWord(int depth, int page_x, int page_y, int clut_x, int clut_y, int u, int v, int w, int h,
                      int wanted, int *atlas_u, int *atlas_v)
 {
-    const uint16_t *words = SoftGpu_Vram();
+    const uint16_t *words = SoftGpu_VramRaw();
     int active = Fields_Active();
     unsigned i;
     if (active < 0 || !Fields_HasCustomName(active) || wanted < 2 || wanted > MAX_FACTOR || !words || w < 1 || h < 1) {
         return 0;
     }
+    SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y); /* read_label settles the others' */
     make_labels();
     for (i = 0; i < (unsigned)label_count; i++) {
         Label *l = &labels[i];
@@ -1904,9 +1911,12 @@ int HdText_FieldWord(int depth, int page_x, int page_y, int clut_x, int clut_y, 
 int HdText_Hud(int depth, int page_x, int page_y, int clut_x, int clut_y, int u, int v, int w, int h, int wanted,
                int *atlas_u, int *atlas_v)
 {
-    const uint16_t *words = SoftGpu_Vram();
+    const uint16_t *words = SoftGpu_VramRaw();
     unsigned i;
     if (wanted < 2 || wanted > MAX_FACTOR || !words || w < 1 || h < 1) return 0;
+    /* The panel, a label or a digit sheet, all on this page; color() and
+     * read_label settle palettes and other labels' pages. */
+    SoftGpu_SettleTexture(depth, page_x, page_y, clut_x, clut_y);
     /* The whole panel or a piece of it: a mod's "limits" past 9999 LP draw
      * its right half again beside a copy to widen it
      * (duel_draw_status_numbers.c, LIFE_POINT_PANEL_SPLIT), and a mod's "ui"

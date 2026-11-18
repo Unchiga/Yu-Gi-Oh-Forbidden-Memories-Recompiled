@@ -345,6 +345,11 @@ if(BUILD_TESTING)
     add_executable(memories_soft_gpu_test tests/pc/soft_gpu_test.c)
     target_link_libraries(memories_soft_gpu_test PRIVATE memories_pc_core)
     add_test(NAME pc_soft_gpu COMMAND memories_soft_gpu_test)
+    # Each reader inside the software GPU settles what it reads
+    # (notes/pc-build.md, "Settling VRAM before it is read").
+    add_executable(memories_soft_gpu_settle_test tests/pc/soft_gpu_settle_test.c)
+    target_link_libraries(memories_soft_gpu_settle_test PRIVATE memories_pc_core)
+    add_test(NAME pc_soft_gpu_settle COMMAND memories_soft_gpu_settle_test)
     add_executable(memories_settings_test tests/pc/settings_test.c src/pc/platform/settings.c
         src/pc/platform/paths.c)
     target_include_directories(memories_settings_test PRIVATE src)
@@ -1293,6 +1298,10 @@ if(Python3_Interpreter_FOUND)
         # Native units that name files reach compat/fs.h (notes/pc-build.md).
         add_test(NAME pc_utf8_paths
             COMMAND "${Python3_EXECUTABLE}" tools/pc/check_utf8_paths.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # And so do the readers outside it (the same notes, "Settling").
+        add_test(NAME pc_vram_readers
+            COMMAND "${Python3_EXECUTABLE}" tools/pc/check_vram_readers.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endif()
 endif()

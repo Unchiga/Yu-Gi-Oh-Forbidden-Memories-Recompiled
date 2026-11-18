@@ -45,6 +45,8 @@ void Log_Printf(LogChannel channel, const char *format, ...) { (void)channel; (v
 static uint16_t bank[SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT];
 uint16_t *SoftGpu_Bank(int which) { return which == 13 ? bank : NULL; }
 const uint16_t *SoftGpu_Vram(void) { return NULL; }
+const uint16_t *SoftGpu_VramRaw(void) { return NULL; }
+void SoftGpu_Settle(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
 
 int CardArt_ImageSize(const char *path, int *width, int *height)
 {

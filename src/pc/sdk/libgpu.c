@@ -38,6 +38,14 @@ static uint32_t frame_words[MAX_FRAME_WORDS];
 static uint32_t frame_addresses[MAX_FRAME_WORDS]; /* where each was in guest RAM (PGXP) */
 static size_t pending_words;
 static void flush_drawing(void);
+
+/* VRAM for showing the display area, w x h words from where it starts
+ * (a 24-bit row is one and a half times as many), settled there. */
+static const uint16_t *display_words(int w, int h)
+{
+    SoftGpu_Settle(disp_env.disp.x, disp_env.disp.y, disp_env.isrgb24 ? (w * 3 + 1) / 2 : w, h);
+    return SoftGpu_VramRaw();
+}
 #define MAX_FRAME_PRECISE 65536
 static PgxpVertex frame_precise[MAX_FRAME_PRECISE];
 static size_t pending_precise;
@@ -113,9 +121,10 @@ static uint32_t *displayed_picture(int full_vram, int scaled, int *out_w, int *o
     int x, y, w = disp_env.disp.w > 0 ? disp_env.disp.w : 320;
     int h = disp_env.disp.h > 0 ? disp_env.disp.h : 240;
     int x0 = full_vram ? 0 : disp_env.disp.x, y0 = full_vram ? 0 : disp_env.disp.y, wide_view = 0;
-    const uint16_t *source = SoftGpu_Vram();
+    const uint16_t *source;
     uint32_t *out;
     flush_drawing();
+    source = SoftGpu_Vram(); /* after the flush: what it drew is read too */
     if (full_vram) {
         w = SOFT_GPU_WIDTH;
         h = SOFT_GPU_HEIGHT;
@@ -190,7 +199,7 @@ static uint32_t *displayed_picture(int full_vram, int scaled, int *out_w, int *o
         for (x = 0; x < w; x++) {
             uint16_t c = source[((y0 + y) & 511) * SOFT_GPU_WIDTH + ((x0 + x) & 1023)];
             if (disp_env.isrgb24 && !full_vram) {
-                const uint8_t *rgb = (const uint8_t *)&SoftGpu_Vram()[((y0 + y) & 511) * SOFT_GPU_WIDTH + x0] + x * 3;
+                const uint8_t *rgb = (const uint8_t *)&SoftGpu_VramRaw()[((y0 + y) & 511) * SOFT_GPU_WIDTH + x0] + x * 3;
                 out[(size_t)y * w + x] = 0xFF000000u | (uint32_t)rgb[0] << 16 | (uint32_t)rgb[1] << 8 | rgb[2];
                 continue;
             }
@@ -275,9 +284,10 @@ static void present_wide(int w, int h)
         /* The backend could not show its own (no room for its target), and
          * these pixels were left to it: 4:3 between black sides, below. */
     }
+    const uint16_t *vram = display_words(w, h); /* x, y: the display area's */
     for (row = 0; row < h; row++) {
         uint8_t *out = (uint8_t *)(sides + row * SOFT_GPU_WIDTH * 2);
-        const uint8_t *in = (const uint8_t *)(SoftGpu_Vram() + ((y + row) & 511) * SOFT_GPU_WIDTH);
+        const uint8_t *in = (const uint8_t *)(vram + ((y + row) & 511) * SOFT_GPU_WIDTH);
         int size = disp_env.isrgb24 ? 3 : 2;
         memset(out, 0, (size_t)(w + 2 * margin) * (size_t)size);
         if (disp_env.isrgb24) {
@@ -352,7 +362,7 @@ static void frame_hash(void)
 void Memories_ShowStill(void)
 {
     int w = disp_env.disp.w > 0 ? disp_env.disp.w : 320, h = disp_env.disp.h > 0 ? disp_env.disp.h : 240;
-    Platform_Present(SoftGpu_Vram(), SOFT_GPU_WIDTH, disp_env.disp.x, disp_env.disp.y, w, h, disp_env.isrgb24);
+    Platform_Present(display_words(w, h), SOFT_GPU_WIDTH, disp_env.disp.x, disp_env.disp.y, w, h, disp_env.isrgb24);
 }
 
 void Memories_PresentDisplay(void)
@@ -441,7 +451,7 @@ void Memories_PresentDisplay(void)
         if (at_scale <= 1 || disp_env.isrgb24 ||
             !Platform_PresentPicture(SoftGpu_Picture(), SOFT_GPU_WIDTH * at_scale, disp_env.disp.x * at_scale,
                                      disp_env.disp.y * at_scale, w * at_scale, h * at_scale, at_scale)) {
-            Platform_Present(SoftGpu_Vram(), SOFT_GPU_WIDTH, disp_env.disp.x, disp_env.disp.y, w, h,
+            Platform_Present(display_words(w, h), SOFT_GPU_WIDTH, disp_env.disp.x, disp_env.disp.y, w, h,
                              disp_env.isrgb24);
             }
         }

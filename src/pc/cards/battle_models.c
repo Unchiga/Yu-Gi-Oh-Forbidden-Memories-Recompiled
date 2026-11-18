@@ -175,7 +175,7 @@ static void textures(int k, s32 from, s32 to)
     unsigned size;
     const unsigned char *pages = Mods_ModelPages(k, &count);
     const int *windows = Mods_ModelWindows(&size);
-    const uint16_t *vram = SoftGpu_Vram();
+    const uint16_t *vram = SoftGpu_VramRaw();
     uint16_t *bank;
     if (!pages || !(bank = SoftGpu_Bank(TEXTURE_BANK(k)))) return;
     if (placed[k] != windows[k]) {
@@ -188,6 +188,9 @@ static void textures(int k, s32 from, s32 to)
         placed[k] = windows[k];
         LOG(LOG_MODS, "battle slot %d: %d texture pages of its own, in texture bank %d", k, count, TEXTURE_BANK(k));
     }
+    SoftGpu_Settle(k * 256, 256, 256, 256);
+    SoftGpu_Settle(k * 256, 0xF0, 256, 16);
+    SoftGpu_Settle(0x200, 0xF0, 256, 4);
     bank_rect(bank, vram, k * 256, 256, 256, 256);
     bank_rect(bank, vram, k * 256, 0xF0, 256, 16);
     bank_rect(bank, vram, 0x200, 0xF0, 256, 4);

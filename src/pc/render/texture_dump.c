@@ -764,7 +764,7 @@ void TextureDump_Primitive(const uint16_t *source, int page_x, int page_y, int d
     hash = fnv(0xcbf29ce484222325ull, header, sizeof(header));
     hash = fnv(hash, indices, (size_t)w * h * sizeof(*indices));
     hash = fnv(hash, palette, (size_t)entries * sizeof(*palette));
-    if (source == SoftGpu_Vram()) note_asset(page_x, page_y, depth, clut_x, clut_y, u0, v0, u1, v1, entries, hash);
+    if (source == SoftGpu_VramRaw()) note_asset(page_x, page_y, depth, clut_x, clut_y, u0, v0, u1, v1, entries, hash);
     if (remember(hash)) {
         for (v = 0; v < h; v++) {
             unsigned char *row = rows + (size_t)v * (1 + (size_t)w * 4);

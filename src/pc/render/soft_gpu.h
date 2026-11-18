@@ -18,7 +18,30 @@ void SoftGpu_Load(int x, int y, int w, int h, const uint16_t *pixels);
 void SoftGpu_Store(int x, int y, int w, int h, uint16_t *pixels);
 void SoftGpu_Move(int sx, int sy, int dx, int dy, int w, int h);
 void SoftGpu_Fill(int x, int y, int w, int h, uint32_t rgb24);
+
+/* Settling (notes/pc-build.md, "Settling VRAM before it is read"): every
+ * reader of the words primitives raster into goes through one of these,
+ * so that a raster which keeps a frame's primitives back (a later change)
+ * draws them before anything reads what they would have drawn. The raster
+ * is immediate today: settling only tells SoftGpu_SettleObserver.
+ *
+ * SoftGpu_Settle: whatever has been drawn within x,y,w,h (VRAM words,
+ * wrapping as transfers do) is in VRAM when it returns. */
+void SoftGpu_Settle(int x, int y, int w, int h);
+/* The words a primitive's texture can read: its page (4-bit, depth 0, is
+ * 64 words wide, 8-bit 128, 16-bit 256; 256 rows) and, below 16 bits, its
+ * palette row (16 or 256 entries). For a host lookup keyed by a primitive's
+ * texture (hd_text.c, menu_letters.c, ...). */
+void SoftGpu_SettleTexture(int depth, int page_x, int page_y, int clut_x, int clut_y);
+/* VRAM, settled whole first. For any reader that does not say which words
+ * it reads, a code mod's included (SoftGpu_Vram is lent to mods). */
 const uint16_t *SoftGpu_Vram(void);
+/* VRAM without settling: only for a reader that settled the words it reads
+ * itself, or reads none that are drawn. tools/pc/check_vram_readers.py
+ * lists every caller and why. */
+const uint16_t *SoftGpu_VramRaw(void);
+/* Tests: told every rectangle settled (SoftGpu_Vram's whole VRAM too). */
+extern void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
 
 /* Texture banks: alternate VRAM that a primitive can sample instead, chosen
  * by bits 11-14 of its texture-page word, which the hardware leaves unused

@@ -70,9 +70,10 @@ int MenuLetters_Waiting(void)
     return waiting;
 }
 
+/* Settled by the caller, a sprite at a time (soft_gpu.h). */
 static uint32_t texel(int mode, int tpage, int cx, int cy, int u, int v)
 {
-    const uint16_t *vram = SoftGpu_Vram();
+    const uint16_t *vram = SoftGpu_VramRaw();
     int tx = (tpage & 0xF) * 64, ty = ((tpage >> 4) & 1) * 256;
     uint16_t c;
     if (mode == 0) {
@@ -154,6 +155,7 @@ static int capture(int i, int selected, Entry *out)
         const GsSPRITE *s = (const GsSPRITE *)&caught.sprite[n];
         int mode = (int)(s->attribute >> 24) & 3;
         int shade = (s->attribute & 0x40) || (s->r == 0x80 && s->g == 0x80 && s->b == 0x80);
+        SoftGpu_SettleTexture(mode, (s->tpage & 0xF) * 64, ((s->tpage >> 4) & 1) * 256, s->cx, s->cy);
         for (y = 0; y < s->h; y++) {
             for (x = 0; x < s->w; x++) {
                 uint32_t p = texel(mode, s->tpage, s->cx, s->cy, s->u + x, s->v + y);
