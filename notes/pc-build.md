@@ -3275,8 +3275,37 @@ it takes:
   centre texel is not clamped to the primitive's `bounds` (a pixel past the
   edge, with anti-aliasing), and HD text's ink indexes a palette by the
   glyph atlas, not the texels. Next to a held area either could read words
-  the copy missed; the gate below ran with xBR and anti-aliasing to look
-  for it.
+  the copy missed. The gate (below) found nothing with xBR alone; with
+  xBR and anti-aliasing together the picture differs from run to run on
+  this PC with the switch off too, so that run proves nothing either way.
+
+The gate at 2x and 4x (scratch scripts, not in the repo; a scratch build
+with a window that is never shown and a per-frame hash of the scaled
+picture read back from the GPU, which settles nothing): one build, each
+scenario played three ways, `MEMORIES_DEFERRED_RASTER=0`, unset (AUTO) and
+unset with poison, with every frame presented (`fps` -1), no recording
+(its checkpoint a frame settles all of VRAM), and a picture and a VRAM hash
+every 30 VBlanks. Every frame's picture hash, every picture and every VRAM
+hash matched in all of them: menus, the story's first duel, a full duel
+(field and 3D battles) and a duel field with a state saved and loaded
+twice, each at 2x and 4x, bare and with the HD pack and HD text; the menus
+and the full duel at 2x with every mod of the target load (picture-only
+frames and palettes, banks); the menus and the first duel at 2x with
+texture xBR. Each AUTO run held and dropped work and made patches (the
+full duel at 2x, bare: 4.8 million primitives held, 4.2 million dropped,
+1302 patches over 14677 frames; with the pack 3.5 million held, 3.0
+dropped, 757 patches). With poison on the interrupt clock
+(`MEMORIES_CLOCK=interrupt`) the menus and the full duel at 2x finished
+holding as much, and their pictures matched the default clock's. Found on
+the way, not the deferred raster's: the HD pack's automatic fast drawing
+(`fast_wanted`) turns on from frame times, so a slower run (one with the
+switch off at 4x) drew differently from frame 11642; the gate pins it
+off (`hd_fast` 0). With xBR and 4x anti-aliasing together two runs with
+the switch off differ from each other. At 1x the gate of "The deferred
+raster" (every replay, headless) also ran with the variable unset, which
+is AUTO and must hold nothing there: its checkpoints and every frame's
+hash matched the run with it off in all 16 replays, as did the runs with
+it on and with poison.
 
 What is left:
 
