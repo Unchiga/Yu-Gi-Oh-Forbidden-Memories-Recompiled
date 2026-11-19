@@ -91,7 +91,8 @@ static Outcome *now_outcome;
 /* What is allocated while the stand-in for the clock's tick runs (`in_tick`):
  * nothing may be, a settle there included (a patch is made without
  * allocating). Counted where the link wraps the allocator (CMakeLists.txt). */
-static int in_tick, tick_allocs;
+static volatile int in_tick; /* volatile: a store around a malloc the compiler knows is kept */
+static int tick_allocs;
 #ifdef SOFT_GPU_TEST_WRAP_ALLOC
 void *__real_malloc(size_t size);
 void *__real_calloc(size_t count, size_t size);
@@ -893,6 +894,17 @@ int main(int argc, char **argv)
     int frames = argc > 1 ? atoi(argv[1]) : 600;
     Outcome now, held, poisoned;
     SoftGpu_HoldClock = hold_clock;
+#ifdef SOFT_GPU_TEST_WRAP_ALLOC
+    { /* the count works: an allocation in the tick is seen (else the checks below would pass for nothing) */
+        void *volatile made; /* volatile: else the compiler may leave out the pair */
+        in_tick = 1;
+        made = malloc(16);
+        in_tick = 0;
+        free(made);
+        CHECK(tick_allocs == 1);
+        tick_allocs = 0;
+    }
+#endif
     if (!TextureDump_EnableShadow()) {
         fprintf(stderr, "no memory for the tags\n");
         return 1;
