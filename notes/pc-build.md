@@ -3293,7 +3293,9 @@ and the full duel at 2x with every mod of the target load (picture-only
 frames and palettes, banks); the menus and the first duel at 2x with
 texture xBR; widescreen (`aspect` 2, its widened picture hashed) on the
 full duel bare and the menus with the pack at 2x; the first duel with
-the scale changed from 2x to 4x in the middle (`MEMORIES_SCALE_AT`).
+the scale changed from 2x to 4x in the middle (`MEMORIES_SCALE_AT`); the
+menus at 2x with the texture dump on (`MEMORIES_DUMP_TEXTURES`, its 2082
+files the same too).
 Each AUTO run held and dropped work and made patches (the
 full duel at 2x, bare: 4.8 million primitives held, 4.2 million dropped,
 1302 patches over 14677 frames; with the pack 3.5 million held, 3.0
@@ -3333,16 +3335,17 @@ window and two 8 s windows of 3D battles; at 2x two runs each way): on
 the duel field the raster (draws and settles outside them) went from 5.3
 to 0.44 ms a frame at 2x and 4x, and the game's work a frame from 6.7 to
 2.4 ms; the present grew from 5.6 to 7.1 ms (the replay from 2.5 to 3.6
-ms: it makes no patches there, so the GPU work is the same, and this is
-time the replay waits for the GPU or a lower clock, not work), so the two
-together went from 12.3 to 9.5 ms at a steady 60 frames a second. In 3D
-battles the raster went from 6.5 and 8.0 ms to 4.5 and 5.5, but the
-game's work did not fall (15.5 and 13.6 ms, then 16.0 and 14.7) and the
-present grew (12.4 and 25.9, then 14.0 and 28.1 ms): the frame rate was
-29.7 and 23.5 with the switch off, 29.4 and 22.1 with AUTO, VBlanks missed
-16 of 720 and 475 of 840, then 25 of 720 and 495 of 720. Battles differ a
-lot from run to run, so this is not settled either way; why the game's
-work does not fall with the raster there is not found yet. With the
+ms, with no patches there, so the same GPU work; why is not measured),
+so the two together went from 12.3 to 9.5 ms at a steady 60 frames a
+second. The CPU time the threads used (`/proc`, 4x, three interleaved
+runs each way) says the same: the game's thread (which also replays)
+14.2 -> 11.7 ms a frame on the duel field, the whole app 22.9 -> 17.6. In
+3D battles little is saved: the raster went from 6.5 and 8.0 ms to 4.5
+and 5.5 (the background's palette move rasters what is held, settles
+caused by a write), the game's thread's CPU time 28.1 -> 27.0 and 44.9 ->
+41.5 ms a frame, the whole app's 42.6 -> 43.4 and 71.9 -> 66.8, at 29 and
+23 frames a second either way (the first battle runs at its own 30 a
+second, the second below it with the switch off too). With the
 virtual clock (`MEMORIES_DETERMINISTIC=1`), three pictures of a duel taken
 over the control channel were the same with the switch off (twice), AUTO
 and AUTO with poison, at 2x and 4x, and at 2x with the OpenGL ES context
