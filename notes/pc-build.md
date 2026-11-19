@@ -3354,6 +3354,25 @@ is AUTO and must hold nothing there: its checkpoints and every frame's
 hash matched the run with it off in all 16 replays, as did the runs with
 it on and with poison.
 
+After the review's fixes (the reach, the HD palette rows, the clock, the
+patches at every flush) the gate ran again on one scratch build of them:
+the menus, the first duel and the full duel at 2x and 4x, bare and with
+the pack; the full duel at 2x with the target load; texture xBR alone
+(no anti-aliasing) on the menus, the first duel and the full duel at 2x;
+and the interrupt clock with AUTO and with poison on the menus and the
+full duel at 2x and 4x, against the default clock's run with the switch
+off. Every frame's picture hash, every picture and every VRAM hash
+matched, and with xBR off the deferred raster's counts (held, dropped,
+rastered, settles by cause, patches) were the same as before the fixes
+to the primitive, so the measurements below still hold. The 3D battles
+of the full duel make patches too (734 of its 1302 at 2x bare, 731 of
+757 with the pack, 730 with the target load). With xBR the full duel
+holds as much (4.71 against 4.77 million primitives) and drops less (3.87
+against 4.22 million): what xBR reads one texel further settles more. On
+the duel field with the pack or the target load nothing is held: the
+area is given up at 99.9% of the frames (152 and 330 primitives a frame
+rastered at once, no settles), not held and settled each frame.
+
 Measured on this Windows PC as at 1x (above: three interleaved runs a
 session with the switch off and AUTO, the per-frame least of the three,
 raster time the draws plus settles outside them), with the window never
