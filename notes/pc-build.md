@@ -3307,6 +3307,34 @@ is AUTO and must hold nothing there: its checkpoints and every frame's
 hash matched the run with it off in all 16 replays, as did the runs with
 it on and with poison.
 
+Measured on this Windows PC as at 1x (above: three interleaved runs a
+session with the switch off and AUTO, the per-frame least of the three,
+raster time the draws plus settles outside them), with the window never
+shown and every frame presented, on the gate's scratch build:
+
+| Scenario | 2x bare | 2x pack and mods | 4x bare | 4x pack and mods |
+|---|---|---|---|---|
+| Duel field | 0.94 -> 0.05 ms (-94%) | 1.16 -> 1.18 ms (+1%) | 0.93 -> 0.05 ms (-95%) | 1.15 -> 1.16 ms (+0.4%) |
+| 3D battle | 1.82 -> 0.61 ms (-67%) | 1.91 -> 0.63 ms (-67%) | 1.79 -> 0.60 ms (-67%) | 1.89 -> 0.61 ms (-68%) |
+| Menus | 0.74 -> 0.05 ms (-93%) | 0.80 -> 0.61 ms (-24%) | 0.73 -> 0.05 ms (-93%) | 0.80 -> 0.61 ms (-24%) |
+| All | 1.23 -> 0.25 ms (-80%) | 1.38 -> 0.86 ms (-38%) | 1.21 -> 0.24 ms (-80%) | 1.36 -> 0.85 ms (-38%) |
+
+Two runs with the switch off differed by 2-6% on the duel field (the 2x
+runs overlapped a long build here; the 4x pack runs were made again on a
+quieter PC). The duel field with the pack is the shadow's and the banks'
+(left, below): it holds as at 1x, given up nearly every frame.
+
+On the Samsung A22 (a debug APK of this branch, mods off, the game's own
+frame trace over a 20 s duel-field window and an 8 s window of a 3D
+battle, two runs each way): the duel field's draws went from 5.30 to 0.43
+ms a frame at 2x and from 5.44 to 0.44 at 4x, and the game's work a frame
+from 6.73 to 2.45 ms and from 6.78 to 2.35 (the raster was 79-80% of it,
+now 18-19%); a 3D battle's draws from 7.0 to 4.2 ms at 2x and from 8.0 to
+2.8 at 4x (its frame time stayed, as the GPU sets it there). With the
+virtual clock (`MEMORIES_DETERMINISTIC=1`), three pictures of a duel taken
+over the control channel were the same with the switch off (twice), AUTO
+and AUTO with poison, at 2x and 4x.
+
 What is left:
 
 - The pack's shadow and the banks: primitives sampling either are still
