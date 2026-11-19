@@ -169,8 +169,13 @@ accept v0.3.0 record TitleConfig gained fade, smooth_slide and the larger TitleB
 accept v0.3.0 record TitleItem gained font_game before action
 
 # The deferred raster at 2x and above with the OpenGL picture: the recorder
-# gained `patch` at its end (the words its copy of VRAM missed). Only the
-# port's own OpenGL picture installs a recorder (v0.1.2's line above covers
-# that release); no mod calls SoftGpu_SetRecorder.
+# gained `patch` at its end (the words its copy of VRAM missed).
+# SoftGpu_SetRecorder is lent to mods, so a mod's recorder, made with an
+# older header, can end before `patch`. soft_gpu.c never reads that far into
+# it: `patch` is read only once a recorder has named itself to
+# SoftGpu_CopyTaken (not lent; only the OpenGL picture's upload calls it,
+# with its own recorder), copy_on() checks that first, and a translated
+# build resolves a recorder only as far as `capture`. A mod's recorder works
+# as before; the deferred raster just holds nothing while it is set.
 accept v0.2.0 record SoftGpuRecorder grew by the patch callback at its end
 accept v0.3.0 record SoftGpuRecorder grew by the patch callback at its end

@@ -16,8 +16,10 @@
  * times, as the game clock's tick can in the middle of a batch. The three
  * runs must also have kept work back, dropped some, rastered some and taken
  * a state while some was held, or they prove nothing. */
+#define _DEFAULT_SOURCE /* MAP_ANONYMOUS (guarded_memory) */
 #include "pc/render/soft_gpu.h"
 #include "pc/render/texture_dump.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -280,6 +282,49 @@ static void rec_patch(int x, int y, int w, int h, const uint16_t *words)
 
 static const SoftGpuRecorder model = {rec_gp0, rec_load, rec_move, rec_fill, rec_resync, NULL, NULL, rec_patch};
 
+/* A mod's recorder, made with a header from before `patch` (SoftGpu_SetRecorder
+ * is lent to mods): its struct ends at `capture`. guarded_recorder() puts one
+ * at the very end of memory that may be read, before a page that may not:
+ * reading its `patch` faults. NULL where no such page can be had. */
+static int foreign_patches;
+static void foreign_patch(int x, int y, int w, int h, const uint16_t *words)
+{
+    (void)x, (void)y, (void)w, (void)h, (void)words;
+    foreign_patches++;
+}
+
+#define GUARD_STEP 65536 /* a multiple of every page size */
+#ifdef _WIN32
+__declspec(dllimport) void *__stdcall VirtualAlloc(void *address, size_t size, unsigned long type, unsigned long protect);
+__declspec(dllimport) int __stdcall VirtualProtect(void *address, size_t size, unsigned long protect,
+                                                   unsigned long *old);
+static char *guarded_memory(void)
+{
+    unsigned long old;
+    char *base = VirtualAlloc(NULL, 2 * GUARD_STEP, 0x1000 | 0x2000, 4); /* committed, reserved; read and write */
+    if (!base || !VirtualProtect(base + GUARD_STEP, GUARD_STEP, 1, &old)) return NULL; /* no access */
+    return base;
+}
+#else
+#include <sys/mman.h>
+static char *guarded_memory(void)
+{
+    char *base = mmap(NULL, 2 * GUARD_STEP, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (base == MAP_FAILED || mprotect(base + GUARD_STEP, GUARD_STEP, PROT_NONE)) return NULL;
+    return base;
+}
+#endif
+
+static SoftGpuRecorder *guarded_recorder(void)
+{
+    static const SoftGpuRecorder older = {rec_gp0, rec_load, rec_move, rec_fill, rec_resync, NULL, NULL, NULL};
+    static char *base;
+    size_t size = offsetof(SoftGpuRecorder, patch);
+    if (!base && !(base = guarded_memory())) return NULL;
+    memcpy(base + GUARD_STEP - size, &older, size);
+    return (SoftGpuRecorder *)(void *)(base + GUARD_STEP - size);
+}
+
 static int in_areas(int x, int y)
 {
     return (y < 240 && x < 640) || (y >= 256 && y < 496 && x < 320);
@@ -474,7 +519,7 @@ static void model_gp0(const uint32_t *words, size_t count)
 static void model_take(void)
 {
     memcpy(copy_vram, SoftGpu_VramRaw(), sizeof(copy_vram));
-    SoftGpu_CopyTaken();
+    SoftGpu_CopyTaken(&model);
 }
 
 /* GlPicture_Replay: the patches, the record in order, the take. */
@@ -1401,7 +1446,7 @@ int main(int argc, char **argv)
             CHECK(s.held == 0 && s.immediate == 0 && holds == 0);
             SoftGpu_SetRecorder(&bare);
             CHECK(SoftGpu_SetScale(2));
-            SoftGpu_CopyTaken();
+            SoftGpu_CopyTaken(&bare);
             CHECK(SoftGpu_Gp0(red, 3) == 3);
             SoftGpu_DeferredStats(&s);
             CHECK(s.held == 0);
@@ -1423,6 +1468,41 @@ int main(int argc, char **argv)
             CHECK(SoftGpu_SetScale(1));
             SoftGpu_SetRecorder(NULL);
             ops_used = 0;
+        }
+
+        /* A mod's recorder (SoftGpu_SetRecorder is lent to mods) keeps no
+         * copy, even when an upload names another (the OpenGL picture's,
+         * which the mod's replaced), so it holds nothing at 2x and its
+         * `patch` is never called; and one made with an older header, whose
+         * struct ends before `patch`, is never read that far. */
+        {
+            static const SoftGpuRecorder foreign = {rec_gp0, rec_load, rec_move, rec_fill, rec_resync,
+                                                    NULL, NULL, foreign_patch};
+            SoftGpuRecorder *older = guarded_recorder();
+            CHECK(older != NULL);
+            for (int which = 0; which < 2; which++) {
+                SoftGpu_SetRecorder(NULL);
+                CHECK(SoftGpu_SetScale(1));
+                SoftGpu_Reset();
+                SoftGpu_SetDeferred(SOFT_GPU_DEFERRED_AUTO, 0);
+                SoftGpu_SetRecorder(which ? older : &foreign);
+                CHECK(SoftGpu_SetScale(2));
+                foreign_patches = 0;
+                for (int take = 0; take < 2; take++) { /* SoftGpu_CopyTaken is not lent: never the mod's own */
+                    SoftGpu_CopyTaken(take ? NULL : &model);
+                    CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+                    SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+                    CHECK(SoftGpu_Gp0(red, 3) == 3);
+                    SoftGpu_Settle(4, 16, 1, 1);
+                    CHECK(SoftGpu_CopyPatches() == 0);
+                }
+                SoftGpu_DeferredStats(&s);
+                CHECK(s.held == 0 && s.patches == 0 && foreign_patches == 0);
+                SoftGpu_SetDeferred(0, 0);
+                CHECK(SoftGpu_SetScale(1));
+                SoftGpu_SetRecorder(NULL);
+                ops_used = 0;
+            }
         }
         window_settles = 1;
     }

@@ -3,6 +3,7 @@
 #endif
 #include "soft_gpu.h"
 #include "texture_dump.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -375,10 +376,13 @@ static size_t polygon(const uint32_t *words, size_t count);
 static size_t lines(const uint32_t *words, size_t count);
 static size_t rectangle(const uint32_t *words, size_t count);
 
-/* Whether held work can be missing from the recorder's copy of VRAM. */
+/* Whether held work can be missing from the recorder's copy of VRAM.
+ * copy_kept first: only a recorder that named itself to SoftGpu_CopyTaken
+ * (gl_picture.c's) has `patch`; a mod's, made with an older header, ends
+ * before it. */
 static int copy_on(void)
 {
-    return recorder && scale > 1 && recorder->patch && copy_kept;
+    return copy_kept && recorder && scale > 1 && recorder->patch;
 }
 
 /* The area's words now, as the recorder's copy should have had them when it
@@ -896,7 +900,7 @@ void SoftGpu_SetDeferred(int on, int poison)
 
 int SoftGpu_Deferred(void) { return deferred_on; }
 
-void SoftGpu_CopyTaken(void)
+void SoftGpu_CopyTaken(const SoftGpuRecorder *taker)
 {
     int took = held_any;
     if (took) hold_clock(); /* the marks and the patches as they stand, not half made by the tick */
@@ -904,7 +908,9 @@ void SoftGpu_CopyTaken(void)
      * copy now: those patches would bring back older words. */
     patch_count = 0;
     copy_lost = 0;
-    copy_kept = recorder != NULL;
+    /* Only the recorder set now, naming itself: an upload by a picture that
+     * is not the recorder (a mod's replaced it) keeps no copy for that one. */
+    copy_kept = taker && taker == recorder;
     for (int a = 0; a < HELD_AREAS; a++) {
         if (!held[a].on) continue;
         held[a].copied = held[a].count;
@@ -920,7 +926,7 @@ int SoftGpu_CopyPatches(void)
     hold_clock();
     lost = copy_lost;
     n = lost ? -1 : patch_count;
-    for (int i = 0; i < patch_count && !lost && recorder && recorder->patch; i++)
+    for (int i = 0; i < patch_count && !lost && copy_on(); i++)
         recorder->patch(patches[i].x, patches[i].y, patches[i].w, patches[i].h, patches[i].words);
     patch_count = 0;
     copy_lost = 0;
@@ -1088,7 +1094,10 @@ void SoftGpu_PictureFromVram(void)
 void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
 {
 #if defined(MEMORIES_TRANSLATED) && !defined(MEMORIES_INSTRUMENT_SOFTGPU)
-    if (wanted) wanted = GuestRuntime_ResolveData((void *)wanted, sizeof(*wanted));
+    /* As far as `capture`: a mod's recorder is made with a header without
+     * `patch`, which is read only for the one that names itself to
+     * SoftGpu_CopyTaken (gl_picture.c's, a host pointer, as it is). */
+    if (wanted) wanted = GuestRuntime_ResolveData((void *)wanted, offsetof(SoftGpuRecorder, patch));
 #endif
     if (wanted == recorder) return;
     SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* as SetScale */

@@ -60,7 +60,9 @@ int SoftGpu_Deferred(void);
 /* The recorder's copy of VRAM (gl_picture.c's texture, which its primitives
  * sample and its moves copy from): taken whole and raw (SoftGpu_VramRaw)
  * after each replay, so it misses what is held there then. Right after it
- * takes it, the recorder calls SoftGpu_CopyTaken. A held area that the copy
+ * takes it, the recorder calls SoftGpu_CopyTaken with itself (`taker`: only
+ * the recorder set now that names itself keeps a copy, so a mod's recorder,
+ * whose struct may end before `patch`, never does). A held area that the copy
  * missed is, when it is settled, rastered up to what it held then and its
  * words kept as a patch (the area as the copy would have had it), before
  * the rest is rastered. At the start of its next replay, before anything
@@ -71,7 +73,8 @@ int SoftGpu_Deferred(void);
  * then has those words already). -1: a patch was lost (no memory): the copy
  * is to be made again from VRAM. Only a recorder with `patch` that has
  * taken its copy lets work be held at 2x and above. */
-void SoftGpu_CopyTaken(void);
+struct SoftGpuRecorder;
+void SoftGpu_CopyTaken(const struct SoftGpuRecorder *taker);
 int SoftGpu_CopyPatches(void);
 /* How many applied code mods bind SoftGpu_Vram or SoftGpu_StateData (mods.c):
  * such a mod may keep VRAM's pointer and write or read through it at any
@@ -255,7 +258,9 @@ typedef struct SoftGpuRecorder {
     /* SoftGpu_CopyPatches: words x,y,w,h of the recorder's copy of VRAM
      * (w x h, row by row) as the copy should have had them when it was last
      * taken. Only the copy: not the picture. May be NULL (then nothing is
-     * held at 2x and above). */
+     * held at 2x and above). Read only once the recorder has named itself to
+     * SoftGpu_CopyTaken: a recorder made with an older header (a mod's) ends
+     * before it, and is never read this far. */
     void (*patch)(int x, int y, int w, int h, const uint16_t *words);
 } SoftGpuRecorder;
 /* The game read w x h of the picture at sx,sy (StoreImage) and loaded it,

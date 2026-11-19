@@ -2898,7 +2898,7 @@ static void upload_vram(void)
     glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT, GL_RED_INTEGER, GL_UNSIGNED_SHORT,
                     SoftGpu_VramRaw());
-    SoftGpu_CopyTaken();
+    SoftGpu_CopyTaken(&recorder);
     sigprocmask(SIG_SETMASK, &previous, NULL);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     stats.vram_uploads++;
