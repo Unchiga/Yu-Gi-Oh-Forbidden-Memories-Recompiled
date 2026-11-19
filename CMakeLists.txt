@@ -357,6 +357,13 @@ if(BUILD_TESTING)
     # (notes/pc-build.md, "The deferred raster").
     add_executable(memories_soft_gpu_deferred_test tests/pc/soft_gpu_deferred_test.c)
     target_link_libraries(memories_soft_gpu_deferred_test PRIVATE memories_pc_core)
+    if(NOT MSVC AND NOT APPLE)
+        # The test counts what is allocated from its stand-in for the clock's
+        # tick, where nothing may be (a patch is made without allocating).
+        target_link_options(memories_soft_gpu_deferred_test PRIVATE
+            -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc)
+        target_compile_definitions(memories_soft_gpu_deferred_test PRIVATE SOFT_GPU_TEST_WRAP_ALLOC=1)
+    endif()
     add_test(NAME pc_soft_gpu_deferred COMMAND memories_soft_gpu_deferred_test)
     add_executable(memories_settings_test tests/pc/settings_test.c src/pc/platform/settings.c
         src/pc/platform/paths.c)

@@ -88,6 +88,34 @@ typedef struct Outcome {
 
 static Outcome *now_outcome;
 
+/* What is allocated while the stand-in for the clock's tick runs (`in_tick`):
+ * nothing may be, a settle there included (a patch is made without
+ * allocating). Counted where the link wraps the allocator (CMakeLists.txt). */
+static int in_tick, tick_allocs;
+#ifdef SOFT_GPU_TEST_WRAP_ALLOC
+void *__real_malloc(size_t size);
+void *__real_calloc(size_t count, size_t size);
+void *__real_realloc(void *pointer, size_t size);
+void *__wrap_malloc(size_t size);
+void *__wrap_calloc(size_t count, size_t size);
+void *__wrap_realloc(void *pointer, size_t size);
+void *__wrap_malloc(size_t size)
+{
+    tick_allocs += in_tick;
+    return __real_malloc(size);
+}
+void *__wrap_calloc(size_t count, size_t size)
+{
+    tick_allocs += in_tick;
+    return __real_calloc(count, size);
+}
+void *__wrap_realloc(void *pointer, size_t size)
+{
+    tick_allocs += in_tick;
+    return __real_realloc(pointer, size);
+}
+#endif
+
 /* The pack's prepare: page 2 (128,0) is "replaced" (1, the shadow), page 3
  * read through another palette (2); now and then a load and a store, as an
  * interrupt-level LoadImage or StoreImage can come in the middle of a batch. */
@@ -98,12 +126,14 @@ static int prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, in
         uint16_t words[16];
         int x = (int)(tick_rnd() % 1024), y = (int)(tick_rnd() % 512);
         for (int i = 0; i < 16; i++) words[i] = (uint16_t)tick_rnd();
+        in_tick = 1;
         if (tick_rnd() & 1) {
             SoftGpu_Load(x, y, 4, 4, words);
         } else {
             SoftGpu_Store(x, y, 4, 4, words);
             now_outcome->stores = fnv(now_outcome->stores, words, sizeof(words));
         }
+        in_tick = 0;
     }
     return page_y == 256 && page_x == 640 ? 1 : page_y == 256 && page_x == 704 ? 2 : 0;
 }
@@ -222,7 +252,6 @@ static uint16_t copy_vram[SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT];
 static uint32_t *ops;
 static size_t ops_used, ops_room;
 static uint64_t copy_reads;    /* every word read in the drawing areas, in order */
-static unsigned copy_lost_seen; /* SoftGpu_CopyPatches said -1 */
 static uint32_t window_seed;    /* the replay's own settles (host lookups): a stream of their own */
 static int window_settles = 1;  /* off for the fixed cases */
 
@@ -340,7 +369,7 @@ static void read_copy(int x, int y)
 /* Before a draw: the patches, as flush_runs takes them. */
 static void model_flush(void)
 {
-    if (SoftGpu_CopyPatches() < 0) copy_lost_seen++;
+    SoftGpu_CopyPatches();
 }
 
 static int clip_cut(int *x, int *y, int *w, int *h)
@@ -785,6 +814,28 @@ int main(int argc, char **argv)
         fprintf(stderr, "no memory for the tags\n");
         return 1;
     }
+    /* First of all, as the patches' buffer is made once: the clock's tick
+     * (a StoreImage there) settles held work the copy missed, which makes a
+     * patch, and nothing is allocated in it. */
+    {
+        static const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        static const uint32_t red[] = {0x600000ffu, 0x00100004u, 0x00080008u}; /* 8x8 at 4,16 */
+        uint16_t word = 0;
+        SoftGpuDeferredStats s;
+        window_settles = 0;
+        CHECK(copy_begin(SOFT_GPU_DEFERRED_AUTO, 0) == 0);
+        CHECK(SoftGpu_Gp0(area, 4) == 4);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(red, 3) == 3);
+        model_replay(); /* the take, the sprite held across it */
+        in_tick = 1;
+        SoftGpu_Store(4, 16, 1, 1, &word);
+        in_tick = 0;
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 1 && s.patches == 1 && word == 0x001f && tick_allocs == 0);
+        (void)copy_end();
+        window_settles = 1;
+    }
     TextureDump_Prepare = prepare;
     for (uint32_t start = 1; start <= 3; start++) {
         CHECK(run(start * 2654435761u, frames, 0, 0, &now) == 0);
@@ -836,7 +887,6 @@ int main(int argc, char **argv)
                (unsigned long long)automatic.stats.copy_missed, (unsigned long long)automatic.stats.patches);
         CHECK(automatic.stats.held > (unsigned)frames && automatic.stats.dropped > (unsigned)frames / 40);
         CHECK(automatic.stats.copy_missed > (unsigned)frames / 10 && automatic.stats.patches > (unsigned)frames / 40);
-        CHECK(copy_lost_seen == 0);
         CHECK(off.reads == automatic.reads && off.reads == poisoned_auto.reads);
         CHECK(off.stores == automatic.stores && off.stores == poisoned_auto.stores);
         CHECK(off.vram == automatic.vram && off.vram == poisoned_auto.vram);
@@ -845,6 +895,7 @@ int main(int argc, char **argv)
         CHECK(off.gpu == automatic.gpu && off.gpu == poisoned_auto.gpu);
     }
     copy_mode = 0;
+    CHECK(tick_allocs == 0); /* the tick's loads and stores, settles and patches included */
 
     /* The fixed cases below, without the pack's prepare (and its tick). */
     TextureDump_Prepare = NULL;

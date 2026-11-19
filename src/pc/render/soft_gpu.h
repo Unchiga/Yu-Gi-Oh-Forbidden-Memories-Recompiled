@@ -70,9 +70,11 @@ int SoftGpu_Deferred(void);
  * too, during the replay), the recorder calls SoftGpu_CopyPatches, which
  * hands each patch to its `patch` and forgets it; patches it has not taken
  * when it takes the copy again are forgotten by SoftGpu_CopyTaken (the copy
- * then has those words already). -1: a patch was lost (no memory): the copy
- * is to be made again from VRAM. Only a recorder with `patch` that has
- * taken its copy lets work be held at 2x and above. */
+ * then has those words already). It returns how many it handed. Only a
+ * recorder with `patch` that has taken its copy lets work be held at 2x and
+ * above; a patch is made without allocating (it can be made from the
+ * clock's tick): their buffer is made at the recorder's first take, and
+ * without it no copy is kept. */
 struct SoftGpuRecorder;
 void SoftGpu_CopyTaken(const struct SoftGpuRecorder *taker);
 int SoftGpu_CopyPatches(void);

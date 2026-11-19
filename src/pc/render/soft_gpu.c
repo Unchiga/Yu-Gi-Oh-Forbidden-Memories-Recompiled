@@ -197,14 +197,21 @@ static int deferred_on, deferred_poison, mod_vram_users, replaying, in_batch;
  * since the recorder was set (`copy_kept`), and the areas it missed as they
  * were when it was taken, each made as its area was settled, for the
  * recorder's next replay. At most one an area a take: an area held at a
- * take is settled once, and what it holds after has no part in that copy. */
+ * take is settled once, and what it holds after has no part in that copy.
+ * Their words share one buffer of VRAM's size, made on the main thread at
+ * the first take (patch_room): a settle can come from the clock's tick
+ * (a LoadImage or StoreImage there), where nothing may be allocated. It is
+ * always enough: the areas held at a take never overlap and lie in VRAM, so
+ * their patches (one an area) hold at most VRAM's words. */
+#define PATCH_WORDS ((size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT)
 typedef struct Patch {
     int x, y, w, h;
-    uint16_t *words;
-    size_t room;
+    const uint16_t *words;
 } Patch;
 static Patch patches[HELD_AREAS];
-static int patch_count, copy_kept, copy_lost;
+static uint16_t *patch_buffer;
+static size_t patch_used;
+static int patch_count, copy_kept;
 static unsigned held_clock;
 /* The provenance tags of each area were found clear at this count of
  * TextureDump_Touched (clean_tags: the tags it was for). */
@@ -385,28 +392,32 @@ static int copy_on(void)
     return copy_kept && recorder && scale > 1 && recorder->patch;
 }
 
+/* The patches' buffer, made once (SoftGpu_CopyTaken, on the main thread)
+ * and kept: 0 if there is no memory for it, and then nothing is held at 2x
+ * and above. */
+static int patch_room(void)
+{
+    if (!patch_buffer) patch_buffer = malloc(PATCH_WORDS * sizeof(uint16_t));
+    return patch_buffer != NULL;
+}
+
 /* The area's words now, as the recorder's copy should have had them when it
  * was taken (settle_area). */
 static void make_patch(const HeldArea *a)
 {
     Patch *p;
+    uint16_t *words;
     size_t need = (size_t)a->w * (size_t)a->h;
-    if (patch_count == HELD_AREAS) { /* cannot be (one an area a take): the copy is made again */
-        copy_lost = 1;
-        return;
-    }
+    /* Cannot be (copy_on() needs the buffer; one patch an area a take, the
+     * areas apart, in VRAM): checked only so that a mistake here never
+     * writes past the buffer. */
+    if (patch_count == HELD_AREAS || patch_used + need > PATCH_WORDS || !patch_buffer) return;
     p = &patches[patch_count];
-    if (p->room < need) {
-        uint16_t *more = realloc(p->words, need * sizeof(uint16_t));
-        if (!more) {
-            copy_lost = 1;
-            return;
-        }
-        p->words = more;
-        p->room = need;
-    }
+    words = patch_buffer + patch_used;
     for (int j = 0; j < a->h; j++)
-        memcpy(p->words + (size_t)j * a->w, vram + (a->y + j) * SOFT_GPU_WIDTH + a->x, (size_t)a->w * 2);
+        memcpy(words + (size_t)j * a->w, vram + (a->y + j) * SOFT_GPU_WIDTH + a->x, (size_t)a->w * 2);
+    p->words = words;
+    patch_used += need;
     p->x = a->x;
     p->y = a->y;
     p->w = a->w;
@@ -907,10 +918,12 @@ void SoftGpu_CopyTaken(const SoftGpuRecorder *taker)
     /* What was settled since the recorder last took the patches is in the
      * copy now: those patches would bring back older words. */
     patch_count = 0;
-    copy_lost = 0;
+    patch_used = 0;
     /* Only the recorder set now, naming itself: an upload by a picture that
-     * is not the recorder (a mod's replaced it) keeps no copy for that one. */
-    copy_kept = taker && taker == recorder;
+     * is not the recorder (a mod's replaced it) keeps no copy for that one.
+     * The buffer is made at the first take, when nothing can be held yet
+     * (copy_on() was false): without it, no copy is kept, and nothing held. */
+    copy_kept = taker && taker == recorder && patch_room();
     for (int a = 0; a < HELD_AREAS; a++) {
         if (!held[a].on) continue;
         held[a].copied = held[a].count;
@@ -921,15 +934,13 @@ void SoftGpu_CopyTaken(const SoftGpuRecorder *taker)
 
 int SoftGpu_CopyPatches(void)
 {
-    int n, lost;
-    if (!patch_count && !copy_lost) return 0; /* before every draw of a replay: mostly nothing */
+    int n = 0;
+    if (!patch_count) return 0; /* before every draw of a replay: mostly nothing */
     hold_clock();
-    lost = copy_lost;
-    n = lost ? -1 : patch_count;
-    for (int i = 0; i < patch_count && !lost && copy_on(); i++)
+    for (int i = 0; i < patch_count && copy_on(); i++, n++)
         recorder->patch(patches[i].x, patches[i].y, patches[i].w, patches[i].h, patches[i].words);
     patch_count = 0;
-    copy_lost = 0;
+    patch_used = 0;
     release_clock();
     return n;
 }
@@ -1106,7 +1117,7 @@ void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
      * and above until it has taken its own (SoftGpu_CopyTaken). Nothing is
      * held now, so the clock need not be. */
     patch_count = 0;
-    copy_lost = 0;
+    patch_used = 0;
     copy_kept = 0;
     recorder = wanted;
     if (recorder) {

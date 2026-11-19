@@ -2618,7 +2618,7 @@ static void flush_runs(void)
     /* A host lookup made for these primitives (HdText_Hud, ...) may have
      * settled held work the last upload missed: its patch, before they draw
      * (upload_vram). */
-    if (SoftGpu_CopyPatches() < 0) want_resync = 1;
+    SoftGpu_CopyPatches();
     gl_ActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, vram_texture);
     gl_UseProgram(program);
@@ -3062,9 +3062,8 @@ int GlPicture_Replay(void)
     opponent_name = HdText_NameEnabled();
     /* What the last upload missed of the deferred raster's held work and has
      * been settled since, into VRAM's texture before anything here reads it
-     * (upload_vram). A patch lost (no memory): VRAM whole again, as for an
-     * overflow. */
-    if (SoftGpu_CopyPatches() < 0) overflow = 1;
+     * (upload_vram). */
+    SoftGpu_CopyPatches();
     if (overflow || wanted_resync) {
         /* Too much for the arena: from VRAM as it is now, with the state
          * as it is now; the record is superseded. */
