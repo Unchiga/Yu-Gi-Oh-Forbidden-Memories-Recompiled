@@ -3364,11 +3364,21 @@ full duel at 2x and 4x, against the default clock's run with the switch
 off. Every frame's picture hash, every picture and every VRAM hash
 matched, and with xBR off the deferred raster's counts (held, dropped,
 rastered, settles by cause, patches) were the same as before the fixes
-to the primitive, so the measurements below still hold. The 3D battles
-of the full duel make patches too (734 of its 1302 at 2x bare, 731 of
-757 with the pack, 730 with the target load). With xBR the full duel
+to the primitive, so the measurements below still hold. The full duel's
+patches (1302 at 2x bare, 734 of them in its 3D battles) are the gate's
+own doing: its VRAM hash every 30 VBlanks settles everything. Played
+without those (the sessions' own pictures only), its battles make none,
+as nothing the game does there reaches held work. So a duel with 3D
+battles that do (Blue-Eyes White Dragon against Simon Muran, four
+attacks; the model's palette move every frame settles held work, 3053
+times) was played three ways at 2x bare without the periodic hashes:
+1527 patches inside its battles, and every frame's picture the same in
+all three (14100 frames). With xBR the full duel
 holds as much (4.71 against 4.77 million primitives) and drops less (3.87
-against 4.22 million): what xBR reads one texel further settles more. On
+against 4.22 million): what xBR reads one texel further settles more.
+With xBR and 4x anti-aliasing (the whole page, AUTO only: that picture
+differs from run to run with the switch off too) it still holds 4.67
+million and drops 3.73. On
 the duel field with the pack or the target load nothing is held: the
 area is given up at 99.9% of the frames (152 and 330 primitives a frame
 rastered at once, no settles), not held and settled each frame.
