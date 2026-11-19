@@ -1057,6 +1057,20 @@ static inline __attribute__((always_inline)) uint16_t *vram_pixel(int x, int y)
     return &vram[(y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
 }
 
+/* The recorder's copy forgotten: no patches, nothing held at 2x and above
+ * until the recorder takes its copy again. Callers settle everything first,
+ * so nothing is held; the clock is held anyway while work can be (the
+ * tick's settles look at the patches). */
+static void forget_copy(void)
+{
+    int clock = deferred_on;
+    if (clock) hold_clock();
+    patch_count = 0;
+    patch_used = 0;
+    copy_kept = 0;
+    if (clock) release_clock();
+}
+
 int SoftGpu_SetScale(int wanted)
 {
     uint32_t *made = NULL;
@@ -1077,6 +1091,9 @@ int SoftGpu_SetScale(int wanted)
     }
     free(picture);
     picture = made;
+    /* The recorder's copy is made again at the new scale (the resync below):
+     * as with a new recorder, nothing is held until it is taken. */
+    forget_copy();
     scale = wanted;
     scale_shift = wanted == 8 ? 3 : wanted == 4 ? 2 : wanted == 2 ? 1 : 0;
     /* The targets missed the primitives so far: made again from VRAM. */
@@ -1114,11 +1131,8 @@ void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
     SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* as SetScale */
     forget_given_up();
     /* The old recorder's copy goes with it; the new one holds nothing at 2x
-     * and above until it has taken its own (SoftGpu_CopyTaken). Nothing is
-     * held now, so the clock need not be. */
-    patch_count = 0;
-    patch_used = 0;
-    copy_kept = 0;
+     * and above until it has taken its own (SoftGpu_CopyTaken). */
+    forget_copy();
     recorder = wanted;
     if (recorder) {
         free(picture);

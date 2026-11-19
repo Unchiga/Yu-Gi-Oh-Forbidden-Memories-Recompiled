@@ -1668,6 +1668,28 @@ int main(int argc, char **argv)
                 (void)copy_end();
             }
         }
+
+        /* A new scale: the copy is made again (a resync), so, as with a new
+         * recorder, a patch made for the old one is not handed over, and
+         * nothing is held until the copy is taken again. */
+        CHECK(copy_begin(SOFT_GPU_DEFERRED_AUTO, 0) == 0);
+        CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(red, 3) == 3);
+        model_replay();                    /* the take: red held across it */
+        CHECK(SoftGpu_Gp0(green, 3) == 3); /* held, after the take */
+        CHECK(SoftGpu_SetScale(4));        /* settled: red's patch, then green */
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 2 && s.patches == 1);
+        CHECK(SoftGpu_CopyPatches() == 0);
+        CHECK(SoftGpu_Gp0(red, 3) == 3);
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 2); /* not held: no copy at 4x yet */
+        model_replay();
+        CHECK(SoftGpu_Gp0(green, 3) == 3);
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 3); /* held again once it is taken */
+        (void)copy_end();
         window_settles = 1;
     }
     puts("Software GPU deferred raster checks passed");
