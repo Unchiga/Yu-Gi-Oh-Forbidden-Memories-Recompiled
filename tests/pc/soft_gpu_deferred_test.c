@@ -42,8 +42,8 @@ static int below(int n) { return (int)(rnd() % (unsigned)n); }
  * into the first area's columns is taken from rows below the areas), so the
  * held work lives until its area's next clear and is dropped there. The
  * others put all of it anywhere. They come four or five at a time (two
- * cycles of each area or so), as the game's stretches do: a cycle that met
- * a bank leaves the next one given up (`again`), so calm frames one by one
+ * cycles of each area or so), as the game's stretches do: a cycle given up
+ * leaves the next one given up too at times, so calm frames one by one
  * would rarely hold. Four or five, so that a busy stretch starts on either
  * area, and either area's calm queue is held while a busy frame's loads,
  * moves, fills and the rest run (Outcome.over_held: four at a time, the
@@ -93,6 +93,7 @@ static Outcome *now_outcome;
  * allocating). Counted where the link wraps the allocator (CMakeLists.txt). */
 static volatile int in_tick; /* volatile: a store around a malloc the compiler knows is kept */
 static int tick_allocs;
+static int fail_calloc; /* the next callocs fail (a frozen copy with no memory for it) */
 #ifdef SOFT_GPU_TEST_WRAP_ALLOC
 void *__real_malloc(size_t size);
 void *__real_calloc(size_t count, size_t size);
@@ -108,6 +109,7 @@ void *__wrap_malloc(size_t size)
 void *__wrap_calloc(size_t count, size_t size)
 {
     tick_allocs += in_tick;
+    if (fail_calloc) return NULL;
     return __real_calloc(count, size);
 }
 void *__wrap_realloc(void *pointer, size_t size)
@@ -136,7 +138,37 @@ static int prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, in
         }
         in_tick = 0;
     }
+    if (tick_rnd() % 17 == 0) { /* the tick writing bank 3 or the shadow's page: the same words mostly */
+        int x = 640 + (int)(tick_rnd() % 60), y = 256 + (int)(tick_rnd() % 250), change = tick_rnd() % 4 == 0;
+        in_tick = 1;
+        if (tick_rnd() & 1) {
+            uint16_t *bank = SoftGpu_Bank(3);
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++) bank[(y + j) * SOFT_GPU_WIDTH + x + i] ^= (uint16_t)(change ? 0x0421 : 0);
+        } else {
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++)
+                    *TextureDump_Cell(x + i, y + j, (int)(tick_rnd() % 4)) ^= (uint16_t)(change ? 0x0421 : 0);
+        }
+        in_tick = 0;
+    }
     return page_y == 256 && page_x == 640 ? 1 : page_y == 256 && page_x == 704 ? 2 : 0;
+}
+
+/* The opponent's name over the life-point panel: none (only that the hook
+ * is set matters to the deferred raster: the panel goes at once). */
+static const uint8_t *no_name(int which, int *x, int *y, int *width, int *height, int *stride)
+{
+    (void)which; (void)x; (void)y; (void)width; (void)height; (void)stride;
+    return NULL;
+}
+
+/* The pack's prepare for the fixed cases: the 16-bit page at 640,256 is
+ * replaced (the shadow), nothing else, and no tick. */
+static int shadow_prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, int u, int v)
+{
+    (void)depth; (void)clut_x; (void)clut_y; (void)u; (void)v;
+    return page_x == 640 && page_y == 256;
 }
 
 static int holds, releases, depth, nested;
@@ -179,7 +211,8 @@ static uint32_t position(int x0, int y0)
 
 /* A texture page word: mostly VRAM pages away from the areas, some inside
  * them (the other area: what a frame samples of the last one), the pack's
- * pages (prepare), and bank 3. */
+ * pages (prepare), and bank 3. Calm frames too take the shadow's page and
+ * bank 3, which are held (from their frozen copies, soft_gpu.c). */
 static uint32_t page_word(void)
 {
     int pick = below(16);
@@ -189,16 +222,17 @@ static uint32_t page_word(void)
                   : pick < 11 ? 11u | 16u
                   : calm ? (uint32_t)(10 + below(6)) | 16u
                   : (uint32_t)below(16) | 16u;                                       /* the lower half */
-    if (calm) { /* nothing that rasters at once (the pack's pages, the bank): the area keeps holding */
+    if (calm) { /* nothing that rasters at once: the area keeps holding */
         page = (uint32_t)(12 + below(4)) | (uint32_t)below(2) << 4;
         if (below(2)) page = (uint32_t)(10 + below(6));
+        if (below(6) == 0) page = 10u | 16u; /* the shadow's (prepare) */
     }
     page |= (uint32_t)below(4) << 5 | (uint32_t)below(3) << 7;
     /* A page whose texels run past x 1023 wraps into the first area's
      * columns (16 bits from 832 on, 8 from 960): a calm frame's takes the
      * lower half, so the wrap lands below the areas. */
     if (calm && (page & 15) * 64 + (64 << ((page >> 7) & 3)) > 1024) page |= 16;
-    if (below(12) == 0 && !calm) page |= SOFT_GPU_BANK_TPAGE(3);
+    if (below(calm ? 6 : 12) == 0) page |= SOFT_GPU_BANK_TPAGE(3);
     return page;
 }
 
@@ -226,7 +260,8 @@ static size_t primitive(uint32_t *out, int x0, int y0)
             else if (shaded) out[at++] = rnd() & 0xffffff;
             out[at++] = position(x0, y0);
             if (textured) {
-                uint32_t extra = v == 0 ? clut_word() : v == 1 ? page_word() : 0;
+                /* The third's upper half: a bank polygon's fade (SoftGpu_FadeOf), now and then. */
+                uint32_t extra = v == 0 ? clut_word() : v == 1 ? page_word() : below(3) == 0 ? 0x8000u | (uint32_t)below(256) : 0;
                 out[at++] = extra << 16 | (rnd() & 0xffff);
             }
         }
@@ -775,7 +810,7 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
             if (op < 70) {
                 at += primitive(batch + at, x0, y0);
             } else if (op < 74) { /* state words in the batch */
-                batch[at++] = 0xe1000000u | (page_word() & 0x7ff);
+                batch[at++] = 0xe1000000u | (page_word() & 0x7fff); /* bank 3 too (bits 11-14) */
                 if (below(3) == 0) batch[at++] = 0xe2000000u | (rnd() & 0xfffff);
                 if (below(4) == 0) batch[at++] = 0xe2000000u;
                 if (below(5) == 0) batch[at++] = 0xe6000000u | (uint32_t)below(4);
@@ -834,6 +869,20 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
                     for (int j = 0; j < h; j++)
                         for (int i = 0; i < w; i++)
                             out->stores = fnv(out->stores, &vram[((y + j) & 511) * 1024 + ((x + i) & 1023)], 2);
+                } else if (op < 94 && below(2)) {
+                    /* A bank's writer (a mod's, a palette copied in each
+                     * frame): bank 3's texels or palette rows, the same
+                     * words mostly, now and then changed; or the shadow's
+                     * cells on its page, repainted alike. */
+                    int w = 1 + below(32), h = 1 + below(16), x = 640 + below(384 - w), y = below(2) ? 480 + below(32 - h) : below(512 - h);
+                    int change = below(4) == 0, shadow = below(3) == 0;
+                    uint16_t *bank = SoftGpu_Bank(3);
+                    if (shadow) x = 640 + below(64 - (w < 64 ? w : 63)), y = 256 + below(256 - h);
+                    for (int j = 0; j < h; j++)
+                        for (int i = 0; i < w; i++) {
+                            uint16_t *at = shadow ? TextureDump_Cell(x + i, y + j, below(4)) : &bank[(y + j) * SOFT_GPU_WIDTH + x + i];
+                            *at = change ? (uint16_t)(rnd() | (shadow ? 0x8000 : 0)) : *at;
+                        }
                 } else if (op < 95) { /* the pack tags and paints some words */
                     int w = 1 + below(64), h = 1 + below(16), x = calm ? column(w) : below(1024 - w), y = below(512 - h);
                     for (int j = 0; j < h; j++)
@@ -957,9 +1006,15 @@ int main(int argc, char **argv)
         CHECK(held.held_by_mod == 0 && poisoned.held_by_mod == 0);
         /* Every rule was met but the panel's and OTHER's (memory, 4M words,
          * widescreen: the fixed cases below take the last two; a mod's VRAM
-         * or a scale raster at once without a look). */
+         * or a scale raster at once without a look), and a bank's and the
+         * shadow's, which are held now (no memory for a frozen copy: a fixed
+         * case below). Held, and some held work settled for a change in
+         * what it read of them (why WRITE counts loads too: see below). */
         for (int why = 0; why < SOFT_GPU_NOW_COUNT; why++)
-            if (why != SOFT_GPU_NOW_PANEL && why != SOFT_GPU_NOW_OTHER) CHECK(held.stats.now[why] > 0);
+            if (why != SOFT_GPU_NOW_PANEL && why != SOFT_GPU_NOW_OTHER && why != SOFT_GPU_NOW_BANK &&
+                why != SOFT_GPU_NOW_SHADOW)
+                CHECK(held.stats.now[why] > 0);
+        CHECK(held.stats.now[SOFT_GPU_NOW_BANK] == 0 && held.stats.now[SOFT_GPU_NOW_SHADOW] == 0);
         CHECK(now.stores == held.stores && now.stores == poisoned.stores);
         CHECK(now.vram == held.vram && now.vram == poisoned.vram);
         CHECK(now.tags == held.tags && now.tags == poisoned.tags);
@@ -1206,17 +1261,18 @@ int main(int argc, char **argv)
         SoftGpu_SetDeferred(0, 0);
     }
 
-    /* An area a bank made go at once stays given up past its next clear
-     * (twice, as the game clears) while each cycle meets a bank, and holds
-     * again after a cycle that met none; one given up for a texture in its
-     * own area (any reason but a bank, the shadow or the panel) holds again
-     * after its next clear. */
+    /* An area the life-point panel made go at once stays given up past its
+     * next clear (twice, as the game clears) while each cycle meets it, and
+     * holds again after a cycle that met none; one given up for a texture in
+     * its own area (any reason but the panel, or a bank or the shadow with no
+     * memory for its frozen copy) holds again after its next clear. */
     {
         const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
         const uint32_t plain[] = {0x60ffffffu, 0x00100010u, 0x00040004u}; /* white, 4x4 at 16,16 */
-        const uint32_t banked[] = {0x25808080u, 0x00000000u, 0x00000000u, 0x00000010u, /* raw textured triangle */
-                                   (uint32_t)(10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(3)) << 16 | 0x0010u,
-                                   0x00100000u, 0x1000u};
+        /* A raw textured triangle from the panel's page (704,0, 4-bit, palette 736,252). */
+        const uint32_t banked[] = {0x25808080u, 0x00000000u, (uint32_t)((252 << 6) | 46) << 16, 0x00000010u,
+                                   11u << 16 | 0x0010u, 0x00100000u, 0x1000u};
+        SoftGpu_PanelName = no_name;
         const uint32_t own[] = {0xe1000000u | (2u << 7), 0x65808080u, 0x00200020u, 0x00000000u,
                                 0x00040004u}; /* 16-bit page 0: the area's own words */
         static const unsigned long long held_after[7] = {1, 1, 1, 2, 3, 4, 5};
@@ -1236,8 +1292,8 @@ int main(int argc, char **argv)
             if (cycle < 2) CHECK(SoftGpu_Gp0(banked, 7) == 7);
             if (cycle == 5) CHECK(SoftGpu_Gp0(own, 5) == 5 && SoftGpu_Gp0(plain, 3) == 3); /* given up: not held */
             SoftGpu_DeferredStats(&s);
-            /* Cycle 0 holds its sprite; 1 (after a bank) and 2 (after a
-             * bank again) hold nothing; 3 (after a cycle without), 4, 5 and
+            /* Cycle 0 holds its sprite; 1 (after the panel) and 2 (after
+             * the panel again) hold nothing; 3 (after a cycle without), 4, 5 and
              * 6 (after a cycle given up for its own texture) do. */
             CHECK(s.held == held_after[cycle]);
         }
@@ -1265,6 +1321,7 @@ int main(int argc, char **argv)
             CHECK(s.held == held_before + 1);
         }
         SoftGpu_SetDeferred(0, 0);
+        SoftGpu_PanelName = NULL;
     }
 
     /* The same texels uploaded again with the mask bit set (E6 bit 0) are
@@ -1776,6 +1833,184 @@ int main(int argc, char **argv)
         }
         window_settles = 1;
     }
+    /* Banks and the pack's shadow (soft_gpu.c, frozen_sync): a held
+     * primitive reads them as they were when it came, from a frozen copy,
+     * whatever is written to them before it is rastered; a rewrite of the
+     * same words rasters nothing; a change rasters the held work that read
+     * them before the next primitive that reads them is held. Each case is
+     * run rastered at once and kept back, and both must store the same. */
+    {
+        static const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        static const uint32_t bank_page[] = {0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(3)}; /* E1: bank 3, 16-bit 640,0 */
+        static const uint32_t shadow_page[] = {0xe1000000u | 10 | 16 | (2u << 7)};                  /* 16-bit 640,256 */
+        static const uint32_t wrap_page[] = {0xe1000000u | 10 | (1u << 7) | SOFT_GPU_BANK_TPAGE(3)}; /* 8-bit, bank 3 */
+        static uint16_t out[2][64 * 24];
+        /* 1, 2: sprites whose bank comes from the E1 word (bank 3), and ones
+         * whose cells come from the shadow: A held; the same words written
+         * again; B held (nothing rastered); a change; C held (A and B
+         * rastered first, from the copy); a change again (C keeps its). */
+        for (int which = 0; which < 2; which++) {
+            for (int deferred = 0; deferred < 2; deferred++) {
+                SoftGpuDeferredStats st;
+                uint16_t *bank = SoftGpu_Bank(3), word = 0x1234;
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 1024, 512, 0);
+                SoftGpu_Load(640, 256, 1, 1, &word);
+                TextureDump_Prepare = which ? shadow_prepare : NULL;
+                for (int j = 0; j < 4; j++)
+                    for (int i = 0; i < 4; i++) {
+                        bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x001f;
+                        *TextureDump_Cell(640 + i, 256 + j, 0) = 0x8000 | 0x001f;
+                    }
+                SoftGpu_SetDeferred(deferred, 0);
+                CHECK(SoftGpu_Gp0(area, 4) == 4);
+                SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+                CHECK(SoftGpu_Gp0(which ? shadow_page : bank_page, 1) == 1);
+                for (int k = 0; k < 3; k++) {
+                    const uint32_t sprite[] = {0x65808080u, (16u << 16) | (uint32_t)(16 + 16 * k), 0, 0x00040004u};
+                    CHECK(SoftGpu_Gp0(sprite, 4) == 4);
+                    SoftGpu_DeferredStats(&st);
+                    if (deferred) CHECK(st.held == (unsigned)k + 1 && st.settled == (k == 2 ? 1u : 0u) &&
+                                        st.why[SOFT_GPU_WHY_WRITE] == (k == 2 ? 1u : 0u) && st.immediate == 0);
+                    for (int j = 0; j < 4; j++)
+                        for (int i = 0; i < 4; i++) {
+                            uint16_t *at = which ? TextureDump_Cell(640 + i, 256 + j, 0) : &bank[j * SOFT_GPU_WIDTH + 640 + i];
+                            *at = k == 0 ? *at : (uint16_t)((which ? 0x8000 : 0) | (k == 1 ? 0x03e0 : 0x7c00));
+                        }
+                }
+                SoftGpu_Store(0, 0, 64, 24, out[deferred]);
+            }
+            CHECK(!memcmp(out[0], out[1], sizeof(out[0])));
+            CHECK(out[0][16 * 64 + 16] == 0x001f && out[0][16 * 64 + 32] == 0x001f && out[0][16 * 64 + 48] == 0x03e0);
+        }
+        TextureDump_Prepare = NULL;
+        /* A bank's texels at coordinates inside the drawing area, where work
+         * is held: no VRAM word is read, so it is held all the same. */
+        {
+            static const uint32_t inside[] = {0xe1000000u | (2u << 7) | SOFT_GPU_BANK_TPAGE(3), /* 16-bit 0,0 */
+                                              0x65808080u, 0x00100010u, 0x00001010u, 0x00040004u};
+            SoftGpuDeferredStats st;
+            SoftGpu_SetDeferred(0, 0);
+            SoftGpu_Reset();
+            SoftGpu_SetDeferred(1, 0);
+            CHECK(SoftGpu_Gp0(area, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+            CHECK(SoftGpu_Gp0(inside, 5) == 5 && SoftGpu_Gp0(inside, 5) == 5);
+            SoftGpu_DeferredStats(&st);
+            CHECK(st.held == 2 && st.immediate == 0);
+        }
+        /* 3: a polygon naming bank 17 (bit 10 of its page word) with a fade,
+         * 4-bit, its palette in the bank: the palette entry its texels index
+         * changed after it is held. 4: 8-bit sprites from bank 3 whose
+         * palette at x 960 runs past 1023: the entry their texels index
+         * (100) lies at x 36; it changes between two held sprites. */
+        for (int which = 0; which < 2; which++) {
+            for (int deferred = 0; deferred < 2; deferred++) {
+                SoftGpuDeferredStats st;
+                uint16_t *bank = SoftGpu_Bank(which ? 3 : 17);
+                const uint32_t quad[] = {0x2d808080u, 0x00100010u, (uint32_t)((300 << 6) | 48) << 16,
+                                         0x00100018u, (uint32_t)(10 | SOFT_GPU_BANK_TPAGE(17)) << 16 | 0x0007u,
+                                         0x00180010u, (0x8000u | 100u) << 16 | 0x0700u, 0x00180018u, 0x0707u};
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 1024, 512, 0);
+                for (int j = 0; j < 8; j++)
+                    for (int i = 0; i < 4; i++) bank[j * SOFT_GPU_WIDTH + 640 + i] = which ? 0x6464 : 0x1111;
+                bank[300 * SOFT_GPU_WIDTH + 768 + 1] = 0x001f;
+                bank[301 * SOFT_GPU_WIDTH + 36] = 0x001f;
+                SoftGpu_SetDeferred(deferred, 0);
+                CHECK(SoftGpu_Gp0(area, 4) == 4);
+                SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+                if (!which) {
+                    CHECK(SoftGpu_Gp0(quad, 9) == 9);
+                    bank[300 * SOFT_GPU_WIDTH + 768 + 1] = 0x03e0;
+                } else {
+                    CHECK(SoftGpu_Gp0(wrap_page, 1) == 1);
+                    for (int k = 0; k < 2; k++) {
+                        const uint32_t sprite[] = {0x65808080u, (16u << 16) | (uint32_t)(16 + 16 * k),
+                                                   (uint32_t)((301 << 6) | 60) << 16, 0x00040004u};
+                        CHECK(SoftGpu_Gp0(sprite, 4) == 4);
+                        bank[301 * SOFT_GPU_WIDTH + 36] = 0x03e0;
+                    }
+                }
+                SoftGpu_DeferredStats(&st);
+                if (deferred) CHECK(st.held == (which ? 2u : 1u) && st.why[SOFT_GPU_WHY_WRITE] == (which ? 1u : 0u));
+                SoftGpu_Store(0, 0, 64, 24, out[deferred]);
+            }
+            CHECK(!memcmp(out[0], out[1], sizeof(out[0])));
+            CHECK(which ? out[0][16 * 64 + 16] == 0x001f && out[0][16 * 64 + 32] == 0x03e0
+                        : (out[0][18 * 64 + 18] & 0x1f) > 16 && (out[0][18 * 64 + 18] >> 5 & 0x1f) < 8); /* red, faded over grey */
+        }
+        SoftGpu_SetDeferred(0, 0);
+    }
+
+    /* At 2x with the model recorder: a sprite from bank 3 held across a take
+     * of the copy; the bank changes; another from it is held, which rasters
+     * the first (a patch for the copy, made from the frozen copy); the
+     * other area then samples what the first drew. The copy's reads are the
+     * same whether held or not, poisoned or not. */
+    {
+        static const int modes[3][2] = {{0, 0}, {SOFT_GPU_DEFERRED_AUTO, 0}, {SOFT_GPU_DEFERRED_AUTO, 1}};
+        static const uint32_t area_a[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        static const uint32_t area_b[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                          0xe6000000u};
+        static const uint32_t bank_page[] = {0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(3)};
+        static const uint32_t sprite_a[] = {0x65808080u, 0x00100010u, 0, 0x00040004u};
+        static const uint32_t sprite_b[] = {0x65808080u, 0x00100020u, 0, 0x00040004u};
+        static const uint32_t own_page[] = {0xe1000000u | (2u << 7)};                          /* 16-bit page 0 */
+        static const uint32_t reader[] = {0x65808080u, 0x00000000u, 0x00001010u, 0x00040020u}; /* u 16-47, v 16-19 */
+        uint64_t reads[3];
+        window_settles = 0;
+        for (int m = 0; m < 3; m++) {
+            SoftGpuDeferredStats st;
+            uint16_t *bank = SoftGpu_Bank(3);
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++) bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x001f;
+            CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+            CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+            CHECK(SoftGpu_Gp0(bank_page, 1) == 1 && SoftGpu_Gp0(sprite_a, 4) == 4);
+            model_replay(); /* the take: sprite A held across it */
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++) bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x03e0;
+            CHECK(SoftGpu_Gp0(sprite_b, 4) == 4);
+            SoftGpu_DeferredStats(&st);
+            if (m) CHECK(st.held == 2 && st.patches == 1 && st.why[SOFT_GPU_WHY_WRITE] == 1);
+            CHECK(SoftGpu_Gp0(area_b, 4) == 4 && SoftGpu_Gp0(own_page, 1) == 1 && SoftGpu_Gp0(reader, 4) == 4);
+            reads[m] = copy_end();
+        }
+        CHECK(reads[0] == reads[1] && reads[0] == reads[2]);
+        window_settles = 1;
+    }
+
+#ifdef SOFT_GPU_TEST_WRAP_ALLOC
+    /* No memory for a frozen copy: the primitive is rastered at once
+     * (NOW_BANK, NOW_SHADOW) and its area given up past its next clear. */
+    for (int which = 0; which < 2; which++) {
+        static const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t page[] = {which ? 0xe1000000u | 10 | 16 | (2u << 7)
+                                       : 0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(3)};
+        static const uint32_t sprite[] = {0x65808080u, 0x00100010u, 0, 0x00040004u};
+        SoftGpuDeferredStats st;
+        SoftGpu_SetDeferred(0, 0); /* the copies go */
+        SoftGpu_Reset();
+        TextureDump_Prepare = which ? shadow_prepare : NULL;
+        SoftGpu_SetDeferred(1, 0);
+        CHECK(SoftGpu_Gp0(area, 4) == 4);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(page, 1) == 1);
+        fail_calloc = 1;
+        CHECK(SoftGpu_Gp0(sprite, 4) == 4);
+        fail_calloc = 0;
+        CHECK(SoftGpu_Gp0(sprite, 4) == 4); /* given up: at once */
+        SoftGpu_DeferredStats(&st);
+        CHECK(st.held == 0 && st.now[which ? SOFT_GPU_NOW_SHADOW : SOFT_GPU_NOW_BANK] == 1 &&
+              st.now[SOFT_GPU_NOW_AFTER] == 1);
+        TextureDump_Prepare = NULL;
+        SoftGpu_SetDeferred(0, 0);
+    }
+#endif
     puts("Software GPU deferred raster checks passed");
     return 0;
 }

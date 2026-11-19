@@ -104,22 +104,23 @@ extern unsigned long long (*SoftGpu_Clock)(void);
 /* What the deferred raster did since SoftGpu_SetDeferred turned it on. */
 enum {
     SOFT_GPU_WHY_READ,      /* a reader settled it (a store, a move's source, a host lookup, a hash...) */
-    SOFT_GPU_WHY_WRITE,     /* a load, move or fill wrote into it, or into a texture it samples */
+    SOFT_GPU_WHY_WRITE,     /* a load, move or fill wrote into it, or into a texture it samples, or a bank or
+                             * the pack's shadow it samples changed (soft_gpu.c, frozen_sync) */
     SOFT_GPU_WHY_DRAW,      /* a primitive rastered at once drew into it, or samples it */
     SOFT_GPU_WHY_AREA,      /* another drawing area took its place */
     SOFT_GPU_WHY_ALL,       /* all of VRAM: a state, a scale, the switch, a mod */
     SOFT_GPU_WHY_COUNT
 };
 enum {
-    SOFT_GPU_NOW_BANK,      /* samples a texture bank */
-    SOFT_GPU_NOW_SHADOW,    /* samples the texture pack's shadow */
+    SOFT_GPU_NOW_BANK,      /* samples a texture bank, and there is no memory for its frozen copy */
+    SOFT_GPU_NOW_SHADOW,    /* samples the texture pack's shadow, and no memory for its frozen copy */
     SOFT_GPU_NOW_TAGS,      /* would clear provenance tags or shadow cells */
     SOFT_GPU_NOW_TEXTURE,   /* its texture or palette lies in held work */
     SOFT_GPU_NOW_PANEL,     /* the life-point panel the opponent's name goes over */
     SOFT_GPU_NOW_OTHER,     /* widescreen's second pass, too much held, no memory (not a mod's VRAM or a
                              * scale: then nothing is looked at, or counted) */
-    SOFT_GPU_NOW_AFTER,     /* one of the above drew into its area since the area's last clear, or a bank,
-                             * the shadow or the panel in the cycle before (soft_gpu.c, `again`) */
+    SOFT_GPU_NOW_AFTER,     /* one of the above drew into its area since the area's last clear, or the
+                             * panel (a bank, the shadow) in the cycle before (soft_gpu.c, `again`) */
     SOFT_GPU_NOW_COUNT
 };
 #define SOFT_GPU_QUEUES 2
