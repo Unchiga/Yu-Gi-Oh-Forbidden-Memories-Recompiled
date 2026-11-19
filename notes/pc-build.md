@@ -3049,7 +3049,9 @@ only that:
   at once (`NOW_BANK`, `NOW_SHADOW`) and `again` applies, as before. They
   are freed when the switch goes off. With poison, a copy no held work
   reads is filled with magenta before it takes the words, so a replay that
-  read past what was compared for it would show;
+  read past what was compared for it would show (so a poison run rasters
+  more than AUTO: words not compared since the fill differ from the live
+  ones and settle the readers; its picture must still be AUTO's);
 - nothing new is lent to mods and no shared struct grows
   (`SoftGpuDeferredStats` counts a change as `why[WRITE]`).
 

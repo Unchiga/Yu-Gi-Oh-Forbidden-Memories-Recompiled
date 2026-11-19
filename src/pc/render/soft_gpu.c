@@ -524,13 +524,27 @@ static void settle_all(int why)
     release_clock();
 }
 
+static size_t frozen_words(int s)
+{
+    return s ? (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT : (size_t)TEXTURE_SHADOW_WIDTH * SOFT_GPU_HEIGHT;
+}
+
+/* Poison: a frozen copy magenta wherever it has taken no words yet (made, or
+ * the poison switched on), so a replay that read past what was frozen for it
+ * shows. Once, not each time a copy is read by no held work: refilled then,
+ * every rectangle not compared since would differ and settle the readers,
+ * and the poison run would hold far less long than AUTO. */
+static void frozen_poison(int s)
+{
+    for (size_t k = 0, words = frozen_words(s); k < words; k++) frozen[s][k] = POISON;
+}
+
 /* Source s's frozen copy made (`hold`, on the main thread): 0 if there is
  * no memory for it, and then what reads s is rastered as it comes. */
 static int frozen_made(int s)
 {
-    if (!frozen[s])
-        frozen[s] = calloc(s ? (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT : (size_t)TEXTURE_SHADOW_WIDTH * SOFT_GPU_HEIGHT,
-                           sizeof(uint16_t));
+    if (!frozen[s] && (frozen[s] = calloc(frozen_words(s), sizeof(uint16_t))) != NULL && deferred_poison)
+        frozen_poison(s);
     return frozen[s] != NULL;
 }
 
@@ -563,8 +577,7 @@ static int frozen_rect(int s, const int rect[4], int copy)
  * they are now. If held work reads s and they changed since it came (a
  * rewrite of the same bytes is no change), that work is rastered first, from
  * the copy as it still is, so as it came. The copy thus changes only while
- * no held work reads it. With poison, a copy no held work reads is magenta
- * first, so a replay that reads past what was frozen for it shows. */
+ * no held work reads it. */
 static void frozen_sync(int s, const int (*rects)[4], int n)
 {
     uint32_t bit = 1u << s;
@@ -575,10 +588,6 @@ static void frozen_sync(int s, const int (*rects)[4], int n)
         if (i == n) return;
         for (a = 0; a < HELD_AREAS; a++)
             if (held[a].on && (held[a].sources & bit)) settle_area(&held[a], SOFT_GPU_WHY_WRITE);
-    }
-    if (deferred_poison) {
-        size_t words = s ? (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT : (size_t)TEXTURE_SHADOW_WIDTH * SOFT_GPU_HEIGHT;
-        for (size_t k = 0; k < words; k++) frozen[s][k] = POISON;
     }
     for (i = 0; i < n; i++) frozen_rect(s, rects[i], 1);
 }
@@ -1020,10 +1029,13 @@ void SoftGpu_SetDeferred(int on, int poison)
         free(held[a].before);
         held[a].before = NULL;
     }
-    if (!deferred_on) { /* nothing is held: no settle reads the frozen copies */
-        for (int s = 0; s < FROZEN_SOURCES; s++) {
+    for (int s = 0; s < FROZEN_SOURCES; s++) { /* nothing is held: no settle reads the frozen copies */
+        if (!frozen[s]) continue;
+        if (!deferred_on) {
             free(frozen[s]);
             frozen[s] = NULL;
+        } else if (deferred_poison) {
+            frozen_poison(s);
         }
     }
 }
