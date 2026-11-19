@@ -3225,9 +3225,11 @@ it takes:
   patch (the area as the copy should have had it), then the rest. The
   recorder takes the patches (`SoftGpu_CopyPatches`, its `patch` callback,
   which writes the copy only, never the picture) at the start of its next
-  replay, before anything in the record, and in `flush_runs` before each
-  draw (the replay's own host lookups, `HdText_Hud` and the others, settle
-  too). Why this is exact, and why not an `OP_LOAD` in the record: a
+  replay, before anything in the record, and at every `flush_runs`, before
+  it draws and before the transfer that flushes it, whether it drew
+  anything or not (the replay's own host lookups, `HdText_Hud` and the
+  others, settle too, also for a primitive that then draws nothing). Why
+  this is exact, and why not an `OP_LOAD` in the record: a
   patch is the area as it was at the last take, which is what the copy
   holds with the switch off from the replay's start until the first write
   into the area in the record; and every write or read of the area in the
@@ -3239,15 +3241,35 @@ it takes:
   it, and loads, moves and fills are recorded before they settle. A
   patch the recorder has not taken when it takes the copy again is
   forgotten (the copy then has those words, rastered further). The tick is
-  held off from the copy's read to `SoftGpu_CopyTaken`. A patch that cannot
-  be kept (no memory) makes the next replay a resync, as an overflow of
-  the record does (that frame shows the picture made from VRAM at 1x).
-  `tools/pc/check_vram_readers.py` checks the two calls' places in
-  `upload_vram`, `GlPicture_Replay` and `flush_runs` (`COPY_KEEPING`).
-- Only a recorder with `patch` that has taken its copy since it was set
-  lets work be held (`copy_on()`); so a test's recorder, a mod's (none
-  exists: `SoftGpu_CopyTaken` and `SoftGpu_CopyPatches` are not lent) or
-  the OpenGL picture before its first replay hold nothing.
+  held off from the copy's read to `SoftGpu_CopyTaken`. A settle can come
+  from the tick (its LoadImage, StoreImage, MoveImage or ClearImage), so a
+  patch is made without allocating: the patches share one buffer of VRAM's
+  size, made on the main thread at the recorder's first take, when nothing
+  can be held yet; it is always enough (the areas held at a take never
+  overlap and lie in VRAM, one patch an area), and without it no copy is
+  kept, so nothing is held. `tools/pc/check_vram_readers.py` checks the
+  calls' places in `upload_vram`, `GlPicture_Replay` and `flush_runs`
+  (`COPY_KEEPING`).
+- The clock and the record: while work can be held or is, a transfer from
+  outside a batch (`SoftGpu_Load`, `Move`, `Fill`) and a batch
+  (`SoftGpu_Gp0`) hold the tick off from their record to the end of the
+  transfer, so record and transfer are one. Otherwise a tick in between
+  records its own transfer after this one but makes it first; with held
+  work that could drop an area the copy missed (a tick's clear) before a
+  move out of it that the record still replays first, from the copy's
+  stale words. With nothing held and nothing holdable the path is as
+  before (a tick there reorders both alike).
+- Only a recorder with `patch` that has taken its copy since it was set,
+  naming itself (`SoftGpu_CopyTaken(&recorder)`), lets work be held
+  (`copy_on()`); so a test's recorder, a mod's or the OpenGL picture
+  before its first replay hold nothing. `SoftGpu_SetRecorder` is lent to
+  mods, and a mod's recorder, made with an older header, ends before
+  `patch`: it is never read that far (`copy_on()` checks `copy_kept`
+  first, and only the recorder that names itself is marked;
+  `SoftGpu_CopyTaken`, `SoftGpu_CopyPatches` and `SoftGpu_SetCopyReach`
+  are not lent), and a translated build resolves a recorder only as far
+  as `capture`. A new recorder or a new scale forgets the copy and its
+  patches (`forget_copy`): nothing is held until the copy is taken again.
 - A fill that covers a held area only by wrapping past VRAM's edge settles
   it instead of dropping it while the copy misses it (`fill_reaches`):
   `apply_fill` cuts a fill at the edge, so the copy keeps the old words
@@ -3271,13 +3293,33 @@ it takes:
 - The replay's host lookups (`HdText_*` in `gl_picture.c`) read VRAM at
   replay time and settle what they read, which rasters a held area they
   cross for nothing but correctness.
-- Reads the OpenGL pass makes beyond what the raster checks: texture xBR's
-  centre texel is not clamped to the primitive's `bounds` (a pixel past the
-  edge, with anti-aliasing), and HD text's ink indexes a palette by the
-  glyph atlas, not the texels. Next to a held area either could read words
-  the copy missed. The gate (below) found nothing with xBR alone; with
-  xBR and anti-aliasing together the picture differs from run to run on
-  this PC with the switch off too, so that run proves nothing either way.
+- Reads the OpenGL pass makes beyond the texels the coordinates span, so
+  beyond what the raster settles of a primitive (`texture_rects`):
+  - Texture xBR (`texture_xbr`) does not clamp its centre texel `e` to the
+    primitive's `bounds` (clamping it changed xBR pictures), and clamps the
+    neighbours only to the span of `bounds` and `e`, so it reads as far as
+    `e` leaves `bounds`. Without anti-aliasing a fragment's centre lies in
+    the primitive, so its coordinates lie within the vertices'; `back`
+    moves them on by less than 2 texels and the 1/256 does not carry
+    `floor()` further: `e` is at most one texel past the last u and v,
+    never before the first. With anti-aliasing a pixel's centre can lie
+    outside the primitive and the corner step adds half a pixel, both as
+    many texels as a pixel spans: no bound short of the page, which
+    `texel_word` wraps. `gl_picture.c` tells the software GPU that reach at
+    each replay, before the patches (`SoftGpu_SetCopyReach`: 0 with xBR
+    off, 1 with it, `SOFT_GPU_REACH_PAGE` with xBR and anti-aliasing), and
+    `texel_rect` takes it in while the copy is kept: one more u and v, or
+    all of the page on an axis that would wrap. A change settles
+    everything (what is held was let hold under the old reach). With xBR
+    off (the default) nothing changes.
+  - HD text (flag 16) reads its palette at whatever index its atlas holds
+    under the pixel, 0 to 255, a neighbouring glyph's or label's too where
+    the pixel's centre lies past its own; the raster settled only the
+    entries the console's texels index (16 for a 4-bit glyph). Each HD
+    text primitive settles its palette row whole (`ink_palette`, 256
+    entries, wrapping as `word_at` does) as the replay gathers it, so
+    `flush_runs` hands the patch over before it draws (`HdText_Hud` and
+    `HdText_FieldWord` already settled theirs).
 
 The gate at 2x and 4x (scratch scripts, not in the repo; a scratch build
 with a window that is never shown and a per-frame hash of the scaled
@@ -3335,9 +3377,18 @@ window and two 8 s windows of 3D battles; at 2x two runs each way): on
 the duel field the raster (draws and settles outside them) went from 5.3
 to 0.44 ms a frame at 2x and 4x, and the game's work a frame from 6.7 to
 2.4 ms; the present grew from 5.6 to 7.1 ms (the replay from 2.5 to 3.6
-ms, with no patches there, so the same GPU work; why is not measured),
-so the two together went from 12.3 to 9.5 ms at a steady 60 frames a
-second. The CPU time the threads used (`/proc`, 4x, three interleaved
+ms, with no patches there, so the same GPU work), so the two together
+went from 12.3 to 9.5 ms at a steady 60 frames a second. Why the present
+grew (simpleperf on a profileable build of the same APK, and per-thread
+scheduler counters): the replay, the present and the game's own code run
+the same instruction counts both ways but take 35-40% longer with AUTO,
+because with the raster gone the lighter game thread is kept on the
+phone's small Cortex-A55 cores (its run time on the big A75 cores falls
+from 50-57% to 8-10%, the small cluster at about 1.3 GHz). About 0.7 ms of
+the replay's 1.0 ms rise is that, measured; the other 0.35 ms is inferred
+from the thread's run-queue wait rising as much, not measured. AUTO's own
+new code (`SoftGpu_CopyTaken`, `SoftGpu_CopyPatches`, the upload's
+`sigprocmask` pair) costs about 0.02 ms a frame. The CPU time the threads used (`/proc`, 4x, three interleaved
 runs each way) says the same: the game's thread (which also replays)
 14.2 -> 11.7 ms a frame on the duel field, the whole app 22.9 -> 17.6. In
 3D battles little is saved: the raster went from 6.5 and 8.0 ms to 4.5
@@ -3345,7 +3396,11 @@ and 5.5 (the background's palette move rasters what is held, settles
 caused by a write), the game's thread's CPU time 28.1 -> 27.0 and 44.9 ->
 41.5 ms a frame, the whole app's 42.6 -> 43.4 and 71.9 -> 66.8, at 29 and
 23 frames a second either way (the first battle runs at its own 30 a
-second, the second below it with the switch off too). With the
+second, the second below it with the switch off too). The battles'
+frame rates differ by no more than runs with the switch off differ from
+each other: in new interleaved windows of the first battle, 26.98 off
+against 26.92 AUTO at 4x and 28.83 against 28.98 at 2x; the second
+battle's window was not run again. With the
 virtual clock (`MEMORIES_DETERMINISTIC=1`), three pictures of a duel taken
 over the control channel were the same with the switch off (twice), AUTO
 and AUTO with poison, at 2x and 4x, and at 2x with the OpenGL ES context
