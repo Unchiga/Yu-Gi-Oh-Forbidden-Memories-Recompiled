@@ -2827,10 +2827,10 @@ lines of the commit that added settling:
 |---|---|---|
 | The raster itself, `plot` (and `name_over_panel` through it) | `soft_gpu.c:706` | it is the raster; `plot` also clears the pack's tags and shadow cells it draws over (`:720`), which must happen as the primitive comes |
 | A state load through `SoftGpu_StateData(0)`'s pointer | `state_subsystems.c:221`, then `SoftGpu_PictureFromVram` at `:227` | drop what is kept back (StateData settles first) |
-| Texture banks through `SoftGpu_Bank()`'s pointer (sampled, never drawn into) | `field_models.c:452`, `:2242`, `field_art.c:167`, `:349` (3D Monsters); `glyphs.c:996`, `:1020`, `:1077` (and `copy_palettes`, every call); `card_layout_art.c:185`, `:312`, `:487`, `:550`, `:696`; `battle_models.c:180` (copies VRAM in every call); `attribute_icons.c:123`; `duel_ui.c:322`; `type_icons.c:110`; `star_icons.c:165` (palettes copied every call) | raster a primitive that samples a bank at once, until banks carry a generation that changes only when their bytes do (the writers rewrite the same bytes every frame) |
-| The pack's shadow cells and tags | `texture_pack.c:1343` `paint` (every cell, the between-frames repaints at `:2821` and `:2828` included), `:1627` `tag_block`, `:2847` (unload); `texture_dump.c:356`, `:398`, `:450` (with each transfer), `:505` (a state load's tags) | raster a primitive that samples the shadow at once, until the shadow has the same generation |
+| Texture banks through `SoftGpu_Bank()`'s pointer (sampled, never drawn into) | `field_models.c:452`, `:2242`, `field_art.c:167`, `:349` (3D Monsters); `glyphs.c:996`, `:1020`, `:1077` (and `copy_palettes`, every call); `card_layout_art.c:185`, `:312`, `:487`, `:550`, `:696`; `battle_models.c:180` (copies VRAM in every call); `attribute_icons.c:123`; `duel_ui.c:322`; `type_icons.c:110`; `star_icons.c:165` (palettes copied every call) | a held primitive reads the bank's frozen copy, compared with the bank as each primitive that reads it is held (the writers rewrite the same bytes every frame, unseen: "Banks and the pack's shadow" below) |
+| The pack's shadow cells and tags | `texture_pack.c:1343` `paint` (every cell, the between-frames repaints at `:2821` and `:2828` included), `:1627` `tag_block`, `:2847` (unload); `texture_dump.c:356`, `:398`, `:450` (with each transfer), `:505` (a state load's tags) | the same, with the shadow's frozen copy (no hook in any writer) |
 | State taken when the list is flushed | `SoftGpu_PanelName`/`SoftGpu_PanelCut` (`libgpu.c` `flush_drawing`), `SoftGpu_PictureOnlyFrame` (`soft_gpu.c:1200`), `SoftGpu_PictureOnlyClut` (`:1176`), `SoftGpu_SetPrecise` (`:1444`) | keep the value each primitive came with |
-| Code mods | `SoftGpu_StateData` and `SoftGpu_Vram` are lent to mods, and a mod may keep VRAM's pointer and write through it whenever; `SoftGpu_Bank` is lent too (the bank row above covers it) | raster at once while a loaded mod imports `SoftGpu_StateData` or `SoftGpu_Vram` (mods must just work); banks keep the per-primitive rule |
+| Code mods | `SoftGpu_StateData` and `SoftGpu_Vram` are lent to mods, and a mod may keep VRAM's pointer and write through it whenever; `SoftGpu_Bank` is lent too (the bank row above covers it) | raster at once while a loaded mod imports `SoftGpu_StateData` or `SoftGpu_Vram` (mods must just work); a mod's bank writes are met by the bank's frozen copy |
 
 Measured with the target load (an HD pack, HD text, a translation and every
 code mod in `mods/`), headless at 1x on an instrumented build (not in the
@@ -2873,9 +2873,11 @@ What is held, and how:
   `TextureDump_Primitive`, the recorder's copy of the batch and its PGXP
   vertices, the picture-only checks. A queued primitive is rastered later
   by the same `polygon`, `rectangle` or `lines` with `replaying` set, which
-  skips all of that, samples VRAM even if a bank of its number has been
-  made since, and clears no provenance tags (it was held only if they were
-  clear, below).
+  skips all of that, samples what it sampled as it came (VRAM, even if a
+  bank of its number has been made since, or its bank's frozen copy; the
+  shadow's frozen cells if it took from the shadow: "Banks and the pack's
+  shadow" below), and clears no provenance tags (it was held only if they
+  were clear, below).
 - It is rastered at the first settle that crosses its area (any
   `SoftGpu_Settle`, and so every reader in "Settling VRAM before it is
   read"), in the order it came, area by area; or dropped when a fill covers
@@ -2919,8 +2921,9 @@ What is held, and how:
 Rastered at once instead (after what it draws over and what it reads has
 been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
 
-- it samples a texture bank (`SoftGpu_Bank`: its writers rewrite it
-  unannounced) or the texture pack's shadow (`TextureDump_Prepare` said 1);
+- it samples a texture bank (`SoftGpu_Bank`) or the texture pack's shadow
+  (`TextureDump_Prepare` said 1) and there is no memory for that source's
+  frozen copy ("Banks and the pack's shadow" below: otherwise it is held);
 - the texels it samples or its palette lie in a held area or in its own;
 - its area's provenance tags or shadow cells are not all clear
   (`TextureDump_Clean`, checked again whenever `TextureDump_TouchCount`
@@ -2958,22 +2961,24 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
 - an area's queue passed 4M words, or memory ran out;
 - a primitive was rastered at once into its area, for one of the reasons
   above but the last two, since the area's last whole clear: until the
-  next, the area holds nothing (`given_up`). With a texture pack or a mod's
-  bank a duel frame cannot be held whole, and holding the rest only to
-  raster it at the next such primitive cost 20% more raster time than not
-  holding at all (the copies, and the palette scan of `texture_rects`).
-- the area met a bank, the shadow or the panel in its last cycle (clear to
-  clear; the game's second clear right after the first ends none): it is
-  still given up after that clear (`again`), until a cycle that meets none
-  of the three, after which it holds again. With the pack and the mods a
-  duel frame meets a bank or the shadow nearly every time (about 14
-  primitives in), so with `given_up` alone each held those 14 only to
-  raster them at the first such primitive: 4% more raster time on
-  the duel field than not holding (measured below). A cycle given up for
-  the other reasons (a texture in held work, tags) is not carried over.
+  next, the area holds nothing (`given_up`). When banks and the shadow went
+  at once, a duel frame with a texture pack or a mod's bank could not be
+  held whole, and holding the rest only to raster it at the next such
+  primitive cost 20% more raster time than not holding at all (the copies,
+  and the palette scan of `texture_rects`).
+- the area met the panel, or a bank or the shadow with no memory for its
+  frozen copy, in its last cycle (clear to clear; the game's second clear
+  right after the first ends none): it is still given up after that clear
+  (`again`), until a cycle that meets none, after which it holds again.
+  When banks and the shadow went at once, a duel frame with the pack and
+  the mods met one nearly every time (about 14 primitives in), so with
+  `given_up` alone each held those 14 only to raster them at the first such
+  primitive: 4% more raster time on the duel field than not holding
+  (measured below). A cycle given up for the other reasons (a texture in
+  held work, tags) is not carried over.
 
-The rules that need no rectangles (the area's size, `holding()`, a bank,
-the shadow, the panel, given up) come first; a polygon's span
+The rules that need no rectangles (the area's size, `holding()`, a bank's
+or the shadow's frozen copy made, the panel, given up) come first; a polygon's span
 (`polygon_uv`), `texture_rects` and its palette scan are taken only for a
 primitive that passes them (or, rastered at once while work is held, for
 the texels it reads), so none of them costs anything with the switch off
@@ -3000,6 +3005,54 @@ and the clock is never held; nor with it on while `holding()` is false
 (the cases above). At 2x and above the OpenGL picture also takes its copy
 with the tick held off (below).
 
+#### Banks and the pack's shadow (frozen copies)
+
+A primitive that samples a texture bank or the HD pack's shadow is held
+too. Their writers (the table above: the 3D Monsters mod and the port's own
+bank users through `SoftGpu_Bank`'s pointer, the pack's `paint`, transfers'
+`TextureDump_Loaded`/`Moved`/`Cleared`, the pack's unload) write unseen, at
+any time, and most write the same bytes again every frame, so neither a
+hook in each writer nor a write count can say when what a held primitive
+reads has changed. Instead each source (`frozen[0]` the shadow's cells,
+`frozen[b]` bank b) has a VRAM-shaped frozen copy, and held work reads
+only that:
+
+- a held entry records the bank it sampled as it came (0 for VRAM; a
+  sprite's comes from E1, which is not in `GpuState`) and whether it took
+  from the shadow; `settle_area` sets `texture_source` (and `set_page`
+  inside a replayed polygon) to the bank's copy, and the sampler's cells
+  (`Sampler.cells`) to the shadow's copy;
+- as a primitive that reads a source is held (`frozen_sync`, with the clock
+  held), the words it reads are compared with the copy: its texel
+  rectangle (`texel_rect`, wrapping past x 1023, the whole page on an axis
+  the window folds or that wraps), for a bank below 16 bits also its
+  palette row in the bank (16 or 256 words, wrapping), for the shadow the
+  four cells of each of those words. If no held area reads that source
+  they are just copied; if they are the same, nothing happens (a rewrite
+  of the same bytes is no change); if they changed, every held area that
+  reads the source (`HeldArea.sources`) is rastered first, from the copy
+  as it still is, counted as `why[WRITE]`, and then the copy takes them;
+- so the copy changes only while no held work reads it, and whatever
+  settles a held area, whenever (a reader, the tick, a state, a scale, the
+  OpenGL replay's lookups), it reads what its primitives read as they
+  came. Nothing in the writers changes, and nothing a mod does through its
+  bank pointer can break it;
+- a bank's primitive reads no VRAM word (its palette is the bank's), so
+  VRAM's rules (`texture_rects`, the held-area meet, `add_sampled`, the
+  immediate path's `before_read`) are not applied to it: a bank's texture
+  coordinates often lie inside a drawing area. A shadow primitive keeps
+  all of them (it reads the word's semi-transparency bit, and the word
+  itself where no cell replaces it) besides its cells;
+- the copies (a bank 1 MB, the shadow 4 MB) are made the first time a
+  primitive that reads the source is held, in `hold` on the main thread;
+  a settle, the tick's too, only reads them. No memory: the primitive goes
+  at once (`NOW_BANK`, `NOW_SHADOW`) and `again` applies, as before. They
+  are freed when the switch goes off. With poison, a copy no held work
+  reads is filled with magenta before it takes the words, so a replay that
+  read past what was compared for it would show;
+- nothing new is lent to mods and no shared struct grows
+  (`SoftGpuDeferredStats` counts a change as `why[WRITE]`).
+
 Checks and tools:
 
 - `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 600
@@ -3018,8 +3071,22 @@ Checks and tools:
   rectangle, state, a present of the area just drawn (one frame in four)
   and the final VRAM, tags, shadow and drawing state must match, the clock
   hook must be called balanced and never nested, nothing may be held while
-  the mod binds VRAM, and each immediate cause but the panel's and
-  `OTHER`'s must have occurred. `OTHER` has two fixed cases of its own:
+  the mod binds VRAM, and each immediate cause but the panel's,
+  `OTHER`'s, `BANK`'s and `SHADOW`'s must have occurred (the last two must
+  not: their copies are always made here; a fixed case where the
+  allocator is wrapped makes them fail). Calm frames sample bank 3 and the
+  shadow's page too, polygons fade, E1 words name bank 3, and bank 3's
+  texels and palette rows and the shadow's cells are written between
+  batches and by the prepare stand-in (the tick), the same words mostly and
+  changed now and then. Fixed cases for the frozen copies: a sprite from
+  bank 3 (named by E1) and one from the shadow, held, then the same words
+  written again (nothing rastered, by the counters), changed (the held
+  ones rastered first), changed again; a polygon naming bank 17 with a
+  fade whose palette entry changes after it is held; 8-bit sprites whose
+  bank palette at x 960 wraps to x 36, changed between two; a bank's
+  texels at coordinates inside the drawing area (held); at 2x, a bank
+  sprite held across a take, the bank changed, the patch made from the
+  copy and the other area reading it. `OTHER` has two fixed cases of its own:
   widescreen on at 1x (a sprite and a quad into a full-screen area are
   rastered at once, VRAM and the widened picture equal the immediate run's,
   and with widescreen off the same two are held) and 2.2 million two-word
@@ -3054,10 +3121,10 @@ Checks and tools:
   case: an area holds a sprite reading words of the other area, which then
   starts holding over them with no clear first and is settled first; the
   random frames clear first, which settles the reader, so only this case
-  catches it). A fixed case checks `again`: an area that met a bank holds
-  nothing after its next clear (made twice), nor after the one after a
-  cycle with a bank, and holds again after a cycle without, or after one
-  given up for its own texture. Calm frames come four or five at a time
+  catches it). A fixed case checks `again`: an area that met the panel
+  holds nothing after its next clear (made twice), nor after the one after
+  a cycle with the panel, and holds again after a cycle without, or after
+  one given up for its own texture (a bank before banks were held). Calm frames come four or five at a time
   (two cycles of each area or so), or with `again` too few held areas
   would be dropped for the test's own check; four or five so that a busy
   stretch starts on either area, and the test requires that each area's
