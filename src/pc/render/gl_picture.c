@@ -2605,6 +2605,12 @@ static void flush_runs(void)
 {
     size_t i;
     int origin_x = 0, origin_y = 0, leaning, bound;
+    /* A host lookup made since the last flush (HdText_Hud, ...) may have
+     * settled held work the last upload missed: its patch, before these
+     * primitives draw, and before the transfer or the end of the replay
+     * that flushes them reads the copy, even when they drew nothing (a
+     * degenerate or oversized polygon looked up and dropped). upload_vram. */
+    if (scale >= 2) SoftGpu_CopyPatches();
     if (!vertex_count || scale < 2) {
         vertex_count = 0;
         run_count = 0;
@@ -2615,10 +2621,6 @@ static void flush_runs(void)
     sync_banks();
     sync_pack();
     if (hd_text || hd_hud || opponent_name) sync_glyphs();
-    /* A host lookup made for these primitives (HdText_Hud, ...) may have
-     * settled held work the last upload missed: its patch, before they draw
-     * (upload_vram). */
-    SoftGpu_CopyPatches();
     gl_ActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, vram_texture);
     gl_UseProgram(program);

@@ -95,9 +95,11 @@ COPY_KEEPING = {
     ("src/pc/render/gl_picture.c", "GlPicture_Replay"): (re.compile(r"\bSoftGpu_CopyPatches\s*\("),
                                                           re.compile(r"\b(gp0|apply_\w+|resync)\s*\("), "before"),
     # The replay's own host lookups settle too (HdText_Hud and the others,
-    # inside the replay): their patches before the primitives draw.
+    # inside the replay): their patches before the primitives draw, and
+    # before the transfer that flushes them reads the copy, even when
+    # nothing is drawn (its early return).
     ("src/pc/render/gl_picture.c", "flush_runs"): (re.compile(r"\bSoftGpu_CopyPatches\s*\("),
-                                                    re.compile(r"\bgl_UseProgram\s*\(\s*program\b"), "before"),
+                                                    re.compile(r"\breturn\b"), "before"),
 }
 SETTLE = re.compile(r"\bSoftGpu_(Settle|SettleTexture|Vram)\s*\(")
 RAW = re.compile(r"\bSoftGpu_VramRaw\s*\(")
@@ -274,6 +276,17 @@ int GlPicture_Replay(void)
     apply_load(0, 0, 1, 1, words);
 }
 """),
+        "patches only for a flush that draws": ("src/pc/render/gl_picture.c", """
+static void flush_runs(void)
+{
+    if (!vertex_count) {
+        run_count = 0;
+        return;
+    }
+    SoftGpu_CopyPatches();
+    draw();
+}
+"""),
     }
     failed = [name for name, (path, code) in cases.items() if not problems_in(path, code, set())]
     clean = """
@@ -301,9 +314,15 @@ static void upload_vram(void)
     upload(SoftGpu_VramRaw());
     SoftGpu_CopyTaken();
 }
+static void flush_runs(void)
+{
+    if (scale >= 2) SoftGpu_CopyPatches();
+    if (!vertex_count) return;
+    draw();
+}
 int GlPicture_Replay(void)
 {
-    if (SoftGpu_CopyPatches() < 0) overflow = 1;
+    SoftGpu_CopyPatches();
     if (overflow) resync(1, words);
     gp0(words, 6);
     upload_vram();

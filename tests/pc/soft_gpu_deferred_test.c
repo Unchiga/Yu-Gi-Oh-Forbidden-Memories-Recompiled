@@ -392,6 +392,15 @@ static void model_flush(void)
     SoftGpu_CopyPatches();
 }
 
+/* Where the model takes the patches and reads what its primitives sample
+ * (`gl_placement`): 0 before every read (the patches, then the read, as the
+ * primitive is parsed); 1 as gl_picture.c does: a primitive's lookups as it
+ * is parsed, its reads when its run is drawn (flush_runs, before every
+ * transfer, a resync and the replay's end), the patches at the replay's
+ * start and at every flush, whether it draws or not. */
+static int gl_placement;
+static void model_flush_runs(void);
+
 static int clip_cut(int *x, int *y, int *w, int *h)
 {
     *x &= SOFT_GPU_WIDTH - 1;
@@ -404,6 +413,7 @@ static int clip_cut(int *x, int *y, int *w, int *h)
 static void model_load(int x, int y, int w, int h, const uint16_t *pixels)
 {
     int cw = w, ch = h;
+    if (gl_placement) model_flush_runs();
     if (!clip_cut(&x, &y, &cw, &ch)) return;
     for (int j = 0; j < ch; j++) memcpy(copy_vram + (y + j) * SOFT_GPU_WIDTH + x, pixels + (size_t)j * w, (size_t)cw * 2);
 }
@@ -412,11 +422,12 @@ static void model_move(int sx, int sy, int dx, int dy, int w, int h)
 {
     static uint16_t scratch[SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT];
     int sw = w, sh = h, dw = w, dh = h;
+    if (gl_placement) model_flush_runs();
     if (!clip_cut(&sx, &sy, &sw, &sh) || !clip_cut(&dx, &dy, &dw, &dh)) return;
     w = sw < dw ? sw : dw;
     h = sh < dh ? sh : dh;
     if (sx == dx && sy == dy) return;
-    model_flush();
+    if (!gl_placement) model_flush();
     for (int j = 0; j < h; j++)
         for (int i = 0; i < w; i++) {
             read_copy(sx + i, sy + j);
@@ -428,6 +439,7 @@ static void model_move(int sx, int sy, int dx, int dy, int w, int h)
 static void model_fill(int x, int y, int w, int h, uint32_t rgb24)
 {
     uint16_t word = (uint16_t)(((rgb24 >> 3) & 0x1f) | (((rgb24 >> 11) & 0x1f) << 5) | (((rgb24 >> 19) & 0x1f) << 10));
+    if (gl_placement) model_flush_runs();
     if (!clip_cut(&x, &y, &w, &h)) return;
     for (int j = 0; j < h; j++)
         for (int i = 0; i < w; i++) copy_vram[(y + j) * SOFT_GPU_WIDTH + x + i] = word;
@@ -446,18 +458,22 @@ static void window_settle(void)
 /* What a textured primitive samples: its texels' words and, below 16 bits,
  * its palette (an 8-bit one past VRAM's edge up to the greatest index its
  * texels hold, as far as the software GPU settles it). */
-static void model_sample(int page_x, int page_y, int depth, int clut_x, int clut_y, int u0, int v0, int u1, int v1,
-                         int wx, int wy)
+typedef struct Sampled {
+    int page_x, page_y, depth, clut_x, clut_y, u0, v0, u1, v1, wx, wy;
+} Sampled;
+static Sampled *pending;
+static size_t pending_count, pending_room;
+
+static void model_read(const Sampled *s)
 {
-    int shift = 2 - depth, x0, y0, w, h, entries;
-    if (wx || u1 > 255) u0 = 0, u1 = 255;
-    if (wy || v1 > 255) v0 = 0, v1 = 255;
+    int page_x = s->page_x, page_y = s->page_y, depth = s->depth, clut_x = s->clut_x, clut_y = s->clut_y;
+    int u0 = s->u0, v0 = s->v0, u1 = s->u1, v1 = s->v1, shift = 2 - depth, x0, y0, w, h, entries;
+    if (s->wx || u1 > 255) u0 = 0, u1 = 255;
+    if (s->wy || v1 > 255) v0 = 0, v1 = 255;
     x0 = page_x + (u0 >> shift);
     y0 = page_y + v0;
     w = (u1 >> shift) - (u0 >> shift) + 1;
     h = v1 - v0 + 1;
-    window_settle();
-    model_flush();
     for (int j = 0; j < h; j++)
         for (int i = 0; i < w; i++) read_copy(x0 + i, y0 + j);
     if (depth >= 2) return;
@@ -472,6 +488,32 @@ static void model_sample(int page_x, int page_y, int depth, int clut_x, int clut
         entries = greatest + 1;
     }
     for (int i = 0; i < entries; i++) read_copy(clut_x + i, clut_y);
+}
+
+static void model_sample(int page_x, int page_y, int depth, int clut_x, int clut_y, int u0, int v0, int u1, int v1,
+                         int wx, int wy)
+{
+    const Sampled s = {page_x, page_y, depth, clut_x, clut_y, u0, v0, u1, v1, wx, wy};
+    window_settle(); /* its lookups, as it is parsed */
+    if (!gl_placement) {
+        model_flush();
+        model_read(&s);
+        return;
+    }
+    if (pending_count == pending_room) {
+        pending_room = pending_room ? pending_room * 2 : 1024;
+        pending = realloc(pending, pending_room * sizeof(*pending));
+        if (!pending) abort();
+    }
+    pending[pending_count++] = s;
+}
+
+/* flush_runs: the patches, then what the primitives gathered since sample. */
+static void model_flush_runs(void)
+{
+    model_flush();
+    for (size_t i = 0; i < pending_count; i++) model_read(&pending[i]);
+    pending_count = 0;
 }
 
 /* A batch as gl_picture.c's gp0 reads it, with the state it leaves. */
@@ -585,12 +627,14 @@ static void model_play(void)
         case 3: model_move((int)op[1], (int)op[2], (int)op[3], (int)op[4], (int)op[5], (int)op[6]); at += 7; break;
         case 4: model_fill((int)op[1], (int)op[2], (int)op[3], (int)op[4], op[5]); at += 6; break;
         default: /* a resync: VRAM settled whole, then taken */
+            if (gl_placement) model_flush_runs();
             SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
             model_take();
             at += 2;
             break;
         }
     }
+    if (gl_placement) model_flush_runs(); /* the replay's last flush, before the take */
     ops_used = 0;
 }
 
@@ -901,16 +945,18 @@ int main(int argc, char **argv)
      * same. Held work must have outlived takes of the copy, and patches been
      * made, or this proves nothing. */
     copy_mode = 1;
-    for (uint32_t start = 1; start <= 2; start++) {
+    for (uint32_t start = 1; start <= 4; start++) {
         Outcome off, automatic, poisoned_auto;
+        gl_placement = start > 2; /* the last two as gl_picture.c reads and patches */
         CHECK(run(start * 2246822519u, frames, 0, 0, &off) == 0);
         CHECK(holds == 0);
         CHECK(run(start * 2246822519u, frames, SOFT_GPU_DEFERRED_AUTO, 0, &automatic) == 0);
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
         CHECK(run(start * 2246822519u, frames, SOFT_GPU_DEFERRED_AUTO, 1, &poisoned_auto) == 0);
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
-        printf("copy run %u: held %llu (dropped %llu, rastered %llu), at once %llu, %d replays, the copy missed %llu "
-               "areas, %llu patches\n", start, (unsigned long long)automatic.stats.held,
+        printf("copy run %u%s: held %llu (dropped %llu, rastered %llu), at once %llu, %d replays, the copy missed %llu "
+               "areas, %llu patches\n", start, gl_placement ? " (flush_runs)" : "",
+               (unsigned long long)automatic.stats.held,
                (unsigned long long)automatic.stats.dropped, (unsigned long long)automatic.stats.rastered,
                (unsigned long long)automatic.stats.immediate, automatic.replays,
                (unsigned long long)automatic.stats.copy_missed, (unsigned long long)automatic.stats.patches);
@@ -924,6 +970,7 @@ int main(int argc, char **argv)
         CHECK(off.gpu == automatic.gpu && off.gpu == poisoned_auto.gpu);
     }
     copy_mode = 0;
+    gl_placement = 0;
     CHECK(tick_allocs == 0); /* the tick's loads and stores, settles and patches included */
 
     /* The fixed cases below, without the pack's prepare (and its tick). */

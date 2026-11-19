@@ -66,8 +66,10 @@ int SoftGpu_Deferred(void);
  * missed is, when it is settled, rastered up to what it held then and its
  * words kept as a patch (the area as the copy would have had it), before
  * the rest is rastered. At the start of its next replay, before anything
- * in the record, and again before each draw (its own host lookups settle
- * too, during the replay), the recorder calls SoftGpu_CopyPatches, which
+ * in the record, and again at each flush of what it gathered, before it
+ * draws and before the transfer that flushes it, whether anything is drawn
+ * or not (its own host lookups settle too, during the replay), the
+ * recorder calls SoftGpu_CopyPatches, which
  * hands each patch to its `patch` and forgets it; patches it has not taken
  * when it takes the copy again are forgotten by SoftGpu_CopyTaken (the copy
  * then has those words already). It returns how many it handed. Only a
