@@ -3047,11 +3047,13 @@ only that:
   primitive that reads the source is held, in `hold` on the main thread;
   a settle, the tick's too, only reads them. No memory: the primitive goes
   at once (`NOW_BANK`, `NOW_SHADOW`) and `again` applies, as before. They
-  are freed when the switch goes off. With poison, a copy no held work
-  reads is filled with magenta before it takes the words, so a replay that
-  read past what was compared for it would show (so a poison run rasters
-  more than AUTO: words not compared since the fill differ from the live
-  ones and settle the readers; its picture must still be AUTO's);
+  are freed when the switch goes off. With poison, a copy is magenta when
+  it is made (or the poison switched on) wherever it has not taken words
+  yet, so a replay that read what was never frozen would show. Once only:
+  refilled each time no held work read it, every rectangle not compared
+  since would differ at the next hold and settle the readers, and a poison
+  run held far less long than AUTO (the first duel at 2x with the pack:
+  183688 rastered against 27160);
 - nothing new is lent to mods and no shared struct grows
   (`SoftGpuDeferredStats` counts a change as `why[WRITE]`).
 
