@@ -80,6 +80,14 @@ int SoftGpu_Deferred(void);
 struct SoftGpuRecorder;
 void SoftGpu_CopyTaken(const struct SoftGpuRecorder *taker);
 int SoftGpu_CopyPatches(void);
+/* How many texels past the last u and v a primitive's coordinates span the
+ * recorder may read its copy at (texture xBR: gl_picture.c tells it at each
+ * replay, before its patches), SOFT_GPU_REACH_PAGE for anywhere in the page
+ * (wrapping as the texels do). What it reads there is settled as the rest
+ * is (texture_rects), so the copy gets it as a patch. A change settles
+ * everything (what is held was let hold under the old reach). */
+#define SOFT_GPU_REACH_PAGE 256
+void SoftGpu_SetCopyReach(int texels);
 /* How many applied code mods bind SoftGpu_Vram or SoftGpu_StateData (mods.c):
  * such a mod may keep VRAM's pointer and write or read through it at any
  * time, so nothing is kept back while there is one. Told as each binding is

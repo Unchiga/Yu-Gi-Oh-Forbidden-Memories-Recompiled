@@ -130,11 +130,13 @@ MODULES += MODEL_MODULES
 # (tools/pc/check_mod_abi.py). Mods_VramUsersChanged: the 32-bit table
 # leaves every Mods_ name out, the arm64 one only these; a mod that set it
 # would keep the software GPU from hearing of its VRAM binding.
-# SoftGpu_CopyTaken and SoftGpu_CopyPatches: the OpenGL picture's copy of
-# VRAM; a mod that called them would lose the deferred raster's patches.
+# SoftGpu_CopyTaken, SoftGpu_CopyPatches and SoftGpu_SetCopyReach: the OpenGL
+# picture's copy of VRAM; a mod that called them would lose the deferred
+# raster's patches.
 NOT_LENT_TO_MODS = {"SoftGpu_VramRaw", "SoftGpu_SettleObserver", "SoftGpu_SetDeferred", "SoftGpu_Deferred",
                     "SoftGpu_SetModVramUsers", "SoftGpu_HoldClock", "SoftGpu_Clock", "SoftGpu_DeferredStats",
-                    "SoftGpu_CopyTaken", "SoftGpu_CopyPatches", "Mods_VramUsersChanged"}
+                    "SoftGpu_CopyTaken", "SoftGpu_CopyPatches", "SoftGpu_SetCopyReach",
+                    "Mods_VramUsersChanged"}
 MODULE_CONFIG = {"overworld": "overworld_before_coup"}
 GATED_MODULES = {"duel_effects", "credits"} | {name for name, _, _, _ in MODEL_MODULES}
 # The modules that have no retail ELF or function list in config/slus_01411.

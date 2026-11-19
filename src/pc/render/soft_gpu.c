@@ -212,6 +212,9 @@ static Patch patches[HELD_AREAS];
 static uint16_t *patch_buffer;
 static size_t patch_used;
 static int patch_count, copy_kept;
+/* How far past the texels a primitive's coordinates span the recorder may
+ * read its copy (SoftGpu_SetCopyReach): texel_rect takes it in. */
+static int copy_reach;
 static unsigned held_clock;
 /* The provenance tags of each area were found clear at this count of
  * TextureDump_Touched (clean_tags: the tags it was for). */
@@ -628,8 +631,14 @@ static int holding(void)
 static void texel_rect(int rect[4], const int uv[4])
 {
     int shift = 2 - gpu.depth, u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
-    if (gpu.window_mask_x || uv[2] > 255) u0 = 0, u1 = 255;
-    if (gpu.window_mask_y || uv[3] > 255) v0 = 0, v1 = 255;
+    /* What the recorder reads of its copy past the last u and v
+     * (SoftGpu_SetCopyReach): within the page, wrapping as its texels do,
+     * so all of the page on an axis it would wrap. Nothing before the first. */
+    int reach = copy_reach && copy_on() ? copy_reach : 0;
+    if (gpu.window_mask_x || uv[2] + reach > 255) u0 = 0, u1 = 255;
+    else u1 += reach;
+    if (gpu.window_mask_y || uv[3] + reach > 255) v0 = 0, v1 = 255;
+    else v1 += reach;
     rect[0] = gpu.page_x + (u0 >> shift);
     rect[1] = gpu.page_y + v0;
     rect[2] = (u1 >> shift) - (u0 >> shift) + 1;
@@ -930,6 +939,16 @@ void SoftGpu_CopyTaken(const SoftGpuRecorder *taker)
         deferred_stats.copy_missed++;
     }
     if (took) release_clock();
+}
+
+void SoftGpu_SetCopyReach(int texels)
+{
+    if (texels == copy_reach) return;
+    /* What is held was let hold under the old reach; a patch made now for
+     * the copy's missed areas is handed over before the replay that reads
+     * further (soft_gpu.h). */
+    settle_all(SOFT_GPU_WHY_ALL);
+    copy_reach = texels;
 }
 
 int SoftGpu_CopyPatches(void)

@@ -86,14 +86,22 @@ MUST_SETTLE = {
 # The OpenGL picture's copy of VRAM, taken raw, and the deferred raster's
 # patches for what it missed (soft_gpu.h, SoftGpu_CopyTaken): (file,
 # function) -> (the call it must make, the anchor, "after" or "before" the
-# anchor's first match). upload_vram notes what the copy missed right after
-# it reads VRAM; the replay hands the patches over before anything in its
-# record reads the copy.
+# anchor's first match), or a list of them. upload_vram notes what the copy
+# missed right after it reads VRAM; the replay tells how far texture xBR
+# reads past a primitive's texels (a change settles), then hands the patches
+# over before anything in its record reads the copy.
 COPY_KEEPING = {
     ("src/pc/render/gl_picture.c", "upload_vram"): (re.compile(r"\bSoftGpu_CopyTaken\s*\("),
                                                      re.compile(r"\bSoftGpu_VramRaw\s*\("), "after"),
-    ("src/pc/render/gl_picture.c", "GlPicture_Replay"): (re.compile(r"\bSoftGpu_CopyPatches\s*\("),
-                                                          re.compile(r"\b(gp0|apply_\w+|resync)\s*\("), "before"),
+    ("src/pc/render/gl_picture.c", "GlPicture_Replay"): [
+        (re.compile(r"\bSoftGpu_CopyPatches\s*\("), re.compile(r"\b(gp0|apply_\w+|resync)\s*\("), "before"),
+        (re.compile(r"\bSoftGpu_SetCopyReach\s*\("), re.compile(r"\bSoftGpu_CopyPatches\s*\("), "before")],
+    # HD text reads its palette at any index its atlas holds: the row,
+    # settled before its vertices go up (and so before its draw's patches).
+    ("src/pc/render/gl_picture.c", "triangle"): (re.compile(r"\bink_palette\s*\("),
+                                                  re.compile(r"\bset_vertex\s*\("), "before"),
+    ("src/pc/render/gl_picture.c", "block"): (re.compile(r"\bink_palette\s*\("),
+                                               re.compile(r"\bset_vertex\s*\("), "before"),
     # The replay's own host lookups settle too (HdText_Hud and the others,
     # inside the replay): their patches before the primitives draw, and
     # before the transfer that flushes them reads the copy, even when
@@ -162,11 +170,12 @@ def problems_in(relative: str, code: str, found: set) -> list[str]:
                 problems.append(f"{relative}:{first}: {name}() reads VRAM before it settles it")
         if key in COPY_KEEPING:
             found.add(key)
-            call, anchor, where = COPY_KEEPING[key]
-            made, at = call.search(body), anchor.search(body)
-            if not made or not at or (made.start() < at.start()) != (where == "before"):
-                problems.append(f"{relative}:{first}: {name}() must call /{call.pattern}/ {where} its first "
-                                f"/{anchor.pattern}/ (the copy of VRAM and the deferred raster's patches)")
+            rules = COPY_KEEPING[key]
+            for call, anchor, where in rules if isinstance(rules, list) else [rules]:
+                made, at = call.search(body), anchor.search(body)
+                if not made or not at or (made.start() < at.start()) != (where == "before"):
+                    problems.append(f"{relative}:{first}: {name}() must call /{call.pattern}/ {where} its first "
+                                    f"/{anchor.pattern}/ (the copy of VRAM and the deferred raster's patches)")
         if STATE.search(body):
             found.add(("state", relative, name))
             if key not in STATE_USERS:
@@ -276,6 +285,20 @@ int GlPicture_Replay(void)
     apply_load(0, 0, 1, 1, words);
 }
 """),
+        "reach told after the patches": ("src/pc/render/gl_picture.c", """
+int GlPicture_Replay(void)
+{
+    SoftGpu_CopyPatches();
+    SoftGpu_SetCopyReach(1);
+    gp0(words, 6);
+}
+"""),
+        "HD ink unsettled": ("src/pc/render/gl_picture.c", """
+static void block(int x, int flags)
+{
+    set_vertex(&out[0], x, flags);
+}
+"""),
         "patches only for a flush that draws": ("src/pc/render/gl_picture.c", """
 static void flush_runs(void)
 {
@@ -322,6 +345,7 @@ static void flush_runs(void)
 }
 int GlPicture_Replay(void)
 {
+    SoftGpu_SetCopyReach(reach);
     SoftGpu_CopyPatches();
     if (overflow) resync(1, words);
     gp0(words, 6);

@@ -1141,6 +1141,17 @@ static GlVertex *push_vertices(size_t n, int subtractive)
     return out;
 }
 
+/* HD text (flag 16) reads its palette at whatever index its atlas holds
+ * under the pixel, 0 to 255 (an 8-bit texture), a neighbouring glyph's or
+ * label's too where the pixel's centre lies past its own (the atlas is not
+ * clamped to it); word_at wraps it at x 1023. The software GPU settled only
+ * the entries the console's own texels index (texture_rects): the row
+ * whole, before its draw (flush_runs hands the patch over first). */
+static void ink_palette(void)
+{
+    SoftGpu_Settle(state.clut_x, state.clut_y, 256, 1);
+}
+
 static void set_vertex(GlVertex *out, float x, float y, float u, float v, const Vertex *from, int flags)
 {
     out->x = x;
@@ -1200,6 +1211,7 @@ static void triangle(const Vertex *a, const Vertex *b, const Vertex *c, int flag
         shift = 0.0f;
         flags |= 64;
     }
+    if (flags & 16) ink_palette();
     for (i = 0; i < 3; i++) {
         float x = v[i]->precise ? v[i]->fx * (float)scale + shift : (float)(v[i]->x * scale) + shift;
         float y = v[i]->precise ? v[i]->fy * (float)scale + shift : (float)(v[i]->y * scale) + shift;
@@ -1236,6 +1248,7 @@ static void block(int x, int y, int w, int h, int u0, int v0, int u1, int v1, co
     float half = 0.5f / (float)scale;
     float s0 = (float)u0 - half, t0 = (float)v0 - half, s1 = (float)u1 - half, t1 = (float)v1 - half;
     if (!out) return;
+    if (flags & 16) ink_palette();
     bounds_now[0] = u0;
     bounds_now[1] = v0;
     bounds_now[2] = u1 - 1;
@@ -3062,6 +3075,21 @@ int GlPicture_Replay(void)
     set_samples(Settings_Get(SET_MSAA));
     hd_hud = HdText_HudEnabled();
     opponent_name = HdText_NameEnabled();
+    /* How far past a primitive's texels texture xBR reads VRAM's texture
+     * (texture_xbr): its centre texel `e` is not clamped to `bounds`, and the
+     * neighbours only to the span of bounds and e, so the reach is how far e
+     * leaves bounds. Without anti-aliasing a fragment's centre lies in the
+     * primitive, so its coordinates lie within the vertices' (bounds, give
+     * or take the console's left-out last texel); `back` moves them on by
+     * less than 2 (1 - 1 / scale, twice at most) and the 1/256 does not take
+     * floor() further: e is at most one texel past the last u and v, never
+     * before the first. With anti-aliasing the centre of a pixel a sample of
+     * it covers can lie outside the primitive and the corner step goes half
+     * a pixel more, both as many texels as a pixel spans, without bound:
+     * anywhere in the page, which texel_word wraps. The software GPU settles
+     * that much past what it settles of each primitive (soft_gpu.h). Before
+     * the patches: a change settles what was held under the old reach. */
+    SoftGpu_SetCopyReach(!Settings_Get(SET_XBR) ? 0 : samples ? SOFT_GPU_REACH_PAGE : 1);
     /* What the last upload missed of the deferred raster's held work and has
      * been settled since, into VRAM's texture before anything here reads it
      * (upload_vram). */

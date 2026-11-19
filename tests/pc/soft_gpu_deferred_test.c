@@ -464,25 +464,34 @@ typedef struct Sampled {
 static Sampled *pending;
 static size_t pending_count, pending_room;
 
+/* How far past a primitive's last u and v the model reads (texture xBR,
+ * gl_picture.c: one texel without anti-aliasing, anywhere in the page with
+ * it), told to the software GPU at each replay as gl_picture.c tells it. */
+static int model_reach;
+
+/* The texels u0..u1 x v0..v1 and, with model_reach, the ones past the last
+ * u and v (wrapping in the page as texel_word does): their words, and the
+ * palette entries they index. */
 static void model_read(const Sampled *s)
 {
     int page_x = s->page_x, page_y = s->page_y, depth = s->depth, clut_x = s->clut_x, clut_y = s->clut_y;
-    int u0 = s->u0, v0 = s->v0, u1 = s->u1, v1 = s->v1, shift = 2 - depth, x0, y0, w, h, entries;
-    if (s->wx || u1 > 255) u0 = 0, u1 = 255;
-    if (s->wy || v1 > 255) v0 = 0, v1 = 255;
-    x0 = page_x + (u0 >> shift);
-    y0 = page_y + v0;
-    w = (u1 >> shift) - (u0 >> shift) + 1;
-    h = v1 - v0 + 1;
-    for (int j = 0; j < h; j++)
-        for (int i = 0; i < w; i++) read_copy(x0 + i, y0 + j);
+    int u0 = s->u0, v0 = s->v0, u1 = s->u1, v1 = s->v1, shift = 2 - depth, entries, nx = 0, ny = 0;
+    int xs[257], ys[257];
+    if (s->wx || u1 > 255 || model_reach == SOFT_GPU_REACH_PAGE) u0 = 0, u1 = 255;
+    if (s->wy || v1 > 255 || model_reach == SOFT_GPU_REACH_PAGE) v0 = 0, v1 = 255;
+    for (int x = u0 >> shift; x <= u1 >> shift; x++) xs[nx++] = page_x + x;
+    for (int y = v0; y <= v1; y++) ys[ny++] = page_y + y;
+    if (model_reach == 1 && u1 - u0 < 255) xs[nx++] = page_x + (((u1 + 1) & 255) >> shift);
+    if (model_reach == 1 && v1 - v0 < 255) ys[ny++] = page_y + ((v1 + 1) & 255);
+    for (int j = 0; j < ny; j++)
+        for (int i = 0; i < nx; i++) read_copy(xs[i], ys[j]);
     if (depth >= 2) return;
     entries = depth == 0 ? 16 : 256;
     if (clut_x + entries > SOFT_GPU_WIDTH) {
         int greatest = 0;
-        for (int j = 0; j < h; j++)
-            for (int i = 0; i < w; i++) {
-                uint16_t word = copy_vram[((y0 + j) & 511) * SOFT_GPU_WIDTH + ((x0 + i) & 1023)];
+        for (int j = 0; j < ny; j++)
+            for (int i = 0; i < nx; i++) {
+                uint16_t word = copy_vram[(ys[j] & 511) * SOFT_GPU_WIDTH + (xs[i] & 1023)];
                 greatest = word >> 8 > greatest ? word >> 8 : (word & 0xff) > greatest ? word & 0xff : greatest;
             }
         entries = greatest + 1;
@@ -617,6 +626,7 @@ static void model_take(void)
 static void model_play(void)
 {
     size_t at = 0;
+    SoftGpu_SetCopyReach(model_reach); /* before the patches, as gl_picture.c */
     model_flush();
     while (at < ops_used) {
         const uint32_t *op = ops + at;
@@ -948,14 +958,16 @@ int main(int argc, char **argv)
     for (uint32_t start = 1; start <= 4; start++) {
         Outcome off, automatic, poisoned_auto;
         gl_placement = start > 2; /* the last two as gl_picture.c reads and patches */
+        /* Texture xBR's reach: off, without anti-aliasing (one texel), with it */
+        model_reach = start == 2 || start == 3 ? 1 : start == 4 ? SOFT_GPU_REACH_PAGE : 0;
         CHECK(run(start * 2246822519u, frames, 0, 0, &off) == 0);
         CHECK(holds == 0);
         CHECK(run(start * 2246822519u, frames, SOFT_GPU_DEFERRED_AUTO, 0, &automatic) == 0);
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
         CHECK(run(start * 2246822519u, frames, SOFT_GPU_DEFERRED_AUTO, 1, &poisoned_auto) == 0);
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
-        printf("copy run %u%s: held %llu (dropped %llu, rastered %llu), at once %llu, %d replays, the copy missed %llu "
-               "areas, %llu patches\n", start, gl_placement ? " (flush_runs)" : "",
+        printf("copy run %u%s, reach %d: held %llu (dropped %llu, rastered %llu), at once %llu, %d replays, the copy missed %llu "
+               "areas, %llu patches\n", start, gl_placement ? " (flush_runs)" : "", model_reach,
                (unsigned long long)automatic.stats.held,
                (unsigned long long)automatic.stats.dropped, (unsigned long long)automatic.stats.rastered,
                (unsigned long long)automatic.stats.immediate, automatic.replays,
@@ -971,6 +983,7 @@ int main(int argc, char **argv)
     }
     copy_mode = 0;
     gl_placement = 0;
+    model_reach = 0;
     CHECK(tick_allocs == 0); /* the tick's loads and stores, settles and patches included */
 
     /* The fixed cases below, without the pack's prepare (and its tick). */
@@ -1690,6 +1703,59 @@ int main(int argc, char **argv)
         SoftGpu_DeferredStats(&s);
         CHECK(s.held == 3); /* held again once it is taken */
         (void)copy_end();
+
+        /* Texture xBR reads one texel past the last u and v without
+         * anti-aliasing (wrapping in the page), anywhere in the page with
+         * it (SoftGpu_SetCopyReach): what it reads there of held work the
+         * copy missed is settled, so the copy gets it; and work held under
+         * a shorter reach is settled when the reach grows. Red is held
+         * across a take next to the texels a 16-bit sprite from page 4
+         * (256,0) reads: in the area at 0,0, which the sprite's u 64-255
+         * reach only by wrapping to the page's first (and its u 64-127 only
+         * with anti-aliasing); in the area at 320,0 just past u 0-63; in an
+         * area at 0,16 just past v 0-15. */
+        {
+            static const uint32_t area_a16[] = {0xe3000000u | (16u << 10), 0xe4000000u | 319 | (239 << 10),
+                                                0xe5000000u | (16u << 11), 0xe6000000u}; /* 320x224 at 0,16 */
+            static const uint32_t red_far[] = {0x600000ffu, 0x00100100u, 0x00080008u}; /* 8x8 at 256,16 of 0,0 */
+            static const uint32_t red_b[] = {0x600000ffu, 0x00100000u, 0x00080008u};   /* at 0,16 of 320,0 */
+            static const uint32_t red_top[] = {0x600000ffu, 0x00000100u, 0x00080008u}; /* at 256,0 of 0,16 */
+            static const uint32_t far_page[] = {0xe1000000u | 4 | (2u << 7)};          /* page 4, 16-bit */
+            static const uint32_t to_end[] = {0x65808080u, 0x00000000u, 0x00001040u, 0x000800c0u};   /* u 64-255 */
+            static const uint32_t short_of[] = {0x65808080u, 0x00000000u, 0x00001040u, 0x00080040u}; /* u 64-127 */
+            static const uint32_t left_of[] = {0x65808080u, 0x00000000u, 0x00001000u, 0x00080040u};  /* u 0-63 */
+            static const uint32_t above[] = {0x65808080u, 0x00000000u, 0x00000000u, 0x00100040u};    /* v 0-15 */
+            static const struct {
+                const uint32_t *held, *red, *drawn, *sprite;
+                int fill[4], reach_held, reach_read;
+            } cases[] = {
+                {area_a, red_far, area_b, to_end, {0, 0, 320, 240}, 1, 1},
+                {area_a, red_far, area_b, short_of, {0, 0, 320, 240}, SOFT_GPU_REACH_PAGE, SOFT_GPU_REACH_PAGE},
+                {area_a, red_far, area_b, to_end, {0, 0, 320, 240}, 0, 1}, /* held under a shorter reach */
+                {area_b, red_b, area_a, left_of, {320, 0, 320, 240}, 1, 1},
+                {area_a16, red_top, area_b, above, {0, 16, 320, 224}, 1, 1},
+            };
+            const int n = (int)(sizeof(cases) / sizeof(cases[0]));
+            for (int c = 0; c < n; c++) {
+                uint64_t reads[3];
+                for (int m = 0; m < 3; m++) {
+                    model_reach = cases[c].reach_held;
+                    CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+                    CHECK(SoftGpu_Gp0(cases[c].held, 4) == 4);
+                    SoftGpu_Fill(cases[c].fill[0], cases[c].fill[1], cases[c].fill[2], cases[c].fill[3], 0x404040);
+                    CHECK(SoftGpu_Gp0(cases[c].red, 3) == 3);
+                    model_replay(); /* the take: red held across it */
+                    SoftGpu_DeferredStats(&s);
+                    if (m) CHECK(s.held == 1);
+                    CHECK(SoftGpu_Gp0(cases[c].drawn, 4) == 4 && SoftGpu_Gp0(far_page, 1) == 1);
+                    CHECK(SoftGpu_Gp0(cases[c].sprite, 4) == 4);
+                    model_reach = cases[c].reach_read;
+                    reads[m] = copy_end();
+                }
+                CHECK(reads[0] == reads[1] && reads[0] == reads[2]);
+            }
+            model_reach = 0;
+        }
         window_settles = 1;
     }
     puts("Software GPU deferred raster checks passed");
