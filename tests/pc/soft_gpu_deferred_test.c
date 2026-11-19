@@ -627,6 +627,7 @@ static void model_take(void)
 static void model_play(void)
 {
     size_t at = 0;
+    uint64_t replay_reads = copy_reads; /* what was read before this replay */
     SoftGpu_SetCopyReach(model_reach); /* before the patches, as gl_picture.c */
     model_flush();
     while (at < ops_used) {
@@ -639,6 +640,11 @@ static void model_play(void)
         case 4: model_fill((int)op[1], (int)op[2], (int)op[3], (int)op[4], op[5]); at += 6; break;
         default: /* a resync: VRAM settled whole, then taken */
             if (gl_placement) model_flush_runs();
+            /* gl_picture.c's resync uploads VRAM whole and draws the picture
+             * again from it: nothing the record read before it reaches the
+             * picture or the copy (a scale change drops the copy's patches,
+             * forget_copy, and the resync makes them needless). */
+            copy_reads = replay_reads;
             SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
             model_take();
             at += 2;
