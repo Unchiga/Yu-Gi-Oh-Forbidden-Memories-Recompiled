@@ -3291,7 +3291,10 @@ hash matched in all of them: menus, the story's first duel, a full duel
 twice, each at 2x and 4x, bare and with the HD pack and HD text; the menus
 and the full duel at 2x with every mod of the target load (picture-only
 frames and palettes, banks); the menus and the first duel at 2x with
-texture xBR. Each AUTO run held and dropped work and made patches (the
+texture xBR; widescreen (`aspect` 2, its widened picture hashed) on the
+full duel bare and the menus with the pack at 2x; the first duel with
+the scale changed from 2x to 4x in the middle (`MEMORIES_SCALE_AT`).
+Each AUTO run held and dropped work and made patches (the
 full duel at 2x, bare: 4.8 million primitives held, 4.2 million dropped,
 1302 patches over 14677 frames; with the pack 3.5 million held, 3.0
 dropped, 757 patches). With poison on the interrupt clock
@@ -3325,15 +3328,26 @@ quieter PC). The duel field with the pack is the shadow's and the banks'
 (left, below): it holds as at 1x, given up nearly every frame.
 
 On the Samsung A22 (a debug APK of this branch, mods off, the game's own
-frame trace over a 20 s duel-field window and an 8 s window of a 3D
-battle, two runs each way): the duel field's draws went from 5.30 to 0.43
-ms a frame at 2x and from 5.44 to 0.44 at 4x, and the game's work a frame
-from 6.73 to 2.45 ms and from 6.78 to 2.35 (the raster was 79-80% of it,
-now 18-19%); a 3D battle's draws from 7.0 to 4.2 ms at 2x and from 8.0 to
-2.8 at 4x (its frame time stayed, as the GPU sets it there). With the
+frame trace; at 4x three runs each way, interleaved, a 10 s duel-field
+window and two 8 s windows of 3D battles; at 2x two runs each way): on
+the duel field the raster (draws and settles outside them) went from 5.3
+to 0.44 ms a frame at 2x and 4x, and the game's work a frame from 6.7 to
+2.4 ms; the present grew from 5.6 to 7.1 ms (the replay from 2.5 to 3.6
+ms: it makes no patches there, so the GPU work is the same, and this is
+time the replay waits for the GPU or a lower clock, not work), so the two
+together went from 12.3 to 9.5 ms at a steady 60 frames a second. In 3D
+battles the raster went from 6.5 and 8.0 ms to 4.5 and 5.5, but the
+game's work did not fall (15.5 and 13.6 ms, then 16.0 and 14.7) and the
+present grew (12.4 and 25.9, then 14.0 and 28.1 ms): the frame rate was
+29.7 and 23.5 with the switch off, 29.4 and 22.1 with AUTO, VBlanks missed
+16 of 720 and 475 of 840, then 25 of 720 and 495 of 720. Battles differ a
+lot from run to run, so this is not settled either way; why the game's
+work does not fall with the raster there is not found yet. With the
 virtual clock (`MEMORIES_DETERMINISTIC=1`), three pictures of a duel taken
 over the control channel were the same with the switch off (twice), AUTO
-and AUTO with poison, at 2x and 4x.
+and AUTO with poison, at 2x and 4x, and at 2x with the OpenGL ES context
+lost and made again before them (`MEMORIES_TEST_GL_RESET`), off, AUTO
+and poison.
 
 What is left:
 
