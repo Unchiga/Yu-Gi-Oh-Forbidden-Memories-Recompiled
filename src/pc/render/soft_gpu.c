@@ -1435,32 +1435,36 @@ static void fill_words(int x, int y, int w, int h, uint32_t rgb24)
 
 /* The transfers from outside a batch (LoadImage and the like, which can
  * come from the interrupt tick): recorded one by one. A batch's own
- * transfers are in its record already. */
+ * transfers are in its record already. While work can be held or is, the
+ * clock is held from the record to the end of the transfer, so the two are
+ * one: a tick in between would record its own transfer after this one but
+ * make it first (and, with this one a fill, could settle or drop a held
+ * area out of the order the record replays). Otherwise as ever: a tick
+ * there changes the order both ways at once. */
+static int transfer_clock(void)
+{
+    int held = holding() || held_any;
+    if (held) hold_clock();
+    return held;
+}
+
 void SoftGpu_Load(int x, int y, int w, int h, const uint16_t *pixels)
 {
 #if defined(MEMORIES_TRANSLATED) && !defined(MEMORIES_INSTRUMENT_SOFTGPU)
     if (w > 0 && h > 0) pixels = GuestRuntime_ResolveData((void *)pixels, (size_t)w * (size_t)h * sizeof(*pixels));
 #endif
+    int held = transfer_clock();
     if (recorder && scale > 1) recorder->load(x, y, w, h, pixels);
-    if (held_any) {
-        hold_clock();
-        load_words(x, y, w, h, pixels);
-        release_clock();
-    } else {
-        load_words(x, y, w, h, pixels);
-    }
+    load_words(x, y, w, h, pixels);
+    if (held) release_clock();
 }
 
 void SoftGpu_Move(int sx, int sy, int dx, int dy, int w, int h)
 {
+    int held = transfer_clock();
     if (recorder && scale > 1) recorder->move(sx, sy, dx, dy, w, h);
-    if (held_any) {
-        hold_clock();
-        move_words(sx, sy, dx, dy, w, h);
-        release_clock();
-    } else {
-        move_words(sx, sy, dx, dy, w, h);
-    }
+    move_words(sx, sy, dx, dy, w, h);
+    if (held) release_clock();
 }
 
 void SoftGpu_Capture(int sx, int sy, int dx, int dy, int w, int h)
@@ -1472,14 +1476,10 @@ void SoftGpu_Capture(int sx, int sy, int dx, int dy, int w, int h)
 
 void SoftGpu_Fill(int x, int y, int w, int h, uint32_t rgb24)
 {
+    int held = transfer_clock();
     if (recorder && scale > 1) recorder->fill(x, y, w, h, rgb24);
-    if (held_any) {
-        hold_clock();
-        fill_words(x, y, w, h, rgb24);
-        release_clock();
-    } else {
-        fill_words(x, y, w, h, rgb24);
-    }
+    fill_words(x, y, w, h, rgb24);
+    if (held) release_clock();
 }
 
 /* What a primitive's texels are read with, and what plot draws it with:
@@ -2464,12 +2464,14 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
     size_t at = 0;
     int clock_held = holding() || held_any; /* never with a mod's VRAM, the software GPU's scaled picture, a recorder
                                              * at 2x and above that keeps no copy yet, or AUTO below 2x */
+    /* The deferred raster's queues (`hold`), and the record with the batch
+     * (as a transfer's, transfer_clock). */
+    if (clock_held) hold_clock();
     if (recorder && scale > 1) {
         if (precise_count && recorder->precise) recorder->precise(precise, precise_count);
         recorder->gp0(words, count);
     }
     precise_count = 0;
-    if (clock_held) hold_clock(); /* the deferred raster's queues (`hold`) */
     in_batch++;
     while (at < count) {
         uint32_t word = words[at], command = word >> 24;

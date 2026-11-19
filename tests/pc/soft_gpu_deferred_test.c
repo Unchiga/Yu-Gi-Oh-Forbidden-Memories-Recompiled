@@ -139,6 +139,9 @@ static int prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, in
 }
 
 static int holds, releases, depth, nested;
+/* A tick stand-in armed to come at the next record (record_point): at once
+ * if the clock is free then, else as it is let go, as SIGALRM would. */
+static void (*armed_tick)(void), (*pending_tick)(void);
 static void hold_clock(int on)
 {
     if (on) {
@@ -146,8 +149,21 @@ static void hold_clock(int on)
         if (depth++) nested = 1;
     } else {
         releases++;
-        depth--;
+        if (!--depth && pending_tick) {
+            void (*tick)(void) = pending_tick;
+            pending_tick = NULL;
+            tick();
+        }
     }
+}
+
+static void record_point(void)
+{
+    void (*tick)(void) = armed_tick;
+    if (!tick) return;
+    armed_tick = NULL;
+    if (depth) pending_tick = tick;
+    else tick();
 }
 
 static uint32_t position(int x0, int y0)
@@ -274,6 +290,7 @@ static void rec_gp0(const uint32_t *words, size_t count)
     at[0] = 1;
     at[1] = (uint32_t)count;
     memcpy(at + 2, words, count * 4);
+    record_point();
 }
 
 static void rec_load(int x, int y, int w, int h, const uint16_t *pixels)
@@ -281,6 +298,7 @@ static void rec_load(int x, int y, int w, int h, const uint16_t *pixels)
     uint32_t *at = op_room(5 + ((size_t)w * h + 1) / 2);
     at[0] = 2, at[1] = (uint32_t)x, at[2] = (uint32_t)y, at[3] = (uint32_t)w, at[4] = (uint32_t)h;
     memcpy(at + 5, pixels, (size_t)w * h * 2);
+    record_point();
 }
 
 static void rec_move(int sx, int sy, int dx, int dy, int w, int h)
@@ -288,12 +306,14 @@ static void rec_move(int sx, int sy, int dx, int dy, int w, int h)
     uint32_t *at = op_room(7);
     at[0] = 3, at[1] = (uint32_t)sx, at[2] = (uint32_t)sy, at[3] = (uint32_t)dx, at[4] = (uint32_t)dy;
     at[5] = (uint32_t)w, at[6] = (uint32_t)h;
+    record_point();
 }
 
 static void rec_fill(int x, int y, int w, int h, uint32_t rgb24)
 {
     uint32_t *at = op_room(6);
     at[0] = 4, at[1] = (uint32_t)x, at[2] = (uint32_t)y, at[3] = (uint32_t)w, at[4] = (uint32_t)h, at[5] = rgb24;
+    record_point();
 }
 
 static void rec_resync(int scale, const uint32_t state[6])
@@ -551,8 +571,8 @@ static void model_take(void)
     SoftGpu_CopyTaken(&model);
 }
 
-/* GlPicture_Replay: the patches, the record in order, the take. */
-static void model_replay(void)
+/* GlPicture_Replay: the patches, the record in order (model_play), the take. */
+static void model_play(void)
 {
     size_t at = 0;
     model_flush();
@@ -572,9 +592,18 @@ static void model_replay(void)
         }
     }
     ops_used = 0;
+}
+
+static void model_replay(void)
+{
+    model_play();
     window_settle(); /* after the last draw: its patch is not taken, and the take makes it needless */
     model_take();
 }
+
+/* The tick (record_point) clearing the first area whole, as the game's
+ * clear does. */
+static void tick_clear(void) { SoftGpu_Fill(0, 0, 320, 240, 0x00ff00); }
 
 /* A fixed case at 2x with the model recorder, deferral `mode`, its copy
  * taken; copy_end replays what came since and returns what it read. */
@@ -1553,6 +1582,43 @@ int main(int argc, char **argv)
                 CHECK(SoftGpu_SetScale(1));
                 SoftGpu_SetRecorder(NULL);
                 ops_used = 0;
+            }
+        }
+
+        /* The tick comes between a transfer's record and the transfer (a
+         * move out of the area, a load or a fill into it, a batch's move)
+         * and clears the area, whose held work the copy missed. Held work
+         * or not, record and transfer are one: the tick waits for both, so
+         * the copy, replayed, ends as VRAM (the area and the move's
+         * target). Unheld, as ever, the tick may come between, and both
+         * change order at once (not checked: the record's order is not
+         * VRAM's then either). */
+        for (int m = 1; m < 3; m++) {
+            for (int kind = 0; kind < 4; kind++) {
+                static const uint32_t moved[] = {0x80000000u, 4u | 16u << 16, 700u | 16u << 16, 8u | 8u << 16};
+                uint16_t pixels[8 * 8], seen[320 * 240];
+                for (int i = 0; i < 64; i++) pixels[i] = (uint16_t)(0x03e0 + i);
+                CHECK(copy_begin(SOFT_GPU_DEFERRED_AUTO, m == 2) == 0);
+                CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+                SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+                CHECK(SoftGpu_Gp0(red, 3) == 3);
+                model_replay(); /* the take: the sprite held across it */
+                armed_tick = tick_clear;
+                if (kind == 0) SoftGpu_Move(4, 16, 700, 16, 8, 8);
+                else if (kind == 1) SoftGpu_Load(4, 16, 8, 8, pixels);
+                else if (kind == 2) SoftGpu_Fill(0, 16, 16, 8, 0xffffff);
+                else CHECK(SoftGpu_Gp0(moved, 4) == 4);
+                CHECK(!armed_tick && !pending_tick);
+                model_play();
+                SoftGpu_Store(0, 0, 320, 240, seen);
+                for (int j = 0; j < 240; j++)
+                    CHECK(!memcmp(seen + j * 320, copy_vram + j * SOFT_GPU_WIDTH, 320 * 2));
+                SoftGpu_Store(700, 16, 8, 8, pixels);
+                for (int j = 0; j < 8; j++)
+                    CHECK(!memcmp(pixels + j * 8, copy_vram + (16 + j) * SOFT_GPU_WIDTH + 700, 8 * 2));
+                if (kind == 0 || kind == 3) CHECK(pixels[0] == 0x001f); /* the red, moved before the clear */
+                model_take();
+                (void)copy_end();
             }
         }
         window_settles = 1;
