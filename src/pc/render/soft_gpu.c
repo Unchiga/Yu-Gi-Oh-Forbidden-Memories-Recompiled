@@ -3,6 +3,7 @@
 #endif
 #include "soft_gpu.h"
 #include "texture_dump.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -149,9 +150,12 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  *   name comes from the host as the panel is drawn);
  * - nothing else reads or writes VRAM behind the software GPU's back: no
  *   applied code mod binds SoftGpu_Vram or SoftGpu_StateData (mods.c);
- * - VRAM is the only picture: no scaled picture and no recorder drawing one
- *   (whose copy of VRAM would miss what is held), no widescreen target
- *   rastered beside the area.
+ * - no scaled picture drawn here, and no widescreen target rastered beside
+ *   the area; a recorder that draws the picture at 2x and above only if it
+ *   keeps its copy of VRAM by SoftGpu_CopyTaken: the copy misses what is
+ *   held when it is taken, and gets it as a patch (settle_area) before its
+ *   next replay reads anything (soft_gpu.h). A primitive only the recorder
+ *   draws (picture-only) settles what it samples, so the copy gets that too.
  *
  * Held areas never overlap, and none samples another: before an area holds
  * its first primitive, the areas that meet it or sample it are rastered.
@@ -162,9 +166,10 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  * batch while work can be held (holding()) or is, through every look at the
  * queues while anything is held and through every change of given_up[], so
  * it never sees a queue or given_up[] half made or half rastered, and never
- * finds `gpu` swapped for a held primitive's state. With a mod's VRAM, at 2x
- * and above, or with a recorder at 2x and above (not at 1x: holding() is
- * false only for those), a batch neither holds it nor calls hold. */
+ * finds `gpu` swapped for a held primitive's state. While holding() is false
+ * (a mod's VRAM, the software GPU's scaled picture, a recorder at 2x and
+ * above that keeps no copy, or AUTO below 2x), a batch neither holds it nor
+ * calls hold. */
 #define HELD_AREAS SOFT_GPU_QUEUES
 #define HELD_SAMPLED 48
 #define HELD_WORDS_MAX (4u << 20) /* past this an area's queue is rastered and started again */
@@ -183,10 +188,33 @@ typedef struct HeldArea {
     int sampled[HELD_SAMPLED][4];  /* x, y, w, h: the texels and palette rows its work reads */
     int sampled_count, sampled_all;
     uint16_t *before;              /* poison: the area's words as the queue began */
+    size_t copied;                 /* entries it held when the recorder last took its copy (SoftGpu_CopyTaken) */
 } HeldArea;
 static HeldArea held[HELD_AREAS];
 static volatile int held_any;
 static int deferred_on, deferred_poison, mod_vram_users, replaying, in_batch;
+/* The recorder's copy of VRAM (soft_gpu.h, SoftGpu_CopyTaken): taken once
+ * since the recorder was set (`copy_kept`), and the areas it missed as they
+ * were when it was taken, each made as its area was settled, for the
+ * recorder's next replay. At most one an area a take: an area held at a
+ * take is settled once, and what it holds after has no part in that copy.
+ * Their words share one buffer of VRAM's size, made on the main thread at
+ * the first take (patch_room): a settle can come from the clock's tick
+ * (a LoadImage or StoreImage there), where nothing may be allocated. It is
+ * always enough: the areas held at a take never overlap and lie in VRAM, so
+ * their patches (one an area) hold at most VRAM's words. */
+#define PATCH_WORDS ((size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT)
+typedef struct Patch {
+    int x, y, w, h;
+    const uint16_t *words;
+} Patch;
+static Patch patches[HELD_AREAS];
+static uint16_t *patch_buffer;
+static size_t patch_used;
+static int patch_count, copy_kept;
+/* How far past the texels a primitive's coordinates span the recorder may
+ * read its copy (SoftGpu_SetCopyReach): texel_rect takes it in. */
+static int copy_reach;
 static unsigned held_clock;
 /* The provenance tags of each area were found clear at this count of
  * TextureDump_Touched (clean_tags: the tags it was for). */
@@ -348,6 +376,7 @@ static void held_recount(void)
 static void held_reset(HeldArea *a)
 {
     a->on = 0;
+    a->copied = 0;
     a->word_count = a->count = a->state_count = 0;
     a->sampled_count = a->sampled_all = 0;
     held_recount();
@@ -357,7 +386,52 @@ static size_t polygon(const uint32_t *words, size_t count);
 static size_t lines(const uint32_t *words, size_t count);
 static size_t rectangle(const uint32_t *words, size_t count);
 
-/* The area's queue, rastered as it would have been as it came. */
+/* Whether held work can be missing from the recorder's copy of VRAM.
+ * copy_kept first: only a recorder that named itself to SoftGpu_CopyTaken
+ * (gl_picture.c's) has `patch`; a mod's, made with an older header, ends
+ * before it. */
+static int copy_on(void)
+{
+    return copy_kept && recorder && scale > 1 && recorder->patch;
+}
+
+/* The patches' buffer, made once (SoftGpu_CopyTaken, on the main thread)
+ * and kept: 0 if there is no memory for it, and then nothing is held at 2x
+ * and above. */
+static int patch_room(void)
+{
+    if (!patch_buffer) patch_buffer = malloc(PATCH_WORDS * sizeof(uint16_t));
+    return patch_buffer != NULL;
+}
+
+/* The area's words now, as the recorder's copy should have had them when it
+ * was taken (settle_area). */
+static void make_patch(const HeldArea *a)
+{
+    Patch *p;
+    uint16_t *words;
+    size_t need = (size_t)a->w * (size_t)a->h;
+    /* Cannot be (copy_on() needs the buffer; one patch an area a take, the
+     * areas apart, in VRAM): checked only so that a mistake here never
+     * writes past the buffer. */
+    if (patch_count == HELD_AREAS || patch_used + need > PATCH_WORDS || !patch_buffer) return;
+    p = &patches[patch_count];
+    words = patch_buffer + patch_used;
+    for (int j = 0; j < a->h; j++)
+        memcpy(words + (size_t)j * a->w, vram + (a->y + j) * SOFT_GPU_WIDTH + a->x, (size_t)a->w * 2);
+    p->words = words;
+    patch_used += need;
+    p->x = a->x;
+    p->y = a->y;
+    p->w = a->w;
+    p->h = a->h;
+    patch_count++;
+    deferred_stats.patches++;
+}
+
+/* The area's queue, rastered as it would have been as it came. What the
+ * recorder's copy missed of it (`copied`) is rastered first and kept as a
+ * patch for the copy. */
 static void settle_area(HeldArea *a, int why)
 {
     GpuState live;
@@ -365,17 +439,19 @@ static void settle_area(HeldArea *a, int why)
     uint32_t *live_wide = wide_picture;
     int live_bank = texture_bank, live_shadow = shadow_on, live_fade = fade, live_shift = dither_shift;
     unsigned long long started;
-    size_t i;
+    size_t i, patch_at;
     if (!a->on || replaying) return;
     hold_clock();
     live = gpu;
     started = SoftGpu_Clock ? SoftGpu_Clock() : 0;
+    patch_at = a->copied && copy_on() ? a->copied : (size_t)-1;
     if (a->before) { /* poison: the words it was drawn over */
         for (int j = 0; j < a->h; j++)
             memcpy(vram + (a->y + j) * SOFT_GPU_WIDTH + a->x, a->before + (size_t)j * a->w, (size_t)a->w * 2);
     }
     replaying = 1;
     for (i = 0; i < a->count; i++) {
+        if (i == patch_at) make_patch(a);
         const HeldEntry *e = &a->entries[i];
         const uint32_t *words = a->words + e->at;
         uint32_t command = words[0] >> 24;
@@ -389,6 +465,7 @@ static void settle_area(HeldArea *a, int why)
         wide_picture = NULL;
         (command < 0x40 ? polygon : command < 0x60 ? lines : rectangle)(words, e->count);
     }
+    if (patch_at == a->count) make_patch(a); /* nothing came after the take */
     replaying = 0;
     gpu = live;
     texture_source = live_source;
@@ -486,6 +563,17 @@ static void before_write(int x, int y, int w, int h, int why, const Write *write
     release_clock();
 }
 
+/* Whether the recorder's fill covers the area too: it cuts a fill at VRAM's
+ * edges where VRAM wraps it (gl_picture.c, apply_fill). An area the copy
+ * missed that only the wrapped part covers is settled, not dropped: the copy
+ * keeps the words the fill does not reach there. */
+static int fill_reaches(int x, int y, int w, int h, const HeldArea *area)
+{
+    x &= SOFT_GPU_WIDTH - 1;
+    y &= SOFT_GPU_HEIGHT - 1;
+    return x <= area->x && area->x + area->w <= x + w && y <= area->y && area->y + area->h <= y + h;
+}
+
 /* A fill: an area it covers whole loses what it holds, which the fill
  * would overwrite word for word (a fill does not check the mask). */
 static void before_fill(int x, int y, int w, int h, uint16_t color)
@@ -515,7 +603,8 @@ static void before_fill(int x, int y, int w, int h, uint16_t color)
     for (int a = 0; a < HELD_AREAS; a++) {
         HeldArea *area = &held[a];
         if (area->on && span_covers(x, w, SOFT_GPU_WIDTH, area->x, area->x + area->w - 1) &&
-            span_covers(y, h, SOFT_GPU_HEIGHT, area->y, area->y + area->h - 1))
+            span_covers(y, h, SOFT_GPU_HEIGHT, area->y, area->y + area->h - 1) &&
+            (!area->copied || !copy_on() || fill_reaches(x, y, w, h, area)))
             drop_area(area);
     }
     before_write(x, y, w, h, SOFT_GPU_WHY_WRITE, &fill);
@@ -526,7 +615,9 @@ static void before_fill(int x, int y, int w, int h, uint16_t color)
  * on the primitive). */
 static int holding(void)
 {
-    return deferred_on && !mod_vram_users && !picture && !(recorder && scale > 1);
+    if (!deferred_on || mod_vram_users || picture) return 0; /* picture: the software GPU draws a scaled one */
+    if (recorder && scale > 1) return copy_on(); /* its copy of VRAM gets what it missed (SoftGpu_CopyTaken) */
+    return deferred_on != SOFT_GPU_DEFERRED_AUTO; /* auto: only at 2x and above with the recorder */
 }
 
 /* The words of the texture the primitive reads (texture_rects, as
@@ -540,8 +631,14 @@ static int holding(void)
 static void texel_rect(int rect[4], const int uv[4])
 {
     int shift = 2 - gpu.depth, u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
-    if (gpu.window_mask_x || uv[2] > 255) u0 = 0, u1 = 255;
-    if (gpu.window_mask_y || uv[3] > 255) v0 = 0, v1 = 255;
+    /* What the recorder reads of its copy past the last u and v
+     * (SoftGpu_SetCopyReach): within the page, wrapping as its texels do,
+     * so all of the page on an axis it would wrap. Nothing before the first. */
+    int reach = copy_reach && copy_on() ? copy_reach : 0;
+    if (gpu.window_mask_x || uv[2] + reach > 255) u0 = 0, u1 = 255;
+    else u1 += reach;
+    if (gpu.window_mask_y || uv[3] + reach > 255) v0 = 0, v1 = 255;
+    else v1 += reach;
     rect[0] = gpu.page_x + (u0 >> shift);
     rect[1] = gpu.page_y + v0;
     rect[2] = (u1 >> shift) - (u0 >> shift) + 1;
@@ -730,7 +827,11 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
      * (a bank, the shadow, an area given up) never scans a palette. */
     if (w < 256 || h < 192 || x + w > SOFT_GPU_WIDTH || y + h > SOFT_GPU_HEIGHT) {
         now = SOFT_GPU_NOW_COUNT; /* not a full screen: not counted */
-    } else if (!holding() || SoftGpu_WideMargin(gpu.clip_x1, gpu.clip_y1, gpu.clip_x2, gpu.clip_y2)) {
+    } else if (!holding() ||
+               (wide_rastered() && SoftGpu_WideMargin(gpu.clip_x1, gpu.clip_y1, gpu.clip_x2, gpu.clip_y2))) {
+        /* A widescreen target the software GPU rasters beside the area: its
+         * second pass is not held. With a recorder at 2x and above it draws
+         * the targets, and the area holds as any other. */
         now = SOFT_GPU_NOW_OTHER;
     } else if (textured && texture_source != vram) {
         now = SOFT_GPU_NOW_BANK;
@@ -808,7 +909,7 @@ void SoftGpu_SetDeferred(int on, int poison)
 {
     settle_all(SOFT_GPU_WHY_ALL); /* nothing is held after it, so nothing below needs the clock held */
     if (on && !deferred_on) memset(&deferred_stats, 0, sizeof(deferred_stats));
-    deferred_on = on != 0;
+    deferred_on = on == SOFT_GPU_DEFERRED_AUTO ? SOFT_GPU_DEFERRED_AUTO : on != 0;
     deferred_poison = on && poison;
     forget_given_up();
     for (int a = 0; a < HELD_AREAS; a++) {
@@ -818,6 +919,50 @@ void SoftGpu_SetDeferred(int on, int poison)
 }
 
 int SoftGpu_Deferred(void) { return deferred_on; }
+
+void SoftGpu_CopyTaken(const SoftGpuRecorder *taker)
+{
+    int took = held_any;
+    if (took) hold_clock(); /* the marks and the patches as they stand, not half made by the tick */
+    /* What was settled since the recorder last took the patches is in the
+     * copy now: those patches would bring back older words. */
+    patch_count = 0;
+    patch_used = 0;
+    /* Only the recorder set now, naming itself: an upload by a picture that
+     * is not the recorder (a mod's replaced it) keeps no copy for that one.
+     * The buffer is made at the first take, when nothing can be held yet
+     * (copy_on() was false): without it, no copy is kept, and nothing held. */
+    copy_kept = taker && taker == recorder && patch_room();
+    for (int a = 0; a < HELD_AREAS; a++) {
+        if (!held[a].on) continue;
+        held[a].copied = held[a].count;
+        deferred_stats.copy_missed++;
+    }
+    if (took) release_clock();
+}
+
+void SoftGpu_SetCopyReach(int texels)
+{
+    if (texels == copy_reach) return;
+    /* What is held was let hold under the old reach; a patch made now for
+     * the copy's missed areas is handed over before the replay that reads
+     * further (soft_gpu.h). */
+    settle_all(SOFT_GPU_WHY_ALL);
+    copy_reach = texels;
+}
+
+int SoftGpu_CopyPatches(void)
+{
+    int n = 0;
+    if (!patch_count) return 0; /* before every draw of a replay: mostly nothing */
+    hold_clock();
+    for (int i = 0; i < patch_count && copy_on(); i++, n++)
+        recorder->patch(patches[i].x, patches[i].y, patches[i].w, patches[i].h, patches[i].words);
+    patch_count = 0;
+    patch_used = 0;
+    release_clock();
+    return n;
+}
 
 void SoftGpu_SetModVramUsers(int users)
 {
@@ -931,6 +1076,20 @@ static inline __attribute__((always_inline)) uint16_t *vram_pixel(int x, int y)
     return &vram[(y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
 }
 
+/* The recorder's copy forgotten: no patches, nothing held at 2x and above
+ * until the recorder takes its copy again. Callers settle everything first,
+ * so nothing is held; the clock is held anyway while work can be (the
+ * tick's settles look at the patches). */
+static void forget_copy(void)
+{
+    int clock = deferred_on;
+    if (clock) hold_clock();
+    patch_count = 0;
+    patch_used = 0;
+    copy_kept = 0;
+    if (clock) release_clock();
+}
+
 int SoftGpu_SetScale(int wanted)
 {
     uint32_t *made = NULL;
@@ -951,6 +1110,9 @@ int SoftGpu_SetScale(int wanted)
     }
     free(picture);
     picture = made;
+    /* The recorder's copy is made again at the new scale (the resync below):
+     * as with a new recorder, nothing is held until it is taken. */
+    forget_copy();
     scale = wanted;
     scale_shift = wanted == 8 ? 3 : wanted == 4 ? 2 : wanted == 2 ? 1 : 0;
     /* The targets missed the primitives so far: made again from VRAM. */
@@ -979,11 +1141,17 @@ void SoftGpu_PictureFromVram(void)
 void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
 {
 #if defined(MEMORIES_TRANSLATED) && !defined(MEMORIES_INSTRUMENT_SOFTGPU)
-    if (wanted) wanted = GuestRuntime_ResolveData((void *)wanted, sizeof(*wanted));
+    /* As far as `capture`: a mod's recorder is made with a header without
+     * `patch`, which is read only for the one that names itself to
+     * SoftGpu_CopyTaken (gl_picture.c's, a host pointer, as it is). */
+    if (wanted) wanted = GuestRuntime_ResolveData((void *)wanted, offsetof(SoftGpuRecorder, patch));
 #endif
     if (wanted == recorder) return;
     SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT); /* as SetScale */
     forget_given_up();
+    /* The old recorder's copy goes with it; the new one holds nothing at 2x
+     * and above until it has taken its own (SoftGpu_CopyTaken). */
+    forget_copy();
     recorder = wanted;
     if (recorder) {
         free(picture);
@@ -1300,32 +1468,36 @@ static void fill_words(int x, int y, int w, int h, uint32_t rgb24)
 
 /* The transfers from outside a batch (LoadImage and the like, which can
  * come from the interrupt tick): recorded one by one. A batch's own
- * transfers are in its record already. */
+ * transfers are in its record already. While work can be held or is, the
+ * clock is held from the record to the end of the transfer, so the two are
+ * one: a tick in between would record its own transfer after this one but
+ * make it first (and, with this one a fill, could settle or drop a held
+ * area out of the order the record replays). Otherwise as ever: a tick
+ * there changes the order both ways at once. */
+static int transfer_clock(void)
+{
+    int held = holding() || held_any;
+    if (held) hold_clock();
+    return held;
+}
+
 void SoftGpu_Load(int x, int y, int w, int h, const uint16_t *pixels)
 {
 #if defined(MEMORIES_TRANSLATED) && !defined(MEMORIES_INSTRUMENT_SOFTGPU)
     if (w > 0 && h > 0) pixels = GuestRuntime_ResolveData((void *)pixels, (size_t)w * (size_t)h * sizeof(*pixels));
 #endif
+    int held = transfer_clock();
     if (recorder && scale > 1) recorder->load(x, y, w, h, pixels);
-    if (held_any) {
-        hold_clock();
-        load_words(x, y, w, h, pixels);
-        release_clock();
-    } else {
-        load_words(x, y, w, h, pixels);
-    }
+    load_words(x, y, w, h, pixels);
+    if (held) release_clock();
 }
 
 void SoftGpu_Move(int sx, int sy, int dx, int dy, int w, int h)
 {
+    int held = transfer_clock();
     if (recorder && scale > 1) recorder->move(sx, sy, dx, dy, w, h);
-    if (held_any) {
-        hold_clock();
-        move_words(sx, sy, dx, dy, w, h);
-        release_clock();
-    } else {
-        move_words(sx, sy, dx, dy, w, h);
-    }
+    move_words(sx, sy, dx, dy, w, h);
+    if (held) release_clock();
 }
 
 void SoftGpu_Capture(int sx, int sy, int dx, int dy, int w, int h)
@@ -1337,14 +1509,10 @@ void SoftGpu_Capture(int sx, int sy, int dx, int dy, int w, int h)
 
 void SoftGpu_Fill(int x, int y, int w, int h, uint32_t rgb24)
 {
+    int held = transfer_clock();
     if (recorder && scale > 1) recorder->fill(x, y, w, h, rgb24);
-    if (held_any) {
-        hold_clock();
-        fill_words(x, y, w, h, rgb24);
-        release_clock();
-    } else {
-        fill_words(x, y, w, h, rgb24);
-    }
+    fill_words(x, y, w, h, rgb24);
+    if (held) release_clock();
 }
 
 /* What a primitive's texels are read with, and what plot draws it with:
@@ -1990,9 +2158,11 @@ void SoftGpu_PictureOnlyClut(int clut_x, int clut_y)
     picture_only_count++;
 }
 
+/* A held primitive was not picture-only as it came (it would not have been
+ * held): rastered later, it is drawn whatever the flags say then. */
 static int picture_only_clut(int clut_x, int clut_y)
 {
-    if (!recorder || scale <= 1) return 0;
+    if (!recorder || scale <= 1 || replaying) return 0;
     for (int i = 0; i < picture_only_count; i++) {
         if (picture_only[i].x == clut_x && picture_only[i].y == clut_y) return 1;
     }
@@ -2006,8 +2176,24 @@ void SoftGpu_PictureOnlyFrame(int on) { picture_only_frame = on; }
 
 static int picture_only_screen(void)
 {
-    return picture_only_frame && recorder && scale > 1 && gpu.clip_x2 - gpu.clip_x1 + 1 >= 256 &&
+    return picture_only_frame && recorder && scale > 1 && !replaying && gpu.clip_x2 - gpu.clip_x1 + 1 >= 256 &&
            gpu.clip_y2 - gpu.clip_y1 + 1 >= 192;
+}
+
+/* A primitive the recorder alone draws (picture-only) samples the
+ * recorder's copy of VRAM: the texels its coordinates span and its palette
+ * whole are rastered first, so that the copy gets them (a patch) if it
+ * missed them. `uv` NULL: a polygon's vertices' span. */
+static void picture_only_reads(const int *uv, const Vertex *v, int vertices)
+{
+    int rect[4], span[4];
+    if (!held_any || texture_source != vram) return;
+    if (!uv) polygon_uv(v, vertices, span), uv = span;
+    texel_rect(rect, uv);
+    hold_clock();
+    before_read(rect[0], rect[1], rect[2], rect[3], SOFT_GPU_WHY_DRAW);
+    if (gpu.depth < 2) before_read(gpu.clut_x, gpu.clut_y, gpu.depth == 0 ? 16 : 256, 1, SOFT_GPU_WHY_DRAW);
+    release_clock();
 }
 
 static size_t polygon(const uint32_t *words, size_t count)
@@ -2074,8 +2260,12 @@ static size_t polygon(const uint32_t *words, size_t count)
         picture_triangle(v[0], v[1], v[2], flags);
         if (quad) picture_triangle(v[1], v[2], v[3], flags);
     }
-    if ((textured && picture_only_clut(gpu.clut_x, gpu.clut_y)) || picture_only_screen() ||
-        hold(words, need, NULL, textured ? v : NULL, vertices, textured && panel_page())) {
+    if ((textured && picture_only_clut(gpu.clut_x, gpu.clut_y)) || picture_only_screen()) {
+        if (textured) picture_only_reads(NULL, v, vertices);
+        fade = 0;
+        return need;
+    }
+    if (hold(words, need, NULL, textured ? v : NULL, vertices, textured && panel_page())) {
         fade = 0;
         return need;
     }
@@ -2204,8 +2394,11 @@ static size_t rectangle(const uint32_t *words, size_t count)
     }
     {
         const int uv[4] = {base.u, base.v, base.u + (w ? w - 1 : 0), base.v + (h ? h - 1 : 0)};
-        if (!picture_only_screen() && hold(words, need, textured ? uv : NULL, NULL, 0, textured && panel_page()))
+        if (picture_only_screen()) {
+            if (textured) picture_only_reads(uv, NULL, 0);
+        } else if (hold(words, need, textured ? uv : NULL, NULL, 0, textured && panel_page())) {
             return need;
+        }
     }
     const Plotter p = plotter();
     switch (picture_only_screen() ? -1 : flags) {
@@ -2302,13 +2495,16 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
     if (count) words = GuestRuntime_ResolveData((void *)words, count * sizeof(*words));
 #endif
     size_t at = 0;
-    int clock_held = holding() || held_any; /* never with a mod's VRAM, at 2x and above, or with a recorder at 2x and above */
+    int clock_held = holding() || held_any; /* never with a mod's VRAM, the software GPU's scaled picture, a recorder
+                                             * at 2x and above that keeps no copy yet, or AUTO below 2x */
+    /* The deferred raster's queues (`hold`), and the record with the batch
+     * (as a transfer's, transfer_clock). */
+    if (clock_held) hold_clock();
     if (recorder && scale > 1) {
         if (precise_count && recorder->precise) recorder->precise(precise, precise_count);
         recorder->gp0(words, count);
     }
     precise_count = 0;
-    if (clock_held) hold_clock(); /* the deferred raster's queues (`hold`) */
     in_batch++;
     while (at < count) {
         uint32_t word = words[at], command = word >> 24;

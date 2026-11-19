@@ -16,8 +16,10 @@
  * times, as the game clock's tick can in the middle of a batch. The three
  * runs must also have kept work back, dropped some, rastered some and taken
  * a state while some was held, or they prove nothing. */
+#define _DEFAULT_SOURCE /* MAP_ANONYMOUS (guarded_memory) */
 #include "pc/render/soft_gpu.h"
 #include "pc/render/texture_dump.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +51,13 @@ static int below(int n) { return (int)(rnd() % (unsigned)n); }
 static int calm, calm_run;
 static int column(int w) { return calm ? 640 + below(384 - w) : below(1024); }
 
+/* The copy runs (below, the OpenGL picture's copy of VRAM): at 2x with a
+ * recorder, which draws a few palettes into the picture alone
+ * (SoftGpu_PictureOnlyClut, one in the first area's rows) and whole frames
+ * now and then (SoftGpu_PictureOnlyFrame). */
+static const uint32_t only_cluts[2] = {(100u << 6) | 2u, (490u << 6) | 41u};
+static int copy_mode;
+
 /* The "tick" inside TextureDump_Prepare draws its numbers from a stream of
  * its own, so that the run's own stream is the same whatever it does. */
 static uint32_t tick_seed;
@@ -72,10 +81,41 @@ typedef struct Outcome {
     int held_by_mod;   /* primitives held while a mod bound VRAM (must be none) */
     int over_held[2];  /* a busy frame's loads, moves, fills, stores, settles, tags and states
                         * made while the other area (0,0 or 320,0) held work */
+    uint64_t reads;    /* copy runs: what the recorder's replays read of its copy */
+    int replays;
     SoftGpuDeferredStats stats;
 } Outcome;
 
 static Outcome *now_outcome;
+
+/* What is allocated while the stand-in for the clock's tick runs (`in_tick`):
+ * nothing may be, a settle there included (a patch is made without
+ * allocating). Counted where the link wraps the allocator (CMakeLists.txt). */
+static volatile int in_tick; /* volatile: a store around a malloc the compiler knows is kept */
+static int tick_allocs;
+#ifdef SOFT_GPU_TEST_WRAP_ALLOC
+void *__real_malloc(size_t size);
+void *__real_calloc(size_t count, size_t size);
+void *__real_realloc(void *pointer, size_t size);
+void *__wrap_malloc(size_t size);
+void *__wrap_calloc(size_t count, size_t size);
+void *__wrap_realloc(void *pointer, size_t size);
+void *__wrap_malloc(size_t size)
+{
+    tick_allocs += in_tick;
+    return __real_malloc(size);
+}
+void *__wrap_calloc(size_t count, size_t size)
+{
+    tick_allocs += in_tick;
+    return __real_calloc(count, size);
+}
+void *__wrap_realloc(void *pointer, size_t size)
+{
+    tick_allocs += in_tick;
+    return __real_realloc(pointer, size);
+}
+#endif
 
 /* The pack's prepare: page 2 (128,0) is "replaced" (1, the shadow), page 3
  * read through another palette (2); now and then a load and a store, as an
@@ -87,17 +127,22 @@ static int prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, in
         uint16_t words[16];
         int x = (int)(tick_rnd() % 1024), y = (int)(tick_rnd() % 512);
         for (int i = 0; i < 16; i++) words[i] = (uint16_t)tick_rnd();
+        in_tick = 1;
         if (tick_rnd() & 1) {
             SoftGpu_Load(x, y, 4, 4, words);
         } else {
             SoftGpu_Store(x, y, 4, 4, words);
             now_outcome->stores = fnv(now_outcome->stores, words, sizeof(words));
         }
+        in_tick = 0;
     }
     return page_y == 256 && page_x == 640 ? 1 : page_y == 256 && page_x == 704 ? 2 : 0;
 }
 
 static int holds, releases, depth, nested;
+/* A tick stand-in armed to come at the next record (record_point): at once
+ * if the clock is free then, else as it is let go, as SIGALRM would. */
+static void (*armed_tick)(void), (*pending_tick)(void);
 static void hold_clock(int on)
 {
     if (on) {
@@ -105,8 +150,21 @@ static void hold_clock(int on)
         if (depth++) nested = 1;
     } else {
         releases++;
-        depth--;
+        if (!--depth && pending_tick) {
+            void (*tick)(void) = pending_tick;
+            pending_tick = NULL;
+            tick();
+        }
     }
+}
+
+static void record_point(void)
+{
+    void (*tick)(void) = armed_tick;
+    if (!tick) return;
+    armed_tick = NULL;
+    if (depth) pending_tick = tick;
+    else tick();
 }
 
 static uint32_t position(int x0, int y0)
@@ -146,7 +204,9 @@ static uint32_t page_word(void)
 
 static uint32_t clut_word(void)
 {
-    int x = below(4) == 0 && !calm ? below(40) : 40 + below(24), y = below(4) == 0 ? below(240) : 480 + below(32);
+    int x, y;
+    if (copy_mode && below(8) == 0) return only_cluts[below(2)];
+    x = below(4) == 0 && !calm ? below(40) : 40 + below(24), y = below(4) == 0 ? below(240) : 480 + below(32);
     /* A calm frame's 8-bit palette from x 768 on wraps past VRAM's edge
      * into the first area's columns: only in rows below the areas. */
     if (calm && y < 240 && x > 48) x = 40 + below(9);
@@ -193,6 +253,442 @@ static void noise(uint16_t *words, int count)
     for (int i = 0; i < count; i++) words[i] = (uint16_t)rnd();
 }
 
+/* --- The OpenGL picture's copy of VRAM, as a model (gl_picture.c) -------
+ * At 2x and above a recorder draws the picture. Its copy of VRAM is taken
+ * raw after each replay (upload_vram) and changed by the record's loads,
+ * moves and fills, cut at VRAM's edges as gl_picture.c cuts them; its
+ * primitives draw only into the picture, and sample the copy. So while the
+ * deferred raster holds work across a take, the copy misses it, and gets it
+ * back as patches (soft_gpu.h, SoftGpu_CopyTaken). The model replays the
+ * record at the end of most frames, taking the patches first and before
+ * every read (as flush_runs does: its host lookups settle too, which the
+ * model stands in for with settles of its own in the middle of a replay),
+ * and hashes every word of the copy that a textured primitive or a move
+ * reads inside the drawing areas: kept back or not, they must be the same. */
+static uint16_t copy_vram[SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT];
+static uint32_t *ops;
+static size_t ops_used, ops_room;
+static uint64_t copy_reads;    /* every word read in the drawing areas, in order */
+static uint32_t window_seed;    /* the replay's own settles (host lookups): a stream of their own */
+static int window_settles = 1;  /* off for the fixed cases */
+
+static uint32_t *op_room(size_t n)
+{
+    if (ops_used + n > ops_room) {
+        size_t room = ops_room ? ops_room : 1 << 16;
+        while (room < ops_used + n) room *= 2;
+        ops = realloc(ops, room * sizeof(uint32_t));
+        if (!ops) abort();
+        ops_room = room;
+    }
+    ops_used += n;
+    return ops + ops_used - n;
+}
+
+static void rec_gp0(const uint32_t *words, size_t count)
+{
+    uint32_t *at = op_room(2 + count);
+    at[0] = 1;
+    at[1] = (uint32_t)count;
+    memcpy(at + 2, words, count * 4);
+    record_point();
+}
+
+static void rec_load(int x, int y, int w, int h, const uint16_t *pixels)
+{
+    uint32_t *at = op_room(5 + ((size_t)w * h + 1) / 2);
+    at[0] = 2, at[1] = (uint32_t)x, at[2] = (uint32_t)y, at[3] = (uint32_t)w, at[4] = (uint32_t)h;
+    memcpy(at + 5, pixels, (size_t)w * h * 2);
+    record_point();
+}
+
+static void rec_move(int sx, int sy, int dx, int dy, int w, int h)
+{
+    uint32_t *at = op_room(7);
+    at[0] = 3, at[1] = (uint32_t)sx, at[2] = (uint32_t)sy, at[3] = (uint32_t)dx, at[4] = (uint32_t)dy;
+    at[5] = (uint32_t)w, at[6] = (uint32_t)h;
+    record_point();
+}
+
+static void rec_fill(int x, int y, int w, int h, uint32_t rgb24)
+{
+    uint32_t *at = op_room(6);
+    at[0] = 4, at[1] = (uint32_t)x, at[2] = (uint32_t)y, at[3] = (uint32_t)w, at[4] = (uint32_t)h, at[5] = rgb24;
+    record_point();
+}
+
+static void rec_resync(int scale, const uint32_t state[6])
+{
+    uint32_t *at = op_room(2);
+    (void)state;
+    at[0] = 5;
+    at[1] = (uint32_t)scale;
+}
+
+static void rec_patch(int x, int y, int w, int h, const uint16_t *words)
+{
+    for (int j = 0; j < h; j++) memcpy(copy_vram + (y + j) * SOFT_GPU_WIDTH + x, words + (size_t)j * w, (size_t)w * 2);
+}
+
+static const SoftGpuRecorder model = {rec_gp0, rec_load, rec_move, rec_fill, rec_resync, NULL, NULL, rec_patch};
+
+/* A mod's recorder, made with a header from before `patch` (SoftGpu_SetRecorder
+ * is lent to mods): its struct ends at `capture`. guarded_recorder() puts one
+ * at the very end of memory that may be read, before a page that may not:
+ * reading its `patch` faults. NULL where no such page can be had. */
+static int foreign_patches;
+static void foreign_patch(int x, int y, int w, int h, const uint16_t *words)
+{
+    (void)x, (void)y, (void)w, (void)h, (void)words;
+    foreign_patches++;
+}
+
+#define GUARD_STEP 65536 /* a multiple of every page size */
+#ifdef _WIN32
+__declspec(dllimport) void *__stdcall VirtualAlloc(void *address, size_t size, unsigned long type, unsigned long protect);
+__declspec(dllimport) int __stdcall VirtualProtect(void *address, size_t size, unsigned long protect,
+                                                   unsigned long *old);
+static char *guarded_memory(void)
+{
+    unsigned long old;
+    char *base = VirtualAlloc(NULL, 2 * GUARD_STEP, 0x1000 | 0x2000, 4); /* committed, reserved; read and write */
+    if (!base || !VirtualProtect(base + GUARD_STEP, GUARD_STEP, 1, &old)) return NULL; /* no access */
+    return base;
+}
+#else
+#include <sys/mman.h>
+static char *guarded_memory(void)
+{
+    char *base = mmap(NULL, 2 * GUARD_STEP, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (base == MAP_FAILED || mprotect(base + GUARD_STEP, GUARD_STEP, PROT_NONE)) return NULL;
+    return base;
+}
+#endif
+
+static SoftGpuRecorder *guarded_recorder(void)
+{
+    static const SoftGpuRecorder older = {rec_gp0, rec_load, rec_move, rec_fill, rec_resync, NULL, NULL, NULL};
+    static char *base;
+    size_t size = offsetof(SoftGpuRecorder, patch);
+    if (!base && !(base = guarded_memory())) return NULL;
+    memcpy(base + GUARD_STEP - size, &older, size);
+    return (SoftGpuRecorder *)(void *)(base + GUARD_STEP - size);
+}
+
+static int in_areas(int x, int y)
+{
+    return (y < 240 && x < 640) || (y >= 256 && y < 496 && x < 320);
+}
+
+static void read_copy(int x, int y)
+{
+    x &= SOFT_GPU_WIDTH - 1;
+    y &= SOFT_GPU_HEIGHT - 1;
+    if (in_areas(x, y)) copy_reads = fnv(copy_reads, &copy_vram[y * SOFT_GPU_WIDTH + x], 2);
+}
+
+/* Before a draw: the patches, as flush_runs takes them. */
+static void model_flush(void)
+{
+    SoftGpu_CopyPatches();
+}
+
+/* Where the model takes the patches and reads what its primitives sample
+ * (`gl_placement`): 0 before every read (the patches, then the read, as the
+ * primitive is parsed); 1 as gl_picture.c does: a primitive's lookups as it
+ * is parsed, its reads when its run is drawn (flush_runs, before every
+ * transfer, a resync and the replay's end), the patches at the replay's
+ * start and at every flush, whether it draws or not. */
+static int gl_placement;
+static void model_flush_runs(void);
+
+static int clip_cut(int *x, int *y, int *w, int *h)
+{
+    *x &= SOFT_GPU_WIDTH - 1;
+    *y &= SOFT_GPU_HEIGHT - 1;
+    if (*x + *w > SOFT_GPU_WIDTH) *w = SOFT_GPU_WIDTH - *x;
+    if (*y + *h > SOFT_GPU_HEIGHT) *h = SOFT_GPU_HEIGHT - *y;
+    return *w > 0 && *h > 0;
+}
+
+static void model_load(int x, int y, int w, int h, const uint16_t *pixels)
+{
+    int cw = w, ch = h;
+    if (gl_placement) model_flush_runs();
+    if (!clip_cut(&x, &y, &cw, &ch)) return;
+    for (int j = 0; j < ch; j++) memcpy(copy_vram + (y + j) * SOFT_GPU_WIDTH + x, pixels + (size_t)j * w, (size_t)cw * 2);
+}
+
+static void model_move(int sx, int sy, int dx, int dy, int w, int h)
+{
+    static uint16_t scratch[SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT];
+    int sw = w, sh = h, dw = w, dh = h;
+    if (gl_placement) model_flush_runs();
+    if (!clip_cut(&sx, &sy, &sw, &sh) || !clip_cut(&dx, &dy, &dw, &dh)) return;
+    w = sw < dw ? sw : dw;
+    h = sh < dh ? sh : dh;
+    if (sx == dx && sy == dy) return;
+    if (!gl_placement) model_flush();
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            read_copy(sx + i, sy + j);
+            scratch[j * w + i] = copy_vram[(sy + j) * SOFT_GPU_WIDTH + sx + i];
+        }
+    for (int j = 0; j < h; j++) memcpy(copy_vram + (dy + j) * SOFT_GPU_WIDTH + dx, scratch + j * w, (size_t)w * 2);
+}
+
+static void model_fill(int x, int y, int w, int h, uint32_t rgb24)
+{
+    uint16_t word = (uint16_t)(((rgb24 >> 3) & 0x1f) | (((rgb24 >> 11) & 0x1f) << 5) | (((rgb24 >> 19) & 0x1f) << 10));
+    if (gl_placement) model_flush_runs();
+    if (!clip_cut(&x, &y, &w, &h)) return;
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) copy_vram[(y + j) * SOFT_GPU_WIDTH + x + i] = word;
+}
+
+/* A host lookup in the middle of the replay settles a rectangle of the
+ * drawing areas (HdText_Hud a page or a palette), then a draw follows. */
+static void window_settle(void)
+{
+    if (!window_settles) return;
+    window_seed = window_seed * 69069u + 7u;
+    if ((window_seed >> 24) % 97) return; /* now and then: one that crosses held work rasters it */
+    SoftGpu_Settle((int)((window_seed >> 4) % 640), (int)((window_seed >> 12) % 240), 1 + (int)(window_seed % 64), 1 + (int)((window_seed >> 20) % 16));
+}
+
+/* What a textured primitive samples: its texels' words and, below 16 bits,
+ * its palette (an 8-bit one past VRAM's edge up to the greatest index its
+ * texels hold, as far as the software GPU settles it). */
+typedef struct Sampled {
+    int page_x, page_y, depth, clut_x, clut_y, u0, v0, u1, v1, wx, wy;
+} Sampled;
+static Sampled *pending;
+static size_t pending_count, pending_room;
+
+/* How far past a primitive's last u and v the model reads (texture xBR,
+ * gl_picture.c: one texel without anti-aliasing, anywhere in the page with
+ * it), told to the software GPU at each replay as gl_picture.c tells it. */
+static int model_reach;
+
+/* The texels u0..u1 x v0..v1 and, with model_reach, the ones past the last
+ * u and v (wrapping in the page as texel_word does): their words, and the
+ * palette entries they index. */
+static void model_read(const Sampled *s)
+{
+    int page_x = s->page_x, page_y = s->page_y, depth = s->depth, clut_x = s->clut_x, clut_y = s->clut_y;
+    int u0 = s->u0, v0 = s->v0, u1 = s->u1, v1 = s->v1, shift = 2 - depth, entries, nx = 0, ny = 0;
+    int xs[257], ys[257];
+    if (s->wx || u1 > 255 || model_reach == SOFT_GPU_REACH_PAGE) u0 = 0, u1 = 255;
+    if (s->wy || v1 > 255 || model_reach == SOFT_GPU_REACH_PAGE) v0 = 0, v1 = 255;
+    for (int x = u0 >> shift; x <= u1 >> shift; x++) xs[nx++] = page_x + x;
+    for (int y = v0; y <= v1; y++) ys[ny++] = page_y + y;
+    if (model_reach == 1 && u1 - u0 < 255) xs[nx++] = page_x + (((u1 + 1) & 255) >> shift);
+    if (model_reach == 1 && v1 - v0 < 255) ys[ny++] = page_y + ((v1 + 1) & 255);
+    for (int j = 0; j < ny; j++)
+        for (int i = 0; i < nx; i++) read_copy(xs[i], ys[j]);
+    if (depth >= 2) return;
+    entries = depth == 0 ? 16 : 256;
+    if (clut_x + entries > SOFT_GPU_WIDTH) {
+        int greatest = 0;
+        for (int j = 0; j < ny; j++)
+            for (int i = 0; i < nx; i++) {
+                uint16_t word = copy_vram[(ys[j] & 511) * SOFT_GPU_WIDTH + (xs[i] & 1023)];
+                greatest = word >> 8 > greatest ? word >> 8 : (word & 0xff) > greatest ? word & 0xff : greatest;
+            }
+        entries = greatest + 1;
+    }
+    for (int i = 0; i < entries; i++) read_copy(clut_x + i, clut_y);
+}
+
+static void model_sample(int page_x, int page_y, int depth, int clut_x, int clut_y, int u0, int v0, int u1, int v1,
+                         int wx, int wy)
+{
+    const Sampled s = {page_x, page_y, depth, clut_x, clut_y, u0, v0, u1, v1, wx, wy};
+    window_settle(); /* its lookups, as it is parsed */
+    if (!gl_placement) {
+        model_flush();
+        model_read(&s);
+        return;
+    }
+    if (pending_count == pending_room) {
+        pending_room = pending_room ? pending_room * 2 : 1024;
+        pending = realloc(pending, pending_room * sizeof(*pending));
+        if (!pending) abort();
+    }
+    pending[pending_count++] = s;
+}
+
+/* flush_runs: the patches, then what the primitives gathered since sample. */
+static void model_flush_runs(void)
+{
+    model_flush();
+    for (size_t i = 0; i < pending_count; i++) model_read(&pending[i]);
+    pending_count = 0;
+}
+
+/* A batch as gl_picture.c's gp0 reads it, with the state it leaves. */
+static int model_fresh = 1; /* a run begins: the state as SoftGpu_Reset leaves it */
+static void model_gp0(const uint32_t *words, size_t count)
+{
+    static int page_x, page_y, depth, bank, wx, wy;
+    size_t at = 0;
+    if (model_fresh) page_x = page_y = depth = bank = wx = wy = model_fresh = 0;
+    while (at < count) {
+        uint32_t word = words[at], command = word >> 24;
+        size_t used = 1;
+        if (command >= 0x20 && command < 0x40) {
+            int quad = command & 8, textured = command & 4, shaded = command & 0x10, n = quad ? 4 : 3;
+            int u0 = 255, v0 = 255, u1 = 0, v1 = 0, clut_x = 0, clut_y = 0;
+            size_t k = at + 1;
+            used = (size_t)n * (1 + (textured ? 1 : 0)) + (shaded ? (size_t)n : 1);
+            if (count - at < used) break;
+            for (int i = 0; i < n; i++) {
+                if (i && shaded) k++;
+                k++; /* the position */
+                if (textured) {
+                    uint32_t t = words[k++];
+                    int u = t & 0xff, v = (t >> 8) & 0xff;
+                    u0 = u < u0 ? u : u0, u1 = u > u1 ? u : u1, v0 = v < v0 ? v : v0, v1 = v > v1 ? v : v1;
+                    if (i == 0) clut_x = (int)((t >> 16) & 0x3f) * 16, clut_y = (int)((t >> 22) & 0x1ff);
+                    if (i == 1) {
+                        uint32_t p = t >> 16;
+                        page_x = (int)(p & 15) * 64, page_y = (int)((p >> 4) & 1) * 256, depth = (int)((p >> 7) & 3);
+                        if (depth == 3) depth = 2;
+                        bank = (int)((p >> 11) & 15) | (int)((p >> 10) & 1) << 4;
+                    }
+                }
+            }
+            if (textured && !(bank && SoftGpu_BankPixels(bank)))
+                model_sample(page_x, page_y, depth, clut_x, clut_y, u0, v0, u1, v1, wx, wy);
+        } else if (command >= 0x40 && command < 0x60) {
+            int shaded = command & 0x10, poly = command & 8;
+            size_t k = at + 2;
+            for (;;) {
+                if (poly && k < count && (words[k] & 0xf000f000u) == 0x50005000u) { k++; break; }
+                if (shaded) k++;
+                k++;
+                if (!poly || k >= count) break;
+            }
+            if (k > count) break;
+            used = k - at;
+        } else if (command >= 0x60 && command < 0x80) {
+            static const int sizes[4] = {0, 1, 8, 16};
+            int textured = command & 4, kind = (command >> 3) & 3, w = sizes[kind], h = sizes[kind];
+            used = 2 + (textured ? 1u : 0u) + (kind == 0 ? 1u : 0u);
+            if (count - at < used) break;
+            if (kind == 0) w = words[at + used - 1] & 0x3ff, h = (words[at + used - 1] >> 16) & 0x1ff;
+            if (textured && w && h && !(bank && SoftGpu_BankPixels(bank))) {
+                uint32_t t = words[at + 2];
+                int u = t & 0xff, v = (t >> 8) & 0xff;
+                model_sample(page_x, page_y, depth, (int)((t >> 16) & 0x3f) * 16, (int)((t >> 22) & 0x1ff), u, v,
+                             u + w - 1, v + h - 1, wx, wy);
+            }
+        } else if (command == 0x02) {
+            used = 3;
+            if (count - at < 3) break;
+            model_fill(words[at + 1] & 0x3f0, (words[at + 1] >> 16) & 0x1ff, ((words[at + 2] & 0x3ff) + 15) & ~15,
+                       (words[at + 2] >> 16) & 0x1ff, word);
+        } else if (command >= 0x80 && command < 0xa0) {
+            used = 4;
+            if (count - at < 4) break;
+            model_move(words[at + 1] & 0x3ff, (words[at + 1] >> 16) & 0x1ff, words[at + 2] & 0x3ff,
+                       (words[at + 2] >> 16) & 0x1ff, (int)((words[at + 3] - 1) & 0x3ff) + 1,
+                       (int)(((words[at + 3] >> 16) - 1) & 0x1ff) + 1);
+        } else if (command >= 0xa0 && command < 0xc0) {
+            int w, h;
+            if (count - at < 3) break;
+            w = (int)((words[at + 2] - 1) & 0x3ff) + 1;
+            h = (int)(((words[at + 2] >> 16) - 1) & 0x1ff) + 1;
+            used = 3 + ((size_t)w * h + 1) / 2;
+            if (count - at < used) break;
+            model_load(words[at + 1] & 0x3ff, (words[at + 1] >> 16) & 0x1ff, w, h, (const uint16_t *)(words + at + 3));
+        } else if (command >= 0xc0 && command < 0xe0) {
+            used = 3;
+        } else if (command == 0xe1) {
+            page_x = (int)(word & 15) * 64, page_y = (int)((word >> 4) & 1) * 256, depth = (int)((word >> 7) & 3);
+            if (depth == 3) depth = 2;
+            bank = (int)((word >> 11) & 15);
+        } else if (command == 0xe2) {
+            wx = word & 0x1f, wy = (word >> 5) & 0x1f;
+        }
+        if (count - at < used) break;
+        at += used;
+    }
+}
+
+/* The take: VRAM raw into the copy, then SoftGpu_CopyTaken. */
+static void model_take(void)
+{
+    memcpy(copy_vram, SoftGpu_VramRaw(), sizeof(copy_vram));
+    SoftGpu_CopyTaken(&model);
+}
+
+/* GlPicture_Replay: the patches, the record in order (model_play), the take. */
+static void model_play(void)
+{
+    size_t at = 0;
+    SoftGpu_SetCopyReach(model_reach); /* before the patches, as gl_picture.c */
+    model_flush();
+    while (at < ops_used) {
+        const uint32_t *op = ops + at;
+        switch (op[0]) {
+        case 1: model_gp0(op + 2, op[1]); at += 2 + op[1]; break;
+        case 2: model_load((int)op[1], (int)op[2], (int)op[3], (int)op[4], (const uint16_t *)(op + 5));
+                at += 5 + ((size_t)op[3] * op[4] + 1) / 2; break;
+        case 3: model_move((int)op[1], (int)op[2], (int)op[3], (int)op[4], (int)op[5], (int)op[6]); at += 7; break;
+        case 4: model_fill((int)op[1], (int)op[2], (int)op[3], (int)op[4], op[5]); at += 6; break;
+        default: /* a resync: VRAM settled whole, then taken */
+            if (gl_placement) model_flush_runs();
+            SoftGpu_Settle(0, 0, SOFT_GPU_WIDTH, SOFT_GPU_HEIGHT);
+            model_take();
+            at += 2;
+            break;
+        }
+    }
+    if (gl_placement) model_flush_runs(); /* the replay's last flush, before the take */
+    ops_used = 0;
+}
+
+static void model_replay(void)
+{
+    model_play();
+    window_settle(); /* after the last draw: its patch is not taken, and the take makes it needless */
+    model_take();
+}
+
+/* The tick (record_point) clearing the first area whole, as the game's
+ * clear does. */
+static void tick_clear(void) { SoftGpu_Fill(0, 0, 320, 240, 0x00ff00); }
+
+/* A fixed case at 2x with the model recorder, deferral `mode`, its copy
+ * taken; copy_end replays what came since and returns what it read. */
+static int copy_begin(int mode, int poison)
+{
+    SoftGpu_SetDeferred(0, 0);
+    SoftGpu_SetRecorder(NULL);
+    if (!SoftGpu_SetScale(1)) return 1;
+    SoftGpu_Reset();
+    SoftGpu_Fill(0, 0, 1024, 512, 0x800000);
+    ops_used = 0;
+    model_fresh = 1;
+    copy_reads = 1469598103934665603ull;
+    SoftGpu_SetRecorder(&model);
+    if (!SoftGpu_SetScale(2)) return 1;
+    model_replay();
+    SoftGpu_SetDeferred(mode, poison);
+    return 0;
+}
+
+static uint64_t copy_end(void)
+{
+    model_replay();
+    SoftGpu_SetDeferred(0, 0);
+    SoftGpu_SetScale(1);
+    SoftGpu_SetRecorder(NULL);
+    ops_used = 0;
+    return copy_reads;
+}
+
 /* The run, from `start`, in the mode given. */
 static int run(uint32_t start, int frames, int deferred, int poison, Outcome *out)
 {
@@ -214,6 +710,16 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     noise(words, 1024 * 512);
     SoftGpu_Load(0, 0, 1024, 512, words);
     noise(SoftGpu_Bank(3), 1024 * 512);
+    if (copy_mode) { /* 2x, the model recorder; its first replay takes the copy */
+        ops_used = 0;
+        model_fresh = 1;
+        copy_reads = 1469598103934665603ull;
+        window_seed = start;
+        SoftGpu_SetRecorder(&model);
+        if (!SoftGpu_SetScale(2)) return 1;
+        for (int i = 0; i < 2; i++) SoftGpu_PictureOnlyClut((int)(only_cluts[i] & 0x3f) * 16, (int)(only_cluts[i] >> 6));
+        model_replay();
+    }
     SoftGpu_SetDeferred(deferred, poison);
     for (int frame = 0, run_end = 0; frame < frames; frame++) {
         int area = frame & 1, x0 = area ? 320 : 0, y0 = 0, count = 0, busy;
@@ -223,6 +729,10 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
             run_end = frame + 4 + below(2);
         }
         calm = calm_run;
+        if (copy_mode) { /* widescreen (whose targets the recorder draws), now and then a frame for the picture alone */
+            SoftGpu_SetWidescreen(frame % 3 != 0);
+            SoftGpu_PictureOnlyFrame(below(6) == 0);
+        }
         if (frame % 97 == 50 || frame % 97 == 60) { /* a mod binds VRAM for a while: nothing is held */
             SoftGpuDeferredStats s;
             static unsigned long long held_then;
@@ -278,6 +788,9 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
                  * as libgpu.c flushes before any transfer. */
                 SoftGpu_Gp0(batch, at);
                 at = 0;
+                /* The picture-only switch, set before each flush (libgpu.c),
+                 * may change while work is held. */
+                if (copy_mode && below(4) == 0) SoftGpu_PictureOnlyFrame(below(3) == 0);
                 if (!calm && y0 == 0) {
                     SoftGpuDeferredStats s;
                     SoftGpu_DeferredStats(&s);
@@ -337,7 +850,12 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
             }
         }
         SoftGpu_Gp0(batch, at);
-        if (below(4) == 0) {
+        if (copy_mode) { /* the OpenGL picture's present settles nothing; most frames replay */
+            if (below(4)) {
+                model_replay();
+                out->replays++;
+            }
+        } else if (below(4) == 0) {
             /* A present, as the window at the console's resolution does: the
              * area just drawn, settled and read, with its tags; it sees what
              * a raster gone wrong left there before the next clear hides it. */
@@ -348,8 +866,17 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
             }
         }
         if (frame % 211 == 100) { /* the scale changes and back: everything settles */
-            if (!SoftGpu_SetScale(2) || !SoftGpu_SetScale(1)) return 1;
+            if (!SoftGpu_SetScale(copy_mode ? 4 : 2) || !SoftGpu_SetScale(copy_mode ? 2 : 1)) return 1;
         }
+    }
+    if (copy_mode) {
+        model_replay();
+        out->reads = copy_reads;
+        SoftGpu_PictureOnlyFrame(0);
+        SoftGpu_SetWidescreen(0);
+        if (!SoftGpu_SetScale(1)) return 1;
+        SoftGpu_SetRecorder(NULL);
+        ops_used = 0;
     }
     vram = SoftGpu_Vram();
     SoftGpu_DeferredStats(&out->stats);
@@ -367,9 +894,42 @@ int main(int argc, char **argv)
     int frames = argc > 1 ? atoi(argv[1]) : 600;
     Outcome now, held, poisoned;
     SoftGpu_HoldClock = hold_clock;
+#ifdef SOFT_GPU_TEST_WRAP_ALLOC
+    { /* the count works: an allocation in the tick is seen (else the checks below would pass for nothing) */
+        void *volatile made; /* volatile: else the compiler may leave out the pair */
+        in_tick = 1;
+        made = malloc(16);
+        in_tick = 0;
+        free(made);
+        CHECK(tick_allocs == 1);
+        tick_allocs = 0;
+    }
+#endif
     if (!TextureDump_EnableShadow()) {
         fprintf(stderr, "no memory for the tags\n");
         return 1;
+    }
+    /* First of all, as the patches' buffer is made once: the clock's tick
+     * (a StoreImage there) settles held work the copy missed, which makes a
+     * patch, and nothing is allocated in it. */
+    {
+        static const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        static const uint32_t red[] = {0x600000ffu, 0x00100004u, 0x00080008u}; /* 8x8 at 4,16 */
+        uint16_t word = 0;
+        SoftGpuDeferredStats s;
+        window_settles = 0;
+        CHECK(copy_begin(SOFT_GPU_DEFERRED_AUTO, 0) == 0);
+        CHECK(SoftGpu_Gp0(area, 4) == 4);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(red, 3) == 3);
+        model_replay(); /* the take, the sprite held across it */
+        in_tick = 1;
+        SoftGpu_Store(4, 16, 1, 1, &word);
+        in_tick = 0;
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 1 && s.patches == 1 && word == 0x001f && tick_allocs == 0);
+        (void)copy_end();
+        window_settles = 1;
     }
     TextureDump_Prepare = prepare;
     for (uint32_t start = 1; start <= 3; start++) {
@@ -400,6 +960,43 @@ int main(int argc, char **argv)
         CHECK(now.shadow == held.shadow && now.shadow == poisoned.shadow);
         CHECK(now.gpu == held.gpu && now.gpu == poisoned.gpu);
     }
+
+    /* At 2x with a recorder (the OpenGL picture) and its copy of VRAM: kept
+     * back by AUTO (as the game runs it by default) or not, with poison or
+     * not, the copy's words its replays read, and everything else, are the
+     * same. Held work must have outlived takes of the copy, and patches been
+     * made, or this proves nothing. */
+    copy_mode = 1;
+    for (uint32_t start = 1; start <= 4; start++) {
+        Outcome off, automatic, poisoned_auto;
+        gl_placement = start > 2; /* the last two as gl_picture.c reads and patches */
+        /* Texture xBR's reach: off, without anti-aliasing (one texel), with it */
+        model_reach = start == 2 || start == 3 ? 1 : start == 4 ? SOFT_GPU_REACH_PAGE : 0;
+        CHECK(run(start * 2246822519u, frames, 0, 0, &off) == 0);
+        CHECK(holds == 0);
+        CHECK(run(start * 2246822519u, frames, SOFT_GPU_DEFERRED_AUTO, 0, &automatic) == 0);
+        CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
+        CHECK(run(start * 2246822519u, frames, SOFT_GPU_DEFERRED_AUTO, 1, &poisoned_auto) == 0);
+        CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
+        printf("copy run %u%s, reach %d: held %llu (dropped %llu, rastered %llu), at once %llu, %d replays, the copy missed %llu "
+               "areas, %llu patches\n", start, gl_placement ? " (flush_runs)" : "", model_reach,
+               (unsigned long long)automatic.stats.held,
+               (unsigned long long)automatic.stats.dropped, (unsigned long long)automatic.stats.rastered,
+               (unsigned long long)automatic.stats.immediate, automatic.replays,
+               (unsigned long long)automatic.stats.copy_missed, (unsigned long long)automatic.stats.patches);
+        CHECK(automatic.stats.held > (unsigned)frames && automatic.stats.dropped > (unsigned)frames / 40);
+        CHECK(automatic.stats.copy_missed > (unsigned)frames / 10 && automatic.stats.patches > (unsigned)frames / 40);
+        CHECK(off.reads == automatic.reads && off.reads == poisoned_auto.reads);
+        CHECK(off.stores == automatic.stores && off.stores == poisoned_auto.stores);
+        CHECK(off.vram == automatic.vram && off.vram == poisoned_auto.vram);
+        CHECK(off.tags == automatic.tags && off.tags == poisoned_auto.tags);
+        CHECK(off.shadow == automatic.shadow && off.shadow == poisoned_auto.shadow);
+        CHECK(off.gpu == automatic.gpu && off.gpu == poisoned_auto.gpu);
+    }
+    copy_mode = 0;
+    gl_placement = 0;
+    model_reach = 0;
+    CHECK(tick_allocs == 0); /* the tick's loads and stores, settles and patches included */
 
     /* The fixed cases below, without the pack's prepare (and its tick). */
     TextureDump_Prepare = NULL;
@@ -878,6 +1475,300 @@ int main(int argc, char **argv)
             else SoftGpu_SetModVramUsers(0);
         }
         SoftGpu_SetDeferred(0, 0);
+    }
+    /* The copy's fixed cases: at 2x, the model recorder, in three modes:
+     * off, AUTO and AUTO with poison. */
+    {
+        static const uint32_t area_a[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        static const uint32_t area_b[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                          0xe6000000u, 0xe1000000u | (2u << 7)}; /* page 0, 16-bit */
+        static const uint32_t red[] = {0x600000ffu, 0x00100004u, 0x00080008u};   /* 8x8 at 4,16 */
+        static const uint32_t green[] = {0x6000ff00u, 0x00100004u, 0x00080008u}; /* the same place */
+        static const uint32_t reader[] = {0x65808080u, 0x00000000u, 0x00001000u, 0x00080010u}; /* u 0-15, v 16-23 */
+        static const uint32_t far_reader[] = {0x65808080u, 0x00000000u, 0x00001000u, 0x00080020u}; /* u 0-31 */
+        const int modes[3][2] = {{0, 0}, {SOFT_GPU_DEFERRED_AUTO, 0}, {SOFT_GPU_DEFERRED_AUTO, 1}};
+        uint64_t prefix[3], wrapped[3], window[3], only_reads[3];
+        uint16_t flip[3][16 * 8], clut_flip[3][8 * 8];
+        SoftGpuDeferredStats s;
+        window_settles = 0;
+        for (int m = 0; m < 3; m++) {
+            /* The take falls between two sprites at one place: a patch is
+             * the area as the copy missed it (the first), not as it is now. */
+            CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+            CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            model_replay();
+            CHECK(SoftGpu_Gp0(green, 3) == 3);
+            CHECK(SoftGpu_Gp0(area_b, 5) == 5 && SoftGpu_Gp0(reader, 4) == 4);
+            SoftGpu_DeferredStats(&s);
+            if (m) CHECK(s.held == 2 && s.patches == 1);
+            prefix[m] = copy_end();
+
+            /* A fill that covers the area only by wrapping past x 1023 (16
+             * on, 1024 wide): the recorder cuts it at the edge, so the area
+             * it missed is settled (its patch), not dropped. */
+            CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+            CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            model_replay();
+            SoftGpu_Fill(16, 0, 1024, 240, 0xff0000);
+            CHECK(SoftGpu_Gp0(area_b, 5) == 5 && SoftGpu_Gp0(reader, 4) == 4);
+            SoftGpu_DeferredStats(&s);
+            if (m) CHECK(s.dropped == 0 && s.patches == 1);
+            wrapped[m] = copy_end();
+
+            /* A host lookup in a replay settles held work the copy missed,
+             * after the replay's last draw: the take that follows has it, and
+             * the patch must not come back at the next replay. */
+            CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+            CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            model_replay();
+            CHECK(SoftGpu_Gp0(green, 3) == 3);
+            model_flush();                /* a replay with nothing recorded: */
+            SoftGpu_Settle(4, 16, 1, 1);  /* its lookup, */
+            model_take();                 /* and the take */
+            CHECK(SoftGpu_Gp0(area_b, 5) == 5 && SoftGpu_Gp0(reader, 4) == 4);
+            window[m] = copy_end();
+
+            /* A primitive only the recorder draws (a picture-only frame)
+             * reads held work the copy missed: it is settled, so the copy
+             * gets it. */
+            CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+            CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            model_replay();
+            SoftGpu_PictureOnlyFrame(1);
+            CHECK(SoftGpu_Gp0(area_b, 5) == 5 && SoftGpu_Gp0(far_reader, 4) == 4);
+            SoftGpu_PictureOnlyFrame(0);
+            only_reads[m] = copy_end();
+
+            /* Held, then the frame (or the palette) turns picture-only before
+             * it is settled: what was held is still rastered. */
+            CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+            CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            SoftGpu_PictureOnlyFrame(1);
+            SoftGpu_Store(4, 16, 16, 8, flip[m]);
+            SoftGpu_PictureOnlyFrame(0);
+            {
+                /* A raw 4-bit triangle from the page at 640,256
+                 * through a palette of its own in each mode (row 300 + m),
+                 * the palette made picture-only while it is held. */
+                const uint32_t tri[] = {0x25808080u, 0x00200020u, ((300u + (uint32_t)m) << 22 | 63u << 16) | 0x0000u,
+                                        0x00200028u, (uint32_t)(10 | 1 << 4) << 16 | 0x0007u,
+                                        0x00280020u, 0x00000700u};
+                uint16_t palette[16], texels[8 * 8];
+                for (int i = 0; i < 16; i++) palette[i] = (uint16_t)(0x1111 * (i + 1));
+                for (int i = 0; i < 64; i++) texels[i] = (uint16_t)(0x1234 + i * 0x0101);
+                SoftGpu_Load(1008, 300 + m, 16, 1, palette);
+                SoftGpu_Load(640, 256, 8, 8, texels);
+                CHECK(SoftGpu_Gp0(tri, 7) == 7);
+                SoftGpu_PictureOnlyClut(1008, 300 + m);
+                SoftGpu_Store(32, 32, 8, 8, clut_flip[m]);
+            }
+            (void)copy_end();
+        }
+        CHECK(prefix[0] == prefix[1] && prefix[0] == prefix[2]);
+        CHECK(wrapped[0] == wrapped[1] && wrapped[0] == wrapped[2]);
+        CHECK(window[0] == window[1] && window[0] == window[2]);
+        CHECK(only_reads[0] == only_reads[1] && only_reads[0] == only_reads[2]);
+        CHECK(!memcmp(flip[0], flip[1], sizeof(flip[0])) && !memcmp(flip[0], flip[2], sizeof(flip[0])));
+        CHECK(flip[0][0] == 0x001f && flip[0][15] == 0x2108); /* red was drawn, over the clear */
+        CHECK(!memcmp(clut_flip[0], clut_flip[1], sizeof(clut_flip[0])) &&
+              !memcmp(clut_flip[0], clut_flip[2], sizeof(clut_flip[0])));
+
+        /* What lets work be held: AUTO holds nothing at 1x, nor at 2x with
+         * a recorder that takes no patches, nor with one that has not taken
+         * its copy yet; once it has, a sprite is held, widescreen on too. */
+        {
+            static const SoftGpuRecorder bare = {rec_gp0, rec_load, rec_move, rec_fill, rec_resync};
+            SoftGpu_SetRecorder(NULL);
+            CHECK(SoftGpu_SetScale(1));
+            SoftGpu_Reset();
+            SoftGpu_SetDeferred(SOFT_GPU_DEFERRED_AUTO, 0);
+            holds = 0;
+            CHECK(SoftGpu_Gp0(area_a, 4) == 4 && SoftGpu_Gp0(red, 3) == 3);
+            SoftGpu_DeferredStats(&s);
+            CHECK(s.held == 0 && s.immediate == 0 && holds == 0);
+            SoftGpu_SetRecorder(&bare);
+            CHECK(SoftGpu_SetScale(2));
+            SoftGpu_CopyTaken(&bare);
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            SoftGpu_DeferredStats(&s);
+            CHECK(s.held == 0);
+            ops_used = 0;
+            SoftGpu_SetRecorder(&model);
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            SoftGpu_DeferredStats(&s);
+            CHECK(s.held == 0);
+            model_take();
+            CHECK(SoftGpu_Gp0(red, 3) == 3);
+            SoftGpu_DeferredStats(&s);
+            CHECK(s.held == 1);
+            SoftGpu_SetWidescreen(1);
+            CHECK(SoftGpu_Gp0(green, 3) == 3);
+            SoftGpu_DeferredStats(&s);
+            CHECK(s.held == 2);
+            SoftGpu_SetWidescreen(0);
+            SoftGpu_SetDeferred(0, 0);
+            CHECK(SoftGpu_SetScale(1));
+            SoftGpu_SetRecorder(NULL);
+            ops_used = 0;
+        }
+
+        /* A mod's recorder (SoftGpu_SetRecorder is lent to mods) keeps no
+         * copy, even when an upload names another (the OpenGL picture's,
+         * which the mod's replaced), so it holds nothing at 2x and its
+         * `patch` is never called; and one made with an older header, whose
+         * struct ends before `patch`, is never read that far. */
+        {
+            static const SoftGpuRecorder foreign = {rec_gp0, rec_load, rec_move, rec_fill, rec_resync,
+                                                    NULL, NULL, foreign_patch};
+            SoftGpuRecorder *older = guarded_recorder();
+            CHECK(older != NULL);
+            for (int which = 0; which < 2; which++) {
+                SoftGpu_SetRecorder(NULL);
+                CHECK(SoftGpu_SetScale(1));
+                SoftGpu_Reset();
+                SoftGpu_SetDeferred(SOFT_GPU_DEFERRED_AUTO, 0);
+                SoftGpu_SetRecorder(which ? older : &foreign);
+                CHECK(SoftGpu_SetScale(2));
+                foreign_patches = 0;
+                for (int take = 0; take < 2; take++) { /* SoftGpu_CopyTaken is not lent: never the mod's own */
+                    SoftGpu_CopyTaken(take ? NULL : &model);
+                    CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+                    SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+                    CHECK(SoftGpu_Gp0(red, 3) == 3);
+                    SoftGpu_Settle(4, 16, 1, 1);
+                    CHECK(SoftGpu_CopyPatches() == 0);
+                }
+                SoftGpu_DeferredStats(&s);
+                CHECK(s.held == 0 && s.patches == 0 && foreign_patches == 0);
+                SoftGpu_SetDeferred(0, 0);
+                CHECK(SoftGpu_SetScale(1));
+                SoftGpu_SetRecorder(NULL);
+                ops_used = 0;
+            }
+        }
+
+        /* The tick comes between a transfer's record and the transfer (a
+         * move out of the area, a load or a fill into it, a batch's move)
+         * and clears the area, whose held work the copy missed. Held work
+         * or not, record and transfer are one: the tick waits for both, so
+         * the copy, replayed, ends as VRAM (the area and the move's
+         * target). Unheld, as ever, the tick may come between, and both
+         * change order at once (not checked: the record's order is not
+         * VRAM's then either). */
+        for (int m = 1; m < 3; m++) {
+            for (int kind = 0; kind < 4; kind++) {
+                static const uint32_t moved[] = {0x80000000u, 4u | 16u << 16, 700u | 16u << 16, 8u | 8u << 16};
+                uint16_t pixels[8 * 8], seen[320 * 240];
+                for (int i = 0; i < 64; i++) pixels[i] = (uint16_t)(0x03e0 + i);
+                CHECK(copy_begin(SOFT_GPU_DEFERRED_AUTO, m == 2) == 0);
+                CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+                SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+                CHECK(SoftGpu_Gp0(red, 3) == 3);
+                model_replay(); /* the take: the sprite held across it */
+                armed_tick = tick_clear;
+                if (kind == 0) SoftGpu_Move(4, 16, 700, 16, 8, 8);
+                else if (kind == 1) SoftGpu_Load(4, 16, 8, 8, pixels);
+                else if (kind == 2) SoftGpu_Fill(0, 16, 16, 8, 0xffffff);
+                else CHECK(SoftGpu_Gp0(moved, 4) == 4);
+                CHECK(!armed_tick && !pending_tick);
+                model_play();
+                SoftGpu_Store(0, 0, 320, 240, seen);
+                for (int j = 0; j < 240; j++)
+                    CHECK(!memcmp(seen + j * 320, copy_vram + j * SOFT_GPU_WIDTH, 320 * 2));
+                SoftGpu_Store(700, 16, 8, 8, pixels);
+                for (int j = 0; j < 8; j++)
+                    CHECK(!memcmp(pixels + j * 8, copy_vram + (16 + j) * SOFT_GPU_WIDTH + 700, 8 * 2));
+                if (kind == 0 || kind == 3) CHECK(pixels[0] == 0x001f); /* the red, moved before the clear */
+                model_take();
+                (void)copy_end();
+            }
+        }
+
+        /* A new scale: the copy is made again (a resync), so, as with a new
+         * recorder, a patch made for the old one is not handed over, and
+         * nothing is held until the copy is taken again. */
+        CHECK(copy_begin(SOFT_GPU_DEFERRED_AUTO, 0) == 0);
+        CHECK(SoftGpu_Gp0(area_a, 4) == 4);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(red, 3) == 3);
+        model_replay();                    /* the take: red held across it */
+        CHECK(SoftGpu_Gp0(green, 3) == 3); /* held, after the take */
+        CHECK(SoftGpu_SetScale(4));        /* settled: red's patch, then green */
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 2 && s.patches == 1);
+        CHECK(SoftGpu_CopyPatches() == 0);
+        CHECK(SoftGpu_Gp0(red, 3) == 3);
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 2); /* not held: no copy at 4x yet */
+        model_replay();
+        CHECK(SoftGpu_Gp0(green, 3) == 3);
+        SoftGpu_DeferredStats(&s);
+        CHECK(s.held == 3); /* held again once it is taken */
+        (void)copy_end();
+
+        /* Texture xBR reads one texel past the last u and v without
+         * anti-aliasing (wrapping in the page), anywhere in the page with
+         * it (SoftGpu_SetCopyReach): what it reads there of held work the
+         * copy missed is settled, so the copy gets it; and work held under
+         * a shorter reach is settled when the reach grows. Red is held
+         * across a take next to the texels a 16-bit sprite from page 4
+         * (256,0) reads: in the area at 0,0, which the sprite's u 64-255
+         * reach only by wrapping to the page's first (and its u 64-127 only
+         * with anti-aliasing); in the area at 320,0 just past u 0-63; in an
+         * area at 0,16 just past v 0-15. */
+        {
+            static const uint32_t area_a16[] = {0xe3000000u | (16u << 10), 0xe4000000u | 319 | (239 << 10),
+                                                0xe5000000u | (16u << 11), 0xe6000000u}; /* 320x224 at 0,16 */
+            static const uint32_t red_far[] = {0x600000ffu, 0x00100100u, 0x00080008u}; /* 8x8 at 256,16 of 0,0 */
+            static const uint32_t red_b[] = {0x600000ffu, 0x00100000u, 0x00080008u};   /* at 0,16 of 320,0 */
+            static const uint32_t red_top[] = {0x600000ffu, 0x00000100u, 0x00080008u}; /* at 256,0 of 0,16 */
+            static const uint32_t far_page[] = {0xe1000000u | 4 | (2u << 7)};          /* page 4, 16-bit */
+            static const uint32_t to_end[] = {0x65808080u, 0x00000000u, 0x00001040u, 0x000800c0u};   /* u 64-255 */
+            static const uint32_t short_of[] = {0x65808080u, 0x00000000u, 0x00001040u, 0x00080040u}; /* u 64-127 */
+            static const uint32_t left_of[] = {0x65808080u, 0x00000000u, 0x00001000u, 0x00080040u};  /* u 0-63 */
+            static const uint32_t above[] = {0x65808080u, 0x00000000u, 0x00000000u, 0x00100040u};    /* v 0-15 */
+            static const struct {
+                const uint32_t *held, *red, *drawn, *sprite;
+                int fill[4], reach_held, reach_read;
+            } cases[] = {
+                {area_a, red_far, area_b, to_end, {0, 0, 320, 240}, 1, 1},
+                {area_a, red_far, area_b, short_of, {0, 0, 320, 240}, SOFT_GPU_REACH_PAGE, SOFT_GPU_REACH_PAGE},
+                {area_a, red_far, area_b, to_end, {0, 0, 320, 240}, 0, 1}, /* held under a shorter reach */
+                {area_b, red_b, area_a, left_of, {320, 0, 320, 240}, 1, 1},
+                {area_a16, red_top, area_b, above, {0, 16, 320, 224}, 1, 1},
+            };
+            const int n = (int)(sizeof(cases) / sizeof(cases[0]));
+            for (int c = 0; c < n; c++) {
+                uint64_t reads[3];
+                for (int m = 0; m < 3; m++) {
+                    model_reach = cases[c].reach_held;
+                    CHECK(copy_begin(modes[m][0], modes[m][1]) == 0);
+                    CHECK(SoftGpu_Gp0(cases[c].held, 4) == 4);
+                    SoftGpu_Fill(cases[c].fill[0], cases[c].fill[1], cases[c].fill[2], cases[c].fill[3], 0x404040);
+                    CHECK(SoftGpu_Gp0(cases[c].red, 3) == 3);
+                    model_replay(); /* the take: red held across it */
+                    SoftGpu_DeferredStats(&s);
+                    if (m) CHECK(s.held == 1);
+                    CHECK(SoftGpu_Gp0(cases[c].drawn, 4) == 4 && SoftGpu_Gp0(far_page, 1) == 1);
+                    CHECK(SoftGpu_Gp0(cases[c].sprite, 4) == 4);
+                    model_reach = cases[c].reach_read;
+                    reads[m] = copy_end();
+                }
+                CHECK(reads[0] == reads[1] && reads[0] == reads[2]);
+            }
+            model_reach = 0;
+        }
+        window_settles = 1;
     }
     puts("Software GPU deferred raster checks passed");
     return 0;
