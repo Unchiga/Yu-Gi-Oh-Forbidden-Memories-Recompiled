@@ -2922,8 +2922,9 @@ Rastered at once instead (after what it draws over and what it reads has
 been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
 
 - it samples a texture bank (`SoftGpu_Bank`) or the texture pack's shadow
-  (`TextureDump_Prepare` said 1) and there is no memory for that source's
-  frozen copy ("Banks and the pack's shadow" below: otherwise it is held);
+  (`TextureDump_Prepare` said 1) and that source's frozen copy could not be
+  made: no memory for it, or the clock's tick is running ("Banks and the
+  pack's shadow" below: otherwise it is held);
 - the texels it samples or its palette lie in a held area or in its own;
 - its area's provenance tags or shadow cells are not all clear
   (`TextureDump_Clean`, checked again whenever `TextureDump_TouchCount`
@@ -2966,8 +2967,8 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   held whole, and holding the rest only to raster it at the next such
   primitive cost 20% more raster time than not holding at all (the copies,
   and the palette scan of `texture_rects`).
-- the area met the panel, or a bank or the shadow with no memory for its
-  frozen copy, in its last cycle (clear to clear; the game's second clear
+- the area met the panel, or a bank or the shadow with no frozen copy made
+  for it, in its last cycle (clear to clear; the game's second clear
   right after the first ends none): it is still given up after that clear
   (`again`), until a cycle that meets none, after which it holds again.
   When banks and the shadow went at once, a duel frame with the pack and
@@ -2977,13 +2978,15 @@ been rastered), with the cause counted (`SoftGpuDeferredStats.now`):
   (measured below). A cycle given up for the other reasons (a texture in
   held work, tags) is not carried over.
 
-The rules that need no rectangles (the area's size, `holding()`, a bank's
-or the shadow's frozen copy made, the panel, given up) come first; a polygon's span
+The rules that need no rectangles (the area's size, `holding()`, the
+panel, given up) come first; a polygon's span
 (`polygon_uv`), `texture_rects` and its palette scan are taken only for a
 primitive that passes them (or, rastered at once while work is held, for
 the texels it reads), so none of them costs anything with the switch off
 or in an area given up. That the switch off costs nothing is measured, not
-only read from the code (below).
+only read from the code (below). A bank's or the shadow's frozen copy is
+made last, for a primitive every other rule has let hold, so one rastered
+at once never allocates a copy it would not read.
 
 The game clock's tick (`MEMORIES_CLOCK=interrupt`) is held off, not let in:
 `SoftGpu_HoldClock`, which `platform_common.c` sets when it starts the
@@ -3048,19 +3051,37 @@ only that:
   held off through any batch that can hold; and what a batch calls back
   (the recorder, the pack's and the dump's hooks) writes no bank. The
   panel's name (at 1x) forgets what was remembered, as the host may answer
-  it through code that writes a bank. The shadow is not remembered: the
-  pack's prepare paints it inside the batch;
+  it through code that writes a bank (a fixed case: its callback changes
+  the texels a held sprite read, and a second sprite in the same batch
+  must draw the new ones). It is forgotten too whenever a copy is made,
+  freed or poisoned. The shadow is not remembered: the pack's prepare
+  paints it inside the batch;
 - a bank's primitive reads no VRAM word (its palette is the bank's), so
   VRAM's rules (`texture_rects`, the held-area meet, `add_sampled`, the
   immediate path's `before_read`) are not applied to it: a bank's texture
   coordinates often lie inside a drawing area. A shadow primitive keeps
   all of them (it reads the word's semi-transparency bit, and the word
   itself where no cell replaces it) besides its cells;
-- the copies (a bank 1 MB, the shadow 4 MB) are made the first time a
-  primitive that reads the source is held, in `hold` on the main thread;
-  a settle, the tick's too, only reads them. No memory: the primitive goes
-  at once (`NOW_BANK`, `NOW_SHADOW`) and `again` applies, as before. They
-  are freed when the switch goes off. With poison, a copy is magenta when
+- the copies (a bank 1 MB, the shadow 4 MB) are made in `hold` the first
+  time a primitive that reads the source is held, never in the clock's
+  tick: with `MEMORIES_CLOCK=interrupt` a `LoadImage` from the game's
+  interrupt code flushes the pending batch there (`flush_drawing`), inside
+  the SIGALRM handler (on Windows, the redirected main thread), where
+  nothing may be allocated. `platform_common.c` counts `on_tick`'s run of
+  the interrupt code and lends it as `SoftGpu_InTick`, set with
+  `SoftGpu_HoldClock` and, like it, not lent to mods. In the tick, or with
+  no memory, the primitive goes at once (`NOW_BANK`, `NOW_SHADOW`) and
+  `again` applies; a primitive whose copy exists holds from the tick too.
+  A settle, the tick's too, only reads the copies. They are freed when the
+  switch goes off. What `hold` still allocates in such a tick is the
+  queues' own growth, as before banks were held: `grow`'s reallocs of an
+  area's words, entries and states when they need more room, and with
+  poison the area's `before` copy in `held_area`. Where the tick is a
+  signal handler (Linux, macOS) that is a realloc inside it, which
+  deadlocks if the tick came while the main thread was inside malloc; on
+  Windows the tick never interrupts the C runtime, so it cannot come there. Only the interrupt clock (not
+  the default, and not in the 64-bit Windows build) and a tick-level
+  `LoadImage` flushing a batch that holds reach it. With poison, a copy is magenta when
   it is made (or the poison switched on) wherever it has not taken words
   yet, so a replay that read what was never frozen would show. Once only:
   refilled each time no held work read it, every rectangle not compared
@@ -3082,6 +3103,19 @@ off runs' A/A spread is given):
 | 3D battle | 2.81 ms | 0.86 ms (-69%) | +1% |
 | Menus | 1.42 ms | 0.12 ms (-91%) | +9% |
 | All | 2.05 ms | 0.52 ms (-75%) | -5% |
+
+Measured again after the copies were made only for what holds and never
+in the tick (the same load and method), at 2x and at internal 4x:
+
+| Scenario | 2x off | 2x AUTO | 2x A/A | 4x off | 4x AUTO | 4x A/A |
+|---|---|---|---|---|---|---|
+| Duel field | 1.35 ms | 0.32 ms (-77%) | -15% | 1.27 ms | 0.31 ms (-76%) | -5% |
+| 3D battle | 2.28 ms | 0.67 ms (-70%) | -21% | 2.09 ms | 0.67 ms (-68%) | +1% |
+| Menus | 0.87 ms | 0.09 ms (-90%) | +31% | 0.83 ms | 0.10 ms (-88%) | -22% |
+| All | 1.62 ms | 0.40 ms (-75%) | -14% | 1.50 ms | 0.40 ms (-74%) | -3% |
+
+The software GPU rasters VRAM at the console's size whatever the internal
+scale (the OpenGL picture draws the scaled one), so 4x saves what 2x does.
 
 Before this, AUTO held nothing on the duel field with that load (0 held
 a frame, the same raster time as off); now 423 primitives a frame are held
@@ -3115,15 +3149,27 @@ Checks and tools:
   shadow's page too, polygons fade, E1 words name bank 3, and bank 3's
   texels and palette rows and the shadow's cells are written between
   batches, and the shadow's also by the prepare stand-in inside a batch (as
-  the pack paints), the same words mostly and changed now and then. Fixed cases for the frozen copies: a sprite from
+  the pack paints), the same words mostly and changed now and then; bank
+  primitives' pages (calm frames' too) and the bank's writes lie anywhere
+  in it, as they read no VRAM word. Fixed cases for the frozen copies: a sprite from
   bank 3 (named by E1) and one from the shadow, held, then the same words
   written again (nothing rastered, by the counters), changed (the held
   ones rastered first), changed again; a polygon naming bank 17 with a
   fade whose palette entry changes after it is held; 8-bit sprites whose
   bank palette at x 960 wraps to x 36, changed between two; a bank's
-  texels at coordinates inside the drawing area (held); at 2x, a bank
+  texels at coordinates inside the drawing area (held, its pixels the
+  bank's, changed between two sprites, as rastered at once); the panel's
+  name rewriting a bank's texels inside a batch between two held sprites
+  of another area (pixels as rastered at once); a bank's change read by
+  held work in both areas, both rastered first (the second area's pixels
+  the old words); at 2x, a bank
   sprite held across a take, the bank changed, the patch made from the
-  copy and the other area reading it. `OTHER` has two fixed cases of its own:
+  copy and the other area reading it; the tick stand-in (`SoftGpu_InTick`)
+  flushing a bank and a shadow sprite, held from it while the copy exists
+  and rastered at once with nothing allocated when it would be made there;
+  and, with the allocator wrapped, no memory for a copy: rastered at once,
+  the area given up past the game's two clears, still with no copy made
+  for what goes at once, and held again after the next. `OTHER` has two fixed cases of its own:
   widescreen on at 1x (a sprite and a quad into a full-screen area are
   rastered at once, VRAM and the widened picture equal the immediate run's,
   and with widescreen off the same two are held) and 2.2 million two-word
