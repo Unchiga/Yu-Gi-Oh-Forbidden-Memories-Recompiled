@@ -3046,9 +3046,10 @@ only that:
   exact because nothing writes a bank inside a batch: the writers are the
   game's and mods' code, which runs between batches; the clock's tick is
   held off through any batch that can hold; and what a batch calls back
-  (the recorder, the pack's and the dump's hooks, the panel's name) writes
-  no bank. The shadow is not remembered: the pack's prepare paints it
-  inside the batch;
+  (the recorder, the pack's and the dump's hooks) writes no bank. The
+  panel's name (at 1x) forgets what was remembered, as the host may answer
+  it through code that writes a bank. The shadow is not remembered: the
+  pack's prepare paints it inside the batch;
 - a bank's primitive reads no VRAM word (its palette is the bank's), so
   VRAM's rules (`texture_rects`, the held-area meet, `add_sampled`, the
   immediate path's `before_read`) are not applied to it: a bank's texture

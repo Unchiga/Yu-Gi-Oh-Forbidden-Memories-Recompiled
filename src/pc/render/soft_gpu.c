@@ -586,9 +586,10 @@ static int frozen_rect(int s, const int rect[4], int copy)
  * frame when each was). Nothing writes a bank during a batch: its writers
  * are the game's and mods' code, which runs between batches, the clock's
  * tick is held off through a batch that can hold (SoftGpu_Gp0), and what a
- * batch calls back (the recorder, the pack's and the dump's hooks, the
- * panel's name) writes no bank. The shadow is not remembered: the pack's
- * prepare paints it inside the batch. */
+ * batch calls back (the recorder, the pack's and the dump's hooks) writes
+ * no bank; the panel's name (name_over_panel, 1x) forgets what was
+ * remembered, as the host may draw it through code that does. The shadow
+ * is not remembered: the pack's prepare paints it inside the batch. */
 #define VERIFIED 16
 static struct { int s, rect[4]; } verified[VERIFIED];
 static int verified_count;
@@ -2509,6 +2510,10 @@ static void name_over_panel(int x, int y, int width, int height, int u0, int v0,
     for (which = 0; which < 2; which++) {
         const uint8_t *box = SoftGpu_PanelName(which, &bx, &by, &bw, &bh, &stride);
         int left, top, right, bottom;
+        /* The host's answer may come through code that writes a bank (the
+         * duel UI's labels, the glyphs): what the batch remembers of the
+         * banks is forgotten (frozen_sync), so they are compared again. */
+        verified_count = 0;
         /* As ever, no player's box without the opponent's; but a mod's
          * label may be for YOU alone. */
         if (!box) {

@@ -93,7 +93,6 @@ static Outcome *now_outcome;
  * allocating). Counted where the link wraps the allocator (CMakeLists.txt). */
 static volatile int in_tick; /* volatile: a store around a malloc the compiler knows is kept */
 static int tick_allocs;
-static int fail_calloc; /* the next callocs fail (a frozen copy with no memory for it) */
 #ifdef SOFT_GPU_TEST_WRAP_ALLOC
 void *__real_malloc(size_t size);
 void *__real_calloc(size_t count, size_t size);
@@ -101,6 +100,7 @@ void *__real_realloc(void *pointer, size_t size);
 void *__wrap_malloc(size_t size);
 void *__wrap_calloc(size_t count, size_t size);
 void *__wrap_realloc(void *pointer, size_t size);
+static int fail_calloc; /* the next callocs fail (a frozen copy with no memory for it) */
 void *__wrap_malloc(size_t size)
 {
     tick_allocs += in_tick;
