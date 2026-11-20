@@ -536,11 +536,13 @@ static void flush_drawing(void)
                  * settles took: in the draws above when the batch caused
                  * them, else outside them (a reader's). */
                 static SoftGpuDeferredStats last;
+                static unsigned long long last_undo;
                 SoftGpuDeferredStats now;
+                unsigned long long undo = SoftGpu_UndoSaves();
                 SoftGpu_DeferredStats(&now);
                 LOG(LOG_FRAMES, "deferred: %u held, %u dropped, %u rastered, %u at once; areas %u cleared, "
                     "%u settled (read %u, write %u, draw %u, area %u, all %u); settles %u us, %u of them outside "
-                    "the draws; the OpenGL copy missed %u areas, %u patches",
+                    "the draws; the OpenGL copy missed %u areas, %u patches; %u undo saves",
                     (unsigned)(now.held - last.held), (unsigned)(now.dropped - last.dropped),
                     (unsigned)(now.rastered - last.rastered), (unsigned)(now.immediate - last.immediate),
                     (unsigned)(now.cleared - last.cleared), (unsigned)(now.settled - last.settled),
@@ -551,8 +553,10 @@ static void flush_drawing(void)
                     (unsigned)(now.why[SOFT_GPU_WHY_ALL] - last.why[SOFT_GPU_WHY_ALL]),
                     (unsigned)(now.settle_us - last.settle_us),
                     (unsigned)(now.settle_outside_us - last.settle_outside_us),
-                    (unsigned)(now.copy_missed - last.copy_missed), (unsigned)(now.patches - last.patches));
+                    (unsigned)(now.copy_missed - last.copy_missed), (unsigned)(now.patches - last.patches),
+                    (unsigned)(undo - last_undo));
                 last = now;
+                last_undo = undo;
             }
         }
     }
