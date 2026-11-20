@@ -967,7 +967,7 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
     HeldArea *area;
     if (replaying || target != vram || (!holding() && !held_any)) return 0;
     /* The rules that need no rectangles first: what goes at once anyway
-     * (a bank, the shadow, an area given up) never scans a palette. */
+     * (the panel, an area given up) never scans a palette. */
     if (w < 256 || h < 192 || x + w > SOFT_GPU_WIDTH || y + h > SOFT_GPU_HEIGHT) {
         now = SOFT_GPU_NOW_COUNT; /* not a full screen: not counted */
     } else if (!holding() ||
@@ -976,10 +976,8 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
          * second pass is not held. With a recorder at 2x and above it draws
          * the targets, and the area holds as any other. */
         now = SOFT_GPU_NOW_OTHER;
-    } else if (bank && !frozen_made(bank)) {
-        now = SOFT_GPU_NOW_BANK; /* no memory for the bank's frozen copy */
-    } else if (shadow && (!TextureDump_Shadow || !frozen_made(0))) {
-        now = SOFT_GPU_NOW_SHADOW;
+    } else if (shadow && !TextureDump_Shadow) {
+        now = SOFT_GPU_NOW_SHADOW; /* no shadow to freeze */
     } else if (panel) {
         now = SOFT_GPU_NOW_PANEL;
     } else if (given_up_count && drawn_given_up(x, y, w, h)) {
@@ -1015,6 +1013,10 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
         }
         if (now < 0 && !area_clean(slot, x, y, w, h)) now = SOFT_GPU_NOW_TAGS;
     }
+    /* Its frozen copy, made only for a primitive every other rule lets hold
+     * (one rastered at once reads the live bank or cells, and needs none). */
+    if (now < 0 && count && count <= HELD_WORDS_MAX && source >= 0 && !frozen_made(source))
+        now = bank ? SOFT_GPU_NOW_BANK : SOFT_GPU_NOW_SHADOW; /* no memory for it */
     if (now < 0 && count && count <= HELD_WORDS_MAX) {
         hold_clock();
         if (source >= 0) frozen_sync(source, (const int (*)[4])kept, kept_n);

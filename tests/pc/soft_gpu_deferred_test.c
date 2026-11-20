@@ -101,6 +101,7 @@ void *__wrap_malloc(size_t size);
 void *__wrap_calloc(size_t count, size_t size);
 void *__wrap_realloc(void *pointer, size_t size);
 static int fail_calloc; /* the next callocs fail (a frozen copy with no memory for it) */
+static int callocs;     /* every calloc: none for a primitive rastered at once (no frozen copy) */
 void *__wrap_malloc(size_t size)
 {
     tick_allocs += in_tick;
@@ -109,6 +110,7 @@ void *__wrap_malloc(size_t size)
 void *__wrap_calloc(size_t count, size_t size)
 {
     tick_allocs += in_tick;
+    callocs++;
     if (fail_calloc) return NULL;
     return __real_calloc(count, size);
 }
@@ -2036,7 +2038,9 @@ int main(int argc, char **argv)
 
 #ifdef SOFT_GPU_TEST_WRAP_ALLOC
     /* No memory for a frozen copy: the primitive is rastered at once
-     * (NOW_BANK, NOW_SHADOW) and its area given up past its next clear. */
+     * (NOW_BANK, NOW_SHADOW) and its area given up past its next clear (the
+     * game's two in a row count as one), held again after the one after.
+     * A primitive rastered at once (given up here) makes no frozen copy. */
     for (int which = 0; which < 2; which++) {
         static const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
         const uint32_t page[] = {which ? 0xe1000000u | 10 | 16 | (2u << 7)
@@ -2050,13 +2054,24 @@ int main(int argc, char **argv)
         CHECK(SoftGpu_Gp0(area, 4) == 4);
         SoftGpu_Fill(0, 0, 320, 240, 0x404040);
         CHECK(SoftGpu_Gp0(page, 1) == 1);
+        (void)SoftGpu_Bank(3); /* made: the callocs below are the copies' */
         fail_calloc = 1;
         CHECK(SoftGpu_Gp0(sprite, 4) == 4);
         fail_calloc = 0;
+        callocs = 0;
         CHECK(SoftGpu_Gp0(sprite, 4) == 4); /* given up: at once */
         SoftGpu_DeferredStats(&st);
         CHECK(st.held == 0 && st.now[which ? SOFT_GPU_NOW_SHADOW : SOFT_GPU_NOW_BANK] == 1 &&
               st.now[SOFT_GPU_NOW_AFTER] == 1);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(page, 1) == 1 && SoftGpu_Gp0(sprite, 4) == 4); /* still given up: at once */
+        SoftGpu_DeferredStats(&st);
+        CHECK(st.held == 0 && st.now[SOFT_GPU_NOW_AFTER] == 2 && callocs == 0);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(page, 1) == 1 && SoftGpu_Gp0(sprite, 4) == 4); /* held, its copy made now */
+        SoftGpu_DeferredStats(&st);
+        CHECK(st.held == 1 && st.now[SOFT_GPU_NOW_AFTER] == 2 && callocs == 1);
         TextureDump_Prepare = NULL;
         SoftGpu_SetDeferred(0, 0);
     }
