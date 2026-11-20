@@ -1979,6 +1979,43 @@ int main(int argc, char **argv)
             CHECK(out[0][16 * 64 + 16] == 0x001f && out[0][16 * 64 + 32] == 0x03e0);
             CHECK(st.held == 2 && st.why[SOFT_GPU_WHY_WRITE] == 1 && st.now[SOFT_GPU_NOW_PANEL] == 1);
         }
+        /* A change rasters every held area that read the bank, not only
+         * the first: sprites from bank 9 held in both areas (the first's
+         * queue in slot 0, the second's in slot 1); the texels change; a
+         * third sprite from them in the first area. The second area's sprite
+         * must still draw the old words (red), as rastered at once. */
+        {
+            static const uint32_t to_a[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u,
+                                            0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(9)};
+            static const uint32_t to_b[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                            0xe6000000u, 0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(9)};
+            static const uint32_t first[] = {0x65808080u, 0x00100010u, 0x00000000u, 0x00040004u};  /* at 16,16 */
+            static const uint32_t third[] = {0x65808080u, 0x00100020u, 0x00000000u, 0x00040004u};  /* at 32,16 */
+            static uint16_t both[2][2][64 * 24];
+            SoftGpuDeferredStats st;
+            for (int deferred = 0; deferred < 2; deferred++) {
+                uint16_t *bank = SoftGpu_Bank(9);
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 1024, 512, 0);
+                for (int j = 0; j < 4; j++)
+                    for (int i = 0; i < 4; i++) bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x001f;
+                SoftGpu_SetDeferred(deferred, 0);
+                SoftGpu_Fill(0, 0, 640, 240, 0x404040);
+                CHECK(SoftGpu_Gp0(to_a, 5) == 5 && SoftGpu_Gp0(first, 4) == 4);
+                CHECK(SoftGpu_Gp0(to_b, 5) == 5 && SoftGpu_Gp0(first, 4) == 4);
+                for (int j = 0; j < 4; j++)
+                    for (int i = 0; i < 4; i++) bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x03e0;
+                CHECK(SoftGpu_Gp0(to_a, 5) == 5 && SoftGpu_Gp0(third, 4) == 4);
+                SoftGpu_DeferredStats(&st);
+                SoftGpu_Store(0, 0, 64, 24, both[deferred][0]);
+                SoftGpu_Store(320, 0, 64, 24, both[deferred][1]);
+            }
+            CHECK(!memcmp(both[0], both[1], sizeof(both[0])));
+            CHECK(both[0][0][16 * 64 + 16] == 0x001f && both[0][0][16 * 64 + 32] == 0x03e0 &&
+                  both[0][1][16 * 64 + 16] == 0x001f);
+            CHECK(st.held == 3 && st.settled == 2 && st.why[SOFT_GPU_WHY_WRITE] == 2);
+        }
         /* 3: a polygon naming bank 17 (bit 10 of its page word) with a fade,
          * 4-bit, its palette in the bank: the palette entry its texels index
          * changed after it is held. 4: 8-bit sprites from bank 3 whose
