@@ -231,6 +231,13 @@ static int copy_reach;
  * queues grow; a settle (the tick's too) only reads them. */
 #define FROZEN_SOURCES SOFT_GPU_BANKS
 static uint16_t *frozen[FROZEN_SOURCES];
+/* A bank's rectangles found or made the same in this batch (frozen_sync).
+ * Forgotten whenever a copy is made, freed or poisoned: what they vouched
+ * for was the copy's words. */
+#define VERIFIED 16
+static struct { int s, rect[4]; } verified[VERIFIED];
+static int verified_count;
+static unsigned verified_batch, batch_serial;
 /* The held entry being rastered (settle_area): its source, as it came. */
 static int replay_bank, replay_shadow;
 static unsigned held_clock;
@@ -543,8 +550,10 @@ static void frozen_poison(int s)
  * no memory for it, and then what reads s is rastered as it comes. */
 static int frozen_made(int s)
 {
-    if (!frozen[s] && (frozen[s] = calloc(frozen_words(s), sizeof(uint16_t))) != NULL && deferred_poison)
-        frozen_poison(s);
+    if (!frozen[s] && (frozen[s] = calloc(frozen_words(s), sizeof(uint16_t))) != NULL) {
+        verified_count = 0; /* a new copy has taken no words */
+        if (deferred_poison) frozen_poison(s);
+    }
     return frozen[s] != NULL;
 }
 
@@ -590,11 +599,6 @@ static int frozen_rect(int s, const int rect[4], int copy)
  * no bank; the panel's name (name_over_panel, 1x) forgets what was
  * remembered, as the host may draw it through code that does. The shadow
  * is not remembered: the pack's prepare paints it inside the batch. */
-#define VERIFIED 16
-static struct { int s, rect[4]; } verified[VERIFIED];
-static int verified_count;
-static unsigned verified_batch, batch_serial;
-
 static int frozen_verified(int s, const int rect[4])
 {
     if (verified_batch != batch_serial) return 0;
@@ -1076,6 +1080,7 @@ void SoftGpu_SetDeferred(int on, int poison)
         free(held[a].before);
         held[a].before = NULL;
     }
+    verified_count = 0; /* the copies below are freed or poisoned */
     for (int s = 0; s < FROZEN_SOURCES; s++) { /* nothing is held: no settle reads the frozen copies */
         if (!frozen[s]) continue;
         if (!deferred_on) {
