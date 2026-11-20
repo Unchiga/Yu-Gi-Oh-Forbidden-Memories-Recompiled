@@ -97,6 +97,12 @@ void SoftGpu_SetModVramUsers(int users);
  * held work is queued, rastered or looked up: set by the platform when the
  * interrupt clock runs (platform_common.c), NULL otherwise. hold 1, 0. */
 extern void (*SoftGpu_HoldClock)(int hold);
+/* Whether the game clock's tick is running now (MEMORIES_CLOCK=interrupt:
+ * there, between two instructions of the main thread, nothing may be
+ * allocated, and an interrupt-level LoadImage can flush a batch): set by the
+ * platform with SoftGpu_HoldClock (platform_common.c), NULL otherwise. A
+ * primitive that would need a frozen copy made there is rastered at once. */
+extern int (*SoftGpu_InTick)(void);
 /* Microseconds from any fixed point, to time the deferred raster's settles
  * (SoftGpuDeferredStats.settle_us): set by the platform (platform_common.c);
  * NULL, not timed. */
@@ -104,22 +110,24 @@ extern unsigned long long (*SoftGpu_Clock)(void);
 /* What the deferred raster did since SoftGpu_SetDeferred turned it on. */
 enum {
     SOFT_GPU_WHY_READ,      /* a reader settled it (a store, a move's source, a host lookup, a hash...) */
-    SOFT_GPU_WHY_WRITE,     /* a load, move or fill wrote into it, or into a texture it samples */
+    SOFT_GPU_WHY_WRITE,     /* a load, move or fill wrote into it, or into a texture it samples, or a bank or
+                             * the pack's shadow it samples changed (soft_gpu.c, frozen_sync) */
     SOFT_GPU_WHY_DRAW,      /* a primitive rastered at once drew into it, or samples it */
     SOFT_GPU_WHY_AREA,      /* another drawing area took its place */
     SOFT_GPU_WHY_ALL,       /* all of VRAM: a state, a scale, the switch, a mod */
     SOFT_GPU_WHY_COUNT
 };
 enum {
-    SOFT_GPU_NOW_BANK,      /* samples a texture bank */
-    SOFT_GPU_NOW_SHADOW,    /* samples the texture pack's shadow */
+    SOFT_GPU_NOW_BANK,      /* samples a texture bank, and its frozen copy could not be made (no memory,
+                             * or the clock's tick: SoftGpu_InTick) */
+    SOFT_GPU_NOW_SHADOW,    /* samples the texture pack's shadow, and its frozen copy could not be made */
     SOFT_GPU_NOW_TAGS,      /* would clear provenance tags or shadow cells */
     SOFT_GPU_NOW_TEXTURE,   /* its texture or palette lies in held work */
     SOFT_GPU_NOW_PANEL,     /* the life-point panel the opponent's name goes over */
     SOFT_GPU_NOW_OTHER,     /* widescreen's second pass, too much held, no memory (not a mod's VRAM or a
                              * scale: then nothing is looked at, or counted) */
-    SOFT_GPU_NOW_AFTER,     /* one of the above drew into its area since the area's last clear, or a bank,
-                             * the shadow or the panel in the cycle before (soft_gpu.c, `again`) */
+    SOFT_GPU_NOW_AFTER,     /* one of the above drew into its area since the area's last clear, or the
+                             * panel (a bank, the shadow) in the cycle before (soft_gpu.c, `again`) */
     SOFT_GPU_NOW_COUNT
 };
 #define SOFT_GPU_QUEUES 2

@@ -138,8 +138,12 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  * primitive comes (else it is rastered at once, after what it follows has
  * been rastered):
  *
- * - it samples VRAM: not a texture bank (whose writers rewrite it unseen),
- *   not the texture pack's shadow (painted between frames);
+ * - what it samples of a texture bank or of the texture pack's shadow, whose
+ *   writers write unseen (through a pointer, a mod's too) and mostly the
+ *   same bytes again, it samples from a frozen copy (frozen_sync): the copy
+ *   takes those words as the primitive comes, and changes only after all
+ *   held work that reads it has been rastered, when they changed. A bank's
+ *   primitive reads no VRAM word, so the next rule is for VRAM's texels;
  * - the texels its coordinates span (texture_rects) and its palette lie
  *   outside every held area, its own included, so nothing it reads is
  *   waiting; and once held, any write into what it reads (a load, a move, a
@@ -165,8 +169,8 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  * fill at any instruction. It is held off (SoftGpu_HoldClock) through each
  * batch while work can be held (holding()) or is, through every look at the
  * queues while anything is held and through every change of given_up[], so
- * it never sees a queue or given_up[] half made or half rastered, and never
- * finds `gpu` swapped for a held primitive's state. While holding() is false
+ * it never sees a queue, given_up[] or a frozen copy half made or half
+ * rastered, and never finds `gpu` swapped for a held primitive's state. While holding() is false
  * (a mod's VRAM, the software GPU's scaled picture, a recorder at 2x and
  * above that keeps no copy, or AUTO below 2x), a batch neither holds it nor
  * calls hold. */
@@ -175,7 +179,9 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
 #define HELD_WORDS_MAX (4u << 20) /* past this an area's queue is rastered and started again */
 typedef struct HeldEntry {
     uint32_t at, count, state;
+    uint32_t source; /* the bank it sampled as it came (0: VRAM), | HELD_SHADOW if it took from the shadow */
 } HeldEntry;
+#define HELD_SHADOW 0x100u
 typedef struct HeldArea {
     int on, x, y, w, h;            /* the drawing area */
     unsigned stamp;
@@ -189,6 +195,7 @@ typedef struct HeldArea {
     int sampled_count, sampled_all;
     uint16_t *before;              /* poison: the area's words as the queue began */
     size_t copied;                 /* entries it held when the recorder last took its copy (SoftGpu_CopyTaken) */
+    uint32_t sources;              /* the frozen copies its work reads: bit 0 the shadow's, bit b bank b's */
 } HeldArea;
 static HeldArea held[HELD_AREAS];
 static volatile int held_any;
@@ -215,6 +222,24 @@ static int patch_count, copy_kept;
 /* How far past the texels a primitive's coordinates span the recorder may
  * read its copy (SoftGpu_SetCopyReach): texel_rect takes it in. */
 static int copy_reach;
+/* What held work reads of the texture banks and the pack's shadow, frozen
+ * (frozen_sync): VRAM-shaped copies, frozen[0] the shadow's cells (four a
+ * word), frozen[b] bank b's words. Their writers write through pointers the
+ * software GPU never sees (a mod's bank among them), most of them the same
+ * bytes again every frame, so a held primitive reads the copy, which changes
+ * only when no held work reads it. Made in `hold`, never in the clock's tick
+ * (SoftGpu_InTick); a settle (the tick's too) only reads them. */
+#define FROZEN_SOURCES SOFT_GPU_BANKS
+static uint16_t *frozen[FROZEN_SOURCES];
+/* A bank's rectangles found or made the same in this batch (frozen_sync).
+ * Forgotten whenever a copy is made, freed or poisoned: what they vouched
+ * for was the copy's words. */
+#define VERIFIED 16
+static struct { int s, rect[4]; } verified[VERIFIED];
+static int verified_count;
+static unsigned verified_batch, batch_serial;
+/* The held entry being rastered (settle_area): its source, as it came. */
+static int replay_bank, replay_shadow;
 static unsigned held_clock;
 /* The provenance tags of each area were found clear at this count of
  * TextureDump_Touched (clean_tags: the tags it was for). */
@@ -222,13 +247,13 @@ static unsigned clean_touches[HELD_AREAS];
 static const uint32_t *clean_tags[HELD_AREAS];
 static SoftGpuDeferredStats deferred_stats;
 /* Drawing areas a primitive was rastered at once into since their last
- * clear: they hold nothing until it (with a texture pack or a mod's bank,
- * most of a frame cannot be held, and holding the rest only to raster it at
- * the next such primitive costs the time it would save). One that met a
- * bank, the shadow or the panel since its last clear holds nothing after
- * the next clear either (`again`): with the pack a duel frame always meets
- * one, and holding its first primitives only to raster them at it cost more
- * than not holding. A cycle that meets none lets it hold again after it.
+ * clear: they hold nothing until it (holding the rest only to raster it at
+ * the next such primitive costs the time it would save). One that met the
+ * panel, or a bank or the shadow with no frozen copy made for it, since
+ * its last clear holds nothing after the next clear either (`again`): they
+ * come back every frame, and holding a frame's first primitives only to
+ * raster them at one costs more than not holding. A cycle that meets none
+ * lets it hold again after it.
  * `drawn`: a primitive came into it since the last clear (a clear right
  * after a clear, as the game's, ends no cycle). */
 typedef struct GivenUp {
@@ -239,6 +264,7 @@ static int given_up_count;
 #define POISON 0x7c1f /* magenta: what a reader that does not settle sees of held work */
 
 void (*SoftGpu_HoldClock)(int hold);
+int (*SoftGpu_InTick)(void);
 unsigned long long (*SoftGpu_Clock)(void);
 static int clock_depth;
 
@@ -272,8 +298,8 @@ static int drawn_given_up(int x, int y, int w, int h)
     return gone != NULL;
 }
 
-/* `again`: a bank, the shadow or the panel made it (they come back each
- * frame), so the next cycle starts given up too. */
+/* `again`: the panel, or a bank or the shadow without a frozen copy, made it
+ * (they come back each frame), so the next cycle starts given up too. */
 static void give_up(int x, int y, int w, int h, int again)
 {
     GivenUp *gone;
@@ -379,6 +405,7 @@ static void held_reset(HeldArea *a)
     a->copied = 0;
     a->word_count = a->count = a->state_count = 0;
     a->sampled_count = a->sampled_all = 0;
+    a->sources = 0;
     held_recount();
 }
 
@@ -456,9 +483,12 @@ static void settle_area(HeldArea *a, int why)
         const uint32_t *words = a->words + e->at;
         uint32_t command = words[0] >> 24;
         gpu = a->states[e->state];
-        texture_source = vram;
-        texture_bank = 0;
-        shadow_on = 0;
+        /* What it sampled as it came, from the frozen copies (frozen_sync). */
+        replay_bank = (int)(e->source & (SOFT_GPU_BANKS - 1));
+        replay_shadow = (e->source & HELD_SHADOW) != 0;
+        texture_source = replay_bank ? frozen[replay_bank] : vram;
+        texture_bank = replay_bank;
+        shadow_on = replay_shadow;
         fade = 0;
         target = vram;
         dither_shift = 0;
@@ -500,6 +530,121 @@ static void settle_all(int why)
     hold_clock();
     for (int a = 0; a < HELD_AREAS; a++) settle_area(&held[a], why);
     release_clock();
+}
+
+static size_t frozen_words(int s)
+{
+    return s ? (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT : (size_t)TEXTURE_SHADOW_WIDTH * SOFT_GPU_HEIGHT;
+}
+
+/* Poison: a frozen copy magenta wherever it has taken no words yet (made, or
+ * the poison switched on), so a replay that read past what was frozen for it
+ * shows. Once, not each time a copy is read by no held work: refilled then,
+ * every rectangle not compared since would differ and settle the readers,
+ * and the poison run would hold far less long than AUTO. */
+static void frozen_poison(int s)
+{
+    for (size_t k = 0, words = frozen_words(s); k < words; k++) frozen[s][k] = POISON;
+}
+
+/* Source s's frozen copy made (`hold`): 0 if there is no memory for it, or
+ * if the clock's tick is running (an interrupt-level LoadImage flushing a
+ * batch), where nothing may be allocated; then what reads s is rastered as
+ * it comes. */
+static int frozen_made(int s)
+{
+    if (!frozen[s] && !(SoftGpu_InTick && SoftGpu_InTick()) &&
+        (frozen[s] = calloc(frozen_words(s), sizeof(uint16_t))) != NULL) {
+        verified_count = 0; /* a new copy has taken no words */
+        if (deferred_poison) frozen_poison(s);
+    }
+    return frozen[s] != NULL;
+}
+
+/* The words of `rect` (VRAM words x, y, w, h, wrapping as texels do; the
+ * shadow's four cells a word) compared between source s and its frozen copy
+ * (`copy` 0: 1 if the same) or copied into it (`copy` 1). */
+static int frozen_rect(int s, const int rect[4], int copy)
+{
+    const uint16_t *live = s ? banks[s] : TextureDump_Shadow;
+    uint16_t *kept = frozen[s];
+    size_t per = s ? 1 : 4, stride = (size_t)SOFT_GPU_WIDTH * per;
+    int w = rect[2] < SOFT_GPU_WIDTH ? rect[2] : SOFT_GPU_WIDTH, h = rect[3] < SOFT_GPU_HEIGHT ? rect[3] : SOFT_GPU_HEIGHT;
+    for (int j = 0; j < h; j++) {
+        size_t row = (size_t)((rect[1] + j) & (SOFT_GPU_HEIGHT - 1)) * stride;
+        int x = rect[0] & (SOFT_GPU_WIDTH - 1), left = w;
+        while (left > 0) {
+            int n = SOFT_GPU_WIDTH - x < left ? SOFT_GPU_WIDTH - x : left;
+            size_t at = row + (size_t)x * per, bytes = (size_t)n * per * sizeof(uint16_t);
+            if (copy) memcpy(kept + at, live + at, bytes);
+            else if (memcmp(kept + at, live + at, bytes)) return 0;
+            left -= n;
+            x = 0;
+        }
+    }
+    return 1;
+}
+
+/* Before a primitive that reads source s (the shadow, or a bank) over
+ * `rects` is held, with the clock held: the frozen copy gets those words as
+ * they are now. If held work reads s and they changed since it came (a
+ * rewrite of the same bytes is no change), that work is rastered first, from
+ * the copy as it still is, so as it came. The copy thus changes only while
+ * no held work reads it.
+ *
+ * A bank's rectangles found or made the same are remembered for the rest of
+ * the batch (`verified`), and one within them is not compared again: a duel
+ * frame is one batch, and a 3D Monsters model reads the same texture page
+ * and palette rows from its bank in hundreds of polygons (3.5 MB compared a
+ * frame when each was). Nothing writes a bank during a batch: its writers
+ * are the game's and mods' code, which runs between batches, the clock's
+ * tick is held off through a batch that can hold (SoftGpu_Gp0), and what a
+ * batch calls back (the recorder, the pack's and the dump's hooks) writes
+ * no bank; the panel's name (name_over_panel, 1x) forgets what was
+ * remembered, as the host may draw it through code that does. The shadow
+ * is not remembered: the pack's prepare paints it inside the batch. */
+static int frozen_verified(int s, const int rect[4])
+{
+    if (verified_batch != batch_serial) return 0;
+    for (int k = 0; k < verified_count; k++) {
+        const int *v = verified[k].rect;
+        if (verified[k].s == s && v[0] <= rect[0] && v[1] <= rect[1] && rect[0] + rect[2] <= v[0] + v[2] &&
+            rect[1] + rect[3] <= v[1] + v[3])
+            return 1;
+    }
+    return 0;
+}
+
+static void frozen_remember(int s, const int rect[4])
+{
+    if (verified_batch != batch_serial) verified_batch = batch_serial, verified_count = 0;
+    if (frozen_verified(s, rect)) return;
+    if (verified_count == VERIFIED) memmove(&verified[0], &verified[1], sizeof(verified[0]) * (VERIFIED - 1)), verified_count--;
+    verified[verified_count].s = s;
+    memcpy(verified[verified_count++].rect, rect, sizeof(verified[0].rect));
+}
+
+static void frozen_sync(int s, const int (*rects)[4], int n)
+{
+    uint32_t bit = 1u << s;
+    int readers = 0, a, i;
+    if (s) {
+        for (i = 0; i < n && frozen_verified(s, rects[i]); i++) {}
+        if (i == n) return; /* the same words, compared or taken in this batch */
+    }
+    for (a = 0; a < HELD_AREAS; a++) readers |= held[a].on && (held[a].sources & bit);
+    if (readers) {
+        for (i = 0; i < n && frozen_rect(s, rects[i], 0); i++) {}
+        if (i < n) {
+            for (a = 0; a < HELD_AREAS; a++)
+                if (held[a].on && (held[a].sources & bit)) settle_area(&held[a], SOFT_GPU_WHY_WRITE);
+            for (i = 0; i < n; i++) frozen_rect(s, rects[i], 1);
+        }
+    } else {
+        for (i = 0; i < n; i++) frozen_rect(s, rects[i], 1);
+    }
+    if (s)
+        for (i = 0; i < n; i++) frozen_remember(s, rects[i]);
 }
 
 /* Before x,y,w,h is read: what is held there is drawn. */
@@ -588,7 +733,7 @@ static void before_fill(int x, int y, int w, int h, uint16_t color)
             if (!span_covers(x, w, SOFT_GPU_WIDTH, gone->x, gone->x + gone->w - 1) ||
                 !span_covers(y, h, SOFT_GPU_HEIGHT, gone->y, gone->y + gone->h - 1) || !gone->drawn)
                 continue;
-            if (gone->again) { /* a bank, the shadow or the panel will be back: not yet */
+            if (gone->again) { /* the panel (or a bank or the shadow, uncopied) will be back: not yet */
                 gone->again = gone->drawn = 0;
                 continue;
             }
@@ -821,10 +966,12 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
 {
     int x = gpu.clip_x1, y = gpu.clip_y1, w = gpu.clip_x2 - gpu.clip_x1 + 1, h = gpu.clip_y2 - gpu.clip_y1 + 1;
     int textured = uv != NULL || v != NULL, rects[2][4], n = -1, now = -1, i, slot = -1, span[4];
+    int bank = textured && texture_source != vram ? texture_bank : 0, shadow = textured && shadow_on == 1;
+    int source = bank ? bank : shadow ? 0 : -1, kept[2][4], kept_n = 0; /* the frozen copy it reads (frozen_sync) */
     HeldArea *area;
     if (replaying || target != vram || (!holding() && !held_any)) return 0;
     /* The rules that need no rectangles first: what goes at once anyway
-     * (a bank, the shadow, an area given up) never scans a palette. */
+     * (the panel, an area given up) never scans a palette. */
     if (w < 256 || h < 192 || x + w > SOFT_GPU_WIDTH || y + h > SOFT_GPU_HEIGHT) {
         now = SOFT_GPU_NOW_COUNT; /* not a full screen: not counted */
     } else if (!holding() ||
@@ -833,17 +980,33 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
          * second pass is not held. With a recorder at 2x and above it draws
          * the targets, and the area holds as any other. */
         now = SOFT_GPU_NOW_OTHER;
-    } else if (textured && texture_source != vram) {
-        now = SOFT_GPU_NOW_BANK;
-    } else if (textured && shadow_on == 1) {
-        now = SOFT_GPU_NOW_SHADOW;
+    } else if (shadow && !TextureDump_Shadow) {
+        now = SOFT_GPU_NOW_SHADOW; /* no shadow to freeze */
     } else if (panel) {
         now = SOFT_GPU_NOW_PANEL;
     } else if (given_up_count && drawn_given_up(x, y, w, h)) {
         now = SOFT_GPU_NOW_AFTER;
     } else {
         if (textured && !uv) polygon_uv(v, vertices, span), uv = span;
-        n = textured ? texture_rects(rects, uv) : 0;
+        if (bank) {
+            /* A bank's texels and palette are the bank's: no VRAM word is
+             * read, so none of VRAM's rules apply (its coordinates often lie
+             * inside a drawing area's). What it reads is frozen instead. */
+            texel_rect(kept[0], uv);
+            kept_n = 1;
+            if (gpu.depth < 2) {
+                kept[1][0] = gpu.clut_x;
+                kept[1][1] = gpu.clut_y;
+                kept[1][2] = gpu.depth == 0 ? 16 : 256; /* wrapping past 1023, as texel_from reads it */
+                kept[1][3] = 1;
+                kept_n = 2;
+            }
+        }
+        n = textured && !bank ? texture_rects(rects, uv) : 0;
+        if (shadow) { /* the cells of the words its texels lie in, besides the words */
+            memcpy(kept[0], rects[0], sizeof(kept[0]));
+            kept_n = 1;
+        }
         for (int a = 0; a < HELD_AREAS; a++)
             if (held[a].on && held[a].x == x && held[a].y == y && held[a].w == w && held[a].h == h) slot = a;
         for (i = 0; i < n; i++) {
@@ -854,8 +1017,13 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
         }
         if (now < 0 && !area_clean(slot, x, y, w, h)) now = SOFT_GPU_NOW_TAGS;
     }
+    /* Its frozen copy, made only for a primitive every other rule lets hold
+     * (one rastered at once reads the live bank or cells, and needs none). */
+    if (now < 0 && count && count <= HELD_WORDS_MAX && source >= 0 && !frozen_made(source))
+        now = bank ? SOFT_GPU_NOW_BANK : SOFT_GPU_NOW_SHADOW; /* no memory for it, or the tick */
     if (now < 0 && count && count <= HELD_WORDS_MAX) {
         hold_clock();
+        if (source >= 0) frozen_sync(source, (const int (*)[4])kept, kept_n);
         area = held_area();
         if (area && area->word_count + count > HELD_WORDS_MAX) {
             settle_area(area, SOFT_GPU_WHY_ALL);
@@ -870,6 +1038,8 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
             e->state = (uint32_t)(area->state_count - 1);
             e->at = (uint32_t)area->word_count;
             e->count = (uint32_t)count;
+            e->source = (uint32_t)bank | (shadow ? HELD_SHADOW : 0);
+            if (source >= 0) area->sources |= 1u << source;
             memcpy(area->words + area->word_count, words, count * sizeof(uint32_t));
             area->word_count += count;
             for (i = 0; i < n && !area->sampled_all; i++) add_sampled(area, rects[i]);
@@ -915,6 +1085,16 @@ void SoftGpu_SetDeferred(int on, int poison)
     for (int a = 0; a < HELD_AREAS; a++) {
         free(held[a].before);
         held[a].before = NULL;
+    }
+    verified_count = 0; /* the copies below are freed or poisoned */
+    for (int s = 0; s < FROZEN_SOURCES; s++) { /* nothing is held: no settle reads the frozen copies */
+        if (!frozen[s]) continue;
+        if (!deferred_on) {
+            free(frozen[s]);
+            frozen[s] = NULL;
+        } else if (deferred_poison) {
+            frozen_poison(s);
+        }
     }
 }
 
@@ -1524,6 +1704,7 @@ typedef struct Sampler {
     int keep_u, set_u, keep_v, set_v; /* the texture window, as masks */
     int page_x, page_y, depth, clut_x, clut_y, shadow_on;
     const uint16_t *source;
+    const uint16_t *cells; /* the shadow's (TextureDump_Cell's), or its frozen copy for held work */
 } Sampler;
 
 typedef struct Plotter {
@@ -1549,7 +1730,14 @@ static inline __attribute__((always_inline)) Sampler sampler(void)
     s.clut_y = gpu.clut_y;
     s.shadow_on = shadow_on;
     s.source = texture_source;
+    s.cells = replaying ? frozen[0] : TextureDump_Shadow;
     return s;
+}
+
+/* TextureDump_Cell, in `cells`. */
+static inline __attribute__((always_inline)) uint16_t cell_at(const uint16_t *cells, int x, int y, int sub)
+{
+    return cells[(y & (SOFT_GPU_HEIGHT - 1)) * TEXTURE_SHADOW_WIDTH + (x & (SOFT_GPU_WIDTH - 1)) * 4 + sub];
 }
 
 /* The same word in whichever bank the primitive's texture page names. */
@@ -1583,9 +1771,9 @@ static inline __attribute__((always_inline)) uint16_t texel_from(const Sampler *
          * and the darkest non-zero color without it (texture_dump.h).
          * (2: the primitive reads the words with another palette than the
          * shadow's image; the scaled picture has that image, VRAM stays.) */
-        uint16_t cell = s->depth == 0 ? *TextureDump_Cell(s->page_x + u / 4, y, u & 3)
-                        : s->depth == 1 ? *TextureDump_Cell(s->page_x + u / 2, y, (u & 1) * 2)
-                                        : *TextureDump_Cell(s->page_x + u, y, 0);
+        uint16_t cell = s->depth == 0 ? cell_at(s->cells, s->page_x + u / 4, y, u & 3)
+                        : s->depth == 1 ? cell_at(s->cells, s->page_x + u / 2, y, (u & 1) * 2)
+                                        : cell_at(s->cells, s->page_x + u, y, 0);
         if (cell == TEXTURE_SHADOW_BLACK) return (word & 0x8000) ? 0x8000 : 0x0001;
         if (cell) return (cell & 0x7fff) ? (uint16_t)((cell & 0x7fff) | (word & 0x8000)) : 0;
     }
@@ -2123,10 +2311,16 @@ static void polygon_uv(const Vertex *v, int vertices, int uv[4])
 static void set_page(uint32_t value, int polygon)
 {
     int bank = (int)((value >> 11) & 15) | (polygon ? (int)((value >> 10) & 1) << 4 : 0);
-    /* A held primitive sampled VRAM as it came (soft_gpu.c, `hold`), even
-     * if a bank of its number has been made since. */
-    texture_source = bank && banks[bank] && !replaying ? banks[bank] : vram;
-    texture_bank = texture_source == vram ? 0 : bank;
+    if (replaying) {
+        /* A held primitive samples what it sampled as it came (settle_area):
+         * VRAM, even if a bank of its number has been made since, or its
+         * bank's frozen copy. */
+        texture_source = replay_bank ? frozen[replay_bank] : vram;
+        texture_bank = replay_bank;
+    } else {
+        texture_source = bank && banks[bank] ? banks[bank] : vram;
+        texture_bank = texture_source == vram ? 0 : bank;
+    }
     gpu.page_x = (value & 0xf) * 64;
     gpu.page_y = ((value >> 4) & 1) * 256;
     gpu.blend = (value >> 5) & 3;
@@ -2237,7 +2431,8 @@ static size_t polygon(const uint32_t *words, size_t count)
     fade = textured && texture_source != vram ? SoftGpu_FadeOf((uint32_t)fade) : 0;
     /* What a primitive does as it comes is done as it came, not again when
      * it is rastered later (the deferred raster's `hold`). */
-    shadow_on = textured && TextureDump_Prepare && texture_source == vram && !replaying
+    shadow_on = replaying ? replay_shadow /* as it came (settle_area) */
+                : textured && TextureDump_Prepare && texture_source == vram
                     ? TextureDump_Prepare(gpu.page_x, gpu.page_y, gpu.depth, gpu.clut_x, gpu.clut_y, v[0].u, v[0].v)
                     : 0;
     if (textured && TextureDump_Enabled && !replaying) {
@@ -2326,6 +2521,10 @@ static void name_over_panel(int x, int y, int width, int height, int u0, int v0,
     for (which = 0; which < 2; which++) {
         const uint8_t *box = SoftGpu_PanelName(which, &bx, &by, &bw, &bh, &stride);
         int left, top, right, bottom;
+        /* The host's answer may come through code that writes a bank (the
+         * duel UI's labels, the glyphs): what the batch remembers of the
+         * banks is forgotten (frozen_sync), so they are compared again. */
+        verified_count = 0;
         /* As ever, no player's box without the opponent's; but a mod's
          * label may be for YOU alone. */
         if (!box) {
@@ -2375,7 +2574,8 @@ static size_t rectangle(const uint32_t *words, size_t count)
         w = words[at] & 0x3ff;
         h = (words[at] >> 16) & 0x1ff;
     }
-    shadow_on = textured && TextureDump_Prepare && texture_source == vram && !replaying
+    shadow_on = replaying ? replay_shadow /* as it came (settle_area) */
+                : textured && TextureDump_Prepare && texture_source == vram
                     ? TextureDump_Prepare(gpu.page_x, gpu.page_y, gpu.depth, gpu.clut_x, gpu.clut_y, base.u, base.v)
                     : 0;
     if (textured && TextureDump_Enabled && w && h && !replaying) {
@@ -2495,7 +2695,9 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
     if (count) words = GuestRuntime_ResolveData((void *)words, count * sizeof(*words));
 #endif
     size_t at = 0;
-    int clock_held = holding() || held_any; /* never with a mod's VRAM, the software GPU's scaled picture, a recorder
+    int clock_held;
+    batch_serial++; /* what a bank was found to hold is remembered for this batch only (frozen_sync) */
+    clock_held = holding() || held_any; /* never with a mod's VRAM, the software GPU's scaled picture, a recorder
                                              * at 2x and above that keeps no copy yet, or AUTO below 2x */
     /* The deferred raster's queues (`hold`), and the record with the batch
      * (as a transfer's, transfer_clock). */

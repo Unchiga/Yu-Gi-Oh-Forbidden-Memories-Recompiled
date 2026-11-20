@@ -193,6 +193,10 @@ static void service(void)
     sigprocmask(SIG_SETMASK, &previous, NULL);
 }
 
+/* The interrupt clock's tick is running (on_tick): the software GPU makes
+ * no frozen copy there (soft_gpu.h, SoftGpu_InTick). */
+static volatile int ticking;
+
 static void on_tick(uintptr_t eip, void *context)
 {
     uint64_t real_now = now_us();
@@ -219,7 +223,9 @@ static void on_tick(uintptr_t eip, void *context)
 #else
     (void)context;
 #endif
+    ticking++;
     advance(real_now, eip);
+    ticking--;
 }
 
 #ifndef _WIN32
@@ -244,6 +250,8 @@ static void on_alarm(int number, siginfo_t *info, void *context)
 static sigset_t gpu_mask;
 
 static unsigned long long gpu_clock(void) { return now_us(); }
+
+static int gpu_in_tick(void) { return ticking != 0; }
 
 static void hold_clock_for_gpu(int hold)
 {
@@ -299,6 +307,7 @@ int Platform_StartTimers(void (*tick)(uint64_t, uint64_t), void (*vblank)(void))
             fprintf(stderr, "memories-pc: interrupt clock%s\n",
                     clock && *clock ? " (MEMORIES_CLOCK=interrupt)" : ", which MEMORIES_PROFILE samples from");
             SoftGpu_HoldClock = hold_clock_for_gpu;
+            SoftGpu_InTick = gpu_in_tick;
         }
     }
 #ifdef _WIN32
