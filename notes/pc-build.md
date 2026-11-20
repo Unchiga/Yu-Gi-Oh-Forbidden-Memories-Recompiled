@@ -3069,6 +3069,26 @@ only that:
 - nothing new is lent to mods and no shared struct grows
   (`SoftGpuDeferredStats` counts a change as `why[WRITE]`).
 
+Measured (Windows, headless, internal 2x with the OpenGL picture, the HD
+pack, HD text, a translation and every code mod in `mods/`; CPU raster
+time a frame = draws plus settles outside them, each frame's best of 3
+interleaved runs; a scratch build, not in the tree; the PC was in use, the
+off runs' A/A spread is given):
+
+| Scenario | Off | AUTO | A/A |
+|---|---|---|---|
+| Duel field | 1.68 ms | 0.40 ms (-76%) | -11% |
+| 3D battle | 2.81 ms | 0.86 ms (-69%) | +1% |
+| Menus | 1.42 ms | 0.12 ms (-91%) | +9% |
+| All | 2.05 ms | 0.52 ms (-75%) | -5% |
+
+Before this, AUTO held nothing on the duel field with that load (0 held
+a frame, the same raster time as off); now 423 primitives a frame are held
+and 98% of field frames hold all their full-screen work. Without the
+batch's remembered bank rectangles the field was 28% slower than off. The
+copies cost about 15-30 MB (the game's private memory in a full duel,
+AUTO against off).
+
 Checks and tools:
 
 - `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 600
