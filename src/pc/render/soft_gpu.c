@@ -577,19 +577,65 @@ static int frozen_rect(int s, const int rect[4], int copy)
  * they are now. If held work reads s and they changed since it came (a
  * rewrite of the same bytes is no change), that work is rastered first, from
  * the copy as it still is, so as it came. The copy thus changes only while
- * no held work reads it. */
+ * no held work reads it.
+ *
+ * A bank's rectangles found or made the same are remembered for the rest of
+ * the batch (`verified`), and one within them is not compared again: a duel
+ * frame is one batch, and a 3D Monsters model reads the same texture page
+ * and palette rows from its bank in hundreds of polygons (3.5 MB compared a
+ * frame when each was). Nothing writes a bank during a batch: its writers
+ * are the game's and mods' code, which runs between batches, the clock's
+ * tick is held off through a batch that can hold (SoftGpu_Gp0), and what a
+ * batch calls back (the recorder, the pack's and the dump's hooks, the
+ * panel's name) writes no bank. The shadow is not remembered: the pack's
+ * prepare paints it inside the batch. */
+#define VERIFIED 16
+static struct { int s, rect[4]; } verified[VERIFIED];
+static int verified_count;
+static unsigned verified_batch, batch_serial;
+
+static int frozen_verified(int s, const int rect[4])
+{
+    if (verified_batch != batch_serial) return 0;
+    for (int k = 0; k < verified_count; k++) {
+        const int *v = verified[k].rect;
+        if (verified[k].s == s && v[0] <= rect[0] && v[1] <= rect[1] && rect[0] + rect[2] <= v[0] + v[2] &&
+            rect[1] + rect[3] <= v[1] + v[3])
+            return 1;
+    }
+    return 0;
+}
+
+static void frozen_remember(int s, const int rect[4])
+{
+    if (verified_batch != batch_serial) verified_batch = batch_serial, verified_count = 0;
+    if (frozen_verified(s, rect)) return;
+    if (verified_count == VERIFIED) memmove(&verified[0], &verified[1], sizeof(verified[0]) * (VERIFIED - 1)), verified_count--;
+    verified[verified_count].s = s;
+    memcpy(verified[verified_count++].rect, rect, sizeof(verified[0].rect));
+}
+
 static void frozen_sync(int s, const int (*rects)[4], int n)
 {
     uint32_t bit = 1u << s;
     int readers = 0, a, i;
+    if (s) {
+        for (i = 0; i < n && frozen_verified(s, rects[i]); i++) {}
+        if (i == n) return; /* the same words, compared or taken in this batch */
+    }
     for (a = 0; a < HELD_AREAS; a++) readers |= held[a].on && (held[a].sources & bit);
     if (readers) {
         for (i = 0; i < n && frozen_rect(s, rects[i], 0); i++) {}
-        if (i == n) return;
-        for (a = 0; a < HELD_AREAS; a++)
-            if (held[a].on && (held[a].sources & bit)) settle_area(&held[a], SOFT_GPU_WHY_WRITE);
+        if (i < n) {
+            for (a = 0; a < HELD_AREAS; a++)
+                if (held[a].on && (held[a].sources & bit)) settle_area(&held[a], SOFT_GPU_WHY_WRITE);
+            for (i = 0; i < n; i++) frozen_rect(s, rects[i], 1);
+        }
+    } else {
+        for (i = 0; i < n; i++) frozen_rect(s, rects[i], 1);
     }
-    for (i = 0; i < n; i++) frozen_rect(s, rects[i], 1);
+    if (s)
+        for (i = 0; i < n; i++) frozen_remember(s, rects[i]);
 }
 
 /* Before x,y,w,h is read: what is held there is drawn. */
@@ -2633,7 +2679,9 @@ size_t SoftGpu_Gp0(const uint32_t *words, size_t count)
     if (count) words = GuestRuntime_ResolveData((void *)words, count * sizeof(*words));
 #endif
     size_t at = 0;
-    int clock_held = holding() || held_any; /* never with a mod's VRAM, the software GPU's scaled picture, a recorder
+    int clock_held;
+    batch_serial++; /* what a bank was found to hold is remembered for this batch only (frozen_sync) */
+    clock_held = holding() || held_any; /* never with a mod's VRAM, the software GPU's scaled picture, a recorder
                                              * at 2x and above that keeps no copy yet, or AUTO below 2x */
     /* The deferred raster's queues (`hold`), and the record with the batch
      * (as a transfer's, transfer_clock). */

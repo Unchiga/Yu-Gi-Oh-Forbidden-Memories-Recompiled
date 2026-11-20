@@ -138,19 +138,14 @@ static int prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, in
         }
         in_tick = 0;
     }
-    if (tick_rnd() % 17 == 0) { /* the tick writing bank 3 or the shadow's page: the same words mostly */
+    if (tick_rnd() % 17 == 0) {
+        /* The pack painting the shadow's page as it prepares, inside the
+         * batch: the same cells mostly. (No bank is written inside a batch:
+         * their writers run between batches, below.) */
         int x = 640 + (int)(tick_rnd() % 60), y = 256 + (int)(tick_rnd() % 250), change = tick_rnd() % 4 == 0;
-        in_tick = 1;
-        if (tick_rnd() & 1) {
-            uint16_t *bank = SoftGpu_Bank(3);
-            for (int j = 0; j < 4; j++)
-                for (int i = 0; i < 4; i++) bank[(y + j) * SOFT_GPU_WIDTH + x + i] ^= (uint16_t)(change ? 0x0421 : 0);
-        } else {
-            for (int j = 0; j < 4; j++)
-                for (int i = 0; i < 4; i++)
-                    *TextureDump_Cell(x + i, y + j, (int)(tick_rnd() % 4)) ^= (uint16_t)(change ? 0x0421 : 0);
-        }
-        in_tick = 0;
+        for (int j = 0; j < 4; j++)
+            for (int i = 0; i < 4; i++)
+                *TextureDump_Cell(x + i, y + j, (int)(tick_rnd() % 4)) ^= (uint16_t)(change ? 0x0421 : 0);
     }
     return page_y == 256 && page_x == 640 ? 1 : page_y == 256 && page_x == 704 ? 2 : 0;
 }

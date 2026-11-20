@@ -3037,6 +3037,18 @@ only that:
   OpenGL replay's lookups), it reads what its primitives read as they
   came. Nothing in the writers changes, and nothing a mod does through its
   bank pointer can break it;
+- a bank's rectangles found or made the same are remembered for the rest
+  of the `SoftGpu_Gp0` batch (`verified`, 16 of them), and one within them
+  is not compared again. A duel frame is one batch, and the 3D Monsters
+  model reads the same 8-bit page (128x256 words) and palette rows from its
+  bank in hundreds of polygons: compared each time, that was 3.5 MB a frame
+  and made the duel field with every mod 28% slower than not holding. It is
+  exact because nothing writes a bank inside a batch: the writers are the
+  game's and mods' code, which runs between batches; the clock's tick is
+  held off through any batch that can hold; and what a batch calls back
+  (the recorder, the pack's and the dump's hooks, the panel's name) writes
+  no bank. The shadow is not remembered: the pack's prepare paints it
+  inside the batch;
 - a bank's primitive reads no VRAM word (its palette is the bank's), so
   VRAM's rules (`texture_rects`, the held-area meet, `add_sampled`, the
   immediate path's `before_read`) are not applied to it: a bank's texture
@@ -3081,8 +3093,8 @@ Checks and tools:
   allocator is wrapped makes them fail). Calm frames sample bank 3 and the
   shadow's page too, polygons fade, E1 words name bank 3, and bank 3's
   texels and palette rows and the shadow's cells are written between
-  batches and by the prepare stand-in (the tick), the same words mostly and
-  changed now and then. Fixed cases for the frozen copies: a sprite from
+  batches, and the shadow's also by the prepare stand-in inside a batch (as
+  the pack paints), the same words mostly and changed now and then. Fixed cases for the frozen copies: a sprite from
   bank 3 (named by E1) and one from the shadow, held, then the same words
   written again (nothing rastered, by the counters), changed (the held
   ones rastered first), changed again; a polygon naming bank 17 with a
