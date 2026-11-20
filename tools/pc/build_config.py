@@ -134,8 +134,8 @@ MODULES += MODEL_MODULES
 # picture's copy of VRAM; a mod that called them would lose the deferred
 # raster's patches.
 NOT_LENT_TO_MODS = {"SoftGpu_VramRaw", "SoftGpu_SettleObserver", "SoftGpu_SetDeferred", "SoftGpu_Deferred",
-                    "SoftGpu_SetModVramUsers", "SoftGpu_HoldClock", "SoftGpu_Clock", "SoftGpu_DeferredStats",
-                    "SoftGpu_CopyTaken", "SoftGpu_CopyPatches", "SoftGpu_SetCopyReach",
+                    "SoftGpu_SetModVramUsers", "SoftGpu_HoldClock", "SoftGpu_InTick", "SoftGpu_Clock",
+                    "SoftGpu_DeferredStats", "SoftGpu_CopyTaken", "SoftGpu_CopyPatches", "SoftGpu_SetCopyReach",
                     "Mods_VramUsersChanged"}
 MODULE_CONFIG = {"overworld": "overworld_before_coup"}
 GATED_MODULES = {"duel_effects", "credits"} | {name for name, _, _, _ in MODEL_MODULES}

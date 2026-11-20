@@ -179,6 +179,9 @@ static int shadow_prepare(int page_x, int page_y, int depth, int clut_x, int clu
     return page_x == 640 && page_y == 256;
 }
 
+/* The platform's SoftGpu_InTick: the stand-in for the tick is running. */
+static int test_in_tick(void) { return in_tick; }
+
 static int holds, releases, depth, nested;
 /* A tick stand-in armed to come at the next record (record_point): at once
  * if the clock is free then, else as it is let go, as SIGALRM would. */
@@ -957,6 +960,7 @@ int main(int argc, char **argv)
     int frames = argc > 1 ? atoi(argv[1]) : 600;
     Outcome now, held, poisoned;
     SoftGpu_HoldClock = hold_clock;
+    SoftGpu_InTick = test_in_tick;
 #ifdef SOFT_GPU_TEST_WRAP_ALLOC
     { /* the count works: an allocation in the tick is seen (else the checks below would pass for nothing) */
         void *volatile made; /* volatile: else the compiler may leave out the pair */
@@ -2034,6 +2038,53 @@ int main(int argc, char **argv)
         }
         CHECK(reads[0] == reads[1] && reads[0] == reads[2]);
         window_settles = 1;
+    }
+
+    /* The clock's tick flushing a batch (an interrupt-level LoadImage,
+     * libgpu.c's flush_drawing), where nothing may be allocated: a primitive
+     * from bank 3 or the shadow whose frozen copy is made holds there; one
+     * whose copy would be made there is rastered at once (NOW_BANK,
+     * NOW_SHADOW), as it would be with no memory for it. */
+    for (int which = 0; which < 2; which++) {
+        static const uint32_t area[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u};
+        const uint32_t page[] = {which ? 0xe1000000u | 10 | 16 | (2u << 7)
+                                       : 0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(3)};
+        static const uint32_t sprite[] = {0x65808080u, 0x00100010u, 0, 0x00040004u};
+        SoftGpuDeferredStats st;
+        uint16_t *bank = SoftGpu_Bank(3), word = 0x1234, got;
+        int allocs = tick_allocs;
+        SoftGpu_SetDeferred(0, 0); /* the copies go */
+        SoftGpu_Reset();
+        SoftGpu_Fill(0, 0, 1024, 512, 0);
+        SoftGpu_Load(640, 256, 1, 1, &word);
+        for (int j = 0; j < 4; j++)
+            for (int i = 0; i < 4; i++) {
+                bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x001f;
+                *TextureDump_Cell(640 + i, 256 + j, 0) = 0x8000 | 0x001f;
+            }
+        TextureDump_Prepare = which ? shadow_prepare : NULL;
+        SoftGpu_SetDeferred(1, 0);
+        CHECK(SoftGpu_Gp0(area, 4) == 4);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(SoftGpu_Gp0(page, 1) == 1 && SoftGpu_Gp0(sprite, 4) == 4); /* held: the copy made here */
+        in_tick = 1;
+        CHECK(SoftGpu_Gp0(page, 1) == 1 && SoftGpu_Gp0(sprite, 4) == 4); /* held from the tick too */
+        in_tick = 0;
+        SoftGpu_DeferredStats(&st);
+        CHECK(st.held == 2 && st.immediate == 0);
+        SoftGpu_SetDeferred(0, 0); /* the copies go again */
+        SoftGpu_SetDeferred(1, 0);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        in_tick = 1;
+        CHECK(SoftGpu_Gp0(page, 1) == 1 && SoftGpu_Gp0(sprite, 4) == 4); /* at once: no copy made in the tick */
+        in_tick = 0;
+        SoftGpu_DeferredStats(&st);
+        CHECK(st.held == 0 && st.now[which ? SOFT_GPU_NOW_SHADOW : SOFT_GPU_NOW_BANK] == 1);
+        CHECK(tick_allocs == allocs);
+        SoftGpu_Store(16, 16, 1, 1, &got);
+        CHECK(got == 0x001f);
+        TextureDump_Prepare = NULL;
+        SoftGpu_SetDeferred(0, 0);
     }
 
 #ifdef SOFT_GPU_TEST_WRAP_ALLOC

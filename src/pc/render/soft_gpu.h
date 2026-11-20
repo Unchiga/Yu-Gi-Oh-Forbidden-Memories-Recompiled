@@ -97,6 +97,12 @@ void SoftGpu_SetModVramUsers(int users);
  * held work is queued, rastered or looked up: set by the platform when the
  * interrupt clock runs (platform_common.c), NULL otherwise. hold 1, 0. */
 extern void (*SoftGpu_HoldClock)(int hold);
+/* Whether the game clock's tick is running now (MEMORIES_CLOCK=interrupt:
+ * there, between two instructions of the main thread, nothing may be
+ * allocated, and an interrupt-level LoadImage can flush a batch): set by the
+ * platform with SoftGpu_HoldClock (platform_common.c), NULL otherwise. A
+ * primitive that would need a frozen copy made there is rastered at once. */
+extern int (*SoftGpu_InTick)(void);
 /* Microseconds from any fixed point, to time the deferred raster's settles
  * (SoftGpuDeferredStats.settle_us): set by the platform (platform_common.c);
  * NULL, not timed. */

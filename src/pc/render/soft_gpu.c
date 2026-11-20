@@ -227,8 +227,8 @@ static int copy_reach;
  * word), frozen[b] bank b's words. Their writers write through pointers the
  * software GPU never sees (a mod's bank among them), most of them the same
  * bytes again every frame, so a held primitive reads the copy, which changes
- * only when no held work reads it. Made in `hold` on the main thread, as the
- * queues grow; a settle (the tick's too) only reads them. */
+ * only when no held work reads it. Made in `hold`, never in the clock's tick
+ * (SoftGpu_InTick); a settle (the tick's too) only reads them. */
 #define FROZEN_SOURCES SOFT_GPU_BANKS
 static uint16_t *frozen[FROZEN_SOURCES];
 /* A bank's rectangles found or made the same in this batch (frozen_sync).
@@ -249,7 +249,7 @@ static SoftGpuDeferredStats deferred_stats;
 /* Drawing areas a primitive was rastered at once into since their last
  * clear: they hold nothing until it (holding the rest only to raster it at
  * the next such primitive costs the time it would save). One that met the
- * panel, or a bank or the shadow with no memory for its frozen copy, since
+ * panel, or a bank or the shadow with no frozen copy made for it, since
  * its last clear holds nothing after the next clear either (`again`): they
  * come back every frame, and holding a frame's first primitives only to
  * raster them at one costs more than not holding. A cycle that meets none
@@ -264,6 +264,7 @@ static int given_up_count;
 #define POISON 0x7c1f /* magenta: what a reader that does not settle sees of held work */
 
 void (*SoftGpu_HoldClock)(int hold);
+int (*SoftGpu_InTick)(void);
 unsigned long long (*SoftGpu_Clock)(void);
 static int clock_depth;
 
@@ -546,11 +547,14 @@ static void frozen_poison(int s)
     for (size_t k = 0, words = frozen_words(s); k < words; k++) frozen[s][k] = POISON;
 }
 
-/* Source s's frozen copy made (`hold`, on the main thread): 0 if there is
- * no memory for it, and then what reads s is rastered as it comes. */
+/* Source s's frozen copy made (`hold`): 0 if there is no memory for it, or
+ * if the clock's tick is running (an interrupt-level LoadImage flushing a
+ * batch), where nothing may be allocated; then what reads s is rastered as
+ * it comes. */
 static int frozen_made(int s)
 {
-    if (!frozen[s] && (frozen[s] = calloc(frozen_words(s), sizeof(uint16_t))) != NULL) {
+    if (!frozen[s] && !(SoftGpu_InTick && SoftGpu_InTick()) &&
+        (frozen[s] = calloc(frozen_words(s), sizeof(uint16_t))) != NULL) {
         verified_count = 0; /* a new copy has taken no words */
         if (deferred_poison) frozen_poison(s);
     }
@@ -1016,7 +1020,7 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
     /* Its frozen copy, made only for a primitive every other rule lets hold
      * (one rastered at once reads the live bank or cells, and needs none). */
     if (now < 0 && count && count <= HELD_WORDS_MAX && source >= 0 && !frozen_made(source))
-        now = bank ? SOFT_GPU_NOW_BANK : SOFT_GPU_NOW_SHADOW; /* no memory for it */
+        now = bank ? SOFT_GPU_NOW_BANK : SOFT_GPU_NOW_SHADOW; /* no memory for it, or the tick */
     if (now < 0 && count && count <= HELD_WORDS_MAX) {
         hold_clock();
         if (source >= 0) frozen_sync(source, (const int (*)[4])kept, kept_n);
