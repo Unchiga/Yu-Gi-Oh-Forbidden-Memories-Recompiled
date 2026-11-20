@@ -243,7 +243,12 @@ static uint32_t page_word(void)
      * columns (16 bits from 832 on, 8 from 960): a calm frame's takes the
      * lower half, so the wrap lands below the areas. */
     if (calm && (page & 15) * 64 + (64 << ((page >> 7) & 3)) > 1024) page |= 16;
-    if (below(calm ? 6 : 12) == 0) page |= SOFT_GPU_BANK_TPAGE(3);
+    if (below(calm ? 6 : 12) == 0) {
+        page |= SOFT_GPU_BANK_TPAGE(3);
+        /* A bank's page reads no VRAM word: calm frames' too lie anywhere,
+         * the first area's columns included. */
+        if (calm && below(2)) page = (page & ~15u) | (uint32_t)below(16);
+    }
     return page;
 }
 
@@ -882,10 +887,11 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
                             out->stores = fnv(out->stores, &vram[((y + j) & 511) * 1024 + ((x + i) & 1023)], 2);
                 } else if (op < 94 && below(2)) {
                     /* A bank's writer (a mod's, a palette copied in each
-                     * frame): bank 3's texels or palette rows, the same
-                     * words mostly, now and then changed; or the shadow's
-                     * cells on its page, repainted alike. */
-                    int w = 1 + below(32), h = 1 + below(16), x = 640 + below(384 - w), y = below(2) ? 480 + below(32 - h) : below(512 - h);
+                     * frame): bank 3's texels or palette rows anywhere in
+                     * it, the same words mostly, now and then changed; or
+                     * the shadow's cells on its page, repainted alike. */
+                    int w = 1 + below(32), h = 1 + below(16), x = below(2) ? below(1024 - w) : 640 + below(384 - w);
+                    int y = below(2) ? 480 + below(32 - h) : below(512 - h);
                     int change = below(4) == 0, shadow = below(3) == 0;
                     uint16_t *bank = SoftGpu_Bank(3);
                     if (shadow) x = 640 + below(64 - (w < 64 ? w : 63)), y = 256 + below(256 - h);
@@ -1898,19 +1904,36 @@ int main(int argc, char **argv)
         }
         TextureDump_Prepare = NULL;
         /* A bank's texels at coordinates inside the drawing area, where work
-         * is held: no VRAM word is read, so it is held all the same. */
+         * is held: no VRAM word is read, so it is held all the same, and
+         * draws the bank's words (blue, then green after they change), not
+         * the area's (grey), as rastered at once. */
         {
-            static const uint32_t inside[] = {0xe1000000u | (2u << 7) | SOFT_GPU_BANK_TPAGE(3), /* 16-bit 0,0 */
-                                              0x65808080u, 0x00100010u, 0x00001010u, 0x00040004u};
+            static const uint32_t inside[2][5] = {
+                {0xe1000000u | (2u << 7) | SOFT_GPU_BANK_TPAGE(3), /* 16-bit 0,0 */
+                 0x65808080u, 0x00100010u, 0x00001010u, 0x00040004u},  /* 4x4 at 16,16 from 16,16 */
+                {0xe1000000u | (2u << 7) | SOFT_GPU_BANK_TPAGE(3),
+                 0x65808080u, 0x00100020u, 0x00001010u, 0x00040004u}}; /* at 32,16, the same texels */
             SoftGpuDeferredStats st;
-            SoftGpu_SetDeferred(0, 0);
-            SoftGpu_Reset();
-            SoftGpu_SetDeferred(1, 0);
-            CHECK(SoftGpu_Gp0(area, 4) == 4);
-            SoftGpu_Fill(0, 0, 320, 240, 0x404040);
-            CHECK(SoftGpu_Gp0(inside, 5) == 5 && SoftGpu_Gp0(inside, 5) == 5);
-            SoftGpu_DeferredStats(&st);
-            CHECK(st.held == 2 && st.immediate == 0);
+            for (int deferred = 0; deferred < 2; deferred++) {
+                uint16_t *bank = SoftGpu_Bank(3);
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 1024, 512, 0);
+                for (int j = 0; j < 4; j++)
+                    for (int i = 0; i < 4; i++) bank[(16 + j) * SOFT_GPU_WIDTH + 16 + i] = 0x7c00;
+                SoftGpu_SetDeferred(deferred, 0);
+                CHECK(SoftGpu_Gp0(area, 4) == 4);
+                SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+                CHECK(SoftGpu_Gp0(inside[0], 5) == 5);
+                for (int j = 0; j < 4; j++)
+                    for (int i = 0; i < 4; i++) bank[(16 + j) * SOFT_GPU_WIDTH + 16 + i] = 0x03e0;
+                CHECK(SoftGpu_Gp0(inside[1], 5) == 5);
+                SoftGpu_DeferredStats(&st);
+                SoftGpu_Store(0, 0, 64, 24, out[deferred]);
+            }
+            CHECK(!memcmp(out[0], out[1], sizeof(out[0])));
+            CHECK(out[0][16 * 64 + 16] == 0x7c00 && out[0][16 * 64 + 32] == 0x03e0);
+            CHECK(st.held == 2 && st.immediate == 0 && st.why[SOFT_GPU_WHY_WRITE] == 1);
         }
         /* The panel's name rewriting a bank inside the batch: the host's
          * answer may come through code that writes one (soft_gpu.c,
