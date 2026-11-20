@@ -146,8 +146,11 @@ void (*SoftGpu_SettleObserver)(int x, int y, int w, int h);
  *   primitive reads no VRAM word, so the next rule is for VRAM's texels;
  * - the texels its coordinates span (texture_rects) and its palette lie
  *   outside every held area, its own included, so nothing it reads is
- *   waiting; and once held, any write into what it reads (a load, a move, a
- *   fill, a primitive rastered at once) rasters it first;
+ *   waiting; and once held, a primitive rastered at once that writes into
+ *   what it reads rasters it first, and a load, a move or a fill there keeps
+ *   the words it overwrites in its area's undo log (undo_save), which the
+ *   area's settle swaps back in while it rasters (or, when the log has no
+ *   room, rasters it first);
  * - the provenance tags and shadow cells it would clear are already clear
  *   (TextureDump_Clean), so not clearing them later changes nothing;
  * - it is not the life-point panel the opponent's name is drawn over (the
@@ -182,6 +185,16 @@ typedef struct HeldEntry {
     uint32_t source; /* the bank it sampled as it came (0: VRAM), | HELD_SHADOW if it took from the shadow */
 } HeldEntry;
 #define HELD_SHADOW 0x100u
+/* The undo log (undo_save): what a load, move or fill overwrote of the texels
+ * an area's held work samples, clipped to its sampled rectangles, oldest
+ * first. Each entry is a rectangle that does not wrap, and its words as they
+ * were before that write, in the area's buffer. */
+#define UNDO_ENTRIES 32
+#define UNDO_WORDS ((size_t)1 << 16) /* 128 KB an area: a 16-bit texture page */
+typedef struct UndoEntry {
+    int x, y, w, h;
+    size_t at; /* in the area's `undo` buffer */
+} UndoEntry;
 typedef struct HeldArea {
     int on, x, y, w, h;            /* the drawing area */
     unsigned stamp;
@@ -196,6 +209,10 @@ typedef struct HeldArea {
     uint16_t *before;              /* poison: the area's words as the queue began */
     size_t copied;                 /* entries it held when the recorder last took its copy (SoftGpu_CopyTaken) */
     uint32_t sources;              /* the frozen copies its work reads: bit 0 the shadow's, bit b bank b's */
+    uint16_t *undo;                /* UNDO_WORDS, made as the switch goes on (SoftGpu_SetDeferred); NULL: none */
+    UndoEntry undone[UNDO_ENTRIES];
+    int undo_count;
+    size_t undo_used;
 } HeldArea;
 static HeldArea held[HELD_AREAS];
 static volatile int held_any;
@@ -246,6 +263,7 @@ static unsigned held_clock;
 static unsigned clean_touches[HELD_AREAS];
 static const uint32_t *clean_tags[HELD_AREAS];
 static SoftGpuDeferredStats deferred_stats;
+static unsigned long long undo_saves; /* SoftGpu_UndoSaves: apart, so that the stats' struct does not grow */
 /* Drawing areas a primitive was rastered at once into since their last
  * clear: they hold nothing until it (holding the rest only to raster it at
  * the next such primitive costs the time it would save). One that met the
@@ -406,7 +424,135 @@ static void held_reset(HeldArea *a)
     a->word_count = a->count = a->state_count = 0;
     a->sampled_count = a->sampled_all = 0;
     a->sources = 0;
+    a->undo_count = 0; /* settled or dropped: its log goes with it */
+    a->undo_used = 0;
     held_recount();
+}
+
+/* --- The undo log ------------------------------------------------------
+ * A load, a move or a fill that changes texels an area's held work samples
+ * (outside every held area: none samples another) need not raster the area
+ * first: the words it overwrites, clipped to the area's sampled rectangles,
+ * are saved instead (undo_save), in the order the writes came. The area's
+ * settle swaps each entry's words with VRAM's, last entry first, so that
+ * every texel holds the words it had before the first saved write to it:
+ * the words the held work sampled as it came, since everything else that
+ * writes them (a primitive rastered at once, a write the log has no room
+ * for) rasters the area first, and a primitive held after a write that
+ * samples what that write saved (undo_meets) does too. Then it rasters, and
+ * swaps every entry back, first entry first: a swap is its own inverse, so
+ * VRAM and the saved words are exactly what they were, whatever the entries
+ * overlap. Nothing else reads VRAM in between: the clock is held, a replay
+ * calls nobody back, and the entries lie outside every held area (sampled
+ * texels), so the area rastered and the other held one are not touched.
+ * Outside a settle VRAM holds the new words, as it would rastered at once:
+ * a reader of all of it (a state, a hash, a dump) sees those. A settle,
+ * a drop, a reset forget the log (held_reset).
+ *
+ * The buffer is made as the switch goes on (main thread): a write can come
+ * from the clock's tick, where nothing may be allocated. Without it, past
+ * UNDO_ENTRIES or UNDO_WORDS, with sampled_all, or for a write that is a
+ * primitive (before_write's NULL), the area is rastered first as before. */
+
+/* x,y,w,h (VRAM words, wrapping as transfers and texels do) as up to four
+ * rectangles that do not wrap. */
+static int unwrapped(int x, int y, int w, int h, int out[4][4])
+{
+    int xs[2][2], ys[2][2], nx = 1, ny = 1, n = 0;
+    if (w <= 0 || h <= 0) return 0;
+    if (w > SOFT_GPU_WIDTH) w = SOFT_GPU_WIDTH;
+    if (h > SOFT_GPU_HEIGHT) h = SOFT_GPU_HEIGHT;
+    x &= SOFT_GPU_WIDTH - 1;
+    y &= SOFT_GPU_HEIGHT - 1;
+    xs[0][0] = x, xs[0][1] = x + w;
+    ys[0][0] = y, ys[0][1] = y + h;
+    if (x + w > SOFT_GPU_WIDTH) xs[0][1] = SOFT_GPU_WIDTH, xs[1][0] = 0, xs[1][1] = x + w - SOFT_GPU_WIDTH, nx = 2;
+    if (y + h > SOFT_GPU_HEIGHT) ys[0][1] = SOFT_GPU_HEIGHT, ys[1][0] = 0, ys[1][1] = y + h - SOFT_GPU_HEIGHT, ny = 2;
+    for (int j = 0; j < ny; j++)
+        for (int i = 0; i < nx; i++, n++) {
+            out[n][0] = xs[i][0];
+            out[n][1] = ys[j][0];
+            out[n][2] = xs[i][1] - xs[i][0];
+            out[n][3] = ys[j][1] - ys[j][0];
+        }
+    return n;
+}
+
+/* Before a load, move or fill changes x,y,w,h, which area `a` samples: the
+ * words there that it samples, saved at the end of its log. 0 (nothing
+ * saved) if they do not fit, or `a` keeps no rectangles (sampled_all), or
+ * has no buffer: the caller rasters it first. */
+static int undo_save(HeldArea *a, int x, int y, int w, int h)
+{
+    int writes[4][4], nw, count = a->undo_count;
+    size_t used = a->undo_used;
+    if (!a->undo || a->sampled_all) return 0;
+    nw = unwrapped(x, y, w, h, writes);
+    for (int k = 0; k < a->sampled_count; k++) {
+        int reads[4][4], nr = unwrapped(a->sampled[k][0], a->sampled[k][1], a->sampled[k][2], a->sampled[k][3], reads);
+        for (int r = 0; r < nr; r++)
+            for (int p = 0; p < nw; p++) {
+                int x1 = reads[r][0] > writes[p][0] ? reads[r][0] : writes[p][0];
+                int y1 = reads[r][1] > writes[p][1] ? reads[r][1] : writes[p][1];
+                int x2 = reads[r][0] + reads[r][2] < writes[p][0] + writes[p][2] ? reads[r][0] + reads[r][2]
+                                                                                 : writes[p][0] + writes[p][2];
+                int y2 = reads[r][1] + reads[r][3] < writes[p][1] + writes[p][3] ? reads[r][1] + reads[r][3]
+                                                                                 : writes[p][1] + writes[p][3];
+                int inside = 0;
+                UndoEntry *e;
+                if (x1 >= x2 || y1 >= y2) continue;
+                /* Within one this write saved already (sampled rectangles overlap). */
+                for (int s = a->undo_count; s < count && !inside; s++) {
+                    const UndoEntry *o = &a->undone[s];
+                    inside = o->x <= x1 && o->y <= y1 && x2 <= o->x + o->w && y2 <= o->y + o->h;
+                }
+                if (inside) continue;
+                if (count == UNDO_ENTRIES || used + (size_t)(x2 - x1) * (size_t)(y2 - y1) > UNDO_WORDS)
+                    return 0; /* no room: nothing of this write is kept (count, used not stored) */
+                e = &a->undone[count++];
+                e->x = x1, e->y = y1, e->w = x2 - x1, e->h = y2 - y1, e->at = used;
+                for (int j = 0; j < e->h; j++)
+                    memcpy(a->undo + used + (size_t)j * e->w, vram + (size_t)(y1 + j) * SOFT_GPU_WIDTH + x1,
+                           (size_t)e->w * sizeof(uint16_t));
+                used += (size_t)e->w * (size_t)e->h;
+            }
+    }
+    a->undo_count = count;
+    a->undo_used = used;
+    undo_saves++;
+    return 1;
+}
+
+/* Each entry's words swapped with VRAM's: last first (`forward` 0), so every
+ * texel holds what it had before the first saved write, or first first, to
+ * undo that. */
+static void undo_swap(HeldArea *a, int forward)
+{
+    for (int n = 0; n < a->undo_count; n++) {
+        const UndoEntry *e = &a->undone[forward ? n : a->undo_count - 1 - n];
+        uint16_t *saved = a->undo + e->at;
+        for (int j = 0; j < e->h; j++) {
+            uint16_t *row = vram + (size_t)(e->y + j) * SOFT_GPU_WIDTH + e->x;
+            for (int i = 0; i < e->w; i++) {
+                uint16_t word = row[i];
+                row[i] = *saved;
+                *saved++ = word;
+            }
+        }
+    }
+}
+
+/* Whether a primitive about to be held into `a` samples words its log saved
+ * (rects: texture_rects'): it needs the new words, the held work the old, so
+ * `a` is rastered first. */
+static int undo_meets(const HeldArea *a, const int (*rects)[4], int n)
+{
+    for (int k = 0; k < a->undo_count; k++) {
+        const UndoEntry *e = &a->undone[k];
+        for (int i = 0; i < n; i++)
+            if (rects_meet(e->x, e->y, e->w, e->h, rects[i][0], rects[i][1], rects[i][2], rects[i][3])) return 1;
+    }
+    return 0;
 }
 
 static size_t polygon(const uint32_t *words, size_t count);
@@ -476,6 +622,7 @@ static void settle_area(HeldArea *a, int why)
         for (int j = 0; j < a->h; j++)
             memcpy(vram + (a->y + j) * SOFT_GPU_WIDTH + a->x, a->before + (size_t)j * a->w, (size_t)a->w * 2);
     }
+    undo_swap(a, 0); /* the texels as the held work sampled them (undo_save) */
     replaying = 1;
     for (i = 0; i < a->count; i++) {
         if (i == patch_at) make_patch(a);
@@ -497,6 +644,7 @@ static void settle_area(HeldArea *a, int why)
     }
     if (patch_at == a->count) make_patch(a); /* nothing came after the take */
     replaying = 0;
+    undo_swap(a, 1); /* and back: VRAM's words as they are now */
     gpu = live;
     texture_source = live_source;
     texture_bank = live_bank;
@@ -692,7 +840,8 @@ static int write_same(const Write *write, int x, int y, int w, int h)
 
 /* Before x,y,w,h is written: what is held there is drawn, and what is held
  * anywhere that reads it, unless `write` (NULL: a primitive) leaves every
- * word as it was. */
+ * word as it was, or the words it changes there go into that area's undo
+ * log (a load, a move, a fill: undo_save). */
 static void before_write(int x, int y, int w, int h, int why, const Write *write)
 {
     int same = -1;
@@ -703,7 +852,7 @@ static void before_write(int x, int y, int w, int h, int why, const Write *write
     for (int a = 0; a < HELD_AREAS; a++) {
         if (!area_samples(&held[a], x, y, w, h)) continue;
         if (same < 0) same = write_same(write, x, y, w, h);
-        if (!same) settle_area(&held[a], why);
+        if (!same && !(write && undo_save(&held[a], x, y, w, h))) settle_area(&held[a], why);
     }
     release_clock();
 }
@@ -1029,6 +1178,13 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
             settle_area(area, SOFT_GPU_WHY_ALL);
             area = held_area();
         }
+        if (area && area->undo_count && undo_meets(area, (const int (*)[4])rects, n)) {
+            /* It samples the new words a write left where the held work
+             * needs the old (undo_save): that work first, as the write
+             * would have rastered it without the log. */
+            settle_area(area, SOFT_GPU_WHY_WRITE);
+            area = held_area();
+        }
         if (area && grow((void **)&area->words, &area->word_room, area->word_count + count, sizeof(uint32_t)) &&
             grow((void **)&area->entries, &area->room, area->count + 1, sizeof(HeldEntry)) &&
             grow((void **)&area->states, &area->state_room, area->state_count + 1, sizeof(GpuState))) {
@@ -1078,13 +1234,24 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
 void SoftGpu_SetDeferred(int on, int poison)
 {
     settle_all(SOFT_GPU_WHY_ALL); /* nothing is held after it, so nothing below needs the clock held */
-    if (on && !deferred_on) memset(&deferred_stats, 0, sizeof(deferred_stats));
+    if (on && !deferred_on) {
+        memset(&deferred_stats, 0, sizeof(deferred_stats));
+        undo_saves = 0;
+    }
     deferred_on = on == SOFT_GPU_DEFERRED_AUTO ? SOFT_GPU_DEFERRED_AUTO : on != 0;
     deferred_poison = on && poison;
     forget_given_up();
     for (int a = 0; a < HELD_AREAS; a++) {
         free(held[a].before);
         held[a].before = NULL;
+        /* The undo logs' buffers: made here, on the main thread, never where
+         * a write is saved (it can be the clock's tick); none if there is no
+         * memory (a write then rasters what samples it, as before). */
+        if (deferred_on && !held[a].undo) held[a].undo = malloc(UNDO_WORDS * sizeof(uint16_t));
+        if (!deferred_on) {
+            free(held[a].undo);
+            held[a].undo = NULL;
+        }
     }
     verified_count = 0; /* the copies below are freed or poisoned */
     for (int s = 0; s < FROZEN_SOURCES; s++) { /* nothing is held: no settle reads the frozen copies */
@@ -1168,6 +1335,8 @@ void SoftGpu_DeferredStats(SoftGpuDeferredStats *out)
     }
     if (took) release_clock();
 }
+
+unsigned long long SoftGpu_UndoSaves(void) { return undo_saves; }
 
 void SoftGpu_Settle(int x, int y, int w, int h)
 {
