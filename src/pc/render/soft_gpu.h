@@ -118,8 +118,9 @@ enum {
     SOFT_GPU_WHY_COUNT
 };
 enum {
-    SOFT_GPU_NOW_BANK,      /* samples a texture bank, and there is no memory for its frozen copy */
-    SOFT_GPU_NOW_SHADOW,    /* samples the texture pack's shadow, and no memory for its frozen copy */
+    SOFT_GPU_NOW_BANK,      /* samples a texture bank, and its frozen copy could not be made (no memory,
+                             * or the clock's tick: SoftGpu_InTick) */
+    SOFT_GPU_NOW_SHADOW,    /* samples the texture pack's shadow, and its frozen copy could not be made */
     SOFT_GPU_NOW_TAGS,      /* would clear provenance tags or shadow cells */
     SOFT_GPU_NOW_TEXTURE,   /* its texture or palette lies in held work */
     SOFT_GPU_NOW_PANEL,     /* the life-point panel the opponent's name goes over */
