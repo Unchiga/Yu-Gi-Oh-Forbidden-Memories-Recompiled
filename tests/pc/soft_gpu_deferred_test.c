@@ -158,6 +158,17 @@ static const uint8_t *no_name(int which, int *x, int *y, int *width, int *height
     return NULL;
 }
 
+/* The opponent's name, found through code that writes a bank (the host's
+ * labels): it turns the bank's 4x4 texels at 640,0 green, then has none. */
+static uint16_t *renamed_bank;
+static const uint8_t *bank_name(int which, int *x, int *y, int *width, int *height, int *stride)
+{
+    (void)which; (void)x; (void)y; (void)width; (void)height; (void)stride;
+    for (int j = 0; renamed_bank && j < 4; j++)
+        for (int i = 0; i < 4; i++) renamed_bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x03e0;
+    return NULL;
+}
+
 /* The pack's prepare for the fixed cases: the 16-bit page at 640,256 is
  * replaced (the shadow), nothing else, and no tick. */
 static int shadow_prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, int u, int v)
@@ -1894,6 +1905,50 @@ int main(int argc, char **argv)
             CHECK(SoftGpu_Gp0(inside, 5) == 5 && SoftGpu_Gp0(inside, 5) == 5);
             SoftGpu_DeferredStats(&st);
             CHECK(st.held == 2 && st.immediate == 0);
+        }
+        /* The panel's name rewriting a bank inside the batch: the host's
+         * answer may come through code that writes one (soft_gpu.c,
+         * name_over_panel). In one batch, a sprite from bank 9 is held in the
+         * second area; the panel, drawn in the first, gets its name, whose
+         * callback changes the texels that sprite read; a second sprite from
+         * the same texels is held in the second area. What the batch
+         * remembered of bank 9 is forgotten at the name, so the change is
+         * seen: the first sprite is rastered from the copy (red), the second
+         * reads the new words (green), as rastered at once. */
+        {
+            static const uint32_t batch[] = {
+                0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320, 0xe6000000u,
+                0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(9),      /* bank 9, 16-bit 640,0 */
+                0x65808080u, 0x00100010u, 0x00000000u, 0x00040004u,        /* 4x4 at 16,16 of the second area */
+                0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u,
+                0xe1000000u | 11,                                           /* the panel's page: 4-bit 704,0 */
+                0x64808080u, 0x00200020u, (uint32_t)((252 << 6) | 46) << 16 | 0x8080u, 0x00280040u, /* 64x40 from 128,128 */
+                0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320, 0xe6000000u,
+                0xe1000000u | 10 | (2u << 7) | SOFT_GPU_BANK_TPAGE(9),
+                0x65808080u, 0x00100020u, 0x00000000u, 0x00040004u};      /* 4x4 at 32,16, the same texels */
+            const size_t words = sizeof(batch) / sizeof(batch[0]);
+            SoftGpuDeferredStats st;
+            for (int deferred = 0; deferred < 2; deferred++) {
+                uint16_t *bank = SoftGpu_Bank(9);
+                SoftGpu_SetDeferred(0, 0);
+                SoftGpu_Reset();
+                SoftGpu_Fill(0, 0, 1024, 512, 0);
+                for (int j = 0; j < 4; j++)
+                    for (int i = 0; i < 4; i++) bank[j * SOFT_GPU_WIDTH + 640 + i] = 0x001f;
+                renamed_bank = bank;
+                SoftGpu_PanelName = bank_name;
+                SoftGpu_SetDeferred(deferred, 0);
+                SoftGpu_Fill(0, 0, 640, 240, 0x404040);
+                CHECK(SoftGpu_Gp0(batch, words) == words);
+                SoftGpu_PanelName = NULL;
+                renamed_bank = NULL;
+                SoftGpu_DeferredStats(&st);
+                SoftGpu_Store(320, 0, 64, 24, out[deferred]);
+            }
+            /* The pixels first: they are what forgetting is for. */
+            CHECK(!memcmp(out[0], out[1], sizeof(out[0])));
+            CHECK(out[0][16 * 64 + 16] == 0x001f && out[0][16 * 64 + 32] == 0x03e0);
+            CHECK(st.held == 2 && st.why[SOFT_GPU_WHY_WRITE] == 1 && st.now[SOFT_GPU_NOW_PANEL] == 1);
         }
         /* 3: a polygon naming bank 17 (bit 10 of its page word) with a fade,
          * 4-bit, its palette in the bank: the palette entry its texels index
