@@ -456,6 +456,17 @@ void SoftGpu_Store(int x, int y, int w, int h, uint16_t *pixels)
     }
 }
 
+/* One word's scale x scale block of the picture, moved to another word's. */
+static void picture_move_word(int sx, int sy, int dx, int dy)
+{
+    int px, py;
+    for (py = 0; py < scale; py++) {
+        for (px = 0; px < scale; px++) {
+            *picture_pixel(dx * scale + px, dy * scale + py) = *picture_pixel(sx * scale + px, sy * scale + py);
+        }
+    }
+}
+
 static void move_words(int sx, int sy, int dx, int dy, int w, int h)
 {
     int i, j;
@@ -466,30 +477,22 @@ static void move_words(int sx, int sy, int dx, int dy, int w, int h)
             uint16_t *target = vram_pixel(dx + i, dy + j);
             if (!gpu.mask_check || !(*target & 0x8000)) {
                 *target = (uint16_t)(*vram_pixel(sx + i, sy + j) | (gpu.mask_set ? 0x8000 : 0));
+                /* With the mask the picture follows the words one by one: a
+                 * word the mask kept was not written, its pixels stay too.
+                 * Each block moves where its word did, in its order, so an
+                 * overlapping copy reads what the words read. */
+                if (picture && gpu.mask_check) picture_move_word(sx + i, sy + j, dx + i, dy + j);
             }
         }
     }
     wide_mirror(dx, dy, w, h, 0, 0);
     if (picture) {
-        /* The picture's own pixels move, row by row forwards like the words. */
+        /* The picture's own pixels move, row by row forwards like the words;
+         * with the mask they moved above, a word at a time. */
         int hw = w * scale, hh = h * scale, hsx = sx * scale, hsy = sy * scale, hdx = dx * scale, hdy = dy * scale;
         if (!gpu.mask_check) {
             for (j = 0; j < hh; j++) {
                 for (i = 0; i < hw; i++) *picture_pixel(hdx + i, hdy + j) = *picture_pixel(hsx + i, hsy + j);
-            }
-        } else {
-            /* A word the mask kept was not written: its pixels stay too. */
-            for (j = 0; j < h; j++) {
-                for (i = 0; i < w; i++) {
-                    int px, py;
-                    if (*pixel(dx + i, dy + j) != (uint16_t)(*pixel(sx + i, sy + j) | 0x8000)) continue;
-                    for (py = 0; py < scale; py++) {
-                        for (px = 0; px < scale; px++) {
-                            *picture_pixel(hdx + i * scale + px, hdy + j * scale + py) =
-                                *picture_pixel(hsx + i * scale + px, hsy + j * scale + py);
-                        }
-                    }
-                }
             }
         }
     }
