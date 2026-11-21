@@ -3175,7 +3175,9 @@ held. Both areas sample the strip, so each saves its own copy.
 - Bounded: 32 entries and 64K words (128 KB) an area. Past either the
   write rasters the area, as before. The buffers are made as the switch
   goes on (`SoftGpu_SetDeferred`, the main thread) and freed when it goes
-  off, never where a write is saved: a `LoadImage` from the clock's tick
+  off with the clock held from the settle to the last free (a tick landing
+  between them could hold a primitive or save a write into a buffer about
+  to be freed), never where a write is saved: a `LoadImage` from the clock's tick
   saves into the buffer already there, and without one (no memory) the
   write rasters as before. Banks and the shadow's cells are not VRAM and
   keep their frozen copies; a shadow primitive's words are saved like any

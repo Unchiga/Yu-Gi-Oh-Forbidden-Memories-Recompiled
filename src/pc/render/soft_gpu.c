@@ -1233,7 +1233,12 @@ static int hold(const uint32_t *words, size_t count, const int *uv, const Vertex
 
 void SoftGpu_SetDeferred(int on, int poison)
 {
-    settle_all(SOFT_GPU_WHY_ALL); /* nothing is held after it, so nothing below needs the clock held */
+    /* While it was on, a tick (MEMORIES_CLOCK=interrupt) can hold a primitive or save a write after the
+     * settle below and before the buffers are freed: held for all of it, the tick comes after, with
+     * nothing held and the switch made. (Off before, nothing is held and nothing freed: no hold.) */
+    int guarded = deferred_on;
+    if (guarded) hold_clock();
+    settle_all(SOFT_GPU_WHY_ALL);
     if (on && !deferred_on) {
         memset(&deferred_stats, 0, sizeof(deferred_stats));
         undo_saves = 0;
@@ -1263,6 +1268,7 @@ void SoftGpu_SetDeferred(int on, int poison)
             frozen_poison(s);
         }
     }
+    if (guarded) release_clock();
 }
 
 int SoftGpu_Deferred(void) { return deferred_on; }

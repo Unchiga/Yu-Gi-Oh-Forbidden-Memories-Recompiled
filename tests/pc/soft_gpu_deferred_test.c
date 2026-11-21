@@ -1009,6 +1009,15 @@ static void undo_load(int u, int v, int w, int h, uint16_t base)
     undo_put(640 + u, 256 + v, w, h, base);
 }
 
+/* What the clock's tick does in case 36: a sprite and a load. */
+static void switch_tick(void)
+{
+    in_tick = 1;
+    undo_sprite(50, 10, 0, 0, 32, 32);
+    undo_load(6, 6, 8, 8, 0x3000);
+    in_tick = 0;
+}
+
 static void undo_store(int x, int y, int w, int h)
 {
     static uint16_t words[320 * 240];
@@ -1422,6 +1431,20 @@ static int undo_case(int which, int deferred, int poison, uint64_t *vram, SoftGp
         undo_store(0, 0, 64, 64);
         break;
     }
+    case 36: { /* a tick landing as SetDeferred settles: it holds the clock throughout, so the tick comes
+                * once the buffers are freed and deferred is off, and draws and loads at once */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        if (deferred) {
+            pending_tick = switch_tick; /* comes as the clock is let go */
+            SoftGpu_SetDeferred(0, 0);
+            CHECK(!pending_tick && SoftGpu_Deferred() == 0);
+        } else {
+            switch_tick();
+        }
+        undo_store(0, 0, 128, 64);
+        break;
+    }
     }
     SoftGpu_DeferredStats(st);
     *saves = SoftGpu_UndoSaves();
@@ -1459,7 +1482,7 @@ static int undo_copy_case(int mode, int poison, uint64_t *out, SoftGpuDeferredSt
     return 0;
 }
 
-#define UNDO_CASES 36
+#define UNDO_CASES 37
 
 /* The same at copy reach 1 (Texture xBR's: a sprite's rectangle reaches one
  * texel past its last u, v, which the copy reads), and with a load into
@@ -1544,16 +1567,16 @@ static int undo_cases(void)
             /* The writes saved (one count a write, whatever its pieces) and the settles by a write. */
             static const unsigned long long saves[UNDO_CASES] = {
                 1, 3, 5, 1, 2, 2, 32, 3, 2, 1, 4, 0, 1, 1, 0, 1,
-                4, 3, 1, 2, 3, 33, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 31, 3, 1};
+                4, 3, 1, 2, 3, 33, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 31, 3, 1, 1};
             static const unsigned long long writes[UNDO_CASES] = {
                 0, 0, 0, 0, 1, 0, 1, 2, 0, 1, 0, 0, 0, 1, 1, 0,
-                1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0};
+                1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0};
             /* From case 16 on, the settles by a slot given up (a third area), by a primitive rastered at once
              * and for all of VRAM (a switch, a cap). */
             static const unsigned others[UNDO_CASES - 16][3] = {
                 {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0},
                 {0, 0, 2}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0},
-                {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 1}};
+                {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 1}};
             if (got_saves[mode] != saves[which] || s->why[SOFT_GPU_WHY_WRITE] != writes[which] ||
                 (which >= 16 && (s->why[SOFT_GPU_WHY_AREA] != others[which - 16][0] ||
                                  s->why[SOFT_GPU_WHY_DRAW] != others[which - 16][1] ||
