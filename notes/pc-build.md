@@ -3321,9 +3321,11 @@ Checks and tools:
 - The undo logs (same test): the random frames move a battle background's
   strip over the same 16x64 texels after each frame (now and then twice,
   at another place), and must have saved more writes than frames and still
-  settled some by a write. Sixteen fixed cases, each played at once, kept
-  back and with poison, all of VRAM and every store compared, and each
-  checking its undo saves and settles by a write: one load; three loads of
+  settled some by a write. Thirty-seven fixed cases (`soft_gpu_deferred_test
+  fixed` runs only them), each played at once, kept back and with poison,
+  all of VRAM and every store compared, and each checking its undo saves and
+  settles by a write (the later ones also the settles by a slot given up, a
+  primitive at once and all of VRAM): one load; three loads of
   the same texels with three different words; a load, a move and a fill
   over parts of each other, then loads under the mask; a load then the
   clear (a sprite after the clear reads the new words); sprites held after
@@ -3335,16 +3337,31 @@ Checks and tools:
   them the same; both areas saving the same write; a bank's sprite (nothing
   saved); a 4-bit palette entry; 49 wrapping texel rectangles
   (`sampled_all`: the write rasters); a write wider than what is sampled
-  (only that saved). A copy case at 2x makes the patch after a held
+  (only that saved); writes wrapping past x 1023 and y 511 (a load, a fill
+  and a move, each in two pieces); a textured polygon reading saved texels;
+  partly overlapping sampled rectangles and writes whose pieces overlap; a
+  write in two pieces whose second does not fit; an 8-bit palette reaching
+  past x 1023; a texture window; one write that settles the other area while
+  this one saves, and one with the other's log full; a primitive rastered
+  at once over saved texels; a slot given up with a log; moves whose source
+  and destination overlap, and one from saved texels; each switch with a log
+  outstanding (copy reach, a mod's VRAM, `SetDeferred` on to on and on to off,
+  the scale, a reset); the queue at `HELD_WORDS_MAX` with a log outstanding
+  (two poly-lines of 3.5M and 0.7M words); and a tick landing as
+  `SetDeferred` settles. Two copy cases at 2x make the patch after a held
   sprite's replay with the words swapped in, read back through the model
-  copy. A scratch script (not in the repo) makes 20 mutations of the undo
-  code (the swap orders, no swap in or back, the oldest entry skipped, no
-  settle first, the settle first on one entry, without the palette or on
-  the other area, the log kept across a clear or reset for both areas, one
-  sampled rectangle, `sampled_all` unchecked, the duplicate check taken as
-  meeting, a full log taking the write, the caps off by one or ignored,
-  the buffer made in the tick, a wrapped piece one word short, the rows not
-  cut): all 20 fail the test.
+  copy, at copy reach 0 and 1. A scratch script (not in the repo) makes 25
+  mutations: 20 of the undo code (the swap orders, no swap in or back, the
+  oldest entry skipped, no settle first, the settle first on one entry,
+  without the palette or on the other area, the log kept across a clear or
+  reset for both areas, one sampled rectangle, `sampled_all` unchecked, the
+  duplicate check taken as meeting, a full log taking the write, the caps
+  off by one or ignored, the buffer made in the tick, a wrapped piece one
+  word short, the rows not cut), the review's three (a wrapped piece
+  unsaved, the settle-first check skipped for polygons, the duplicate check
+  dropping any piece that meets one, which is the partial-meeting mutation
+  again) and the two clock holds (`SetDeferred`, the counter's read): all 25
+  fail the fixed cases alone, none needs the random frames.
 - The same test's copy runs (2x): two seeds of the random frames at 2x
   with a model of the OpenGL picture's recorder and copy of VRAM (loads,
   moves and fills cut at VRAM's edges as `gl_picture.c` cuts them,
