@@ -390,8 +390,11 @@ void Spu_Mix(int16_t *out, size_t frames)
             right = (int)(((int64_t)music_r * bus_gain[SPU_BUS_MUSIC] +
                            (int64_t)sfx_r * bus_gain[SPU_BUS_SFX]) / GAIN_ONE);
         }
-        left = (left * volume(master_left)) >> 15;
-        right = (right * volume(master_right)) >> 15;
+        /* In 64 bits: the sum of a few full-scale voices times the master
+         * volume (up to 0x7ffe) is beyond an int, and wrapping flips the
+         * sign where the final clamp should clip. */
+        left = (int)(((int64_t)left * volume(master_left)) >> 15);
+        right = (int)(((int64_t)right * volume(master_right)) >> 15);
         if (cd_enabled) {
             cd_phase += cd_rate;
             while (cd_phase >= 44100) {

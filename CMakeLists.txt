@@ -950,6 +950,38 @@ if(BUILD_TESTING)
     target_sources(memories_audio_replace_test PRIVATE ${memories_platform_support})
     target_sources(memories_disc_test PRIVATE ${memories_platform_support})
     target_link_libraries(memories_audio_replace_test PRIVATE Threads::Threads)
+    # The software SPU's master volume with two dozen loud voices
+    # (tests/pc/spu_master_test.c). -fwrapv as every game build compiles it
+    # (build_game32.py, guest_build.py), so the old 32-bit product wraps the
+    # same way everywhere and the test fails on it. Linux also runs it as an
+    # i386 program, the 32-bit game's width. spu.c naps in Spu_Hold
+    # (nanosleep: POSIX, and winpthreads on Windows).
+    set(memories_spu_master_tests memories_spu_master_test)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        list(APPEND memories_spu_master_tests memories_spu_master_m32_test)
+    endif()
+    foreach(target IN LISTS memories_spu_master_tests)
+        add_executable(${target} tests/pc/spu_master_test.c src/pc/audio/spu.c)
+        target_include_directories(${target} PRIVATE src)
+        target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
+        if(NOT MSVC)
+            target_compile_options(${target} PRIVATE -O2 -fwrapv -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        if(target STREQUAL "memories_spu_master_m32_test")
+            target_compile_options(${target} PRIVATE -m32)
+            target_link_options(${target} PRIVATE -m32)
+        else()
+            target_link_libraries(${target} PRIVATE Threads::Threads)
+        endif()
+        if(MEMORIES_SANITIZERS)
+            target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+            target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+        endif()
+    endforeach()
+    add_test(NAME pc_spu_master COMMAND memories_spu_master_test)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME pc_spu_master_m32 COMMAND memories_spu_master_m32_test)
+    endif()
     # controls_evdev_test.c drives the /dev/input reader, which is Linux only.
     set(memories_controls_parts config runtime window)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
