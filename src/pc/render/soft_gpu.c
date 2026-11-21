@@ -1342,7 +1342,15 @@ void SoftGpu_DeferredStats(SoftGpuDeferredStats *out)
     if (took) release_clock();
 }
 
-unsigned long long SoftGpu_UndoSaves(void) { return undo_saves; }
+unsigned long long SoftGpu_UndoSaves(void)
+{
+    unsigned long long saves;
+    int took = deferred_on;
+    if (took) hold_clock(); /* 64 bits are two reads on i386: not half made by a tick's save (as the stats above) */
+    saves = undo_saves;
+    if (took) release_clock();
+    return saves;
+}
 
 void SoftGpu_Settle(int x, int y, int w, int h)
 {

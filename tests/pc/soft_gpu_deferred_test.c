@@ -1634,6 +1634,17 @@ int main(int argc, char **argv)
         (void)copy_end();
         window_settles = 1;
     }
+    /* SoftGpu_UndoSaves is 64 bits, which a tick's save could tear on i386: read with the clock held while
+     * deferred is on, and never held off. */
+    {
+        int before;
+        SoftGpu_SetDeferred(SOFT_GPU_DEFERRED_AUTO, 0);
+        before = holds;
+        CHECK(SoftGpu_UndoSaves() == 0 && holds == before + 1 && holds == releases);
+        SoftGpu_SetDeferred(0, 0);
+        before = holds;
+        CHECK(SoftGpu_UndoSaves() == 0 && holds == before);
+    }
     /* The undo log's fixed cases (above). */
     CHECK(undo_cases() == 0);
     TextureDump_Prepare = prepare;
