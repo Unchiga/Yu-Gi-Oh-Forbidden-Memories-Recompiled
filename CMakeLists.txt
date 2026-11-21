@@ -1285,6 +1285,12 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME pc_replay_check
             COMMAND "${Python3_EXECUTABLE}" tests/pc/replay_check_test.py
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # yfm_control.py's replies against a made-up game: slow, closed, hung
+        # (notes/agent-control.md).
+        add_test(NAME pc_control_client
+            COMMAND "${Python3_EXECUTABLE}" tests/pc/control_client_test.py
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        set_tests_properties(pc_control_client PROPERTIES TIMEOUT 60)
         # model_oracle.py's comparison and coverage on made-up games
         # (notes/pc-build.md, "MIPS-only effects").
         add_test(NAME pc_model_oracle_check
