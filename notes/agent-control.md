@@ -128,10 +128,26 @@ build with the old combination; the eight smoke cases unchanged.
   port is the game's alone (`SO_EXCLUSIVEADDRUSE`). A restart (the language
   change's, the credits') drops `MEMORIES_CONTROL` from the new game's
   environment (`MEMORIES_RESTART_ENV` may set it again): no client follows.
-  Replies use nonblocking writes with a one-second deadline. While a client
-  is slow to read, the game continues servicing its window; a timeout or a
-  window-close request ends the send and drops the client. Its queued
-  commands and held pads are discarded, and another client can connect.
+  Replies use nonblocking writes with a one-second deadline, which is the
+  client's: it runs only while the socket is full and the client takes not
+  one byte, from the first write that would block, and it is read only
+  after another write was tried. Time the game itself is held (its window's
+  pump, a loaded machine not scheduling it) never counts against a client
+  that reads. (It used to run from the start of every reply, the pump
+  before the first write included: in menus runs through `goto duel` with
+  a window, on Windows and with no build running, the window's event pump
+  now and then held the game 1.4 to 2.8 s, SDL taking over a second over a
+  desktop-mode change. That dropped 5 runs of 20 before a byte of their
+  reply, a 3- to 25-byte `ok`, was written; the client saw "the game closed
+  the channel" with the game still running. A reply that fits the socket
+  now goes out without a pump, and the picture, frames and hashes of those
+  runs are unchanged.) While a client is slow to read, the game continues
+  servicing its window; a timeout (logged: "the client took none of a reply
+  for a second") or a window-close request ends the send and drops the
+  client. Its queued commands and held pads are discarded, and another
+  client can connect. `yfm_control.py`'s
+  `ControlError` for a closed channel says whether the game still runs and
+  ends with the log's last lines, where such a drop is named.
 - **The first client:** the game waits at its first `VSync(0)` for
   `MEMORIES_CONTROL_WAIT` seconds (10 unset; a negative number as long as it
   takes, which `yfm_control.py` sets, its game being its own; 0 not at

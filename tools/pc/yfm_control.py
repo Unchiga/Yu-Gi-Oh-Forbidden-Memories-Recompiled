@@ -262,8 +262,11 @@ class Game:
             self.connection.sendall(line.encode() + b"\n")
             while b"\n" not in self._buffer:
                 chunk = self.connection.recv(1 << 20)
-                if not chunk:
-                    raise ControlError(f"the game closed the channel after {line!r}; see {self.log_path}")
+                if not chunk:   # the game dropped this client, or it is ending: its log says which
+                    ended = self.process.poll()
+                    raise ControlError(f"the game closed the channel after {line!r} (the game "
+                                       f"{'still runs' if ended is None else f'ended with {ended}'}); "
+                                       f"{self.log_path} ends:\n{self._log_tail()}")
                 self._buffer += chunk
         except socket.timeout:   # a game that never answers is hung
             _end(self.process)

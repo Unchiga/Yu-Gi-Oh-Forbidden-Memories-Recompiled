@@ -30,6 +30,7 @@ static int last_error(void) { return errno; }
 #endif
 
 static Socket listener = NO_SOCKET, client = NO_SOCKET;
+static int send_buffer; /* ControlNet_SetSendBuffer: 0, the system's */
 
 #ifdef __APPLE__
 /* Darwin has neither SOCK_CLOEXEC nor accept4. */
@@ -158,8 +159,11 @@ int ControlNet_Accept(int timeout_ms)
     }
     /* One short line each way per command: no waiting to fill a packet. */
     setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (const char *)&yes, sizeof(yes));
+    if (send_buffer) setsockopt(client, SOL_SOCKET, SO_SNDBUF, (const char *)&send_buffer, sizeof(send_buffer));
     return 1;
 }
+
+void ControlNet_SetSendBuffer(int bytes) { send_buffer = bytes; }
 
 void ControlNet_RefuseOthers(const char *reply)
 {
@@ -204,12 +208,17 @@ long ControlNet_Receive(char *buffer, size_t size, int timeout_ms)
 
 int ControlNet_Send(const char *data, size_t size, int (*idle)(void))
 {
-    uint64_t deadline = milliseconds() + 1000;
+    /* The deadline is the client's: a second in which the socket stays full
+     * and it takes not one byte. The clock starts at the first write that
+     * would block and is read only after another write was tried, so time
+     * the game itself is held (its window's pump, a loaded machine not
+     * scheduling it) is never taken for a client that does not read: a
+     * pump of over a second before a three-byte "ok" dropped clients. */
+    uint64_t stalled_since = 0;
     while (size && client != NO_SOCKET) {
         long sent;
         /* Bound each write so large replies regularly service the window. */
         int chunk = size > 65536 ? 65536 : (int)size;
-        if ((idle && !idle()) || milliseconds() >= deadline) return -1;
 #ifdef _WIN32
         sent = (long)send(client, data, chunk, 0);
 #else
@@ -218,6 +227,14 @@ int ControlNet_Send(const char *data, size_t size, int (*idle)(void))
         if (sent < 0 && retryable()) {
             fd_set writable;
             struct timeval wait = {0, 10000};
+            uint64_t now = milliseconds();
+            if (!stalled_since) stalled_since = now;
+            else if (now - stalled_since >= 1000) {
+                fprintf(stderr, "memories-pc: control: the client took none of a reply for a second (%u bytes "
+                                "left); it is dropped\n", (unsigned)size);
+                return -1;
+            }
+            if (idle && !idle()) return -1;
             FD_ZERO(&writable);
             FD_SET(client, &writable);
             /* Ten milliseconds at most before servicing the window again.
@@ -229,6 +246,8 @@ int ControlNet_Send(const char *data, size_t size, int (*idle)(void))
         if (sent <= 0) return -1;
         data += sent;
         size -= (size_t)sent;
+        stalled_since = 0;
+        if (size && idle && !idle()) return -1;
     }
     return client == NO_SOCKET ? -1 : 0;
 }
