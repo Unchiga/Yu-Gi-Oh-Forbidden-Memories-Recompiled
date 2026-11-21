@@ -30,6 +30,7 @@ static int last_error(void) { return errno; }
 #endif
 
 static Socket listener = NO_SOCKET, client = NO_SOCKET;
+static int send_buffer; /* ControlNet_SetSendBuffer: 0, the system's */
 
 #ifdef __APPLE__
 /* Darwin has neither SOCK_CLOEXEC nor accept4. */
@@ -158,8 +159,11 @@ int ControlNet_Accept(int timeout_ms)
     }
     /* One short line each way per command: no waiting to fill a packet. */
     setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (const char *)&yes, sizeof(yes));
+    if (send_buffer) setsockopt(client, SOL_SOCKET, SO_SNDBUF, (const char *)&send_buffer, sizeof(send_buffer));
     return 1;
 }
+
+void ControlNet_SetSendBuffer(int bytes) { send_buffer = bytes; }
 
 void ControlNet_RefuseOthers(const char *reply)
 {

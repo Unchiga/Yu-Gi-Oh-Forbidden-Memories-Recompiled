@@ -214,9 +214,13 @@ int main(void)
     /* The blocked path: the writes block, then the game stalls past the
      * deadline while the client reads what was sent. The next write goes
      * through (it is tried before the clock is read), and the reply
-     * completes. 512 KiB is more than both sockets hold with a 1 KiB
-     * receive buffer (about 128 KiB on Windows, 35 KiB on Linux). */
+     * completes. Both buffers are fixed (16 KiB to send, 1 KiB to
+     * receive), so the kernel does not grow them and 512 KiB blocks on
+     * every system; with the system's send buffer a CI runner's Linux took
+     * about a megabyte, macOS about 460 KiB, without blocking. */
+    ControlNet_SetSendBuffer(16 * 1024);
     peer = connect_client(port, 1024);
+    ControlNet_SetSendBuffer(0);
     round_trip(peer);
     reader = peer;
     pumps = pumps_after = stalled = 0;

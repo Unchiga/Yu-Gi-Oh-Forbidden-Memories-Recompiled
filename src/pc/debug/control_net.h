@@ -12,6 +12,12 @@ int ControlNet_Listen(unsigned port, unsigned *bound);
 /* Take a waiting client, waiting up to timeout_ms for one (0: only look).
  * 1 when one is connected now, 0 when none came. */
 int ControlNet_Accept(int timeout_ms);
+/* For tests: the send buffer (SO_SNDBUF) of the clients taken from now on,
+ * 0 for the system's. A fixed one is not grown by the kernel, so a test's
+ * writes block after the same few kilobytes on every system (Linux grows
+ * its own to megabytes, macOS to hundreds of kilobytes). The game never
+ * sets it. */
+void ControlNet_SetSendBuffer(int bytes);
 /* Bytes from the client, waiting up to timeout_ms: the count, 0 when none
  * came in time, -1 when the client has gone. */
 long ControlNet_Receive(char *buffer, size_t size, int timeout_ms);
