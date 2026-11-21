@@ -1647,6 +1647,10 @@ int main(int argc, char **argv)
     }
     /* The undo log's fixed cases (above). */
     CHECK(undo_cases() == 0);
+    if (argc > 1 && !strcmp(argv[1], "fixed")) { /* only the cases above: what a mutant of the undo code must fail */
+        printf("Software GPU deferred raster fixed undo cases passed\n");
+        return 0;
+    }
     TextureDump_Prepare = prepare;
     for (uint32_t start = 1; start <= 3; start++) {
         CHECK(run(start * 2654435761u, frames, 0, 0, &now) == 0);
