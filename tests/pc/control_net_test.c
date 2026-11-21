@@ -80,6 +80,73 @@ static int stalling_idle(void)
     return 1;
 }
 
+/* The blocked path: the reader pauses until the reply has filled the
+ * socket, so the writes block and the client's clock runs; then the pump
+ * holds the game 1.2 s, while the client reads all that was sent
+ * (stall_reads) or takes nothing. */
+static uint64_t pause_until, stall_ended;
+static int stall_reads, stalled, pumps_before, pumps_after;
+static int blocked_idle(void)
+{
+    pumps++;
+    if (!stalled) {
+        uint64_t end;
+        if (now_ms() < pause_until) return 1;
+        stalled = 1;
+        pumps_before = pumps - 1;
+        end = now_ms() + 1200;
+        if (stall_reads) {
+            while (now_ms() < end) drain(10);
+        } else {
+            sleep_ms(1200);
+        }
+        stall_ended = now_ms();
+        return 1;
+    }
+    pumps_after++;
+    if (stall_reads) drain(10);
+    return 1;
+}
+
+/* The game's standard error into `path` meanwhile, for its log line. */
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#define dup _dup
+#define dup2 _dup2
+#define open _open
+#define close_fd _close
+#else
+#include <fcntl.h>
+#define close_fd close
+#endif
+static int capture_begin(const char *path)
+{
+    int saved, file;
+    fflush(stderr);
+    saved = dup(2);
+    file = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    assert(saved >= 0 && file >= 0);
+    dup2(file, 2);
+    close_fd(file);
+    return saved;
+}
+static int capture_end(int saved, const char *path, const char *wanted)
+{
+    char text[1024] = {0};
+    FILE *file;
+    fflush(stderr);
+    dup2(saved, 2);
+    close_fd(saved);
+    file = fopen(path, "rb");
+    assert(file);
+    if (!fread(text, 1, sizeof(text) - 1, file)) text[0] = 0;
+    fclose(file);
+    remove(path);
+    fputs(text, stderr);
+    return strstr(text, wanted) != NULL;
+}
+
 /* receive_buffer: SO_RCVBUF, or 0 for the system's (a client's own). */
 static Socket connect_client(unsigned port, int receive_buffer)
 {
@@ -144,6 +211,39 @@ int main(void)
     CLOSE(peer);
     cancel_after = 0;
 
+    /* The blocked path: the writes block, then the game stalls past the
+     * deadline while the client reads what was sent. The next write goes
+     * through (it is tried before the clock is read), and the reply
+     * completes. 512 KiB is more than both sockets hold with a 1 KiB
+     * receive buffer (about 128 KiB on Windows, 35 KiB on Linux). */
+    peer = connect_client(port, 1024);
+    round_trip(peer);
+    reader = peer;
+    pumps = pumps_after = stalled = 0;
+    stall_reads = 1;
+    drained = 0;
+    started = now_ms();
+    pause_until = started + 300;
+    assert(!ControlNet_Send(large, 512 * 1024, blocked_idle));
+    assert(stalled && pumps_before > 3 && stall_ended - started >= 1400);
+    drain(200); /* all of it is on its way: 200 ms without a byte is its end */
+    assert(drained == 512 * 1024);
+    round_trip(peer);
+    /* Its converse: a client that takes nothing through the stall is
+     * dropped at the next write, with no second wait and a log line. */
+    pumps = pumps_after = stalled = 0;
+    stall_reads = 0;
+    pause_until = now_ms() + 300;
+    {
+        int saved = capture_begin("control_net_test.log");
+        int result = ControlNet_Send(large, 512 * 1024, blocked_idle);
+        int logged = capture_end(saved, "control_net_test.log", "the client took none of a reply for a second");
+        assert(result == -1 && stalled && pumps_before > 3 && !pumps_after && now_ms() - stall_ended < 500);
+        assert(logged);
+    }
+    ControlNet_Drop();
+    CLOSE(peer);
+
     /* With the system's buffers, as a client has them (a 1 KiB one makes
      * a megabyte crawl through Linux loopback). */
     peer = connect_client(port, 0);
@@ -156,7 +256,7 @@ int main(void)
     stall_ms = 1500;
     assert(!ControlNet_Send("ok frame 1 vblank 1\n", 20, stalling_idle));
     drained = 0;
-    drain(1000);
+    drain(200);
     assert(drained == 20);
     /* So does a long one, with the stall in the middle of it. */
     pumps = 0;
@@ -165,7 +265,7 @@ int main(void)
     started = now_ms();
     assert(!ControlNet_Send(large, 1024 * 1024, stalling_idle));
     assert(pumps > 0 && now_ms() - started >= 1400);
-    drain(1000);
+    drain(200);
     assert(drained == 1024 * 1024);
     assert(!ControlNet_Gone());
     round_trip(peer);
