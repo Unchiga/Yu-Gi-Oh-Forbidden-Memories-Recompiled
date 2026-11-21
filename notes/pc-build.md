@@ -2889,7 +2889,10 @@ What is held, and how:
   or palette row it samples, unless every word the write would write is
   already there (the game uploads the same texels and palettes frame after
   frame; checked under the mask state, only for what is sampled, never for
-  a held area itself). Each area keeps 48 such rectangles; past that a new
+  a held area itself). A load, move or fill into the texels or palette row
+  it samples (not into its area) keeps the words it overwrites in the
+  area's undo log instead, while the log has room ("Writes into what held
+  work samples" below). Each area keeps 48 such rectangles; past that a new
   one is merged into the one it grows least, as long as that does not
   reach into an area held now or before (the buffers); failing that the
   two that grow least are merged to make room (a menu's strips below the
@@ -3124,6 +3127,90 @@ batch's remembered bank rectangles the field was 28% slower than off. The
 copies cost about 15-30 MB (the game's private memory in a full duel,
 AUTO against off).
 
+#### Writes into what held work samples (undo logs)
+
+Some 3D battles animate their background with a `MoveImage` outside any
+draw batch every frame (`func_8004E9A0`, switching on byte 0xA0 of the
+battle record `D_80091008[D_800F5678[0] * 0xB2]`): kind 1, the Normal
+terrain's (where a duel starts: all 39 opponents of Debug > Jump to's
+duels do; a field card changes it), moves one
+of three 16x64 strips to 704,448; kind 4, the Sea's (the Umi card), 32x24
+words to 544,360. Three frames in four the words are the same (the
+`write_same` check above); every fourth they change, and the texels belong
+to what both held buffers sample, so that one move rastered both: whole
+frames of primitives that their clears would have dropped two frames
+later, about 80% of the CPU raster left in those battles.
+
+Such a write now keeps the old words instead (`undo_save`): a load, a move
+or a fill that would change texels a held area samples saves the words it
+overwrites there, cut to the area's sampled rectangles (pieces that do not
+wrap), at the end of that area's log, oldest first, and the area stays
+held. Both areas sample the strip, so each saves its own copy.
+
+- At the area's settle (`settle_area`) each entry's words are swapped
+  with VRAM's, last entry first, so every texel holds the words it had
+  before the first saved write to it; the queue is rastered; then every
+  entry is swapped back, first entry first. A swap is its own inverse, so
+  VRAM and the saved words come back exactly, however the entries overlap
+  (a texel written twice, three loads of the same words). The entries are
+  sampled texels, which lie outside every held area, so the swaps touch
+  neither the area being rastered nor the other one, and nothing else
+  reads VRAM in between: the clock is held, a replay calls nobody back,
+  and a patch for the OpenGL copy is made from the area's own words, which
+  the replay drew from the words swapped in.
+- What makes that the words the held work sampled as it came: every
+  other writer of those texels still rasters the area first (a primitive
+  rastered at once, a write with no room in the log, a write while the
+  area keeps no rectangles, `sampled_all`), and a primitive held into the
+  area after a write that samples any texel the log saved
+  (`undo_meets`) rasters the area first too (counted as `why[WRITE]`): it
+  needs the new words, the held work the old. A primitive held after the
+  write that reads only other texels needs nothing: whatever is written
+  there after it is saved in turn.
+- Outside a settle VRAM holds the new words, as it would rastered at once:
+  readers of all of it (a state, `SoftGpu_Vram`, the frame hash, a dump)
+  settle first, which swaps and swaps back, and `SoftGpu_VramRaw`'s readers
+  see the words as written. A settle, a drop by a clear (the common path:
+  the log goes with the area), a reset and the switch forget the log.
+- Bounded: 32 entries and 64K words (128 KB) an area. Past either the
+  write rasters the area, as before. The buffers are made as the switch
+  goes on (`SoftGpu_SetDeferred`, the main thread) and freed when it goes
+  off with the clock held from the settle to the last free (a tick landing
+  between them could hold a primitive or save a write into a buffer about
+  to be freed), never where a write is saved: a `LoadImage` from the clock's tick
+  saves into the buffer already there, and without one (no memory) the
+  write rasters as before. Banks and the shadow's cells are not VRAM and
+  keep their frozen copies; a shadow primitive's words are saved like any
+  other, its cells come from the frozen copy at the settle.
+- `SoftGpu_UndoSaves` counts the writes saved (one an area a write),
+  apart from `SoftGpuDeferredStats`, which does not grow; it is not lent to
+  mods (`NOT_LENT_TO_MODS`). The frame trace's deferred line prints it.
+  With `MEMORIES_DEFERRED_RASTER=0` nothing is held, nothing saved and no
+  buffer made.
+
+Measured (Windows, headless, the OpenGL picture, the HD pack, HD text, a
+translation and every code mod in `mods/`; CPU raster time a 3D battle
+frame, the game's mode 1 = draws plus settles outside them, each frame's
+best of 3 interleaved runs; four Square battles against Simon Muran, on
+the Normal terrain and with Umi played first; a scratch build, not in the
+tree; the PC was in use):
+
+| Battles | Scale | Off | Before (the frozen copies) | Undo logs |
+|---|---|---|---|---|
+| Normal (kind 1) | 2x | 1.94 ms | 1.08 ms | 0.16 ms (-86%) |
+| Sea (kind 4) | 2x | 2.00 ms | 0.94 ms | 0.17 ms (-82%) |
+| Normal (kind 1) | 4x | 1.91 ms | 1.05 ms | 0.15 ms (-85%) |
+| Sea (kind 4) | 4x | 1.98 ms | 0.92 ms | 0.17 ms (-82%) |
+
+Per battle frame, before and after: settles by a write 0.49 and 0.40 ->
+0, patches to the OpenGL copy 0.24 and 0.20 -> 0, and held work dropped
+by its clear half of it (325 of 650 primitives, 372 of 626) -> all of it;
+0.49 and 0.39 undo saves. What is left is the primitives' front end and
+`hold`'s bookkeeping, at or below the 0.26 ms the investigation measured
+by skipping the settle outright. The other terrains' records (Forest,
+which the full duel plays, kind 6; Wasteland 3; Mountain 5; Sogen 0;
+Yami 2) move nothing, and their battles gain nothing.
+
 Checks and tools:
 
 - `pc_soft_gpu_deferred` (`tests/pc/soft_gpu_deferred_test.c`): 600
@@ -3231,6 +3318,50 @@ Checks and tools:
   replay, the mask bit's upload, an 8-bit palette counted only to VRAM's
   edge); one, `queued` left empty, only the count of held work busy frames
   met; and one, the own-area check above, nothing.
+- The undo logs (same test): the random frames move a battle background's
+  strip over the same 16x64 texels after each frame (now and then twice,
+  at another place), and must have saved more writes than frames and still
+  settled some by a write. Thirty-seven fixed cases (`soft_gpu_deferred_test
+  fixed` runs only them), each played at once, kept back and with poison,
+  all of VRAM and every store compared, and each checking its undo saves and
+  settles by a write (the later ones also the settles by a slot given up, a
+  primitive at once and all of VRAM): one load; three loads of
+  the same texels with three different words; a load, a move and a fill
+  over parts of each other, then loads under the mask; a load then the
+  clear (a sprite after the clear reads the new words); sprites held after
+  a load, one reading other texels (held with the log) and one reading
+  saved ones (the area rastered first); a load and a move from the tick
+  stand-in, nothing allocated; a full log by entries (the 33rd write) and by
+  words; `SoftGpu_VramRaw` (the new words), a state and `SoftGpu_Vram` with
+  a log outstanding; the shadow's sprite with its cells repainted and with
+  them the same; both areas saving the same write; a bank's sprite (nothing
+  saved); a 4-bit palette entry; 49 wrapping texel rectangles
+  (`sampled_all`: the write rasters); a write wider than what is sampled
+  (only that saved); writes wrapping past x 1023 and y 511 (a load, a fill
+  and a move, each in two pieces); a textured polygon reading saved texels;
+  partly overlapping sampled rectangles and writes whose pieces overlap; a
+  write in two pieces whose second does not fit; an 8-bit palette reaching
+  past x 1023; a texture window; one write that settles the other area while
+  this one saves, and one with the other's log full; a primitive rastered
+  at once over saved texels; a slot given up with a log; moves whose source
+  and destination overlap, and one from saved texels; each switch with a log
+  outstanding (copy reach, a mod's VRAM, `SetDeferred` on to on and on to off,
+  the scale, a reset); the queue at `HELD_WORDS_MAX` with a log outstanding
+  (two poly-lines of 3.5M and 0.7M words); and a tick landing as
+  `SetDeferred` settles. Two copy cases at 2x make the patch after a held
+  sprite's replay with the words swapped in, read back through the model
+  copy, at copy reach 0 and 1. A scratch script (not in the repo) makes 25
+  mutations: 20 of the undo code (the swap orders, no swap in or back, the
+  oldest entry skipped, no settle first, the settle first on one entry,
+  without the palette or on the other area, the log kept across a clear or
+  reset for both areas, one sampled rectangle, `sampled_all` unchecked, the
+  duplicate check taken as meeting, a full log taking the write, the caps
+  off by one or ignored, the buffer made in the tick, a wrapped piece one
+  word short, the rows not cut), the review's three (a wrapped piece
+  unsaved, the settle-first check skipped for polygons, the duplicate check
+  dropping any piece that meets one, which is the partial-meeting mutation
+  again) and the two clock holds (`SetDeferred`, the counter's read): all 25
+  fail the fixed cases alone, none needs the random frames.
 - The same test's copy runs (2x): two seeds of the random frames at 2x
   with a model of the OpenGL picture's recorder and copy of VRAM (loads,
   moves and fills cut at VRAM's edges as `gl_picture.c` cuts them,

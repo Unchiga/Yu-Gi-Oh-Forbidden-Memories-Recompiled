@@ -110,8 +110,10 @@ extern unsigned long long (*SoftGpu_Clock)(void);
 /* What the deferred raster did since SoftGpu_SetDeferred turned it on. */
 enum {
     SOFT_GPU_WHY_READ,      /* a reader settled it (a store, a move's source, a host lookup, a hash...) */
-    SOFT_GPU_WHY_WRITE,     /* a load, move or fill wrote into it, or into a texture it samples, or a bank or
-                             * the pack's shadow it samples changed (soft_gpu.c, frozen_sync) */
+    SOFT_GPU_WHY_WRITE,     /* a load, move or fill wrote into it, or into a texture it samples with no room
+                             * in its undo log, or a primitive held after such a write samples what it
+                             * changed (soft_gpu.c, undo_save), or a bank or the pack's shadow it samples
+                             * changed (frozen_sync) */
     SOFT_GPU_WHY_DRAW,      /* a primitive rastered at once drew into it, or samples it */
     SOFT_GPU_WHY_AREA,      /* another drawing area took its place */
     SOFT_GPU_WHY_ALL,       /* all of VRAM: a state, a scale, the switch, a mod */
@@ -147,6 +149,11 @@ typedef struct SoftGpuDeferredStats {
     unsigned long long queued[SOFT_GPU_QUEUES];
 } SoftGpuDeferredStats;
 void SoftGpu_DeferredStats(SoftGpuDeferredStats *out);
+/* Loads, moves and fills since SoftGpu_SetDeferred turned it on that changed
+ * texels an area's held work samples and kept the words they overwrote in its
+ * undo log instead of rastering it (soft_gpu.c, undo_save): one an area a
+ * write. Apart from SoftGpuDeferredStats, which does not grow. */
+unsigned long long SoftGpu_UndoSaves(void);
 #endif
 
 /* Texture banks: alternate VRAM that a primitive can sample instead, chosen

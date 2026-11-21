@@ -9,7 +9,9 @@
  * lines into it, some sampling the other area, VRAM pages, palettes, a
  * texture bank or the texture pack's shadow, between loads, moves, fills,
  * stores, settles of a rectangle (a host lookup), tags and shadow cells
- * written (a pack painting), save states and a mod binding VRAM. Every
+ * written (a pack painting), save states and a mod binding VRAM, and after
+ * each frame a battle background's strip moved over the same texels (which
+ * held work samples: kept in undo logs, soft_gpu.c's undo_save). Every
  * store's words, every state's VRAM and drawing state, the final VRAM, the
  * tags and the shadow must be the same in all three. TextureDump_Prepare,
  * which a textured primitive calls as it comes, also loads and stores at
@@ -82,6 +84,7 @@ typedef struct Outcome {
     int over_held[2];  /* a busy frame's loads, moves, fills, stores, settles, tags and states
                         * made while the other area (0,0 or 320,0) held work */
     uint64_t reads;    /* copy runs: what the recorder's replays read of its copy */
+    unsigned long long undo_saves; /* SoftGpu_UndoSaves at the end */
     int replays;
     SoftGpuDeferredStats stats;
 } Outcome;
@@ -922,6 +925,16 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
             }
         }
         SoftGpu_Gp0(batch, at);
+        /* A battle background's animation (func_8004E9A0): after the frame,
+         * one of three strips moved over the same 16x64 texels (page 11's
+         * lower half, which both areas' work samples at times), often the
+         * same words as before, and now and then once more at once (two
+         * writes to the same texels while both areas hold). */
+        if (below(2)) {
+            int strip = below(4) ? 0 : below(3);
+            SoftGpu_Move(720 + 16 * strip, 448, 704, 448, 16, 64);
+            if (below(4) == 0) SoftGpu_Move(720 + 16 * below(3), 448, 704 + below(8), 448 + below(32), 16, 64);
+        }
         if (copy_mode) { /* the OpenGL picture's present settles nothing; most frames replay */
             if (below(4)) {
                 model_replay();
@@ -952,6 +965,7 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     }
     vram = SoftGpu_Vram();
     SoftGpu_DeferredStats(&out->stats);
+    out->undo_saves = SoftGpu_UndoSaves();
     out->vram = fnv(1469598103934665603ull, vram, (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 2);
     out->tags = fnv(1469598103934665603ull, TextureDump_Tags, (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 4);
     out->shadow = fnv(1469598103934665603ull, TextureDump_Shadow, (size_t)TEXTURE_SHADOW_WIDTH * SOFT_GPU_HEIGHT * 2);
@@ -959,6 +973,622 @@ static int run(uint32_t start, int frames, int deferred, int poison, Outcome *ou
     out->gpu = fnv(1469598103934665603ull, vram, size);
     SoftGpu_SetDeferred(0, 0);
     return 0;
+}
+
+/* --- The undo log (soft_gpu.c, undo_save) ------------------------------
+ * A load, a move or a fill into texels held work samples keeps the words it
+ * overwrites instead of rastering that work; its area's settle swaps them
+ * back in while it rasters. Each case below runs rastered at once, kept back
+ * and kept back with the poison, and everything read on the way (stores,
+ * states, the words left) and all of VRAM at the end must be the same. The
+ * texture is the 16-bit page at 640,256: texel u,v is word 640+u,256+v. */
+static const uint32_t undo_left[] = {0xe3000000u, 0xe4000000u | 319 | (239 << 10), 0xe5000000u, 0xe6000000u,
+                                     0xe1000000u | 10 | 16 | (2u << 7)};
+static const uint32_t undo_right[] = {0xe3000000u | 320, 0xe4000000u | 639 | (239 << 10), 0xe5000000u | 320,
+                                      0xe6000000u, 0xe1000000u | 10 | 16 | (2u << 7)};
+static uint64_t undo_seen;
+
+/* A raw textured sprite w x h at x,y of the area from texel u,v. */
+static int undo_sprite(int x, int y, int u, int v, int w, int h)
+{
+    const uint32_t sprite[] = {0x65808080u, (uint32_t)y << 16 | (uint32_t)x, (uint32_t)(v << 8 | u),
+                               (uint32_t)h << 16 | (uint32_t)w};
+    return SoftGpu_Gp0(sprite, 4) == 4;
+}
+
+/* A load at VRAM's own coordinates (x, y may wrap), and one into the texture. */
+static void undo_put(int x, int y, int w, int h, uint16_t base)
+{
+    static uint16_t words[512 * 512];
+    for (int i = 0; i < w * h; i++) words[i] = (uint16_t)(base + i * 7) | 1;
+    SoftGpu_Load(x, y, w, h, words);
+}
+
+static void undo_load(int u, int v, int w, int h, uint16_t base)
+{
+    undo_put(640 + u, 256 + v, w, h, base);
+}
+
+/* What the clock's tick does in case 36: a sprite and a load. */
+static void switch_tick(void)
+{
+    in_tick = 1;
+    undo_sprite(50, 10, 0, 0, 32, 32);
+    undo_load(6, 6, 8, 8, 0x3000);
+    in_tick = 0;
+}
+
+static void undo_store(int x, int y, int w, int h)
+{
+    static uint16_t words[320 * 240];
+    SoftGpu_Store(x, y, w, h, words);
+    undo_seen = fnv(undo_seen, words, (size_t)w * h * 2);
+}
+
+static void undo_begin(int deferred, int poison)
+{
+    static uint16_t words[1024 * 512];
+    uint32_t s = 12345;
+    SoftGpu_SetDeferred(0, 0);
+    SoftGpu_Reset();
+    for (int i = 0; i < 1024 * 512; i++) words[i] = (uint16_t)((s = s * 1664525u + 1013904223u) >> 16) | 1;
+    SoftGpu_Load(0, 0, 1024, 512, words);
+    SoftGpu_SetDeferred(deferred, poison);
+    SoftGpu_Gp0(undo_left, 5);
+    SoftGpu_Fill(0, 0, 320, 240, 0x404040); /* the clear: the area may hold */
+    undo_seen = 1469598103934665603ull;
+}
+
+/* Case `which` in one mode: returns 0 or the line that failed. Its reads in
+ * undo_seen, all of VRAM after (settled whole) hashed into `vram`. */
+static int undo_case(int which, int deferred, int poison, uint64_t *vram, SoftGpuDeferredStats *st,
+                     unsigned long long *saves)
+{
+    size_t size;
+    const void *state;
+    undo_begin(deferred, poison);
+    switch (which) {
+    case 0: /* one load, then a store of the area */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        undo_store(0, 0, 64, 64);
+        break;
+    case 1: /* three loads of the same texels, three different words each: the oldest is drawn */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        undo_load(4, 4, 8, 8, 0x2000);
+        undo_load(4, 4, 8, 8, 0x3000);
+        undo_store(0, 0, 64, 64);
+        break;
+    case 2: { /* a load, a move and a fill, each over part of the others; then the mask */
+        static const uint32_t mask[] = {0xe6000003u}, unmask[] = {0xe6000000u};
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        CHECK(undo_sprite(60, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        SoftGpu_Move(900, 300, 640 + 8, 256 + 8, 8, 8);
+        SoftGpu_Fill(640 + 2, 256 + 10, 16, 4, 0x00ff00);
+        CHECK(SoftGpu_Gp0(mask, 1) == 1); /* set the mask bit, keep words that have it */
+        undo_load(6, 0, 8, 16, 0x5000);
+        undo_load(0, 6, 16, 4, 0x6000);
+        CHECK(SoftGpu_Gp0(unmask, 1) == 1);
+        undo_store(0, 0, 128, 64);
+        break;
+    }
+    case 3: /* a load, then the clear drops the area and its log; a sprite after the clear reads the new words */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_store(0, 0, 64, 64);
+        break;
+    case 4: /* a sprite held after a load: one that reads only texels the load did not save stays held with
+             * it; one that reads saved texels rasters what is held first */
+        CHECK(undo_sprite(10, 10, 0, 0, 16, 16));
+        CHECK(undo_sprite(40, 10, 16, 0, 16, 16));
+        undo_load(4, 4, 4, 4, 0x1000);
+        CHECK(undo_sprite(70, 10, 20, 2, 8, 8));
+        if (deferred) {
+            SoftGpu_DeferredStats(st);
+            CHECK(st->settled == 0 && SoftGpu_UndoSaves() == 1);
+        }
+        CHECK(undo_sprite(100, 10, 2, 2, 4, 4));
+        if (deferred) {
+            SoftGpu_DeferredStats(st);
+            CHECK(st->settled == 1 && st->why[SOFT_GPU_WHY_WRITE] == 1 && st->held == 4);
+        }
+        undo_load(2, 2, 4, 4, 0x2000);
+        undo_store(0, 0, 128, 64);
+        break;
+    case 5: { /* a load and a move from the clock's tick: saved with the buffer made before, nothing allocated */
+        int allocs = tick_allocs;
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        in_tick = 1;
+        undo_load(4, 4, 8, 8, 0x1000);
+        SoftGpu_Move(900, 300, 640 + 6, 256 + 6, 8, 8);
+        in_tick = 0;
+        CHECK(tick_allocs == allocs);
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 6: /* the log full of entries: the 33rd load rasters the area first */
+        CHECK(undo_sprite(10, 10, 0, 0, 64, 64));
+        for (int i = 0; i < 40; i++) undo_load(i, 63 - i, 1, 1, (uint16_t)(0x100 * i));
+        undo_store(0, 0, 128, 128);
+        break;
+    case 7: /* the log full of words: a page's worth fits, one word more rasters the area first */
+        CHECK(undo_sprite(10, 10, 0, 0, 256, 200));
+        undo_load(0, 0, 256, 200, 0x1000);
+        undo_load(0, 200, 256, 56, 0x2000);
+        if (deferred) {
+            SoftGpu_DeferredStats(st);
+            CHECK(SoftGpu_UndoSaves() == 1 && st->settled == 0); /* 256x200: the second is not sampled */
+        }
+        CHECK(undo_sprite(10, 220, 0, 200, 256, 16)); /* reads none of the saved words: held with them */
+        undo_load(0, 210, 256, 46, 0x3000);         /* 256x6 sampled: fits */
+        CHECK(undo_sprite(10, 10, 0, 0, 256, 200)); /* reads the saved words: the area rastered first */
+        undo_load(0, 0, 256, 200, 0x4000);         /* 51,200 words */
+        undo_load(0, 0, 256, 60, 0x5000);          /* 15,360 more: no room */
+        undo_store(0, 0, 320, 240);
+        break;
+    case 8: /* readers of all of VRAM with a log outstanding see the new words */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        CHECK(SoftGpu_VramRaw()[(256 + 4) * SOFT_GPU_WIDTH + 640 + 4] == (0x1000 | 1)); /* not settled */
+        state = SoftGpu_StateData(0, &size); /* settles all */
+        undo_seen = fnv(undo_seen, state, size);
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x2000);
+        state = SoftGpu_Vram();
+        undo_seen = fnv(undo_seen, state, (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 2);
+        break;
+    case 9: { /* the pack's shadow: a sprite from its page held, a move into its texels, cells painted again */
+        static const uint32_t page[] = {0xe1000000u | 10 | 16 | (2u << 7)};
+        CHECK(SoftGpu_Gp0(page, 1) == 1);
+        for (int j = 0; j < 8; j++)
+            for (int i = 0; i < 8; i++) *TextureDump_Cell(640 + i, 256 + j, 0) = (uint16_t)(0x8000 | (i * 4 + j));
+        CHECK(undo_sprite(10, 10, 0, 0, 16, 16));
+        SoftGpu_Move(900, 300, 640 + 2, 256 + 2, 8, 8);
+        for (int j = 0; j < 8; j++)
+            for (int i = 0; i < 8; i++) *TextureDump_Cell(640 + i, 256 + j, 0) = 0x8000 | 0x03e0;
+        CHECK(undo_sprite(40, 10, 8, 8, 8, 8)); /* reads moved texels: the first rastered first */
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 10: { /* both areas hold, both sample the texels: one write saved in each log */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        SoftGpu_Gp0(undo_right, 5);
+        SoftGpu_Fill(320, 0, 320, 240, 0x202020);
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        if (deferred) {
+            SoftGpu_DeferredStats(st);
+            CHECK(SoftGpu_UndoSaves() == 2 && st->settled == 0);
+        }
+        undo_load(0, 0, 32, 32, 0x2000);
+        undo_store(320, 0, 64, 64); /* the second area first */
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 12: { /* the shadow's sprite, a move into its texels with its cells the same: the swap alone */
+        static const uint32_t page[] = {0xe1000000u | 10 | 16 | (2u << 7)};
+        CHECK(SoftGpu_Gp0(page, 1) == 1);
+        for (int j = 0; j < 8; j++)
+            for (int i = 0; i < 8; i++) *TextureDump_Cell(640 + i, 256 + j, 0) = (uint16_t)(0x8000 | (i * 4 + j));
+        CHECK(undo_sprite(10, 10, 0, 0, 16, 16));
+        SoftGpu_Move(900, 300, 640 + 2, 256 + 2, 12, 12);
+        CHECK(undo_sprite(40, 10, 0, 0, 2, 2)); /* reads none of the moved texels: held with the log */
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 13: { /* a 4-bit sprite's palette: an entry loaded anew is saved; a sprite after it with the same
+                * palette rasters the first one first; one with another palette stays held with the log */
+        static const uint32_t page[] = {0xe1000000u | 10 | 16}; /* 4-bit 640,256 */
+        const uint32_t first[] = {0x65808080u, 0x000a000au, (uint32_t)((500u << 6) | 50) << 16, 0x00100010u};
+        const uint32_t other[] = {0x65808080u, 0x000a0028u, (uint32_t)((501u << 6) | 50) << 16, 0x00100010u};
+        const uint32_t again[] = {0x65808080u, 0x000a0046u, (uint32_t)((500u << 6) | 50) << 16, 0x00100010u};
+        uint16_t entry = 0x7c1f;
+        CHECK(SoftGpu_Gp0(page, 1) == 1 && SoftGpu_Gp0(first, 4) == 4);
+        SoftGpu_Load(800 + 5, 500, 1, 1, &entry);
+        CHECK(SoftGpu_Gp0(other, 4) == 4);
+        CHECK(SoftGpu_Gp0(again, 4) == 4);
+        undo_store(0, 0, 128, 64);
+        break;
+    }
+    case 14: { /* 49 sprites whose texels wrap past x 1023 (no two can be merged): the area keeps no
+                * rectangles (sampled_all), so a load into the last one's texels rasters it first */
+        static const uint32_t page[] = {0xe1000000u | 15 | 16 | (2u << 7)}; /* 16-bit 960,256 */
+        CHECK(SoftGpu_Gp0(page, 1) == 1);
+        for (int i = 0; i < 49; i++) CHECK(undo_sprite(i * 4, 100, 60, i * 4, 12, 2));
+        undo_load(320 + 60, 192, 4, 2, 0x1000); /* 1020,448 */
+        undo_store(0, 0, 200, 104);
+        break;
+    }
+    case 15: { /* a load wider and taller than what the held sprite samples: only the sampled words are
+                * saved, so a sprite after it that reads the load's other words stays held with the log */
+        CHECK(undo_sprite(10, 10, 8, 8, 16, 16));
+        undo_load(0, 0, 32, 32, 0x1000);
+        CHECK(undo_sprite(40, 10, 10, 2, 4, 4));  /* above the saved words */
+        CHECK(undo_sprite(70, 10, 2, 10, 4, 4));  /* left of them */
+        if (deferred) {
+            SoftGpu_DeferredStats(st);
+            CHECK(st->settled == 0 && st->held == 3 && SoftGpu_UndoSaves() == 1);
+        }
+        undo_store(0, 0, 128, 64);
+        break;
+    }
+    case 11: /* a bank's sprite reads no VRAM word: a load at its coordinates saves nothing */
+    {
+        static const uint32_t bank_page[] = {0xe1000000u | 10 | 16 | (2u << 7) | SOFT_GPU_BANK_TPAGE(3)};
+        uint16_t *bank = SoftGpu_Bank(3);
+        for (int j = 0; j < 32; j++)
+            for (int i = 0; i < 32; i++) bank[(256 + j) * SOFT_GPU_WIDTH + 640 + i] = (uint16_t)(0x7c00 | i | j << 5);
+        CHECK(SoftGpu_Gp0(bank_page, 1) == 1);
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        if (deferred) {
+            SoftGpu_DeferredStats(st);
+            CHECK(SoftGpu_UndoSaves() == 0 && st->settled == 0 && st->held == 1);
+        }
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 16: { /* writes that wrap past x 1023, into a sampled rectangle that wraps too: a load, a fill and
+                * a move, each split in two and saved in pieces; the second sprite reads both */
+        static const uint32_t page[] = {0xe1000000u | 15 | 16 | (2u << 7)}; /* 16-bit 960,256 */
+        CHECK(SoftGpu_Gp0(page, 1) == 1);
+        CHECK(undo_sprite(10, 10, 60, 0, 12, 8)); /* x 1020..1023 and 0..7, y 256..263 */
+        undo_put(1018, 258, 10, 3, 0x1000);       /* 1018..1023 and 0..3 */
+        SoftGpu_Fill(1021, 259, 6, 2, 0x00f800);  /* 1021..1023 and 0..2 */
+        SoftGpu_Move(300, 300, 1022, 260, 6, 3);  /* the destination wraps */
+        CHECK(undo_sprite(40, 10, 60, 0, 12, 8)); /* reads the saved words, both pieces */
+        undo_put(1022, 257, 4, 2, 0x2000);
+        undo_store(0, 0, 64, 32);
+        break;
+    }
+    case 17: /* writes that wrap past y 511, into sampled rows 504..511 */
+        CHECK(undo_sprite(10, 10, 0, 248, 16, 8));
+        undo_put(640, 510, 16, 4, 0x1000);       /* rows 510, 511, 0 and 1 */
+        SoftGpu_Move(900, 300, 640, 509, 16, 4); /* rows 509..511 and 0 */
+        SoftGpu_Fill(644, 511, 8, 2, 0x0000f8);  /* rows 511 and 0 */
+        undo_store(0, 0, 64, 32);
+        undo_store(640, 0, 16, 2);
+        break;
+    case 18: { /* one write over the other area and this one's sampled texels: the other settles first, this
+                * one saves */
+        static const uint32_t right_sprite[] = {0x65808080u, 0x000a000au, (100u << 8) | 100u, 0x00080008u};
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        CHECK(SoftGpu_Gp0(undo_right, 5) == 5);
+        SoftGpu_Fill(320, 0, 320, 240, 0x202020);
+        CHECK(SoftGpu_Gp0(right_sprite, 4) == 4);
+        undo_put(600, 230, 60, 40, 0x1000); /* over the right area (320..639) and the texels (640..) */
+        undo_store(320, 0, 64, 64);
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 19: /* a move whose source is texels a log saved, into sampled texels; a sprite reads the destination */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        SoftGpu_Move(640 + 4, 256 + 4, 640 + 20, 256 + 20, 8, 8);
+        CHECK(undo_sprite(50, 10, 20, 20, 8, 8));
+        undo_store(0, 0, 128, 64);
+        break;
+    case 20: /* moves whose source and destination overlap, inside sampled texels */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        SoftGpu_Move(640 + 2, 256 + 2, 640 + 3, 256 + 2, 16, 8);
+        SoftGpu_Move(640 + 5, 256 + 5, 640 + 5, 256 + 4, 8, 8);
+        SoftGpu_Move(640 + 9, 256 + 9, 640 + 7, 256 + 9, 8, 8);
+        undo_store(0, 0, 64, 64);
+        break;
+    case 21: { /* one write, two areas: one saves, the other's log is already full */
+        static const uint32_t b0[] = {0x65808080u, 0x000a000au, 0u, 0x00080008u};
+        static const uint32_t b1[] = {0x65808080u, 0x000a001eu, (100u << 8) | 100u, 0x00200020u};
+        CHECK(undo_sprite(10, 10, 0, 0, 8, 8));
+        CHECK(SoftGpu_Gp0(undo_right, 5) == 5);
+        SoftGpu_Fill(320, 0, 320, 240, 0x202020);
+        CHECK(SoftGpu_Gp0(b0, 4) == 4 && SoftGpu_Gp0(b1, 4) == 4);
+        for (int i = 0; i < 32; i++) undo_load(100 + i, 100, 1, 1, (uint16_t)(0x300 + i)); /* b1's: full */
+        undo_load(2, 2, 2, 2, 0x1000); /* the first area's sample and b0's: one saves, the other's log is full */
+        undo_store(320, 0, 64, 64);
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 22: { /* a third drawing area evicts the oldest slot, which has a log; that slot then logs anew */
+        static const uint32_t third[] = {0xe3000000u | 640, 0xe4000000u | 959 | (239 << 10), 0xe5000000u | 640,
+                                         0xe6000000u, 0xe1000000u | 10 | 16 | (2u << 7)};
+        static const uint32_t right_sprite[] = {0x65808080u, 0x000a000au, (100u << 8) | 100u, 0x00080008u};
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        CHECK(SoftGpu_Gp0(undo_right, 5) == 5);
+        SoftGpu_Fill(320, 0, 320, 240, 0x202020);
+        CHECK(SoftGpu_Gp0(right_sprite, 4) == 4);
+        CHECK(SoftGpu_Gp0(third, 5) == 5);
+        SoftGpu_Fill(640, 0, 320, 240, 0x101010);
+        CHECK(undo_sprite(10, 10, 40, 40, 8, 8));
+        undo_load(42, 42, 2, 2, 0x2000);
+        undo_load(4, 4, 8, 8, 0x3000);
+        undo_store(640, 0, 64, 64);
+        undo_store(320, 0, 64, 64);
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 23: { /* a primitive rastered at once (a small drawing area) over saved texels */
+        static const uint32_t small[] = {0xe3000000u | 640 | (256u << 10), 0xe4000000u | 767 | (383u << 10),
+                                         0xe5000000u | 640 | (256u << 11)};
+        static const uint32_t rect[] = {0x6000ff00u, 0x00020002u, 0x00080008u};
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        CHECK(SoftGpu_Gp0(small, 3) == 3 && SoftGpu_Gp0(rect, 3) == 3);
+        CHECK(SoftGpu_Gp0(undo_left, 5) == 5);
+        CHECK(undo_sprite(50, 10, 0, 0, 32, 32));
+        undo_store(0, 0, 128, 64);
+        break;
+    }
+    case 24: case 25: case 26: case 27: case 28: case 29: { /* each switch with a log outstanding settles
+                * it, and the area logs again after */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        switch (which) {
+        case 24: SoftGpu_SetCopyReach(3); break;
+        case 25: SoftGpu_SetModVramUsers(1); SoftGpu_SetModVramUsers(0); break;
+        case 26: SoftGpu_SetDeferred(deferred, poison); break; /* on to on (off to off at once) */
+        case 27: CHECK(SoftGpu_SetScale(2)); CHECK(SoftGpu_SetScale(1)); break;
+        case 28: SoftGpu_Reset(); break;
+        default: SoftGpu_SetDeferred(0, 0); break; /* on to off: the buffers are freed */
+        }
+        CHECK(SoftGpu_Gp0(undo_left, 5) == 5);
+        SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(5, 5, 8, 8, 0x2000);
+        SoftGpu_SetCopyReach(0);
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 30: { /* an 8-bit palette at x 896 reaching past x 1023 (the greatest index the texels hold is 160):
+                * an entry in the part that wraps is saved, one past the greatest is not */
+        static const uint32_t page8[] = {0xe1000000u | 10 | 16 | (1u << 7)};
+        const uint32_t clut = (56u | (500u << 6)) << 16;
+        const uint32_t s1[] = {0x65808080u, 0x000a000au, clut | 0u, 0x00100020u};   /* u 0..31 */
+        const uint32_t s2[] = {0x65808080u, 0x000a0032u, clut | 128u, 0x00100020u}; /* u 128..159 */
+        static uint16_t idx[16 * 16];
+        uint16_t entry = 0x7c1f, far = 0x03e0;
+        for (int i = 0; i < 16 * 16; i++) idx[i] = (uint16_t)((i & 31) | ((i * 3 & 31) << 8));
+        idx[0] = 160; /* index 160: word 896 + 160 - 1024 = 32 */
+        SoftGpu_Load(640, 256, 16, 16, idx);
+        CHECK(SoftGpu_Gp0(page8, 1) == 1 && SoftGpu_Gp0(s1, 4) == 4);
+        SoftGpu_Load(32, 500, 1, 1, &entry);       /* index 160, past x 1023: saved */
+        SoftGpu_Load(896 + 20, 500, 1, 1, &entry); /* index 20: saved */
+        SoftGpu_Load(100, 500, 1, 1, &far);        /* index 228: not sampled */
+        CHECK(SoftGpu_Gp0(s2, 4) == 4);            /* texels never loaded: random words, may read an entry */
+        undo_store(0, 0, 128, 64);
+        break;
+    }
+    case 31: { /* a texture window: the page's whole width is sampled, so a load outside the sprite's texels is
+                * saved, and a sprite after it reads them */
+        static const uint32_t window[] = {0xe2000000u | 1u}, nowindow[] = {0xe2000000u};
+        CHECK(SoftGpu_Gp0(window, 1) == 1);
+        CHECK(undo_sprite(10, 10, 0, 0, 16, 16));
+        CHECK(SoftGpu_Gp0(nowindow, 1) == 1);
+        undo_load(200, 5, 4, 4, 0x1000);
+        CHECK(undo_sprite(40, 10, 200, 5, 4, 4));
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 32: { /* a textured polygon (a raw quad) held, a load, a second quad reading the saved texels */
+        const uint32_t tpage = (10u | 16u | (2u << 7)) << 16;
+        const uint32_t quad[] = {0x2d808080u, 0x000a000au, 0u, 0x000a002au, tpage | 32u,
+                                 0x002a000au, (32u << 8), 0x002a002au, (32u << 8) | 32u};
+        const uint32_t quad2[] = {0x2d808080u, 0x000a003cu, (2u << 8) | 2u, 0x000a0044u, tpage | (2u << 8) | 6u,
+                                  0x0012003cu, (6u << 8) | 2u, 0x00120044u, (6u << 8) | 6u};
+        CHECK(SoftGpu_Gp0(quad, 9) == 9);
+        undo_load(4, 4, 8, 8, 0x1000);
+        CHECK(SoftGpu_Gp0(quad2, 9) == 9);
+        undo_load(20, 20, 4, 4, 0x2000);
+        undo_store(0, 0, 128, 64);
+        break;
+    }
+    case 33: /* a write in two pieces (it spans two sprites' texels): the first fits as the log's 32nd entry,
+              * the second does not: nothing of it is kept and the area is rastered first */
+        CHECK(undo_sprite(10, 10, 0, 0, 8, 8));
+        CHECK(undo_sprite(30, 10, 100, 0, 8, 8));
+        for (int i = 0; i < 31; i++) undo_load(i % 8, i / 8, 1, 1, (uint16_t)(0x200 + i));
+        undo_load(0, 0, 108, 2, 0x1000);
+        undo_store(0, 0, 64, 64);
+        break;
+    case 34: /* sampled rectangles that overlap in part; writes whose pieces overlap each other */
+        CHECK(undo_sprite(10, 10, 0, 0, 16, 16));
+        CHECK(undo_sprite(30, 10, 8, 8, 16, 16));
+        undo_load(4, 4, 16, 16, 0x1000);
+        undo_load(6, 6, 12, 12, 0x2000);
+        undo_load(0, 0, 24, 24, 0x3000);
+        undo_store(0, 0, 64, 64);
+        break;
+    case 35: { /* the queue at the cap of its words (HELD_WORDS_MAX) with a log outstanding: the next primitive
+                * rasters the area first, the saved words swapped in, and is held after */
+        enum { FIRST = 3500000, SECOND = 700000 };
+        uint32_t *list = malloc((size_t)FIRST * sizeof(uint32_t));
+        CHECK(list != NULL);
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        for (int round = 0; round < 2; round++) { /* a poly-line zigzagging over the sprite */
+            size_t n = round ? SECOND : FIRST, i = 0;
+            list[i++] = 0x48ffffffu | (uint32_t)round << 8; /* mono poly-line */
+            while (i < n - 1) {
+                list[i] = (uint32_t)(10 + (int)(i % 4) * 5 + round) << 16 | (uint32_t)(10 + (int)(i % 3) * 7);
+                i++;
+            }
+            list[i++] = 0x55555555u;
+            if (SoftGpu_Gp0(list, n) != n) {
+                free(list);
+                CHECK(0);
+            }
+            if (!round && deferred) {
+                SoftGpuDeferredStats now;
+                SoftGpu_DeferredStats(&now);
+                CHECK(now.held == 2 && now.why[SOFT_GPU_WHY_ALL] == 0 && SoftGpu_UndoSaves() == 1);
+            }
+        }
+        free(list);
+        undo_store(0, 0, 64, 64);
+        break;
+    }
+    case 36: { /* a tick landing as SetDeferred settles: it holds the clock throughout, so the tick comes
+                * once the buffers are freed and deferred is off, and draws and loads at once */
+        CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+        undo_load(4, 4, 8, 8, 0x1000);
+        if (deferred) {
+            pending_tick = switch_tick; /* comes as the clock is let go */
+            SoftGpu_SetDeferred(0, 0);
+            CHECK(!pending_tick && SoftGpu_Deferred() == 0);
+        } else {
+            switch_tick();
+        }
+        undo_store(0, 0, 128, 64);
+        break;
+    }
+    }
+    SoftGpu_DeferredStats(st);
+    *saves = SoftGpu_UndoSaves();
+    *vram = fnv(undo_seen, SoftGpu_Vram(), (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 2);
+    TextureDump_Prepare = NULL;
+    SoftGpu_SetDeferred(0, 0);
+    return 0;
+}
+
+/* At 2x with the model recorder (the OpenGL picture's copy of VRAM): an area
+ * holds a sprite across the take and one after it; a load into what both
+ * read is saved; a store settles the area, which makes its patch after the
+ * first sprite, rastered from the words swapped back in; a move then reads
+ * the area from the copy, patched. Kept back or not, the copy reads the same. */
+static int undo_copy_case(int mode, int poison, uint64_t *out, SoftGpuDeferredStats *st,
+                          unsigned long long *saves)
+{
+    window_settles = 0;
+    if (copy_begin(mode, poison)) return 1;
+    undo_load(0, 0, 32, 32, 0x0100);
+    SoftGpu_Gp0(undo_left, 5);
+    SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+    CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+    model_replay(); /* the take: the sprite held across it */
+    CHECK(undo_sprite(50, 10, 0, 0, 32, 32));
+    undo_load(4, 4, 8, 8, 0x1000);
+    undo_seen = 1469598103934665603ull;
+    undo_store(0, 0, 64, 64);
+    SoftGpu_Move(0, 0, 700, 300, 128, 64); /* the copy's area words, patched, read (model_move) */
+    SoftGpu_DeferredStats(st);
+    *saves = SoftGpu_UndoSaves();
+    *out = fnv(undo_seen, &(uint64_t){copy_end()}, sizeof(uint64_t));
+    *out = fnv(*out, SoftGpu_Vram(), (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 2);
+    window_settles = 1;
+    return 0;
+}
+
+#define UNDO_CASES 37
+
+/* The same at copy reach 1 (Texture xBR's: a sprite's rectangle reaches one
+ * texel past its last u, v, which the copy reads), and with a load into
+ * only that column: it is saved, and a sprite after it that reaches it
+ * rasters the area first. */
+static int undo_copy_reach_case(int mode, int poison, uint64_t *out, SoftGpuDeferredStats *st,
+                                unsigned long long *saves)
+{
+    int reach = model_reach;
+    model_reach = 1;
+    window_settles = 0;
+    if (copy_begin(mode, poison)) {
+        model_reach = reach;
+        return 1;
+    }
+    undo_load(0, 0, 40, 32, 0x0100);
+    CHECK(SoftGpu_Gp0(undo_left, 5) == 5);
+    SoftGpu_Fill(0, 0, 320, 240, 0x404040);
+    CHECK(undo_sprite(10, 10, 0, 0, 32, 32));
+    model_replay(); /* the take: the sprite held across it */
+    CHECK(undo_sprite(50, 10, 0, 0, 16, 16));
+    undo_load(32, 0, 1, 32, 0x1000);         /* u 32: the reach only */
+    CHECK(undo_sprite(90, 10, 33, 0, 4, 4)); /* reads u 33..36, reaches 37: not the saved column */
+    CHECK(undo_sprite(130, 10, 28, 0, 4, 4)); /* reaches u 32: the area is rastered first */
+    undo_seen = 1469598103934665603ull;
+    undo_store(0, 0, 160, 64);
+    SoftGpu_Move(0, 0, 700, 300, 160, 64); /* the copy's area words, patched, read */
+    SoftGpu_DeferredStats(st);
+    *saves = SoftGpu_UndoSaves();
+    *out = fnv(undo_seen, &(uint64_t){copy_end()}, sizeof(uint64_t));
+    *out = fnv(*out, SoftGpu_Vram(), (size_t)SOFT_GPU_WIDTH * SOFT_GPU_HEIGHT * 2);
+    window_settles = 1;
+    model_reach = reach;
+    return 0;
+}
+
+static int undo_cases(void)
+{
+    {
+        uint64_t got[3];
+        SoftGpuDeferredStats st[3];
+        unsigned long long saves[3];
+        for (int mode = 0; mode < 3; mode++)
+            CHECK(undo_copy_case(mode ? SOFT_GPU_DEFERRED_AUTO : 0, mode == 2, &got[mode], &st[mode], &saves[mode]) == 0);
+        CHECK(got[0] == got[1] && got[0] == got[2]);
+        for (int mode = 1; mode < 3; mode++)
+            CHECK(saves[mode] == 1 && st[mode].patches == 1 && st[mode].why[SOFT_GPU_WHY_WRITE] == 0 &&
+                  st[mode].copy_missed == 1);
+    }
+    {
+        uint64_t got[3];
+        SoftGpuDeferredStats st[3];
+        unsigned long long saves[3];
+        for (int mode = 0; mode < 3; mode++)
+            CHECK(undo_copy_reach_case(mode ? SOFT_GPU_DEFERRED_AUTO : 0, mode == 2, &got[mode], &st[mode],
+                                       &saves[mode]) == 0);
+        CHECK(got[0] == got[1] && got[0] == got[2]);
+        for (int mode = 1; mode < 3; mode++)
+            CHECK(saves[mode] == 1 && st[mode].why[SOFT_GPU_WHY_WRITE] == 1 && st[mode].patches == 1 &&
+                  st[mode].copy_missed == 1);
+    }
+    int bad = 0;
+    for (int which = 0; which < UNDO_CASES; which++) {
+        uint64_t vram[3];
+        SoftGpuDeferredStats st[3];
+        unsigned long long got_saves[3];
+        for (int mode = 0; mode < 3; mode++) {
+            TextureDump_Prepare = which == 9 || which == 12 ? shadow_prepare : NULL;
+            if (undo_case(which, mode > 0, mode == 2, &vram[mode], &st[mode], &got_saves[mode])) {
+                fprintf(stderr, "undo case %d, mode %d\n", which, mode);
+                return 1;
+            }
+        }
+        if (vram[0] != vram[1] || vram[0] != vram[2]) {
+            fprintf(stderr, "undo case %d: kept back %s rastered at once\n", which,
+                    vram[0] != vram[1] ? "differs from" : "with the poison differs from");
+            return 1;
+        }
+        /* What each case is for: it ran the path it names. */
+        for (int mode = 1; mode < 3; mode++) {
+            const SoftGpuDeferredStats *s = &st[mode];
+            /* The writes saved (one count a write, whatever its pieces) and the settles by a write. */
+            static const unsigned long long saves[UNDO_CASES] = {
+                1, 3, 5, 1, 2, 2, 32, 3, 2, 1, 4, 0, 1, 1, 0, 1,
+                4, 3, 1, 2, 3, 33, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 31, 3, 1, 1};
+            static const unsigned long long writes[UNDO_CASES] = {
+                0, 0, 0, 0, 1, 0, 1, 2, 0, 1, 0, 0, 0, 1, 1, 0,
+                1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0};
+            /* From case 16 on, the settles by a slot given up (a third area), by a primitive rastered at once
+             * and for all of VRAM (a switch, a cap). */
+            static const unsigned others[UNDO_CASES - 16][3] = {
+                {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0},
+                {0, 0, 2}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0},
+                {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 1}};
+            if (got_saves[mode] != saves[which] || s->why[SOFT_GPU_WHY_WRITE] != writes[which] ||
+                (which >= 16 && (s->why[SOFT_GPU_WHY_AREA] != others[which - 16][0] ||
+                                 s->why[SOFT_GPU_WHY_DRAW] != others[which - 16][1] ||
+                                 s->why[SOFT_GPU_WHY_ALL] != others[which - 16][2]))) {
+                fprintf(stderr, "undo case %d, mode %d: %llu undo saves, %llu settles by a write (area %llu, draw "
+                        "%llu, all %llu)\n", which, mode, got_saves[mode], s->why[SOFT_GPU_WHY_WRITE],
+                        s->why[SOFT_GPU_WHY_AREA], s->why[SOFT_GPU_WHY_DRAW], s->why[SOFT_GPU_WHY_ALL]);
+                bad = 1;
+            }
+        }
+    }
+    return bad;
 }
 
 int main(int argc, char **argv)
@@ -1004,6 +1634,23 @@ int main(int argc, char **argv)
         (void)copy_end();
         window_settles = 1;
     }
+    /* SoftGpu_UndoSaves is 64 bits, which a tick's save could tear on i386: read with the clock held while
+     * deferred is on, and never held off. */
+    {
+        int before;
+        SoftGpu_SetDeferred(SOFT_GPU_DEFERRED_AUTO, 0);
+        before = holds;
+        CHECK(SoftGpu_UndoSaves() == 0 && holds == before + 1 && holds == releases);
+        SoftGpu_SetDeferred(0, 0);
+        before = holds;
+        CHECK(SoftGpu_UndoSaves() == 0 && holds == before);
+    }
+    /* The undo log's fixed cases (above). */
+    CHECK(undo_cases() == 0);
+    if (argc > 1 && !strcmp(argv[1], "fixed")) { /* only the cases above: what a mutant of the undo code must fail */
+        printf("Software GPU deferred raster fixed undo cases passed\n");
+        return 0;
+    }
     TextureDump_Prepare = prepare;
     for (uint32_t start = 1; start <= 3; start++) {
         CHECK(run(start * 2654435761u, frames, 0, 0, &now) == 0);
@@ -1013,12 +1660,16 @@ int main(int argc, char **argv)
         CHECK(run(start * 2654435761u, frames, 1, 1, &poisoned) == 0);
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
         printf("run %u: held %llu (dropped %llu, rastered %llu), at once %llu, states while held %d, "
-               "busy over held 0,0 %d, 320,0 %d\n", start,
+               "busy over held 0,0 %d, 320,0 %d; %llu undo saves, %llu settles by a write\n", start,
                (unsigned long long)held.stats.held, (unsigned long long)held.stats.dropped,
                (unsigned long long)held.stats.rastered, (unsigned long long)held.stats.immediate, held.states_held,
-               held.over_held[0], held.over_held[1]);
+               held.over_held[0], held.over_held[1], held.undo_saves, held.stats.why[SOFT_GPU_WHY_WRITE]);
         CHECK(held.stats.held > (unsigned)frames && held.stats.dropped > (unsigned)frames / 40 && held.stats.rastered > (unsigned)frames);
         CHECK(held.stats.held == held.stats.dropped + held.stats.rastered);
+        /* Writes into what held work samples were saved in undo logs, and
+         * some still rastered it (a full log, a primitive after the write
+         * reading what it saved, a mask or a primitive rastered at once). */
+        CHECK(held.undo_saves > (unsigned)frames && held.stats.why[SOFT_GPU_WHY_WRITE] > 0);
         CHECK(held.states_held > 0);
         CHECK(held.over_held[0] > 0 && held.over_held[1] > 0); /* both areas' held work met a busy frame */
         CHECK(held.held_by_mod == 0 && poisoned.held_by_mod == 0);
@@ -1058,13 +1709,16 @@ int main(int argc, char **argv)
         CHECK(run(start * 2246822519u, frames, SOFT_GPU_DEFERRED_AUTO, 1, &poisoned_auto) == 0);
         CHECK(holds > 0 && holds == releases && depth == 0 && !nested);
         printf("copy run %u%s, reach %d: held %llu (dropped %llu, rastered %llu), at once %llu, %d replays, the copy missed %llu "
-               "areas, %llu patches\n", start, gl_placement ? " (flush_runs)" : "", model_reach,
+               "areas, %llu patches; %llu undo saves, %llu settles by a write\n", start,
+               gl_placement ? " (flush_runs)" : "", model_reach,
                (unsigned long long)automatic.stats.held,
                (unsigned long long)automatic.stats.dropped, (unsigned long long)automatic.stats.rastered,
                (unsigned long long)automatic.stats.immediate, automatic.replays,
-               (unsigned long long)automatic.stats.copy_missed, (unsigned long long)automatic.stats.patches);
+               (unsigned long long)automatic.stats.copy_missed, (unsigned long long)automatic.stats.patches,
+               automatic.undo_saves, automatic.stats.why[SOFT_GPU_WHY_WRITE]);
         CHECK(automatic.stats.held > (unsigned)frames && automatic.stats.dropped > (unsigned)frames / 40);
         CHECK(automatic.stats.copy_missed > (unsigned)frames / 10 && automatic.stats.patches > (unsigned)frames / 40);
+        CHECK(automatic.undo_saves > (unsigned)frames && automatic.stats.why[SOFT_GPU_WHY_WRITE] > 0);
         CHECK(off.reads == automatic.reads && off.reads == poisoned_auto.reads);
         CHECK(off.stores == automatic.stores && off.stores == poisoned_auto.stores);
         CHECK(off.vram == automatic.vram && off.vram == poisoned_auto.vram);
